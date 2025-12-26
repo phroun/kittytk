@@ -591,8 +591,9 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics core.CellMetrics,
 	title string, titleStyle, frameStyle style.CellStyle, border style.BorderStyle, flags WindowFlags) {
 
-	// Draw border
-	p.DrawRect(bounds, border, frameStyle)
+	// Draw border at local (0,0) - painter is already offset to window position
+	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
+	p.DrawRect(localBounds, border, frameStyle)
 
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
