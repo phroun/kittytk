@@ -171,8 +171,8 @@ func (b *Button) SizeHint() core.UnitSize {
 		}
 	}
 
-	// Add padding and borders
-	totalChars := textLen + iconWidth + 4 // [ text ]
+	// Add brackets/spaces: "<text>" or " text "
+	totalChars := textLen + iconWidth + 2 // bracket + text + bracket
 
 	return core.UnitSize{
 		Width:  metrics.TextWidth(totalChars),
