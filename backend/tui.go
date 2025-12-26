@@ -52,6 +52,10 @@ type TUIBackend struct {
 	eventQueue chan core.Event
 	stopChan   chan struct{}
 
+	// Mouse state (for tracking position between Mouse@x,y and action events)
+	pendingMouseX int
+	pendingMouseY int
+
 	// Output writer
 	output io.Writer
 
@@ -651,6 +655,26 @@ func (t *TUIBackend) Beep() {
 
 // handleKey processes key events from the keyboard handler.
 func (t *TUIBackend) handleKey(key string) {
+	// Check for mouse events from direct-key-handler
+	// Mouse events come as two keys: "Mouse@x,y" (position) followed by action
+	if strings.HasPrefix(key, "Mouse@") {
+		// Parse position: Mouse@x,y
+		var x, y int
+		if _, err := fmt.Sscanf(key, "Mouse@%d,%d", &x, &y); err == nil {
+			t.mu.Lock()
+			t.pendingMouseX = x
+			t.pendingMouseY = y
+			t.mu.Unlock()
+		}
+		return // Position events don't generate UI events
+	}
+
+	// Check for mouse action events
+	if strings.HasPrefix(key, "Mouse") {
+		t.handleMouseAction(key)
+		return
+	}
+
 	// Parse modifiers while keeping the full key string
 	// Key names follow direct-key-handler convention:
 	// - Control+letter: "^A", "^X" etc.
@@ -670,6 +694,70 @@ func (t *TUIBackend) handleKey(key string) {
 		Key:       key,  // Full key string including modifier prefixes
 		Modifiers: mods, // Also provide parsed modifiers for widget convenience
 		Text:      text,
+	}
+
+	select {
+	case t.eventQueue <- event:
+	default:
+		// Queue full, drop event
+	}
+}
+
+// handleMouseAction processes mouse action events from direct-key-handler.
+func (t *TUIBackend) handleMouseAction(key string) {
+	t.mu.Lock()
+	x := t.pendingMouseX
+	y := t.pendingMouseY
+	t.mu.Unlock()
+
+	// Convert cell coordinates to units
+	unitX := t.metrics.CellToUnitsX(x)
+	unitY := t.metrics.CellToUnitsY(y)
+
+	// For drag events, position may be embedded: MouseLeftDrag@x,y
+	if strings.Contains(key, "@") {
+		var dragX, dragY int
+		parts := strings.SplitN(key, "@", 2)
+		if len(parts) == 2 {
+			if _, err := fmt.Sscanf(parts[1], "%d,%d", &dragX, &dragY); err == nil {
+				unitX = t.metrics.CellToUnitsX(dragX)
+				unitY = t.metrics.CellToUnitsY(dragY)
+			}
+		}
+		key = parts[0] // Strip position from key for matching
+	}
+
+	var event core.Event
+
+	switch key {
+	case "MouseLeftPress":
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+	case "MouseMiddlePress":
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.MiddleButton}
+	case "MouseRightPress":
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.RightButton}
+	case "MousePress":
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+
+	case "MouseLeftRelease":
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+	case "MouseMiddleRelease":
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.MiddleButton}
+	case "MouseRightRelease":
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.RightButton}
+	case "MouseRelease":
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+
+	case "MouseLeftDrag", "MouseMiddleDrag", "MouseRightDrag", "MouseDrag":
+		event = core.MouseMoveEvent{X: unitX, Y: unitY}
+
+	case "MouseScrollUp":
+		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: -1}
+	case "MouseScrollDown":
+		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: 1}
+
+	default:
+		return // Unknown mouse event
 	}
 
 	select {

@@ -290,6 +290,14 @@ func (fm *FocusManager) WrapAround() bool {
 	return fm.wrapAround
 }
 
+// FocusChain returns the current focus chain for debugging.
+func (fm *FocusManager) FocusChain() []Widget {
+	fm.mu.RLock()
+	root := fm.root
+	fm.mu.RUnlock()
+	return fm.buildFocusChain(root)
+}
+
 // SetOnFocusChanged sets the focus changed callback.
 func (fm *FocusManager) SetOnFocusChanged(handler func(old, new Widget)) {
 	fm.mu.Lock()

@@ -48,11 +48,12 @@ func main() {
 				if activeWin := wm.ActiveWindow(); activeWin != nil {
 					fm := activeWin.FocusManager()
 					if fm != nil {
+						chain := fm.FocusChain()
 						focused := fm.FocusedWidget()
 						if focused != nil {
-							focusInfo = fmt.Sprintf("focused: %T", focused)
+							focusInfo = fmt.Sprintf("focused: %T (chain: %d)", focused, len(chain))
 						} else {
-							focusInfo = "focused: nil"
+							focusInfo = fmt.Sprintf("focused: nil (chain: %d)", len(chain))
 						}
 					}
 				}
