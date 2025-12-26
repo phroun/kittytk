@@ -529,13 +529,66 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	// Selected:   _/ TabText \_
 	// Unselected:    TabText
 	x := core.Unit(0)
+	lastDrawnIndex := -1
 	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
 		tab := t.tabs[i]
 		// Each tab: 3 chars prefix + text + 3 chars suffix
 		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
 
-		// Stop if we've run out of space
+		// Check if full tab fits
 		if x+tabWidth > availableWidth {
+			// Try to draw a partial tab with ellipsis if there's enough space
+			// Need at least: prefix (3) + "..." (3) = 6 chars minimum
+			remainingSpace := availableWidth - x
+			minPartialWidth := metrics.TextWidth(6) // "_/ ..."
+			if remainingSpace >= minPartialWidth {
+				// Calculate how many characters of the name we can show
+				// Available for text: remaining - prefix(3) - ellipsis(3)
+				textSpace := int(remainingSpace/metrics.CellWidth) - 6
+				if textSpace < 0 {
+					textSpace = 0
+				}
+
+				var s style.CellStyle
+				if !tab.Enabled {
+					s = theme.Disabled
+				} else if i == t.currentIndex {
+					s = selectedStyle
+				} else {
+					s = tabBarStyle
+				}
+
+				isSelected := i == t.currentIndex
+
+				// Draw prefix: "_/ " for selected, "   " for unselected
+				if isSelected {
+					p.DrawCell(x, 0, '_', tabBarStyle)
+					p.DrawCell(x+metrics.CellWidth, 0, '/', tabBarStyle)
+					p.DrawCell(x+metrics.CellWidth*2, 0, ' ', s)
+				} else {
+					p.DrawCell(x, 0, ' ', tabBarStyle)
+					p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarStyle)
+					p.DrawCell(x+metrics.CellWidth*2, 0, ' ', tabBarStyle)
+				}
+
+				// Draw partial tab text
+				textX := x + metrics.CellWidth*3
+				textRunes := []rune(tab.Text)
+				charsToShow := textSpace
+				if charsToShow > len(textRunes) {
+					charsToShow = len(textRunes)
+				}
+				for j := 0; j < charsToShow; j++ {
+					p.DrawCell(textX, 0, textRunes[j], s)
+					textX += metrics.CellWidth
+				}
+
+				// Draw ellipsis
+				for j := 0; j < 3; j++ {
+					p.DrawCell(textX, 0, '.', s)
+					textX += metrics.CellWidth
+				}
+			}
 			break
 		}
 
@@ -587,7 +640,9 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		}
 
 		x += tabWidth
+		lastDrawnIndex = i
 	}
+	_ = lastDrawnIndex // Suppress unused warning for now
 
 	// Draw scroll buttons if needed
 	if needsScrolling {
