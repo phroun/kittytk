@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/phroun/tuitk/core"
@@ -962,7 +964,11 @@ func (m *MenuBar) HandleFocusOut() {
 
 // HandleMouseMove handles mouse movement during drag.
 func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
+	fmt.Fprintf(os.Stderr, "[MENU] HandleMouseMove at (%d,%d), mouseDown=%v, activeMenu=%v\n",
+		event.X, event.Y, m.mouseDown, m.activeMenu != nil)
+
 	if !m.mouseDown || m.activeMenu == nil {
+		fmt.Fprintf(os.Stderr, "[MENU] Returning false - not in mouse-down mode or no active menu\n")
 		return false
 	}
 
@@ -981,7 +987,9 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// Only start dragging if moved at least half a cell
 		if dx >= metrics.CellWidth/2 || dy >= metrics.CellHeight/2 {
 			m.dragging = true
+			fmt.Fprintf(os.Stderr, "[MENU] Started dragging - dx=%d, dy=%d\n", dx, dy)
 		} else {
+			fmt.Fprintf(os.Stderr, "[MENU] Not dragging yet - dx=%d, dy=%d\n", dx, dy)
 			return true // Not dragging yet, consume but don't act
 		}
 	}

@@ -2,6 +2,8 @@
 package window
 
 import (
+	"fmt"
+	"os"
 	"sync"
 
 	"github.com/phroun/tuitk/core"
@@ -496,6 +498,8 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove processes mouse movement for dragging.
 func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
+	fmt.Fprintf(os.Stderr, "[WM] HandleMouseMove at (%d,%d)\n", event.X, event.Y)
+
 	m.mu.Lock()
 	dragging := m.dragging
 	offsetX := m.dragOffsetX
@@ -503,6 +507,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 	m.mu.Unlock()
 
 	if dragging != nil {
+		fmt.Fprintf(os.Stderr, "[WM] Window drag mode - moving window\n")
 		// Move window
 		newX := event.X - offsetX
 		newY := event.Y - offsetY
@@ -528,9 +533,12 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if handler, ok := desktop.(interface {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {
+			fmt.Fprintf(os.Stderr, "[WM] Forwarding to desktop\n")
 			if handler.HandleMouseMove(event) {
+				fmt.Fprintf(os.Stderr, "[WM] Desktop handled the event\n")
 				return true
 			}
+			fmt.Fprintf(os.Stderr, "[WM] Desktop did not handle the event\n")
 		}
 	}
 
@@ -540,11 +548,14 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
+		fmt.Fprintf(os.Stderr, "[WM] Forwarding to active window, local coords (%d,%d)\n", localEvent.X, localEvent.Y)
 		if active.HandleMouseMove(localEvent) {
+			fmt.Fprintf(os.Stderr, "[WM] Active window handled the event\n")
 			// Request repaint since widget state may have changed
 			m.RequestRepaint()
 			return true
 		}
+		fmt.Fprintf(os.Stderr, "[WM] Active window did not handle the event\n")
 	}
 
 	return false
