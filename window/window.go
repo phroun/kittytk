@@ -44,6 +44,18 @@ const (
 	TitleButtonMaximize             // [^] or [o] button
 )
 
+// TitleFocus identifies which title bar element has keyboard focus.
+type TitleFocus int
+
+const (
+	TitleFocusNone     TitleFocus = iota // No title bar element focused
+	TitleFocusTitle                      // Title text focused (for moving)
+	TitleFocusClose                      // Close button focused
+	TitleFocusMinimize                   // Minimize button focused
+	TitleFocusMaximize                   // Maximize button focused
+)
+
+
 // Window represents a floating window with frame, title bar, and content area.
 // Windows support maximization, minimization, MDI-style child windows,
 // and optional Mac-like menu integration.
@@ -95,6 +107,10 @@ type Window struct {
 	// Button press tracking
 	pressedButton TitleButton // Currently pressed titlebar button
 	buttonHovered bool        // Whether mouse is still over the pressed button
+
+	// Title bar keyboard focus
+	titleFocus   TitleFocus // Which title bar element has keyboard focus
+	resizeEdges  int        // Which edges are being keyboard-resized (ResizeEdge* constants)
 }
 
 // NewWindow creates a new window with the given title.
@@ -789,11 +805,382 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	return TitleButtonNone
 }
 
+// TitleFocus returns the current title bar focus.
+func (w *Window) TitleFocus() TitleFocus {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.titleFocus
+}
+
+// SetTitleFocus sets which title bar element has keyboard focus.
+func (w *Window) SetTitleFocus(focus TitleFocus) {
+	w.mu.Lock()
+	w.titleFocus = focus
+	if focus == TitleFocusNone {
+		w.resizeEdges = ResizeEdgeNone // Clear resize state when leaving title bar
+	}
+	w.mu.Unlock()
+	w.Update()
+}
+
+// HasTitleFocus returns true if any title bar element has keyboard focus.
+func (w *Window) HasTitleFocus() bool {
+	return w.TitleFocus() != TitleFocusNone
+}
+
+// handleTitleBarKey handles keyboard input when title bar has focus.
+func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
+	w.mu.RLock()
+	titleFocus := w.titleFocus
+	resizeEdges := w.resizeEdges
+	flags := w.flags
+	w.mu.RUnlock()
+
+	metrics := core.DefaultCellMetrics()
+
+	// Handle navigation between title bar elements
+	switch event.Key {
+	case "Tab":
+		// Move to next title element or exit to content
+		next := w.nextTitleFocus(titleFocus)
+		if next == TitleFocusNone {
+			// Exit title bar, focus first widget in content
+			w.SetTitleFocus(TitleFocusNone)
+			if fm := w.FocusManager(); fm != nil {
+				fm.FocusFirst()
+			}
+		} else {
+			w.SetTitleFocus(next)
+		}
+		return true
+
+	case "S-Tab", "Shift-Tab":
+		// Move to previous title element
+		prev := w.prevTitleFocus(titleFocus)
+		w.SetTitleFocus(prev)
+		return true
+
+	case "Escape":
+		// Exit title bar focus, return to content
+		w.SetTitleFocus(TitleFocusNone)
+		w.mu.Lock()
+		w.resizeEdges = ResizeEdgeNone
+		w.mu.Unlock()
+		if fm := w.FocusManager(); fm != nil {
+			fm.FocusFirst()
+		}
+		return true
+
+	case "Enter", " ", "Space":
+		// Activate focused button
+		switch titleFocus {
+		case TitleFocusClose:
+			if flags&WindowFlagNoClose == 0 {
+				w.Close()
+			}
+		case TitleFocusMinimize:
+			if flags&WindowFlagNoMinimize == 0 {
+				w.mu.RLock()
+				handler := w.onMinimizeRequest
+				w.mu.RUnlock()
+				if handler != nil {
+					handler()
+				}
+			}
+		case TitleFocusMaximize:
+			if flags&WindowFlagNoMaximize == 0 {
+				w.mu.RLock()
+				handler := w.onMaximizeRequest
+				w.mu.RUnlock()
+				if handler != nil {
+					handler()
+				}
+			}
+		}
+		return true
+	}
+
+	// Handle window movement and resizing when title has focus
+	if titleFocus == TitleFocusTitle {
+		bounds := w.Bounds()
+		hasShift := event.Modifiers&core.ShiftModifier != 0
+		hasCtrl := event.Modifiers&core.ControlModifier != 0
+		hasMeta := event.Modifiers&core.MetaModifier != 0
+		moveToEdge := hasCtrl || hasMeta
+
+		switch event.Key {
+		case "Left":
+			if hasShift {
+				// Start/continue resizing left edge
+				if resizeEdges&ResizeEdgeLeft != 0 {
+					// Continue: shrink from left
+					newBounds := bounds
+					newBounds.X += metrics.CellWidth
+					newBounds.Width -= metrics.CellWidth
+					if newBounds.Width >= w.minWidth {
+						w.SetBounds(newBounds)
+					}
+				} else if resizeEdges&ResizeEdgeRight != 0 {
+					// Continue right resize: shrink right edge
+					newBounds := bounds
+					newBounds.Width -= metrics.CellWidth
+					if newBounds.Width >= w.minWidth {
+						w.SetBounds(newBounds)
+					}
+				} else {
+					// Start: expand left edge
+					w.mu.Lock()
+					w.resizeEdges = ResizeEdgeLeft
+					w.mu.Unlock()
+					newBounds := bounds
+					newBounds.X -= metrics.CellWidth
+					newBounds.Width += metrics.CellWidth
+					w.SetBounds(newBounds)
+				}
+			} else if moveToEdge {
+				// Move to left edge
+				newBounds := bounds
+				newBounds.X = 0
+				w.SetBounds(newBounds)
+			} else {
+				// Move window left
+				newBounds := bounds
+				newBounds.X -= metrics.CellWidth
+				w.SetBounds(newBounds)
+			}
+			return true
+
+		case "Right":
+			if hasShift {
+				// Start/continue resizing right edge
+				if resizeEdges&ResizeEdgeRight != 0 {
+					// Continue: shrink from right
+					newBounds := bounds
+					newBounds.Width -= metrics.CellWidth
+					if newBounds.Width >= w.minWidth {
+						w.SetBounds(newBounds)
+					}
+				} else if resizeEdges&ResizeEdgeLeft != 0 {
+					// Continue left resize: shrink left edge
+					newBounds := bounds
+					newBounds.X += metrics.CellWidth
+					newBounds.Width -= metrics.CellWidth
+					if newBounds.Width >= w.minWidth {
+						w.SetBounds(newBounds)
+					}
+				} else {
+					// Start: expand right edge
+					w.mu.Lock()
+					w.resizeEdges = ResizeEdgeRight
+					w.mu.Unlock()
+					newBounds := bounds
+					newBounds.Width += metrics.CellWidth
+					w.SetBounds(newBounds)
+				}
+			} else if moveToEdge {
+				// Move to right edge - handled by window manager
+				// (we don't know screen bounds here)
+				w.mu.Lock()
+				w.resizeEdges = ResizeEdgeNone
+				w.mu.Unlock()
+				return true
+			} else {
+				// Move window right
+				newBounds := bounds
+				newBounds.X += metrics.CellWidth
+				w.SetBounds(newBounds)
+			}
+			return true
+
+		case "Up":
+			if hasShift {
+				// Start/continue resizing top edge
+				if resizeEdges&ResizeEdgeTop != 0 {
+					// Continue: shrink from top
+					newBounds := bounds
+					newBounds.Y += metrics.CellHeight
+					newBounds.Height -= metrics.CellHeight
+					if newBounds.Height >= w.minHeight {
+						w.SetBounds(newBounds)
+					}
+				} else if resizeEdges&ResizeEdgeBottom != 0 {
+					// Continue bottom resize: shrink bottom edge
+					newBounds := bounds
+					newBounds.Height -= metrics.CellHeight
+					if newBounds.Height >= w.minHeight {
+						w.SetBounds(newBounds)
+					}
+				} else {
+					// Start: expand top edge
+					w.mu.Lock()
+					w.resizeEdges |= ResizeEdgeTop
+					w.mu.Unlock()
+					newBounds := bounds
+					newBounds.Y -= metrics.CellHeight
+					newBounds.Height += metrics.CellHeight
+					w.SetBounds(newBounds)
+				}
+			} else if moveToEdge {
+				// Move to top edge
+				newBounds := bounds
+				newBounds.Y = 0
+				w.SetBounds(newBounds)
+			} else {
+				// Move window up
+				newBounds := bounds
+				newBounds.Y -= metrics.CellHeight
+				w.SetBounds(newBounds)
+			}
+			return true
+
+		case "Down":
+			if hasShift {
+				// Start/continue resizing bottom edge
+				if resizeEdges&ResizeEdgeBottom != 0 {
+					// Continue: shrink from bottom
+					newBounds := bounds
+					newBounds.Height -= metrics.CellHeight
+					if newBounds.Height >= w.minHeight {
+						w.SetBounds(newBounds)
+					}
+				} else if resizeEdges&ResizeEdgeTop != 0 {
+					// Continue top resize: shrink top edge
+					newBounds := bounds
+					newBounds.Y += metrics.CellHeight
+					newBounds.Height -= metrics.CellHeight
+					if newBounds.Height >= w.minHeight {
+						w.SetBounds(newBounds)
+					}
+				} else {
+					// Start: expand bottom edge
+					w.mu.Lock()
+					w.resizeEdges |= ResizeEdgeBottom
+					w.mu.Unlock()
+					newBounds := bounds
+					newBounds.Height += metrics.CellHeight
+					w.SetBounds(newBounds)
+				}
+			} else if moveToEdge {
+				// Move to bottom edge - handled by window manager
+				w.mu.Lock()
+				w.resizeEdges = ResizeEdgeNone
+				w.mu.Unlock()
+				return true
+			} else {
+				// Move window down
+				newBounds := bounds
+				newBounds.Y += metrics.CellHeight
+				w.SetBounds(newBounds)
+			}
+			return true
+		}
+	}
+
+	return false
+}
+
+// nextTitleFocus returns the next title bar element after the given one.
+func (w *Window) nextTitleFocus(current TitleFocus) TitleFocus {
+	w.mu.RLock()
+	flags := w.flags
+	w.mu.RUnlock()
+
+	// Order: Title -> Close -> Minimize -> Maximize -> (exit to content)
+	switch current {
+	case TitleFocusTitle:
+		if flags&WindowFlagNoClose == 0 {
+			return TitleFocusClose
+		}
+		fallthrough
+	case TitleFocusClose:
+		if flags&WindowFlagNoMinimize == 0 {
+			return TitleFocusMinimize
+		}
+		fallthrough
+	case TitleFocusMinimize:
+		if flags&WindowFlagNoMaximize == 0 {
+			return TitleFocusMaximize
+		}
+		fallthrough
+	case TitleFocusMaximize:
+		return TitleFocusNone // Exit to content
+	}
+	return TitleFocusNone
+}
+
+// prevTitleFocus returns the previous title bar element before the given one.
+func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
+	w.mu.RLock()
+	flags := w.flags
+	w.mu.RUnlock()
+
+	// Reverse order: Maximize -> Minimize -> Close -> Title
+	switch current {
+	case TitleFocusMaximize:
+		if flags&WindowFlagNoMinimize == 0 {
+			return TitleFocusMinimize
+		}
+		fallthrough
+	case TitleFocusMinimize:
+		if flags&WindowFlagNoClose == 0 {
+			return TitleFocusClose
+		}
+		fallthrough
+	case TitleFocusClose:
+		return TitleFocusTitle
+	case TitleFocusTitle:
+		return TitleFocusTitle // Stay at title, can't go back further
+	}
+	return TitleFocusTitle
+}
+
 // HandleKeyPress handles keyboard input.
 func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	w.mu.RLock()
 	fm := w.focusManager
+	titleFocus := w.titleFocus
 	w.mu.RUnlock()
+
+	// If title bar has focus, handle title bar keys
+	if titleFocus != TitleFocusNone {
+		if w.handleTitleBarKey(event) {
+			return true
+		}
+	}
+
+	// Handle Shift+Tab from first widget to enter title bar
+	if event.Key == "S-Tab" || event.Key == "Shift-Tab" {
+		if fm != nil {
+			chain := fm.FocusChain()
+			focused := fm.FocusedWidget()
+			// If at first focusable widget, go to title bar
+			for _, widget := range chain {
+				if widget.IsVisible() && widget.IsEnabled() {
+					if widget == focused {
+						// At first widget, enter title bar
+						// Find last title bar element
+						w.mu.RLock()
+						flags := w.flags
+						w.mu.RUnlock()
+						var lastFocus TitleFocus
+						if flags&WindowFlagNoMaximize == 0 {
+							lastFocus = TitleFocusMaximize
+						} else if flags&WindowFlagNoMinimize == 0 {
+							lastFocus = TitleFocusMinimize
+						} else if flags&WindowFlagNoClose == 0 {
+							lastFocus = TitleFocusClose
+						} else {
+							lastFocus = TitleFocusTitle
+						}
+						w.SetTitleFocus(lastFocus)
+						fm.ClearFocus()
+						return true
+					}
+					break // Not at first widget
+				}
+			}
+		}
+	}
 
 	// Use focus manager to handle Tab navigation and forward to focused widget
 	if fm != nil {
