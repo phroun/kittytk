@@ -1,7 +1,12 @@
 // Package core provides fundamental types for the TUI toolkit.
 package core
 
-// Point represents a 2D coordinate.
+// The following types use int for cell-based coordinates.
+// These are used internally by backends for actual rendering.
+// Widgets should use the Unit-based types from units.go for
+// resolution-independent layout.
+
+// Point represents a 2D coordinate in cells/pixels.
 type Point struct {
 	X, Y int
 }
@@ -186,14 +191,6 @@ const (
 	ScrollDown
 )
 
-// MouseEvent contains mouse event information.
-type MouseEvent struct {
-	X, Y     int
-	Button   MouseButton
-	Released bool
-	Drag     bool
-}
-
 // KeyModifiers represents active modifier keys.
 type KeyModifiers int
 
@@ -205,49 +202,33 @@ const (
 	MetaModifier
 )
 
-// KeyEvent contains keyboard event information.
-type KeyEvent struct {
-	Key       string       // Key name from direct-key-handler
-	Modifiers KeyModifiers // Active modifiers
-	Text      string       // Printable text if any
-}
-
-// ParseKeyEvent parses a key string from direct-key-handler into a KeyEvent.
-func ParseKeyEvent(key string) KeyEvent {
-	event := KeyEvent{Key: key}
-
-	// Parse modifiers from prefix
+// ParseKeyModifiers parses modifier prefixes from a key string.
+// Returns the modifiers and the remaining key name.
+func ParseKeyModifiers(key string) (KeyModifiers, string) {
+	var mods KeyModifiers
 	remaining := key
+
 	for {
 		switch {
 		case len(remaining) > 2 && remaining[:2] == "M-":
-			event.Modifiers |= AltModifier
+			mods |= AltModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "C-":
-			event.Modifiers |= ControlModifier
+			mods |= ControlModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "S-":
-			event.Modifiers |= ShiftModifier
+			mods |= ShiftModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "s-":
-			event.Modifiers |= MetaModifier
+			mods |= MetaModifier
 			remaining = remaining[2:]
 		default:
-			goto done
+			// Check for control character notation
+			if len(remaining) == 2 && remaining[0] == '^' {
+				mods |= ControlModifier
+				remaining = string(remaining[1])
+			}
+			return mods, remaining
 		}
 	}
-done:
-
-	// Check for control character notation
-	if len(remaining) == 2 && remaining[0] == '^' {
-		event.Modifiers |= ControlModifier
-		remaining = string(remaining[1])
-	}
-
-	// Set text for printable characters
-	if len(remaining) == 1 && remaining[0] >= 32 && remaining[0] < 127 {
-		event.Text = remaining
-	}
-
-	return event
 }
