@@ -314,7 +314,8 @@ func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 		if event.Modifiers&ShiftModifier != 0 {
 			return fm.FocusPrevious()
 		}
-		return fm.FocusNext()
+		result := fm.FocusNext()
+		return result
 
 	case "S-Tab", "Shift-Tab":
 		return fm.FocusPrevious()

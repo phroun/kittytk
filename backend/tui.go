@@ -783,6 +783,10 @@ func (t *TUIBackend) handleResize() {
 					t.rows = rows
 					t.allocateBuffers()
 
+					// Clear screen properly before repaint
+					// CSI 0m = reset attributes, CSI 2J = clear entire screen
+					t.write("\033[0m\033[2J")
+
 					// Queue resize event
 					event := core.ResizeEvent{
 						Width:  t.metrics.CellToUnitsX(cols),
