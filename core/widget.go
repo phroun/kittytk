@@ -606,9 +606,24 @@ func (w *WidgetBase) SetApplication(app *Application) {
 	w.app = app
 }
 
-// setFocusWidget is a forward reference for Application.
+// setFocusWidget updates the focused widget, clearing focus from the previous one.
 func (a *Application) setFocusWidget(w interface{ ClearFocus() }) {
-	// Will be implemented in the app package
+	if a == nil {
+		return
+	}
+
+	a.mu.Lock()
+	oldFocus := a.focusWidget
+	// Type assert to Widget to store it
+	if widget, ok := w.(Widget); ok {
+		a.focusWidget = widget
+	}
+	a.mu.Unlock()
+
+	// Clear focus from the old widget (if different)
+	if oldFocus != nil && oldFocus != w {
+		oldFocus.ClearFocus()
+	}
 }
 
 // requestRepaint is a forward reference for Application.

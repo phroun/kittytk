@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"time"
+
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
 )
@@ -69,6 +71,10 @@ type TreeView struct {
 	// Appearance
 	indentWidth int // Characters per indent level
 
+	// Double-click detection
+	lastClickTime  int64 // Unix nano
+	lastClickIndex int
+
 	// Callbacks
 	onCurrentChanged  func(item *TreeItem)
 	onItemActivated   func(item *TreeItem)
@@ -79,8 +85,9 @@ type TreeView struct {
 // NewTreeView creates a new tree view.
 func NewTreeView() *TreeView {
 	t := &TreeView{
-		currentIndex: -1,
-		indentWidth:  2,
+		currentIndex:   -1,
+		indentWidth:    2,
+		lastClickIndex: -1,
 	}
 	t.WidgetBase = *core.NewWidgetBase()
 	t.SetFocusPolicy(core.StrongFocus)
@@ -552,6 +559,28 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 				t.ToggleItem(item)
 				return true
 			}
+		}
+
+		// Check for double-click (400ms threshold)
+		now := time.Now().UnixNano()
+		isDoubleClick := t.lastClickIndex == clickedIndex &&
+			(now-t.lastClickTime) < int64(400*time.Millisecond)
+
+		// Update click tracking
+		t.lastClickTime = now
+		t.lastClickIndex = clickedIndex
+
+		if isDoubleClick {
+			// Double-click: toggle expand/collapse if not leaf, then activate
+			if !item.IsLeaf() {
+				t.ToggleItem(item)
+			}
+			if t.onItemActivated != nil {
+				t.onItemActivated(item)
+			}
+			// Reset double-click state
+			t.lastClickIndex = -1
+			return true
 		}
 
 		t.SetCurrentIndex(clickedIndex)

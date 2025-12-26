@@ -765,6 +765,26 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle drag
 	if dragging != nil {
+		// If window is maximized, restore it first and adjust offset
+		if dragging.IsMaximized() {
+			// Get the normalized bounds before restore
+			oldBounds := dragging.Bounds()
+
+			// Restore the window
+			dragging.Restore()
+			newBounds := dragging.Bounds()
+
+			// Recalculate offset so the cursor stays proportionally positioned
+			// on the titlebar (e.g., if you grabbed the middle, keep it middle)
+			proportion := float64(offsetX) / float64(oldBounds.Width)
+			offsetX = core.Unit(proportion * float64(newBounds.Width))
+
+			// Update stored offset
+			m.mu.Lock()
+			m.dragOffsetX = offsetX
+			m.mu.Unlock()
+		}
+
 		// Move window
 		newX := event.X - offsetX
 		newY := event.Y - offsetY
@@ -772,6 +792,36 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		bounds := dragging.Bounds()
 		bounds.X = newX
 		bounds.Y = newY
+
+		// Constrain to client area (below menu bar, above status bar)
+		clientArea := m.ClientArea()
+		metrics := core.DefaultCellMetrics()
+
+		// Dragging into menu bar area = maximize gesture
+		if bounds.Y < clientArea.Y && dragging.Flags()&WindowFlagNoMaximize == 0 {
+			m.MaximizeWindow(dragging)
+			// Stop dragging since we maximized
+			m.mu.Lock()
+			m.dragging = nil
+			m.mu.Unlock()
+			m.RequestRepaint()
+			return true
+		}
+
+		// Keep at least the titlebar visible at bottom
+		maxY := clientArea.Y + clientArea.Height - metrics.CellHeight
+		if bounds.Y > maxY {
+			bounds.Y = maxY
+		}
+		// Allow some horizontal overflow but keep part of window visible
+		minVisibleWidth := metrics.CellWidth * 4
+		if bounds.X+bounds.Width < clientArea.X+minVisibleWidth {
+			bounds.X = clientArea.X + minVisibleWidth - bounds.Width
+		}
+		if bounds.X > clientArea.X+clientArea.Width-minVisibleWidth {
+			bounds.X = clientArea.X + clientArea.Width - minVisibleWidth
+		}
+
 		dragging.SetBounds(bounds)
 
 		// Request repaint to show the window at its new position
