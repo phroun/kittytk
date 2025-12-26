@@ -5,6 +5,12 @@ import (
 	"sync"
 )
 
+// FocusManagerOwner is implemented by containers that own a FocusManager.
+// The Window type implements this interface.
+type FocusManagerOwner interface {
+	FocusManager() *FocusManager
+}
+
 // FocusManager handles focus navigation within a scope (window/dialog).
 // Each window typically has its own focus manager.
 type FocusManager struct {
@@ -93,6 +99,47 @@ func (fm *FocusManager) SetFocusedWidget(widget Widget) bool {
 	if widget != nil {
 		widget.SetFocus()
 	}
+
+	// Announce focus change for accessibility
+	if am != nil && widget != nil {
+		am.AnnounceFocus(widget)
+	}
+
+	// Call callback
+	if handler != nil {
+		handler(oldFocus, widget)
+	}
+
+	return true
+}
+
+// setFocusedWidgetInternal is called by widgets when they gain focus.
+// It updates the focus manager's state and clears focus from the old widget,
+// but does NOT call SetFocus on the new widget (to avoid recursion).
+func (fm *FocusManager) setFocusedWidgetInternal(widget Widget) bool {
+	if widget != nil && !fm.canFocus(widget) {
+		return false
+	}
+
+	fm.mu.Lock()
+	if fm.focusedWidget == widget {
+		fm.mu.Unlock()
+		return true
+	}
+
+	oldFocus := fm.focusedWidget
+	fm.focusedWidget = widget
+	handler := fm.onFocusChanged
+	am := fm.accessibilityManager
+	fm.mu.Unlock()
+
+	// Clear focus on old widget (this sets focused=false and calls HandleFocusOut)
+	if oldFocus != nil {
+		oldFocus.ClearFocus()
+	}
+
+	// Do NOT call widget.SetFocus() here - the widget already has focus
+	// This method is called FROM widget.SetFocus(), so calling it again would loop
 
 	// Announce focus change for accessibility
 	if am != nil && widget != nil {

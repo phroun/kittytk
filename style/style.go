@@ -380,7 +380,7 @@ func DefaultTheme() *Theme {
 		WindowBackground:   DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
 
 		Button:        DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
-		ButtonFocused: DefaultStyle().WithFg(ColorWhite).WithBg(ColorCyan),
+		ButtonFocused: DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
 		ButtonPressed: DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
 
 		Input:          DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),

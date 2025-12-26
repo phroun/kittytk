@@ -107,6 +107,10 @@ type Widget interface {
 	// Returns true if the event was consumed.
 	HandleKeyPress(event KeyPressEvent) bool
 
+	// HandleKeyRelease processes a key release event.
+	// Note: Not all terminals support key release events.
+	HandleKeyRelease(event KeyReleaseEvent) bool
+
 	// HandleMousePress processes a mouse button press.
 	HandleMousePress(event MousePressEvent) bool
 
@@ -475,19 +479,46 @@ func (w *WidgetBase) SetFocus() {
 		w.mu.Unlock()
 		return
 	}
-	wasLocked := w.focused
+	wasFocused := w.focused
 	w.focused = true
 	app := w.app
+	parent := w.parent
 	w.mu.Unlock()
 
-	if !wasLocked {
+	if !wasFocused {
 		w.HandleFocusIn()
 		w.Update()
 	}
 
+	// Find a parent with a FocusManager and notify it
+	// This ensures the old focused widget gets ClearFocus() called
+	w.notifyFocusManager(parent)
+
 	// Notify application of focus change
 	if app != nil {
 		app.setFocusWidget(w)
+	}
+}
+
+// notifyFocusManager walks up the parent chain to find a FocusManagerOwner
+// and calls SetFocusedWidget to properly transfer focus.
+func (w *WidgetBase) notifyFocusManager(parent Container) {
+	current := parent
+	for current != nil {
+		if owner, ok := current.(FocusManagerOwner); ok {
+			if fm := owner.FocusManager(); fm != nil {
+				// Use internal method to avoid calling SetFocus again
+				// The FocusManager will clear focus from the old widget
+				fm.setFocusedWidgetInternal(w)
+				return
+			}
+		}
+		// Walk up to next parent
+		if widget, ok := current.(Widget); ok {
+			current = widget.Parent()
+		} else {
+			break
+		}
 	}
 }
 
@@ -557,6 +588,11 @@ func (w *WidgetBase) NeedsRepaint() bool {
 
 // HandleKeyPress handles key events (override in subclasses).
 func (w *WidgetBase) HandleKeyPress(event KeyPressEvent) bool {
+	return false
+}
+
+// HandleKeyRelease handles key release (override in subclasses).
+func (w *WidgetBase) HandleKeyRelease(event KeyReleaseEvent) bool {
 	return false
 }
 

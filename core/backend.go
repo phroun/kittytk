@@ -118,6 +118,15 @@ type KeyPressEvent struct {
 
 func (KeyPressEvent) isEvent() {}
 
+// KeyReleaseEvent represents a key release.
+// Note: Not all terminals support key release events.
+type KeyReleaseEvent struct {
+	Key       string       // Key name
+	Modifiers KeyModifiers // Active modifiers
+}
+
+func (KeyReleaseEvent) isEvent() {}
+
 // MousePressEvent represents a mouse button press.
 type MousePressEvent struct {
 	X, Y   Unit        // Position in units

@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"time"
+
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
 )
@@ -16,10 +18,13 @@ type Button struct {
 	iconSize  style.IconSize
 	checkable bool
 	checked   bool
-	pressed   bool
-	hovered   bool // Mouse is over button while pressed
-	flat      bool // No border when not focused/hovered
-	isDefault bool // Default button (shown bold when not focused)
+	pressed        bool
+	hovered        bool // Mouse is over button while pressed
+	spacePressed   bool // Space key is being held down
+	animatingPress bool // Showing press animation (250ms visual feedback)
+	flat           bool // No border when not focused/hovered
+	isDefault      bool // Default button (shown bold when not focused)
+	isCancel       bool // Cancel button (activated by Escape)
 
 	onClick  func()
 	onToggle func(checked bool)
@@ -127,6 +132,42 @@ func (b *Button) SetDefault(isDefault bool) {
 	b.Update()
 }
 
+// IsCancel returns whether this is the cancel button.
+func (b *Button) IsCancel() bool {
+	return b.isCancel
+}
+
+// SetCancel makes this the cancel button (activated by Escape key).
+func (b *Button) SetCancel(isCancel bool) {
+	b.isCancel = isCancel
+}
+
+// AnimatePress shows the pressed state briefly (250ms) then triggers click.
+// This provides visual feedback for keyboard-triggered button presses.
+func (b *Button) AnimatePress() {
+	if !b.IsEnabled() || b.animatingPress {
+		return
+	}
+
+	// If already showing pressed state (e.g., space held), just click
+	if b.spacePressed || (b.pressed && b.hovered) {
+		b.Click()
+		return
+	}
+
+	// Show pressed state
+	b.animatingPress = true
+	b.Update()
+
+	// After 250ms, clear animation and trigger click
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		b.animatingPress = false
+		b.Update()
+		b.Click()
+	}()
+}
+
 // SetOnClick sets the click handler.
 func (b *Button) SetOnClick(handler func()) {
 	b.onClick = handler
@@ -193,8 +234,8 @@ func (b *Button) Paint(p *core.Painter) {
 	focused := b.HasFocus()
 	metrics := p.Metrics()
 
-	// Determine if showing pressed visual (pressed and hovering, or checked)
-	showPressed := (b.pressed && b.hovered) || b.checked
+	// Determine if showing pressed visual (pressed and hovering, space held, animating, or checked)
+	showPressed := (b.pressed && b.hovered) || b.spacePressed || b.animatingPress || b.checked
 
 	// Determine style
 	var s style.CellStyle
@@ -320,9 +361,43 @@ func (b *Button) Paint(p *core.Painter) {
 // HandleKeyPress handles keyboard input.
 func (b *Button) HandleKeyPress(event core.KeyPressEvent) bool {
 	switch event.Key {
-	case "Enter", " ":
-		b.Click()
+	case "Enter":
+		// Enter triggers with animation for visual feedback
+		b.AnimatePress()
 		return true
+	case " ", "Space":
+		// Space shows pressed state, waits for release to trigger
+		if !b.spacePressed {
+			b.spacePressed = true
+			b.Update()
+		}
+		return true
+	case "Escape":
+		// Escape cancels space press first
+		if b.spacePressed {
+			b.spacePressed = false
+			b.Update()
+			return true
+		}
+		// If this is a cancel button, activate it
+		if b.isCancel {
+			b.AnimatePress()
+			return true
+		}
+	}
+	return false
+}
+
+// HandleKeyRelease handles key release.
+func (b *Button) HandleKeyRelease(event core.KeyReleaseEvent) bool {
+	switch event.Key {
+	case " ", "Space":
+		if b.spacePressed {
+			b.spacePressed = false
+			b.Update()
+			b.Click()
+			return true
+		}
 	}
 	return false
 }
@@ -387,6 +462,8 @@ func (b *Button) HandleFocusIn() {
 func (b *Button) HandleFocusOut() {
 	b.pressed = false
 	b.hovered = false
+	b.spacePressed = false
+	b.animatingPress = false
 	b.Update()
 }
 

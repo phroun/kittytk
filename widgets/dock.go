@@ -3,6 +3,7 @@ package widgets
 
 import (
 	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/style"
 )
 
 // DockEntry represents a minimized window in the dock.
@@ -128,11 +129,13 @@ func (d *DockRow) Paint(p *core.Painter) {
 	}
 
 	bounds := d.Bounds()
-	theme := d.Theme()
 	metrics := p.Metrics()
 
+	// Dock style: cyan on blue
+	dockStyle := style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlue)
+
 	// Draw background
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.StatusBar)
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', dockStyle)
 
 	// Calculate layout
 	entryWidthUnits := core.Unit(d.entryWidth) * metrics.CellWidth
@@ -156,11 +159,11 @@ func (d *DockRow) Paint(p *core.Painter) {
 			Width:  entryWidthUnits,
 			Height: metrics.CellHeight,
 		}
-		p.FillRect(entryRect, ' ', theme.Button)
+		p.FillRect(entryRect, ' ', dockStyle)
 
 		// Draw border characters
-		p.DrawCell(x, y, '[', theme.Button)
-		p.DrawCell(x+entryWidthUnits-metrics.CellWidth, y, ']', theme.Button)
+		p.DrawCell(x, y, '[', dockStyle)
+		p.DrawCell(x+entryWidthUnits-metrics.CellWidth, y, ']', dockStyle)
 
 		// Draw title (truncated if needed)
 		title := entry.Title
@@ -171,7 +174,7 @@ func (d *DockRow) Paint(p *core.Painter) {
 
 		textX := x + metrics.CellWidth
 		for _, ch := range title {
-			p.DrawCell(textX, y, ch, theme.Button)
+			p.DrawCell(textX, y, ch, dockStyle)
 			textX += metrics.CellWidth
 		}
 	}
