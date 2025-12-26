@@ -370,7 +370,8 @@ func (l *ListView) Paint(p *core.Painter) {
 			if focused {
 				s = theme.Selected
 			} else {
-				s = theme.Selected.WithAttrs(style.StyleDim)
+				// Unfocused selection: silver on dark blue
+				s = style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
 			}
 		} else if l.alternateRowColors && itemIndex%2 == 1 {
 			s = theme.Normal.WithAttrs(style.StyleDim)
