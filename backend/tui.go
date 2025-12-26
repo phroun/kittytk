@@ -168,9 +168,6 @@ func (t *TUIBackend) Init() error {
 	// This matches the pattern used in direct-key-handler's test program
 	kbOpts := keyboard.Options{
 		InputReader: os.Stdin,
-		DebugFn: func(msg string) {
-			fmt.Fprintf(os.Stderr, "[KB] %s\n", msg)
-		},
 	}
 	t.keyboard = keyboard.New(kbOpts)
 	t.keyboard.OnKey = t.handleKey
@@ -668,9 +665,6 @@ func (t *TUIBackend) Beep() {
 
 // handleKey processes key events from the keyboard handler.
 func (t *TUIBackend) handleKey(key string) {
-	// DEBUG: Log ALL keys received
-	fmt.Fprintf(os.Stderr, "[KEY] Received: %q\n", key)
-
 	// Check for mouse events from direct-key-handler
 	// Mouse events come as two keys: "Mouse@x,y" (position) followed by action
 	if strings.HasPrefix(key, "Mouse@") {
@@ -731,9 +725,6 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	unitX := t.metrics.CellToUnitsX(x)
 	unitY := t.metrics.CellToUnitsY(y)
 
-	// DEBUG: Log raw mouse action
-	fmt.Fprintf(os.Stderr, "[MOUSE] Raw key: %q, pending: (%d,%d)\n", key, x, y)
-
 	// For drag events, position may be embedded: MouseLeftDrag@x,y
 	// Terminal coordinates are 1-indexed, convert to 0-indexed
 	if strings.Contains(key, "@") {
@@ -743,7 +734,6 @@ func (t *TUIBackend) handleMouseAction(key string) {
 			if _, err := fmt.Sscanf(parts[1], "%d,%d", &dragX, &dragY); err == nil {
 				unitX = t.metrics.CellToUnitsX(dragX - 1)
 				unitY = t.metrics.CellToUnitsY(dragY - 1)
-				fmt.Fprintf(os.Stderr, "[MOUSE] Drag parsed: cell(%d,%d) -> units(%d,%d)\n", dragX-1, dragY-1, unitX, unitY)
 			}
 		}
 		key = parts[0] // Strip position from key for matching
@@ -754,7 +744,6 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	switch key {
 	case "MouseLeftPress":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton}
-		fmt.Fprintf(os.Stderr, "[MOUSE] -> MousePressEvent at (%d,%d)\n", unitX, unitY)
 	case "MouseMiddlePress":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.MiddleButton}
 	case "MouseRightPress":
@@ -764,7 +753,6 @@ func (t *TUIBackend) handleMouseAction(key string) {
 
 	case "MouseLeftRelease":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton}
-		fmt.Fprintf(os.Stderr, "[MOUSE] -> MouseReleaseEvent at (%d,%d)\n", unitX, unitY)
 	case "MouseMiddleRelease":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.MiddleButton}
 	case "MouseRightRelease":
@@ -774,7 +762,6 @@ func (t *TUIBackend) handleMouseAction(key string) {
 
 	case "MouseLeftDrag", "MouseMiddleDrag", "MouseRightDrag", "MouseDrag":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY}
-		fmt.Fprintf(os.Stderr, "[MOUSE] -> MouseMoveEvent (drag) at (%d,%d)\n", unitX, unitY)
 
 	case "MouseScrollUp":
 		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: -1}
@@ -782,15 +769,13 @@ func (t *TUIBackend) handleMouseAction(key string) {
 		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: 1}
 
 	default:
-		fmt.Fprintf(os.Stderr, "[MOUSE] -> Unknown event type: %q\n", key)
 		return // Unknown mouse event
 	}
 
 	select {
 	case t.eventQueue <- event:
-		fmt.Fprintf(os.Stderr, "[MOUSE] Event queued successfully\n")
 	default:
-		fmt.Fprintf(os.Stderr, "[MOUSE] WARNING: Queue full, event dropped!\n")
+		// Queue full, drop event
 	}
 }
 

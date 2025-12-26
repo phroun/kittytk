@@ -194,6 +194,42 @@ func (m CellMetrics) LinesForHeight(height Unit) int {
 	return int(height / m.CellHeight)
 }
 
+// RoundDownToCell rounds a unit value down to the nearest cell boundary.
+func (m CellMetrics) RoundDownToCell(units Unit, cellSize Unit) Unit {
+	if cellSize <= 0 {
+		return units
+	}
+	return (units / cellSize) * cellSize
+}
+
+// RoundDownToCellX rounds an X coordinate down to the nearest cell boundary.
+func (m CellMetrics) RoundDownToCellX(x Unit) Unit {
+	return m.RoundDownToCell(x, m.CellWidth)
+}
+
+// RoundDownToCellY rounds a Y coordinate down to the nearest cell boundary.
+func (m CellMetrics) RoundDownToCellY(y Unit) Unit {
+	return m.RoundDownToCell(y, m.CellHeight)
+}
+
+// AlignSize aligns width and height to cell boundaries (rounding down).
+func (m CellMetrics) AlignSize(size UnitSize) UnitSize {
+	return UnitSize{
+		Width:  m.RoundDownToCellX(size.Width),
+		Height: m.RoundDownToCellY(size.Height),
+	}
+}
+
+// AlignRect aligns a rectangle's position and size to cell boundaries.
+func (m CellMetrics) AlignRect(r UnitRect) UnitRect {
+	return UnitRect{
+		X:      m.RoundDownToCellX(r.X),
+		Y:      m.RoundDownToCellY(r.Y),
+		Width:  m.RoundDownToCellX(r.Width),
+		Height: m.RoundDownToCellY(r.Height),
+	}
+}
+
 // Transform handles coordinate transformation between different coordinate spaces.
 type Transform struct {
 	// Offset added to coordinates

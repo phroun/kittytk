@@ -123,6 +123,15 @@ func (d *Desktop) CloseActiveMenu() {
 	}
 }
 
+// ActiveMenuBounds returns the bounds of the active dropdown menu.
+// Returns an empty rect if no menu is open.
+func (d *Desktop) ActiveMenuBounds() core.UnitRect {
+	if d.menuBar == nil {
+		return core.UnitRect{}
+	}
+	return d.menuBar.ActiveMenuBounds()
+}
+
 // SetStatusBar sets the status bar (displayed at the bottom).
 func (d *Desktop) SetStatusBar(statusBar *StatusBar) {
 	d.statusBar = statusBar

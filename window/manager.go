@@ -2,12 +2,19 @@
 package window
 
 import (
-	"fmt"
-	"os"
 	"sync"
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
+)
+
+// Resize edge constants (can be combined for corners)
+const (
+	ResizeEdgeNone   = 0
+	ResizeEdgeLeft   = 1 << 0
+	ResizeEdgeRight  = 1 << 1
+	ResizeEdgeTop    = 1 << 2
+	ResizeEdgeBottom = 1 << 3
 )
 
 // WindowManager manages all windows in the application.
@@ -34,15 +41,18 @@ type WindowManager struct {
 	theme *style.Theme
 
 	// Drag state
-	dragging   *Window
-	dragStartX core.Unit
-	dragStartY core.Unit
+	dragging    *Window
+	dragStartX  core.Unit
+	dragStartY  core.Unit
 	dragOffsetX core.Unit
 	dragOffsetY core.Unit
 
 	// Resize state
-	resizing   *Window
-	resizeEdge int
+	resizing       *Window
+	resizeEdge     int
+	resizeStartX   core.Unit
+	resizeStartY   core.Unit
+	resizeOriginal core.UnitRect
 
 	// Callbacks
 	onWindowAdded   func(*Window)
@@ -56,6 +66,38 @@ func NewWindowManager() *WindowManager {
 	return &WindowManager{
 		theme: style.DefaultTheme(),
 	}
+}
+
+// detectResizeEdge determines which window edge(s) the mouse is near.
+// Returns a combination of ResizeEdge constants.
+func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
+	if win.Flags()&WindowFlagNoResize != 0 {
+		return ResizeEdgeNone
+	}
+
+	bounds := win.Bounds()
+	metrics := core.DefaultCellMetrics()
+
+	// Edge detection threshold (half a cell)
+	threshold := metrics.CellWidth / 2
+
+	edge := ResizeEdgeNone
+
+	// Check horizontal edges
+	if x >= bounds.X && x < bounds.X+threshold {
+		edge |= ResizeEdgeLeft
+	} else if x >= bounds.X+bounds.Width-threshold && x < bounds.X+bounds.Width {
+		edge |= ResizeEdgeRight
+	}
+
+	// Check vertical edges
+	if y >= bounds.Y && y < bounds.Y+threshold {
+		edge |= ResizeEdgeTop
+	} else if y >= bounds.Y+bounds.Height-threshold && y < bounds.Y+bounds.Height {
+		edge |= ResizeEdgeBottom
+	}
+
+	return edge
 }
 
 // SetDesktop sets the desktop widget (background behind windows).
@@ -364,6 +406,7 @@ func (m *WindowManager) TileWindows() {
 	}
 
 	clientArea := m.ClientArea()
+	metrics := core.DefaultCellMetrics()
 
 	// Calculate grid dimensions
 	cols := 1
@@ -373,8 +416,9 @@ func (m *WindowManager) TileWindows() {
 	}
 	rows = (len(windows) + cols - 1) / cols
 
-	cellWidth := clientArea.Width / core.Unit(cols)
-	cellHeight := clientArea.Height / core.Unit(rows)
+	// Align tile sizes to cell boundaries
+	cellWidth := metrics.RoundDownToCellX(clientArea.Width / core.Unit(cols))
+	cellHeight := metrics.RoundDownToCellY(clientArea.Height / core.Unit(rows))
 
 	for i, win := range windows {
 		col := i % cols
@@ -409,9 +453,9 @@ func (m *WindowManager) CascadeWindows() {
 	metrics := core.DefaultCellMetrics()
 	offset := metrics.CellWidth * 2
 
-	// Standard size for cascaded windows
-	width := clientArea.Width * 3 / 4
-	height := clientArea.Height * 3 / 4
+	// Standard size for cascaded windows - align to cell boundaries
+	width := metrics.RoundDownToCellX(clientArea.Width * 3 / 4)
+	height := metrics.RoundDownToCellY(clientArea.Height * 3 / 4)
 
 	for i, win := range windows {
 		x := clientArea.X + core.Unit(i)*offset
@@ -442,6 +486,20 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 	desktop := m.desktop
 	m.mu.RUnlock()
 
+	// Check if click is within an active menu dropdown (rendered on top of windows)
+	// Menu dropdowns have higher z-order than windows, so check them first
+	if desktop != nil {
+		if menuBoundsGetter, ok := desktop.(interface {
+			ActiveMenuBounds() core.UnitRect
+		}); ok {
+			menuBounds := menuBoundsGetter.ActiveMenuBounds()
+			if !menuBounds.IsEmpty() && menuBounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+				// Click is on the menu dropdown - pass to desktop for menu handling
+				return desktop.HandleMousePress(event)
+			}
+		}
+	}
+
 	// Check windows from top to bottom
 	for i := len(windows) - 1; i >= 0; i-- {
 		win := windows[i]
@@ -462,6 +520,20 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 
 			// Activate window
 			m.ActivateWindow(win)
+
+			// Check for resize edge first
+			resizeEdge := m.detectResizeEdge(win, event.X, event.Y)
+			if resizeEdge != ResizeEdgeNone {
+				// Start resize
+				m.mu.Lock()
+				m.resizing = win
+				m.resizeEdge = resizeEdge
+				m.resizeStartX = event.X
+				m.resizeStartY = event.Y
+				m.resizeOriginal = bounds
+				m.mu.Unlock()
+				return true
+			}
 
 			// Check for title bar drag
 			metrics := core.DefaultCellMetrics()
@@ -498,16 +570,68 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove processes mouse movement for dragging.
 func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
-	fmt.Fprintf(os.Stderr, "[WM] HandleMouseMove at (%d,%d)\n", event.X, event.Y)
-
 	m.mu.Lock()
 	dragging := m.dragging
 	offsetX := m.dragOffsetX
 	offsetY := m.dragOffsetY
+	resizing := m.resizing
+	resizeEdge := m.resizeEdge
+	resizeStartX := m.resizeStartX
+	resizeStartY := m.resizeStartY
+	resizeOriginal := m.resizeOriginal
 	m.mu.Unlock()
 
+	// Handle resize
+	if resizing != nil {
+		metrics := core.DefaultCellMetrics()
+
+		deltaX := event.X - resizeStartX
+		deltaY := event.Y - resizeStartY
+
+		newBounds := resizeOriginal
+
+		// Apply resize based on which edges are being dragged
+		if resizeEdge&ResizeEdgeLeft != 0 {
+			newBounds.X = resizeOriginal.X + deltaX
+			newBounds.Width = resizeOriginal.Width - deltaX
+		}
+		if resizeEdge&ResizeEdgeRight != 0 {
+			newBounds.Width = resizeOriginal.Width + deltaX
+		}
+		if resizeEdge&ResizeEdgeTop != 0 {
+			newBounds.Y = resizeOriginal.Y + deltaY
+			newBounds.Height = resizeOriginal.Height - deltaY
+		}
+		if resizeEdge&ResizeEdgeBottom != 0 {
+			newBounds.Height = resizeOriginal.Height + deltaY
+		}
+
+		// Align to cell boundaries
+		newBounds = metrics.AlignRect(newBounds)
+
+		// Enforce minimum window size (at least 3 cells wide, 2 cells tall)
+		minWidth := metrics.CellWidth * 3
+		minHeight := metrics.CellHeight * 2
+		if newBounds.Width < minWidth {
+			if resizeEdge&ResizeEdgeLeft != 0 {
+				newBounds.X = resizeOriginal.X + resizeOriginal.Width - minWidth
+			}
+			newBounds.Width = minWidth
+		}
+		if newBounds.Height < minHeight {
+			if resizeEdge&ResizeEdgeTop != 0 {
+				newBounds.Y = resizeOriginal.Y + resizeOriginal.Height - minHeight
+			}
+			newBounds.Height = minHeight
+		}
+
+		resizing.SetBounds(newBounds)
+		m.RequestRepaint()
+		return true
+	}
+
+	// Handle drag
 	if dragging != nil {
-		fmt.Fprintf(os.Stderr, "[WM] Window drag mode - moving window\n")
 		// Move window
 		newX := event.X - offsetX
 		newY := event.Y - offsetY
@@ -533,12 +657,9 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if handler, ok := desktop.(interface {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {
-			fmt.Fprintf(os.Stderr, "[WM] Forwarding to desktop\n")
 			if handler.HandleMouseMove(event) {
-				fmt.Fprintf(os.Stderr, "[WM] Desktop handled the event\n")
 				return true
 			}
-			fmt.Fprintf(os.Stderr, "[WM] Desktop did not handle the event\n")
 		}
 	}
 
@@ -548,14 +669,11 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
-		fmt.Fprintf(os.Stderr, "[WM] Forwarding to active window, local coords (%d,%d)\n", localEvent.X, localEvent.Y)
 		if active.HandleMouseMove(localEvent) {
-			fmt.Fprintf(os.Stderr, "[WM] Active window handled the event\n")
 			// Request repaint since widget state may have changed
 			m.RequestRepaint()
 			return true
 		}
-		fmt.Fprintf(os.Stderr, "[WM] Active window did not handle the event\n")
 	}
 
 	return false
@@ -565,11 +683,13 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	m.mu.Lock()
 	dragging := m.dragging
+	resizing := m.resizing
 	m.dragging = nil
 	m.resizing = nil
+	m.resizeEdge = ResizeEdgeNone
 	m.mu.Unlock()
 
-	if dragging != nil {
+	if dragging != nil || resizing != nil {
 		return true
 	}
 
