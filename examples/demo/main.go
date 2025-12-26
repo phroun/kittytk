@@ -38,9 +38,20 @@ func main() {
 	// Set desktop as the application's desktop widget
 	application.SetDesktop(desktop)
 
-	// Create the main demo window (floats over the desktop)
-	mainWindow := createMainWindow(application, statusBar)
-	application.WindowManager().AddWindow(mainWindow)
+	// Add event filter to show key presses in status bar (for debugging)
+	application.AddEventFilter(func(event core.Event) bool {
+		if keyEvent, ok := event.(core.KeyPressEvent); ok {
+			statusBar.SetText(fmt.Sprintf("Key: %q  Modifiers: %d", keyEvent.Key, keyEvent.Modifiers))
+		}
+		return false // Don't consume the event
+	})
+
+	// Create windows in startup callback (after screen bounds are set)
+	application.SetOnStartup(func() {
+		// Create the main demo window (floats over the desktop)
+		mainWindow := createMainWindow(application, statusBar)
+		application.WindowManager().AddWindow(mainWindow)
+	})
 
 	// Run the application
 	application.Run()
