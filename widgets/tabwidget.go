@@ -447,10 +447,13 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: tabHeight}, ' ', theme.MenuBar)
 
-	// Draw tabs
+	// Draw tabs with tab-style decorators:
+	// Selected:   _/ TabText \_
+	// Unselected:    TabText
 	x := core.Unit(0)
 	for i, tab := range t.tabs {
-		tabWidth := core.Unit(len(tab.Text)+4) * metrics.CellWidth
+		// Each tab: 3 chars prefix + text + 3 chars suffix
+		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
 
 		var s style.CellStyle
 		if !tab.Enabled {
@@ -461,24 +464,43 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 			s = theme.MenuBar
 		}
 
-		// Draw tab background
-		p.FillRect(core.UnitRect{X: x, Y: 0, Width: tabWidth, Height: tabHeight}, ' ', s)
+		isSelected := i == t.currentIndex
 
-		// Draw tab text
-		textX := x + metrics.CellWidth*2
+		// Draw prefix: "_/ " for selected, "   " for unselected
+		if isSelected {
+			p.DrawCell(x, 0, '_', theme.MenuBar)
+			p.DrawCell(x+metrics.CellWidth, 0, '/', theme.MenuBar)
+			p.DrawCell(x+metrics.CellWidth*2, 0, ' ', s)
+		} else {
+			p.DrawCell(x, 0, ' ', theme.MenuBar)
+			p.DrawCell(x+metrics.CellWidth, 0, ' ', theme.MenuBar)
+			p.DrawCell(x+metrics.CellWidth*2, 0, ' ', theme.MenuBar)
+		}
+
+		// Draw tab text with tab's style
+		textX := x + metrics.CellWidth*3
 		for _, ch := range tab.Text {
 			p.DrawCell(textX, 0, ch, s)
 			textX += metrics.CellWidth
 		}
 
-		// Draw close button if closable
-		if t.closable || tab.Closable {
-			closeX := x + tabWidth - metrics.CellWidth*2
-			p.DrawCell(closeX, 0, '×', s)
+		// Draw suffix: " \_" for selected, "   " for unselected
+		suffixX := x + metrics.CellWidth*3 + core.Unit(len(tab.Text))*metrics.CellWidth
+		if isSelected {
+			p.DrawCell(suffixX, 0, ' ', s)
+			p.DrawCell(suffixX+metrics.CellWidth, 0, '\\', theme.MenuBar)
+			p.DrawCell(suffixX+metrics.CellWidth*2, 0, '_', theme.MenuBar)
+		} else {
+			p.DrawCell(suffixX, 0, ' ', theme.MenuBar)
+			p.DrawCell(suffixX+metrics.CellWidth, 0, ' ', theme.MenuBar)
+			p.DrawCell(suffixX+metrics.CellWidth*2, 0, ' ', theme.MenuBar)
 		}
 
-		// Draw separator
-		p.DrawCell(x+tabWidth-metrics.CellWidth, 0, '│', theme.MenuBar)
+		// Draw close button if closable (before suffix)
+		if t.closable || tab.Closable {
+			closeX := suffixX - metrics.CellWidth
+			p.DrawCell(closeX, 0, '×', s)
+		}
 
 		x += tabWidth
 	}
@@ -491,10 +513,11 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', theme.MenuBar)
 
-	// Draw tabs
+	// Draw tabs with tab-style decorators (inverted for bottom: \_  and  _/)
 	x := core.Unit(0)
 	for i, tab := range t.tabs {
-		tabWidth := core.Unit(len(tab.Text)+4) * metrics.CellWidth
+		// Each tab: 3 chars prefix + text + 3 chars suffix
+		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
 
 		var s style.CellStyle
 		if !tab.Enabled {
@@ -505,12 +528,36 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 			s = theme.MenuBar
 		}
 
-		// Draw tab
-		p.FillRect(core.UnitRect{X: x, Y: tabY, Width: tabWidth, Height: tabHeight}, ' ', s)
-		textX := x + metrics.CellWidth*2
+		isSelected := i == t.currentIndex
+
+		// Draw prefix: " \_" for selected (inverted), "   " for unselected
+		if isSelected {
+			p.DrawCell(x, tabY, ' ', theme.MenuBar)
+			p.DrawCell(x+metrics.CellWidth, tabY, '\\', theme.MenuBar)
+			p.DrawCell(x+metrics.CellWidth*2, tabY, '_', s)
+		} else {
+			p.DrawCell(x, tabY, ' ', theme.MenuBar)
+			p.DrawCell(x+metrics.CellWidth, tabY, ' ', theme.MenuBar)
+			p.DrawCell(x+metrics.CellWidth*2, tabY, ' ', theme.MenuBar)
+		}
+
+		// Draw tab text
+		textX := x + metrics.CellWidth*3
 		for _, ch := range tab.Text {
 			p.DrawCell(textX, tabY, ch, s)
 			textX += metrics.CellWidth
+		}
+
+		// Draw suffix: "_/ " for selected (inverted), "   " for unselected
+		suffixX := x + metrics.CellWidth*3 + core.Unit(len(tab.Text))*metrics.CellWidth
+		if isSelected {
+			p.DrawCell(suffixX, tabY, '_', s)
+			p.DrawCell(suffixX+metrics.CellWidth, tabY, '/', theme.MenuBar)
+			p.DrawCell(suffixX+metrics.CellWidth*2, tabY, ' ', theme.MenuBar)
+		} else {
+			p.DrawCell(suffixX, tabY, ' ', theme.MenuBar)
+			p.DrawCell(suffixX+metrics.CellWidth, tabY, ' ', theme.MenuBar)
+			p.DrawCell(suffixX+metrics.CellWidth*2, tabY, ' ', theme.MenuBar)
 		}
 
 		x += tabWidth
@@ -734,11 +781,13 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 	tabX := core.Unit(0)
 
 	for i, tab := range t.tabs {
-		tabWidth := core.Unit(len(tab.Text)+4) * metrics.CellWidth
+		// Each tab: 3 chars prefix + text + 3 chars suffix
+		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
 
 		if x >= tabX && x < tabX+tabWidth {
-			// Check for close button
-			if (t.closable || tab.Closable) && x >= tabX+tabWidth-metrics.CellWidth*2 {
+			// Check for close button (in the text area, before suffix)
+			textEnd := tabX + metrics.CellWidth*3 + core.Unit(len(tab.Text))*metrics.CellWidth
+			if (t.closable || tab.Closable) && x >= textEnd-metrics.CellWidth && x < textEnd {
 				if t.onTabCloseRequested != nil {
 					t.onTabCloseRequested(i)
 				}
