@@ -230,7 +230,7 @@ func (m *Menu) Show(x, y core.Unit) {
 	m.popupX = x
 	m.popupY = y
 	m.visible = true
-	m.currentIndex = m.findNextEnabled(-1)
+	m.currentIndex = -1 // No item selected until user hovers over one
 	m.SetFocus()
 	m.Update()
 }
@@ -1010,8 +1010,14 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		}
 	}
 
-	// Check if mouse is in menu bar - switch menus
+	// Check if mouse is in menu bar - switch menus and deselect dropdown item
 	if event.Y < metrics.CellHeight {
+		// Deselect current item in dropdown since we're back on the menu bar
+		if m.activeMenu != nil && m.activeMenu.currentIndex != -1 {
+			m.activeMenu.currentIndex = -1
+			m.activeMenu.Update()
+		}
+
 		x := core.Unit(0)
 		for i, menu := range m.menus {
 			menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
