@@ -84,14 +84,14 @@ func (fm *FocusManager) SetFocusedWidget(widget Widget) bool {
 	am := fm.accessibilityManager
 	fm.mu.Unlock()
 
-	// Notify old widget of focus loss
+	// Clear focus on old widget (this sets focused=false and calls HandleFocusOut)
 	if oldFocus != nil {
-		oldFocus.HandleFocusOut()
+		oldFocus.ClearFocus()
 	}
 
-	// Notify new widget of focus gain
+	// Set focus on new widget (this sets focused=true and calls HandleFocusIn)
 	if widget != nil {
-		widget.HandleFocusIn()
+		widget.SetFocus()
 	}
 
 	// Announce focus change for accessibility
