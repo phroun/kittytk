@@ -46,6 +46,7 @@ type WindowManager struct {
 	onWindowAdded   func(*Window)
 	onWindowRemoved func(*Window)
 	onActiveChanged func(*Window)
+	onRepaintNeeded func()
 }
 
 // NewWindowManager creates a new window manager.
@@ -505,6 +506,9 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		bounds.Y = newY
 		dragging.SetBounds(bounds)
 
+		// Request repaint to show the window at its new position
+		m.RequestRepaint()
+
 		return true
 	}
 
@@ -531,6 +535,8 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
 		if active.HandleMouseMove(localEvent) {
+			// Request repaint since widget state may have changed
+			m.RequestRepaint()
 			return true
 		}
 	}
@@ -573,6 +579,8 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
 		if active.HandleMouseRelease(localEvent) {
+			// Request repaint since widget state may have changed
+			m.RequestRepaint()
 			return true
 		}
 	}
@@ -707,4 +715,21 @@ func (m *WindowManager) SetOnActiveChanged(handler func(*Window)) {
 	m.mu.Lock()
 	m.onActiveChanged = handler
 	m.mu.Unlock()
+}
+
+// SetOnRepaintNeeded sets the repaint needed callback.
+func (m *WindowManager) SetOnRepaintNeeded(handler func()) {
+	m.mu.Lock()
+	m.onRepaintNeeded = handler
+	m.mu.Unlock()
+}
+
+// RequestRepaint requests a repaint from the application.
+func (m *WindowManager) RequestRepaint() {
+	m.mu.RLock()
+	handler := m.onRepaintNeeded
+	m.mu.RUnlock()
+	if handler != nil {
+		handler()
+	}
 }

@@ -280,13 +280,29 @@ func (s *Splitter) Paint(p *core.Painter) {
 
 	if s.orientation == core.Horizontal {
 		// Vertical divider bar
+		midY := bounds.Height / 2
+		// Round to cell boundary
+		midY = (midY / metrics.CellHeight) * metrics.CellHeight
 		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
-			p.DrawCell(divider.X, y, '│', dividerStyle)
+			ch := '│'
+			// Draw drag handle indicator in the middle
+			if y == midY {
+				ch = ':'
+			}
+			p.DrawCell(divider.X, y, ch, dividerStyle)
 		}
 	} else {
 		// Horizontal divider bar
+		midX := bounds.Width / 2
+		// Round to cell boundary
+		midX = (midX / metrics.CellWidth) * metrics.CellWidth
 		for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
-			p.DrawCell(x, divider.Y, '─', dividerStyle)
+			ch := '─'
+			// Draw drag handle indicator in the middle
+			if x == midX {
+				ch = ':'
+			}
+			p.DrawCell(x, divider.Y, ch, dividerStyle)
 		}
 	}
 

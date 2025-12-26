@@ -102,6 +102,10 @@ func New(backend core.RenderBackend) *Application {
 
 	app.backend = backend
 	app.windowManager = window.NewWindowManager()
+	// Wire up repaint callback for window dragging/updates
+	app.windowManager.SetOnRepaintNeeded(func() {
+		app.RequestUpdate()
+	})
 	app.focusManager = core.NewGlobalFocusManager()
 	app.accessibilityManager = core.NewAccessibilityManager()
 	app.shortcuts = core.DefaultShortcuts()

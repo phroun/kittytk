@@ -627,7 +627,10 @@ type MenuBar struct {
 	showShortcuts bool
 
 	// Drag tracking for click-and-drag menu navigation
-	dragging bool
+	mouseDown      bool  // Mouse button is held down
+	dragging       bool  // Actually dragging (mouse moved while down)
+	mouseDownX     core.Unit
+	mouseDownY     core.Unit
 }
 
 // NewMenuBar creates a new menu bar.
@@ -887,9 +890,11 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 	metrics := core.DefaultCellMetrics()
 	bounds := m.Bounds()
 
-	// Check active menu first (but not if we're in drag mode - drag handles this differently)
-	if m.activeMenu != nil && !m.dragging && m.activeMenu.HandleMousePress(event) {
-		return true
+	// Check active menu first - if clicking on an item in the dropdown
+	if m.activeMenu != nil && !m.mouseDown {
+		if m.activeMenu.HandleMousePress(event) {
+			return true
+		}
 	}
 
 	// Check if click is in menu bar
@@ -899,12 +904,17 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 		for i, menu := range m.menus {
 			menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
 			if event.X >= x && event.X < x+menuWidth {
-				if m.activeMenu == menu && !m.dragging {
+				// Track mouse down for potential drag
+				m.mouseDown = true
+				m.mouseDownX = event.X
+				m.mouseDownY = event.Y
+				m.dragging = false
+
+				if m.activeMenu == menu {
+					// Toggle - close if same menu clicked
 					m.CloseMenu()
-					m.dragging = false
 				} else {
 					m.OpenMenu(i)
-					m.dragging = true // Start drag mode
 				}
 				return true
 			}
@@ -913,6 +923,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 
 		// Clicked on empty part of menu bar
 		m.CloseMenu()
+		m.mouseDown = false
 		m.dragging = false
 		return true
 	}
@@ -925,6 +936,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 	// Click outside - if menu was open, consume the event to dismiss without activating anything
 	if m.activeMenu != nil {
 		m.CloseMenu()
+		m.mouseDown = false
 		m.dragging = false
 		return true
 	}
@@ -950,11 +962,29 @@ func (m *MenuBar) HandleFocusOut() {
 
 // HandleMouseMove handles mouse movement during drag.
 func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
-	if !m.dragging || m.activeMenu == nil {
+	if !m.mouseDown || m.activeMenu == nil {
 		return false
 	}
 
 	metrics := core.DefaultCellMetrics()
+
+	// Detect if we've started dragging (moved enough from initial click)
+	if !m.dragging {
+		dx := event.X - m.mouseDownX
+		dy := event.Y - m.mouseDownY
+		if dx < 0 {
+			dx = -dx
+		}
+		if dy < 0 {
+			dy = -dy
+		}
+		// Only start dragging if moved at least half a cell
+		if dx >= metrics.CellWidth/2 || dy >= metrics.CellHeight/2 {
+			m.dragging = true
+		} else {
+			return true // Not dragging yet, consume but don't act
+		}
+	}
 
 	// Check if mouse is in menu bar - switch menus
 	if event.Y < metrics.CellHeight {
@@ -994,11 +1024,23 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 // HandleMouseRelease handles mouse release during drag.
 func (m *MenuBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
-	if !m.dragging {
+	wasMouseDown := m.mouseDown
+	wasDragging := m.dragging
+
+	// Always clear mouse state
+	m.mouseDown = false
+	m.dragging = false
+
+	// If we weren't in mouse-down mode, nothing to do
+	if !wasMouseDown {
 		return false
 	}
 
-	m.dragging = false
+	// If not dragging (just a click), leave menu open for further clicks
+	if !wasDragging {
+		return true // Consume the release event but don't dismiss
+	}
+
 	metrics := core.DefaultCellMetrics()
 
 	// Check if release is on a dropdown menu item - trigger it
