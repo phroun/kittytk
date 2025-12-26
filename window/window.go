@@ -53,6 +53,9 @@ type Window struct {
 	content      core.Widget
 	layout       core.LayoutManager
 
+	// Focus management
+	focusManager *core.FocusManager
+
 	// Child windows (MDI support)
 	parent       *Window
 	children     []*Window
@@ -91,7 +94,15 @@ func NewWindow(title string) *Window {
 	}
 	w.WidgetBase = *core.NewWidgetBase()
 	w.SetFocusPolicy(core.StrongFocus)
+	w.focusManager = core.NewFocusManager(nil)
 	return w
+}
+
+// FocusManager returns the window's focus manager.
+func (w *Window) FocusManager() *core.FocusManager {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.focusManager
 }
 
 // Title returns the window title.
@@ -135,10 +146,18 @@ func (w *Window) State() WindowState {
 func (w *Window) SetContent(widget core.Widget) {
 	w.mu.Lock()
 	w.content = widget
+	fm := w.focusManager
 	if widget != nil {
 		widget.SetParent(w)
 	}
 	w.mu.Unlock()
+
+	// Update focus manager root and focus first widget
+	if fm != nil {
+		fm.SetRoot(widget)
+		fm.FocusFirst()
+	}
+
 	w.layoutContent()
 	w.Update()
 }
@@ -605,12 +624,12 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 // HandleKeyPress handles keyboard input.
 func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	w.mu.RLock()
-	content := w.content
+	fm := w.focusManager
 	w.mu.RUnlock()
 
-	// Pass to content first
-	if content != nil {
-		if content.HandleKeyPress(event) {
+	// Use focus manager to handle Tab navigation and forward to focused widget
+	if fm != nil {
+		if fm.HandleKeyPress(event) {
 			return true
 		}
 	}
