@@ -300,6 +300,7 @@ func (fm *FocusManager) SetOnFocusChanged(handler func(old, new Widget)) {
 // HandleKeyPress handles focus-related keyboard events.
 // Returns true if the event was handled.
 func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
+	// Handle Tab navigation
 	switch event.Key {
 	case "Tab":
 		if event.Modifiers&ShiftModifier != 0 {
@@ -309,6 +310,15 @@ func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 
 	case "S-Tab", "Shift-Tab":
 		return fm.FocusPrevious()
+	}
+
+	// Forward other keys to the focused widget
+	fm.mu.RLock()
+	focused := fm.focusedWidget
+	fm.mu.RUnlock()
+
+	if focused != nil {
+		return focused.HandleKeyPress(event)
 	}
 
 	return false
