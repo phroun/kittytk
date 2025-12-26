@@ -34,6 +34,16 @@ const (
 	WindowFlagToolWindow                          // Smaller title bar, no taskbar entry
 )
 
+// TitleButton identifies a titlebar button.
+type TitleButton int
+
+const (
+	TitleButtonNone     TitleButton = iota
+	TitleButtonClose                // [x] button
+	TitleButtonMinimize             // [.] button
+	TitleButtonMaximize             // [^] or [o] button
+)
+
 // Window represents a floating window with frame, title bar, and content area.
 // Windows support maximization, minimization, MDI-style child windows,
 // and optional Mac-like menu integration.
@@ -81,6 +91,10 @@ type Window struct {
 	// Request callbacks (for WindowManager integration)
 	onMinimizeRequest func() // Called when user clicks minimize button
 	onMaximizeRequest func() // Called when user clicks maximize button
+
+	// Button press tracking
+	pressedButton TitleButton // Currently pressed titlebar button
+	buttonHovered bool        // Whether mouse is still over the pressed button
 }
 
 // NewWindow creates a new window with the given title.
@@ -595,6 +609,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	w.mu.RLock()
 	flags := w.flags
 	state := w.state
+	pressedButton := w.pressedButton
+	buttonHovered := w.buttonHovered
 	w.mu.RUnlock()
 
 	// Fill title bar background
@@ -606,21 +622,36 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	}
 	p.FillRect(titleRect, ' ', titleStyle)
 
+	// Pressed button style (inverted colors)
+	pressedStyle := frameStyle.WithFg(frameStyle.Bg).WithBg(frameStyle.Fg)
+
 	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
 	controlX := core.Unit(0)
 	if flags&WindowFlagNoClose == 0 {
-		p.DrawText(controlX, 0, "[x]", frameStyle)
+		btnStyle := frameStyle
+		if pressedButton == TitleButtonClose && buttonHovered {
+			btnStyle = pressedStyle
+		}
+		p.DrawText(controlX, 0, "[x]", btnStyle)
 		controlX += metrics.TextWidth(3)
 	}
 	if flags&WindowFlagNoMinimize == 0 {
-		p.DrawText(controlX, 0, "[.]", frameStyle)
+		btnStyle := frameStyle
+		if pressedButton == TitleButtonMinimize && buttonHovered {
+			btnStyle = pressedStyle
+		}
+		p.DrawText(controlX, 0, "[.]", btnStyle)
 		controlX += metrics.TextWidth(3)
 	}
 	if flags&WindowFlagNoMaximize == 0 {
+		btnStyle := frameStyle
+		if pressedButton == TitleButtonMaximize && buttonHovered {
+			btnStyle = pressedStyle
+		}
 		if state == WindowStateMaximized {
-			p.DrawText(controlX, 0, "[o]", frameStyle) // Restore icon
+			p.DrawText(controlX, 0, "[o]", btnStyle) // Restore icon
 		} else {
-			p.DrawText(controlX, 0, "[^]", frameStyle) // Maximize icon
+			p.DrawText(controlX, 0, "[^]", btnStyle) // Maximize icon
 		}
 		controlX += metrics.TextWidth(3)
 	}
@@ -635,29 +666,46 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 
 	w.mu.RLock()
 	state := w.state
+	pressedButton := w.pressedButton
+	buttonHovered := w.buttonHovered
 	w.mu.RUnlock()
 
 	// Draw border at local (0,0) - painter is already offset to window position
 	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 	p.DrawRect(localBounds, border, frameStyle)
 
+	// Pressed button style (inverted colors)
+	pressedStyle := frameStyle.WithFg(frameStyle.Bg).WithBg(frameStyle.Fg)
+
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
 		// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
 		controlX := metrics.CellWidth // Start after left border
 		if flags&WindowFlagNoClose == 0 {
-			p.DrawText(controlX, 0, "[x]", frameStyle)
+			btnStyle := frameStyle
+			if pressedButton == TitleButtonClose && buttonHovered {
+				btnStyle = pressedStyle
+			}
+			p.DrawText(controlX, 0, "[x]", btnStyle)
 			controlX += metrics.TextWidth(3)
 		}
 		if flags&WindowFlagNoMinimize == 0 {
-			p.DrawText(controlX, 0, "[.]", frameStyle)
+			btnStyle := frameStyle
+			if pressedButton == TitleButtonMinimize && buttonHovered {
+				btnStyle = pressedStyle
+			}
+			p.DrawText(controlX, 0, "[.]", btnStyle)
 			controlX += metrics.TextWidth(3)
 		}
 		if flags&WindowFlagNoMaximize == 0 {
+			btnStyle := frameStyle
+			if pressedButton == TitleButtonMaximize && buttonHovered {
+				btnStyle = pressedStyle
+			}
 			if state == WindowStateMaximized {
-				p.DrawText(controlX, 0, "[o]", frameStyle) // Restore icon
+				p.DrawText(controlX, 0, "[o]", btnStyle) // Restore icon
 			} else {
-				p.DrawText(controlX, 0, "[^]", frameStyle) // Maximize icon
+				p.DrawText(controlX, 0, "[^]", btnStyle) // Maximize icon
 			}
 			controlX += metrics.TextWidth(3)
 		}
@@ -683,6 +731,55 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	contentBounds := w.contentBounds()
 	theme := w.Theme()
 	p.FillRect(contentBounds, ' ', theme.WindowBackground)
+}
+
+// buttonAtPosition returns which titlebar button is at the given local coordinates.
+// Returns TitleButtonNone if not on a button.
+func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
+	w.mu.RLock()
+	flags := w.flags
+	state := w.state
+	w.mu.RUnlock()
+
+	metrics := core.DefaultCellMetrics()
+
+	// Must be in titlebar
+	if flags&WindowFlagNoTitle != 0 || y >= metrics.CellHeight {
+		return TitleButtonNone
+	}
+
+	// Control buttons are on the left
+	controlX := metrics.CellWidth // Start after left border (for normal frame)
+	if state == WindowStateMaximized {
+		controlX = 0 // No border in maximized state
+	}
+
+	buttonWidth := metrics.TextWidth(3)
+
+	// Check close button [x]
+	if flags&WindowFlagNoClose == 0 {
+		if x >= controlX && x < controlX+buttonWidth {
+			return TitleButtonClose
+		}
+		controlX += buttonWidth
+	}
+
+	// Check minimize button [.]
+	if flags&WindowFlagNoMinimize == 0 {
+		if x >= controlX && x < controlX+buttonWidth {
+			return TitleButtonMinimize
+		}
+		controlX += buttonWidth
+	}
+
+	// Check maximize/restore button [^] or [o]
+	if flags&WindowFlagNoMaximize == 0 {
+		if x >= controlX && x < controlX+buttonWidth {
+			return TitleButtonMaximize
+		}
+	}
+
+	return TitleButtonNone
 }
 
 // HandleKeyPress handles keyboard input.
@@ -720,56 +817,22 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	w.mu.RLock()
 	content := w.content
 	flags := w.flags
-	state := w.state
-	minHandler := w.onMinimizeRequest
-	maxHandler := w.onMaximizeRequest
 	w.mu.RUnlock()
 
 	metrics := core.DefaultCellMetrics()
 
 	// Check for title bar clicks
 	if flags&WindowFlagNoTitle == 0 && event.Y < metrics.CellHeight {
-		// Control buttons are on the left: [x][.][^]
-		// Each button is 3 characters wide
-		controlX := metrics.CellWidth // Start after left border (for normal frame)
-		if state == WindowStateMaximized {
-			controlX = 0 // No border in maximized state
-		}
-
-		// Check close button [x]
-		if flags&WindowFlagNoClose == 0 {
-			if event.X >= controlX && event.X < controlX+metrics.TextWidth(3) {
-				w.Close()
-				return true
-			}
-			controlX += metrics.TextWidth(3)
-		}
-
-		// Check minimize button [.]
-		if flags&WindowFlagNoMinimize == 0 {
-			if event.X >= controlX && event.X < controlX+metrics.TextWidth(3) {
-				if minHandler != nil {
-					minHandler()
-				} else {
-					w.Minimize()
-				}
-				return true
-			}
-			controlX += metrics.TextWidth(3)
-		}
-
-		// Check maximize/restore button [^] or [o]
-		if flags&WindowFlagNoMaximize == 0 {
-			if event.X >= controlX && event.X < controlX+metrics.TextWidth(3) {
-				if maxHandler != nil {
-					maxHandler()
-				} else if w.IsMaximized() {
-					w.Restore()
-				} else {
-					w.Maximize()
-				}
-				return true
-			}
+		// Check if clicking on a button
+		button := w.buttonAtPosition(event.X, event.Y)
+		if button != TitleButtonNone {
+			// Start tracking button press - don't trigger yet
+			w.mu.Lock()
+			w.pressedButton = button
+			w.buttonHovered = true
+			w.mu.Unlock()
+			w.Update()
+			return true
 		}
 
 		// Title bar click outside buttons - return false to let WindowManager handle drag
@@ -794,7 +857,24 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 	w.mu.RLock()
 	content := w.content
+	pressedButton := w.pressedButton
 	w.mu.RUnlock()
+
+	// If tracking a button press, update hover state
+	if pressedButton != TitleButtonNone {
+		currentButton := w.buttonAtPosition(event.X, event.Y)
+		newHovered := currentButton == pressedButton
+
+		w.mu.Lock()
+		if w.buttonHovered != newHovered {
+			w.buttonHovered = newHovered
+			w.mu.Unlock()
+			w.Update()
+		} else {
+			w.mu.Unlock()
+		}
+		return true // Capture mouse while button is pressed
+	}
 
 	// Forward to content
 	if content != nil {
@@ -818,7 +898,44 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	w.mu.RLock()
 	content := w.content
+	pressedButton := w.pressedButton
+	buttonHovered := w.buttonHovered
+	minHandler := w.onMinimizeRequest
+	maxHandler := w.onMaximizeRequest
 	w.mu.RUnlock()
+
+	// If tracking a button press, handle release
+	if pressedButton != TitleButtonNone {
+		// Clear pressed state
+		w.mu.Lock()
+		w.pressedButton = TitleButtonNone
+		w.buttonHovered = false
+		w.mu.Unlock()
+		w.Update()
+
+		// Only trigger action if mouse is still on the button
+		if buttonHovered {
+			switch pressedButton {
+			case TitleButtonClose:
+				w.Close()
+			case TitleButtonMinimize:
+				if minHandler != nil {
+					minHandler()
+				} else {
+					w.Minimize()
+				}
+			case TitleButtonMaximize:
+				if maxHandler != nil {
+					maxHandler()
+				} else if w.IsMaximized() {
+					w.Restore()
+				} else {
+					w.Maximize()
+				}
+			}
+		}
+		return true
+	}
 
 	// Forward to content
 	if content != nil {
