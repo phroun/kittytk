@@ -23,17 +23,13 @@ type Splitter struct {
 
 	// Divider dragging state
 	dragging bool
-
-	// Appearance
-	dividerWidth core.Unit // Width of the divider bar
 }
 
 // NewSplitter creates a new splitter with the given orientation.
 func NewSplitter(orientation core.Orientation) *Splitter {
 	s := &Splitter{
-		orientation:  orientation,
-		position:     0.5, // Default to 50/50 split
-		dividerWidth: 8,   // 1 cell width
+		orientation: orientation,
+		position:    0.5, // Default to 50/50 split
 	}
 	s.WidgetBase = *core.NewWidgetBase()
 	s.SetFocusPolicy(core.NoFocus)
@@ -186,7 +182,9 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 	metrics := core.DefaultCellMetrics()
 
 	if s.orientation == core.Horizontal {
-		totalWidth := bounds.Width - s.dividerWidth
+		// Horizontal splitter has a vertical divider bar (use cell width)
+		dividerSize := metrics.CellWidth
+		totalWidth := bounds.Width - dividerSize
 		firstWidth := core.Unit(float64(totalWidth) * s.position)
 		// Round to cell boundary
 		firstWidth = core.Unit(metrics.UnitsToCellX(firstWidth)) * metrics.CellWidth
@@ -194,13 +192,14 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 		return core.UnitRect{
 			X:      firstWidth,
 			Y:      0,
-			Width:  s.dividerWidth,
+			Width:  dividerSize,
 			Height: bounds.Height,
 		}
 	}
 
-	// Vertical
-	totalHeight := bounds.Height - s.dividerWidth
+	// Vertical splitter has a horizontal divider bar (use cell height)
+	dividerSize := metrics.CellHeight
+	totalHeight := bounds.Height - dividerSize
 	firstHeight := core.Unit(float64(totalHeight) * s.position)
 	// Round to cell boundary
 	firstHeight = core.Unit(metrics.UnitsToCellY(firstHeight)) * metrics.CellHeight
@@ -209,7 +208,7 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 		X:      0,
 		Y:      firstHeight,
 		Width:  bounds.Width,
-		Height: s.dividerWidth,
+		Height: dividerSize,
 	}
 }
 
@@ -364,9 +363,11 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if s.dragging {
 		bounds := s.Bounds()
+		metrics := core.DefaultCellMetrics()
 
 		if s.orientation == core.Horizontal {
-			totalWidth := bounds.Width - s.dividerWidth
+			dividerSize := metrics.CellWidth
+			totalWidth := bounds.Width - dividerSize
 			if totalWidth > 0 {
 				newPos := float64(event.X) / float64(totalWidth)
 				if newPos < 0.1 {
@@ -378,7 +379,8 @@ func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 				s.Update()
 			}
 		} else {
-			totalHeight := bounds.Height - s.dividerWidth
+			dividerSize := metrics.CellHeight
+			totalHeight := bounds.Height - dividerSize
 			if totalHeight > 0 {
 				newPos := float64(event.Y) / float64(totalHeight)
 				if newPos < 0.1 {

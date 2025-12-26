@@ -1349,6 +1349,17 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	return false
 }
 
+// SetBounds sets the window bounds and triggers layout.
+func (w *Window) SetBounds(bounds core.UnitRect) {
+	oldSize := w.Bounds().Size()
+	w.WidgetBase.SetBounds(bounds)
+	newSize := bounds.Size()
+	// Manually call our HandleResize since embedded SetBounds won't do it
+	if oldSize != newSize {
+		w.HandleResize(oldSize, newSize)
+	}
+}
+
 // HandleResize is called when the window is resized.
 func (w *Window) HandleResize(oldSize, newSize core.UnitSize) {
 	w.layoutContent()
