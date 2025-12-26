@@ -33,6 +33,8 @@ func NewHSeparator(title string) *LineSeparator {
 	s := NewLineSeparator()
 	s.title = title
 	s.orientation = core.Horizontal
+	// Horizontal separator expands horizontally, fixed height
+	s.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizeFixed))
 	return s
 }
 
@@ -41,6 +43,8 @@ func NewVSeparator(title string) *LineSeparator {
 	s := NewLineSeparator()
 	s.title = title
 	s.orientation = core.Vertical
+	// Vertical separator expands vertically, fixed width
+	s.SetSizePolicy(core.NewSizePolicy(core.SizeFixed, core.SizeExpanding))
 	return s
 }
 

@@ -104,7 +104,8 @@ func (m Margins) Vertical() int {
 type Alignment int
 
 const (
-	AlignLeft Alignment = iota
+	AlignFill Alignment = iota // Default: fill available space
+	AlignLeft
 	AlignCenter
 	AlignRight
 	AlignTop

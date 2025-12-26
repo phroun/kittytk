@@ -414,13 +414,16 @@ func (t *TabWidget) calculateTabBarWidth() core.Unit {
 }
 
 // calculateTotalTabsWidth returns the total width needed to display all tabs.
+// Format: [prefix 3][tab1 text][sep 3][tab2 text][sep 3]...
+// So total = 3 + sum(len(text)) + 3*numTabs
 func (t *TabWidget) calculateTotalTabsWidth() core.Unit {
 	metrics := core.DefaultCellMetrics()
-	total := core.Unit(0)
+	if len(t.tabs) == 0 {
+		return 0
+	}
+	total := core.Unit(3) * metrics.CellWidth // Initial prefix
 	for _, tab := range t.tabs {
-		// Each tab: 3 chars prefix + text + 3 chars suffix
-		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
-		total += tabWidth
+		total += core.Unit(len(tab.Text)+3) * metrics.CellWidth // text + separator
 	}
 	return total
 }
@@ -523,70 +526,98 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	if needsScrolling {
 		scrollButtonsWidth = metrics.TextWidth(6) // [<][>] = 6 chars
 	}
-	availableWidth := bounds.Width - scrollButtonsWidth
 
-	// Draw tabs with tab-style decorators:
-	// Selected:   _/ TabText \_
-	// Unselected:    TabText
-	x := core.Unit(0)
-	lastDrawnIndex := -1
-	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
-		tab := t.tabs[i]
-		// Each tab: 3 chars prefix + text + 3 chars suffix
-		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
+	// If scrolled right, show left ellipse indicator (clickable to scroll left)
+	leftEllipseWidth := core.Unit(0)
+	if t.tabScrollOffset > 0 {
+		leftEllipseWidth = metrics.TextWidth(3) // "..."
+		// Draw the left ellipse
+		for i := 0; i < 3; i++ {
+			p.DrawCell(metrics.CellToUnitsX(i), 0, '.', tabBarStyle)
+		}
+	}
 
-		// Check if full tab fits
-		if x+tabWidth > availableWidth {
-			// Try to draw a partial tab with ellipsis if there's enough space
-			// Need at least: prefix (3) + "..." (3) = 6 chars minimum
+	availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth
+
+	// New tab format: [prefix][tab1 text][sep][tab2 text][sep]...
+	// Prefix before first visible tab: "_/ " if selected, else "   "
+	// Separator after each tab:
+	//   - " \_" if current tab is selected
+	//   - "_/ " if next tab is selected
+	//   - "   " otherwise
+	x := leftEllipseWidth
+
+	visibleTabs := t.tabs[t.tabScrollOffset:]
+	for i := 0; i < len(visibleTabs); i++ {
+		tabIndex := t.tabScrollOffset + i
+		tab := visibleTabs[i]
+		isSelected := tabIndex == t.currentIndex
+		isFirstVisible := i == 0
+		isLastVisible := tabIndex == len(t.tabs)-1
+		nextIsSelected := !isLastVisible && tabIndex+1 == t.currentIndex
+
+		// Calculate this tab's width: prefix(3 if first) + text + separator(3)
+		var tabSlotWidth core.Unit
+		if isFirstVisible {
+			tabSlotWidth = core.Unit(len(tab.Text)+6) * metrics.CellWidth // prefix + text + sep
+		} else {
+			tabSlotWidth = core.Unit(len(tab.Text)+3) * metrics.CellWidth // text + sep
+		}
+
+		// Check if this tab fits
+		if x+tabSlotWidth > availableWidth {
+			// Try to draw partial tab with ellipsis
 			remainingSpace := availableWidth - x
-			minPartialWidth := metrics.TextWidth(6) // "_/ ..."
+			prefixLen := 0
+			if isFirstVisible {
+				prefixLen = 3
+			}
+			minPartialWidth := metrics.TextWidth(prefixLen + 3) // prefix + "..."
 			if remainingSpace >= minPartialWidth {
-				// Calculate how many characters of the name we can show
-				// Available for text: remaining - prefix(3) - ellipsis(3)
-				textSpace := int(remainingSpace/metrics.CellWidth) - 6
-				if textSpace < 0 {
-					textSpace = 0
-				}
-
 				var s style.CellStyle
 				if !tab.Enabled {
 					s = theme.Disabled
-				} else if i == t.currentIndex {
+				} else if isSelected {
 					s = selectedStyle
 				} else {
 					s = tabBarStyle
 				}
 
-				isSelected := i == t.currentIndex
-
-				// Draw prefix: "_/ " for selected, "   " for unselected
-				if isSelected {
-					p.DrawCell(x, 0, '_', tabBarStyle)
-					p.DrawCell(x+metrics.CellWidth, 0, '/', tabBarStyle)
-					p.DrawCell(x+metrics.CellWidth*2, 0, ' ', s)
-				} else {
-					p.DrawCell(x, 0, ' ', tabBarStyle)
-					p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarStyle)
-					p.DrawCell(x+metrics.CellWidth*2, 0, ' ', tabBarStyle)
+				// Draw prefix if first visible
+				if isFirstVisible {
+					if isSelected {
+						p.DrawCell(x, 0, '_', tabBarStyle)
+						p.DrawCell(x+metrics.CellWidth, 0, '/', tabBarStyle)
+						p.DrawCell(x+metrics.CellWidth*2, 0, ' ', tabBarStyle)
+					} else {
+						p.DrawCell(x, 0, ' ', tabBarStyle)
+						p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarStyle)
+						p.DrawCell(x+metrics.CellWidth*2, 0, ' ', tabBarStyle)
+					}
+					x += metrics.CellWidth * 3
 				}
 
-				// Draw partial tab text
-				textX := x + metrics.CellWidth*3
+				// Calculate how much text we can show
+				textSpace := int((availableWidth-x)/metrics.CellWidth) - 3 // -3 for ellipsis
+				if textSpace < 0 {
+					textSpace = 0
+				}
 				textRunes := []rune(tab.Text)
 				charsToShow := textSpace
 				if charsToShow > len(textRunes) {
 					charsToShow = len(textRunes)
 				}
+
+				// Draw partial text
 				for j := 0; j < charsToShow; j++ {
-					p.DrawCell(textX, 0, textRunes[j], s)
-					textX += metrics.CellWidth
+					p.DrawCell(x, 0, textRunes[j], s)
+					x += metrics.CellWidth
 				}
 
 				// Draw ellipsis
 				for j := 0; j < 3; j++ {
-					p.DrawCell(textX, 0, '.', s)
-					textX += metrics.CellWidth
+					p.DrawCell(x, 0, '.', s)
+					x += metrics.CellWidth
 				}
 			}
 			break
@@ -595,54 +626,59 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		var s style.CellStyle
 		if !tab.Enabled {
 			s = theme.Disabled
-		} else if i == t.currentIndex {
+		} else if isSelected {
 			s = selectedStyle
 		} else {
 			s = tabBarStyle
 		}
 
-		isSelected := i == t.currentIndex
+		// Draw prefix if first visible tab
+		if isFirstVisible {
+			if isSelected {
+				p.DrawCell(x, 0, '_', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth, 0, '/', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth*2, 0, ' ', tabBarStyle)
+			} else {
+				p.DrawCell(x, 0, ' ', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth*2, 0, ' ', tabBarStyle)
+			}
+			x += metrics.CellWidth * 3
+		}
 
-		// Draw prefix: "_/ " for selected, "   " for unselected
+		// Draw tab text
+		textStartX := x
+		for _, ch := range tab.Text {
+			p.DrawCell(x, 0, ch, s)
+			x += metrics.CellWidth
+		}
+
+		// Draw close button if closable (at end of text, before separator)
+		if t.closable || tab.Closable {
+			closeX := x - metrics.CellWidth
+			p.DrawCell(closeX, 0, '×', s)
+		}
+		_ = textStartX // May use later for close button positioning
+
+		// Draw separator after tab (3 chars)
 		if isSelected {
+			// After selected tab: " \_"
+			p.DrawCell(x, 0, ' ', tabBarStyle)
+			p.DrawCell(x+metrics.CellWidth, 0, '\\', tabBarStyle)
+			p.DrawCell(x+metrics.CellWidth*2, 0, '_', tabBarStyle)
+		} else if nextIsSelected {
+			// Before selected tab: "_/ "
 			p.DrawCell(x, 0, '_', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth, 0, '/', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth*2, 0, ' ', s)
+			p.DrawCell(x+metrics.CellWidth*2, 0, ' ', tabBarStyle)
 		} else {
+			// Regular separator: "   "
 			p.DrawCell(x, 0, ' ', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*2, 0, ' ', tabBarStyle)
 		}
-
-		// Draw tab text with tab's style
-		textX := x + metrics.CellWidth*3
-		for _, ch := range tab.Text {
-			p.DrawCell(textX, 0, ch, s)
-			textX += metrics.CellWidth
-		}
-
-		// Draw suffix: " \_" for selected, "   " for unselected
-		suffixX := x + metrics.CellWidth*3 + core.Unit(len(tab.Text))*metrics.CellWidth
-		if isSelected {
-			p.DrawCell(suffixX, 0, ' ', s)
-			p.DrawCell(suffixX+metrics.CellWidth, 0, '\\', tabBarStyle)
-			p.DrawCell(suffixX+metrics.CellWidth*2, 0, '_', tabBarStyle)
-		} else {
-			p.DrawCell(suffixX, 0, ' ', tabBarStyle)
-			p.DrawCell(suffixX+metrics.CellWidth, 0, ' ', tabBarStyle)
-			p.DrawCell(suffixX+metrics.CellWidth*2, 0, ' ', tabBarStyle)
-		}
-
-		// Draw close button if closable (before suffix)
-		if t.closable || tab.Closable {
-			closeX := suffixX - metrics.CellWidth
-			p.DrawCell(closeX, 0, '×', s)
-		}
-
-		x += tabWidth
-		lastDrawnIndex = i
+		x += metrics.CellWidth * 3
 	}
-	_ = lastDrawnIndex // Suppress unused warning for now
 
 	// Draw scroll buttons if needed
 	if needsScrolling {
@@ -680,54 +716,68 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
 
-	// Draw tabs with tab-style decorators (inverted for bottom: \_  and  _/)
+	// New tab format: [prefix][tab1 text][sep][tab2 text][sep]...
+	// For bottom tabs, connectors are inverted:
+	// Prefix before first visible tab: " \_" if selected, else "   "
+	// Separator after each tab:
+	//   - "_/ " if current tab is selected
+	//   - " \_" if next tab is selected
+	//   - "   " otherwise
 	x := core.Unit(0)
+
 	for i, tab := range t.tabs {
-		// Each tab: 3 chars prefix + text + 3 chars suffix
-		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
+		isSelected := i == t.currentIndex
+		isFirstVisible := i == 0
+		isLastVisible := i == len(t.tabs)-1
+		nextIsSelected := !isLastVisible && i+1 == t.currentIndex
 
 		var s style.CellStyle
 		if !tab.Enabled {
 			s = theme.Disabled
-		} else if i == t.currentIndex {
+		} else if isSelected {
 			s = selectedStyle
 		} else {
 			s = tabBarStyle
 		}
 
-		isSelected := i == t.currentIndex
+		// Draw prefix if first tab (inverted for bottom: " \_")
+		if isFirstVisible {
+			if isSelected {
+				p.DrawCell(x, tabY, ' ', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth*2, tabY, '_', tabBarStyle)
+			} else {
+				p.DrawCell(x, tabY, ' ', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth, tabY, ' ', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth*2, tabY, ' ', tabBarStyle)
+			}
+			x += metrics.CellWidth * 3
+		}
 
-		// Draw prefix: " \_" for selected (inverted), "   " for unselected
+		// Draw tab text
+		for _, ch := range tab.Text {
+			p.DrawCell(x, tabY, ch, s)
+			x += metrics.CellWidth
+		}
+
+		// Draw separator after tab (3 chars, inverted for bottom)
 		if isSelected {
+			// After selected tab: "_/ "
+			p.DrawCell(x, tabY, '_', tabBarStyle)
+			p.DrawCell(x+metrics.CellWidth, tabY, '/', tabBarStyle)
+			p.DrawCell(x+metrics.CellWidth*2, tabY, ' ', tabBarStyle)
+		} else if nextIsSelected {
+			// Before selected tab: " \_"
 			p.DrawCell(x, tabY, ' ', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth*2, tabY, '_', s)
+			p.DrawCell(x+metrics.CellWidth*2, tabY, '_', tabBarStyle)
 		} else {
+			// Regular separator: "   "
 			p.DrawCell(x, tabY, ' ', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth, tabY, ' ', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*2, tabY, ' ', tabBarStyle)
 		}
-
-		// Draw tab text
-		textX := x + metrics.CellWidth*3
-		for _, ch := range tab.Text {
-			p.DrawCell(textX, tabY, ch, s)
-			textX += metrics.CellWidth
-		}
-
-		// Draw suffix: "_/ " for selected (inverted), "   " for unselected
-		suffixX := x + metrics.CellWidth*3 + core.Unit(len(tab.Text))*metrics.CellWidth
-		if isSelected {
-			p.DrawCell(suffixX, tabY, '_', s)
-			p.DrawCell(suffixX+metrics.CellWidth, tabY, '/', tabBarStyle)
-			p.DrawCell(suffixX+metrics.CellWidth*2, tabY, ' ', tabBarStyle)
-		} else {
-			p.DrawCell(suffixX, tabY, ' ', tabBarStyle)
-			p.DrawCell(suffixX+metrics.CellWidth, tabY, ' ', tabBarStyle)
-			p.DrawCell(suffixX+metrics.CellWidth*2, tabY, ' ', tabBarStyle)
-		}
-
-		x += tabWidth
+		x += metrics.CellWidth * 3
 	}
 }
 
@@ -953,6 +1003,16 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 	metrics := core.DefaultCellMetrics()
 	bounds := t.Bounds()
 
+	// Check if clicking on left ellipse (scroll left by one)
+	if t.tabScrollOffset > 0 {
+		leftEllipseWidth := metrics.TextWidth(3)
+		if x < leftEllipseWidth {
+			t.tabScrollOffset--
+			t.Update()
+			return
+		}
+	}
+
 	// Check if clicking on scroll buttons
 	if t.tabsNeedScrolling() {
 		scrollButtonsWidth := metrics.TextWidth(6)
@@ -980,23 +1040,43 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 	if t.tabsNeedScrolling() {
 		scrollButtonsWidth = metrics.TextWidth(6)
 	}
-	availableWidth := bounds.Width - scrollButtonsWidth
+	leftEllipseWidth := core.Unit(0)
+	if t.tabScrollOffset > 0 {
+		leftEllipseWidth = metrics.TextWidth(3)
+	}
+	availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth
 
-	tabX := core.Unit(0)
+	// New tab format: [prefix 3][tab1 text][sep 3][tab2 text][sep 3]...
+	// First visible tab: prefix(3) + text + separator(3)
+	// Other tabs: text + separator(3)
+	tabX := leftEllipseWidth
 	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
 		tab := t.tabs[i]
-		// Each tab: 3 chars prefix + text + 3 chars suffix
-		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
+		isFirstVisible := i == t.tabScrollOffset
+
+		// Calculate tab slot width
+		var tabSlotWidth core.Unit
+		if isFirstVisible {
+			tabSlotWidth = core.Unit(len(tab.Text)+6) * metrics.CellWidth // prefix + text + sep
+		} else {
+			tabSlotWidth = core.Unit(len(tab.Text)+3) * metrics.CellWidth // text + sep
+		}
 
 		// Stop if past visible area
-		if tabX+tabWidth > availableWidth {
+		if tabX+tabSlotWidth > availableWidth {
 			break
 		}
 
-		if x >= tabX && x < tabX+tabWidth {
-			// Check for close button (in the text area, before suffix)
-			textEnd := tabX + metrics.CellWidth*3 + core.Unit(len(tab.Text))*metrics.CellWidth
-			if (t.closable || tab.Closable) && x >= textEnd-metrics.CellWidth && x < textEnd {
+		if x >= tabX && x < tabX+tabSlotWidth {
+			// Calculate where text starts and ends
+			textStartX := tabX
+			if isFirstVisible {
+				textStartX += metrics.CellWidth * 3 // Skip prefix
+			}
+			textEndX := textStartX + core.Unit(len(tab.Text))*metrics.CellWidth
+
+			// Check for close button (at end of text)
+			if (t.closable || tab.Closable) && x >= textEndX-metrics.CellWidth && x < textEndX {
 				if t.onTabCloseRequested != nil {
 					t.onTabCloseRequested(i)
 				}
@@ -1009,7 +1089,7 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 			return
 		}
 
-		tabX += tabWidth
+		tabX += tabSlotWidth
 	}
 }
 

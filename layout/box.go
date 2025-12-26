@@ -211,6 +211,8 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 	if l.orientation == core.Horizontal {
 		// Vertical alignment in horizontal layout
 		switch item.Align {
+		case core.AlignFill:
+			// Fill available space - no adjustment needed
 		case core.AlignTop:
 			bounds.Height = hint.Height
 		case core.AlignMiddle:
@@ -227,6 +229,8 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 	} else {
 		// Horizontal alignment in vertical layout
 		switch item.Align {
+		case core.AlignFill:
+			// Fill available space - no adjustment needed
 		case core.AlignLeft:
 			bounds.Width = hint.Width
 		case core.AlignCenter:
