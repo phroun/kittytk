@@ -87,7 +87,13 @@ func (p *Panel) ChildAt(pos core.UnitPoint) core.Widget {
 func (p *Panel) Layout() {
 	if p.layoutManager != nil {
 		bounds := p.Bounds()
-		contentBounds := bounds
+		// Use local coordinates - children are positioned relative to this container
+		contentBounds := core.UnitRect{
+			X:      0,
+			Y:      0,
+			Width:  bounds.Width,
+			Height: bounds.Height,
+		}
 		if p.border {
 			metrics := core.DefaultCellMetrics()
 			contentBounds = core.UnitRect{
