@@ -298,8 +298,8 @@ func (m *Menu) calculateSize() core.UnitSize {
 	maxWidth := 0
 	for _, item := range m.items {
 		width := len(item.Text)
-		if item.Shortcut.Key != "" {
-			width += 4 + len(item.Shortcut.String())
+		if item.Shortcut != "" {
+			width += 4 + len(item.Shortcut.DisplayString())
 		}
 		if item.SubMenu != nil {
 			width += 3 // For submenu arrow
@@ -398,8 +398,8 @@ func (m *Menu) Paint(p *core.Painter) {
 		if item.SubMenu != nil {
 			arrowX := m.popupX + size.Width - metrics.CellWidth*2
 			p.DrawCell(arrowX, itemY, '▸', s)
-		} else if item.Shortcut.Key != "" {
-			shortcutStr := item.Shortcut.String()
+		} else if item.Shortcut != "" {
+			shortcutStr := item.Shortcut.DisplayString()
 			shortcutX := m.popupX + size.Width - core.Unit(len(shortcutStr)+2)*metrics.CellWidth
 			shortcutStyle := s
 			if item.Enabled {

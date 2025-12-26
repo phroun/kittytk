@@ -389,6 +389,24 @@ func (app *Application) filterEvent(event core.Event) bool {
 
 // handleShortcut checks if a key event matches a global shortcut.
 func (app *Application) handleShortcut(event core.KeyPressEvent) bool {
+	// Handle common shortcuts directly using key handler format
+	switch event.Key {
+	case "^Q": // Ctrl+Q - Quit
+		app.Quit()
+		return true
+	case "^W": // Ctrl+W - Close window
+		app.mu.RLock()
+		wm := app.windowManager
+		app.mu.RUnlock()
+		if wm != nil {
+			if active := wm.ActiveWindow(); active != nil {
+				active.Close()
+				return true
+			}
+		}
+	}
+
+	// Check registered shortcuts using key handler format directly
 	app.mu.RLock()
 	shortcuts := app.shortcuts
 	app.mu.RUnlock()
@@ -397,14 +415,10 @@ func (app *Application) handleShortcut(event core.KeyPressEvent) bool {
 		return false
 	}
 
-	shortcut := core.Shortcut{
-		Key:       event.Key,
-		Modifiers: event.Modifiers,
-	}
-
-	actionID := shortcuts.FindAction(shortcut)
+	// Direct lookup - key handler format is the source of truth
+	actionID := shortcuts.FindActionByKey(event.Key)
 	if actionID != "" {
-		// TODO: Trigger the action when action registry is implemented
+		// TODO: Trigger the action through action registry
 		return true
 	}
 

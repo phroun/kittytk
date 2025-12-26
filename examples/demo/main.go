@@ -64,21 +64,21 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 	// File menu
 	fileMenu := widgets.NewMenu("File")
 	newItem := widgets.NewMenuItem("New")
-	newItem.SetShortcut(core.NewShortcut("n", core.ControlModifier))
+	newItem.SetShortcut(core.NewShortcut("^N"))
 	fileMenu.AddItem(newItem)
 
 	openItem := widgets.NewMenuItem("Open...")
-	openItem.SetShortcut(core.NewShortcut("o", core.ControlModifier))
+	openItem.SetShortcut(core.NewShortcut("^O"))
 	fileMenu.AddItem(openItem)
 
 	saveItem := widgets.NewMenuItem("Save")
-	saveItem.SetShortcut(core.NewShortcut("s", core.ControlModifier))
+	saveItem.SetShortcut(core.NewShortcut("^S"))
 	fileMenu.AddItem(saveItem)
 
 	fileMenu.AddSeparator()
 
 	exitItem := widgets.NewMenuItem("Exit")
-	exitItem.SetShortcut(core.NewShortcut("q", core.ControlModifier))
+	exitItem.SetShortcut(core.NewShortcut("^Q"))
 	exitItem.SetOnTriggered(func() {
 		application.Quit()
 	})
@@ -89,15 +89,15 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 	// Edit menu
 	editMenu := widgets.NewMenu("Edit")
 	cutItem := widgets.NewMenuItem("Cut")
-	cutItem.SetShortcut(core.NewShortcut("x", core.ControlModifier))
+	cutItem.SetShortcut(core.NewShortcut("^X"))
 	editMenu.AddItem(cutItem)
 
 	copyItem := widgets.NewMenuItem("Copy")
-	copyItem.SetShortcut(core.NewShortcut("c", core.ControlModifier))
+	copyItem.SetShortcut(core.NewShortcut("^C"))
 	editMenu.AddItem(copyItem)
 
 	pasteItem := widgets.NewMenuItem("Paste")
-	pasteItem.SetShortcut(core.NewShortcut("v", core.ControlModifier))
+	pasteItem.SetShortcut(core.NewShortcut("^V"))
 	editMenu.AddItem(pasteItem)
 
 	menuBar.AddMenu(editMenu)

@@ -150,65 +150,51 @@ func (a *Action) MatchesKey(event KeyPressEvent) bool {
 	return false
 }
 
-// Shortcut represents a keyboard shortcut.
-type Shortcut struct {
-	Key       string       // Key name (e.g., "s", "F1", "Enter")
-	Modifiers KeyModifiers // Required modifiers
-}
+// Shortcut represents a keyboard shortcut using the key handler format.
+// Examples: "^Q" (Ctrl+Q), "M-x" (Alt+x), "S-Tab" (Shift+Tab), "F1" (plain key)
+type Shortcut string
 
 // NoShortcut represents the absence of a shortcut.
-var NoShortcut = Shortcut{}
+const NoShortcut Shortcut = ""
 
-// NewShortcut creates a shortcut from a key and modifiers.
-func NewShortcut(key string, mods KeyModifiers) Shortcut {
-	return Shortcut{Key: key, Modifiers: mods}
-}
-
-// Ctrl creates a Ctrl+key shortcut.
-func Ctrl(key string) Shortcut {
-	return Shortcut{Key: key, Modifiers: ControlModifier}
-}
-
-// Alt creates an Alt+key shortcut.
-func Alt(key string) Shortcut {
-	return Shortcut{Key: key, Modifiers: AltModifier}
-}
-
-// CtrlShift creates a Ctrl+Shift+key shortcut.
-func CtrlShift(key string) Shortcut {
-	return Shortcut{Key: key, Modifiers: ControlModifier | ShiftModifier}
+// NewShortcut creates a shortcut from a key handler format string.
+// This is the primary way to create shortcuts.
+func NewShortcut(key string) Shortcut {
+	return Shortcut(key)
 }
 
 // Matches returns true if the key event matches this shortcut.
 func (s Shortcut) Matches(event KeyPressEvent) bool {
-	if s.Key == "" {
+	if s == "" {
 		return false
 	}
-	// Normalize key for comparison
-	mods, key := ParseKeyModifiers(event.Key)
-	return key == s.Key && mods == s.Modifiers
+	// Direct comparison - both use key handler format
+	return event.Key == string(s)
 }
 
-// String returns a human-readable representation of the shortcut.
+// String returns the shortcut in key handler format.
 func (s Shortcut) String() string {
-	if s.Key == "" {
+	return string(s)
+}
+
+// DisplayString returns a human-readable representation of the shortcut
+// for display in menus and tooltips.
+func (s Shortcut) DisplayString() string {
+	if s == "" {
 		return ""
 	}
-	result := ""
-	if s.Modifiers&ControlModifier != 0 {
-		result += "Ctrl+"
+	key := string(s)
+	// Convert key handler format to display format
+	if len(key) >= 2 && key[0] == '^' {
+		return "Ctrl+" + string(key[1])
 	}
-	if s.Modifiers&AltModifier != 0 {
-		result += "Alt+"
+	if len(key) >= 2 && key[0:2] == "M-" {
+		return "Alt+" + key[2:]
 	}
-	if s.Modifiers&ShiftModifier != 0 {
-		result += "Shift+"
+	if len(key) >= 2 && key[0:2] == "S-" {
+		return "Shift+" + key[2:]
 	}
-	if s.Modifiers&MetaModifier != 0 {
-		result += "Super+"
-	}
-	result += s.Key
-	return result
+	return key
 }
 
 // ActionGroup manages a collection of related actions.
@@ -285,10 +271,14 @@ func NewShortcutMap() *ShortcutMap {
 	}
 }
 
-// Set sets the shortcuts for an action.
-func (m *ShortcutMap) Set(actionID string, shortcuts ...Shortcut) {
+// Set sets the shortcuts for an action using key handler format strings.
+func (m *ShortcutMap) Set(actionID string, keys ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	shortcuts := make([]Shortcut, len(keys))
+	for i, key := range keys {
+		shortcuts[i] = Shortcut(key)
+	}
 	m.bindings[actionID] = shortcuts
 }
 
@@ -329,12 +319,18 @@ func (m *ShortcutMap) FindAction(shortcut Shortcut) string {
 
 	for actionID, shortcuts := range m.bindings {
 		for _, s := range shortcuts {
-			if s.Key == shortcut.Key && s.Modifiers == shortcut.Modifiers {
+			if s == shortcut {
 				return actionID
 			}
 		}
 	}
 	return ""
+}
+
+// FindActionByKey returns the action ID that matches the given key string.
+// This is a convenience method that takes a key handler format string directly.
+func (m *ShortcutMap) FindActionByKey(key string) string {
+	return m.FindAction(Shortcut(key))
 }
 
 // StandardActions provides common action IDs.
@@ -408,33 +404,34 @@ var StandardActions = struct {
 }
 
 // DefaultShortcuts returns the default keyboard shortcuts.
+// All shortcuts use the key handler format directly.
 func DefaultShortcuts() *ShortcutMap {
 	m := NewShortcutMap()
 
-	// File
-	m.Set(StandardActions.New, Ctrl("n"))
-	m.Set(StandardActions.Open, Ctrl("o"))
-	m.Set(StandardActions.Save, Ctrl("s"))
-	m.Set(StandardActions.SaveAs, CtrlShift("s"))
-	m.Set(StandardActions.Close, Ctrl("w"))
-	m.Set(StandardActions.Quit, Ctrl("q"))
+	// File - using key handler format: ^x = Ctrl+x
+	m.Set(StandardActions.New, "^N")
+	m.Set(StandardActions.Open, "^O")
+	m.Set(StandardActions.Save, "^S")
+	m.Set(StandardActions.SaveAs, "^S-S") // Ctrl+Shift+S
+	m.Set(StandardActions.Close, "^W")
+	m.Set(StandardActions.Quit, "^Q")
 
 	// Edit
-	m.Set(StandardActions.Undo, Ctrl("z"))
-	m.Set(StandardActions.Redo, CtrlShift("z"), Ctrl("y"))
-	m.Set(StandardActions.Cut, Ctrl("x"))
-	m.Set(StandardActions.Copy, Ctrl("c"))
-	m.Set(StandardActions.Paste, Ctrl("v"))
-	m.Set(StandardActions.Delete, NewShortcut("Delete", 0))
-	m.Set(StandardActions.SelectAll, Ctrl("a"))
-	m.Set(StandardActions.Find, Ctrl("f"))
-	m.Set(StandardActions.Replace, Ctrl("h"))
+	m.Set(StandardActions.Undo, "^Z")
+	m.Set(StandardActions.Redo, "^S-Z", "^Y") // Ctrl+Shift+Z or Ctrl+Y
+	m.Set(StandardActions.Cut, "^X")
+	m.Set(StandardActions.Copy, "^C")
+	m.Set(StandardActions.Paste, "^V")
+	m.Set(StandardActions.Delete, "Delete")
+	m.Set(StandardActions.SelectAll, "^A")
+	m.Set(StandardActions.Find, "^F")
+	m.Set(StandardActions.Replace, "^H")
 
 	// Navigation
-	m.Set(StandardActions.FocusNext, NewShortcut("Tab", 0))
-	m.Set(StandardActions.FocusPrev, NewShortcut("Tab", ShiftModifier))
-	m.Set(StandardActions.Escape, NewShortcut("Escape", 0))
-	m.Set(StandardActions.Confirm, NewShortcut("Enter", 0))
+	m.Set(StandardActions.FocusNext, "Tab")
+	m.Set(StandardActions.FocusPrev, "S-Tab") // Shift+Tab
+	m.Set(StandardActions.Escape, "Escape")
+	m.Set(StandardActions.Confirm, "Enter")
 
 	return m
 }
