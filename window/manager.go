@@ -319,8 +319,12 @@ func (m *WindowManager) positionWindow(win *Window) {
 		height = hint.Height
 	}
 
-	// Cascade offset
-	offset := core.Unit(numWindows) * metrics.CellWidth * 2
+	// Cascade offset (numWindows-1 because the window was already added to the list)
+	cascadeIndex := numWindows - 1
+	if cascadeIndex < 0 {
+		cascadeIndex = 0
+	}
+	offset := core.Unit(cascadeIndex) * metrics.CellWidth * 2
 
 	x := clientArea.X + offset
 	y := clientArea.Y + offset
@@ -526,6 +530,7 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RLock()
 	active := m.activeWindow
+	desktop := m.desktop
 	m.mu.RUnlock()
 
 	// Window switching shortcuts
@@ -539,9 +544,16 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 	}
 
-	// Pass to active window
+	// Pass to active window first
 	if active != nil {
-		return active.HandleKeyPress(event)
+		if active.HandleKeyPress(event) {
+			return true
+		}
+	}
+
+	// Forward unhandled keys to desktop for menu bar and other desktop shortcuts
+	if desktop != nil {
+		return desktop.HandleKeyPress(event)
 	}
 
 	return false

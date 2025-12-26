@@ -270,7 +270,9 @@ func createBasicWidgetsDemo(statusBar *widgets.StatusBar) core.Widget {
 func createSelectionDemo() core.Widget {
 	panel := widgets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
-	boxLayout.SetSpacing(8)
+	// Use spacing of 0 - items are already one cell tall each
+	// Using non-cell-aligned spacing (like 8) causes visual/click issues
+	boxLayout.SetSpacing(0)
 
 	// Checkboxes
 	checkLabel := widgets.NewLabel("Checkboxes:")
