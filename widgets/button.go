@@ -216,8 +216,8 @@ func (b *Button) Paint(p *core.Painter) {
 		s = *customStyle
 	}
 
-	// Shadow style (black on transparent/normal background)
-	shadowStyle := theme.Normal.WithFg(style.ColorBlack)
+	// Shadow style (black foreground on default/inherited background)
+	shadowStyle := style.DefaultStyle().WithFg(style.ColorBlack)
 
 	// Calculate button content width (excluding shadow)
 	textLen := len([]rune(b.text))
