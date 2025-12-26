@@ -75,6 +75,9 @@ type TreeView struct {
 	lastClickTime  int64 // Unix nano
 	lastClickIndex int
 
+	// Mouse state
+	isDragging bool
+
 	// Callbacks
 	onCurrentChanged  func(item *TreeItem)
 	onItemActivated   func(item *TreeItem)
@@ -543,6 +546,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	t.SetFocus()
+	t.isDragging = true
 
 	metrics := core.DefaultCellMetrics()
 	clickedRow := int(event.Y / metrics.CellHeight)
@@ -586,6 +590,36 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		t.SetCurrentIndex(clickedIndex)
 	}
 
+	return true
+}
+
+// HandleMouseMove handles mouse drag to sweep selection.
+func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
+	if !t.isDragging {
+		return false
+	}
+
+	metrics := core.DefaultCellMetrics()
+	row := int(event.Y / metrics.CellHeight)
+	index := t.scrollOffset + row
+
+	// Clamp to valid range
+	if index < 0 {
+		index = 0
+	} else if index >= len(t.flatList) {
+		index = len(t.flatList) - 1
+	}
+
+	if index >= 0 && index != t.currentIndex {
+		t.SetCurrentIndex(index)
+	}
+
+	return true
+}
+
+// HandleMouseRelease handles mouse release.
+func (t *TreeView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	t.isDragging = false
 	return true
 }
 

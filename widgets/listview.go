@@ -39,6 +39,9 @@ type ListView struct {
 	alternateRowColors bool
 	showIcons          bool
 
+	// Mouse state
+	isDragging bool
+
 	// Callbacks
 	onCurrentChanged  func(index int)
 	onItemActivated   func(index int)
@@ -522,6 +525,7 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	l.SetFocus()
+	l.isDragging = true
 
 	metrics := core.DefaultCellMetrics()
 	clickedRow := int(event.Y / metrics.CellHeight)
@@ -531,6 +535,36 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		l.SetCurrentIndex(clickedIndex)
 	}
 
+	return true
+}
+
+// HandleMouseMove handles mouse drag to sweep selection.
+func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
+	if !l.isDragging {
+		return false
+	}
+
+	metrics := core.DefaultCellMetrics()
+	row := int(event.Y / metrics.CellHeight)
+	index := l.scrollOffset + row
+
+	// Clamp to valid range
+	if index < 0 {
+		index = 0
+	} else if index >= len(l.items) {
+		index = len(l.items) - 1
+	}
+
+	if index >= 0 && index != l.currentIndex {
+		l.SetCurrentIndex(index)
+	}
+
+	return true
+}
+
+// HandleMouseRelease handles mouse release.
+func (l *ListView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	l.isDragging = false
 	return true
 }
 
