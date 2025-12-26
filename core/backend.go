@@ -89,6 +89,19 @@ type RenderBackend interface {
 
 	// ColorDepth returns the number of colors supported (2, 16, 256, or 16777216 for true color).
 	ColorDepth() int
+
+	// Clipboard operations
+
+	// GetClipboard returns the current clipboard contents.
+	GetClipboard() string
+
+	// SetClipboard sets the clipboard contents.
+	SetClipboard(text string)
+
+	// System
+
+	// Beep produces an audible alert.
+	Beep()
 }
 
 // Event is the base interface for all input events.

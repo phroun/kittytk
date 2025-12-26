@@ -1,0 +1,599 @@
+// Package app provides the main application framework for the TUI toolkit.
+package app
+
+import (
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/style"
+	"github.com/phroun/tuitk/window"
+)
+
+// Application is the main entry point for a TUI application.
+// It manages the event loop, windows, and global state.
+type Application struct {
+	mu sync.RWMutex
+
+	// Backend for rendering
+	backend core.RenderBackend
+
+	// Window manager
+	windowManager *window.WindowManager
+
+	// Global focus manager
+	focusManager *core.GlobalFocusManager
+
+	// Accessibility manager
+	accessibilityManager *core.AccessibilityManager
+
+	// Shortcut map for global shortcuts
+	shortcuts *core.ShortcutMap
+
+	// Theme
+	theme *style.Theme
+
+	// Desktop widget (behind all windows)
+	desktop core.Widget
+
+	// Running state
+	running atomic.Bool
+
+	// Quit channel
+	quitChan chan struct{}
+
+	// Update request channel
+	updateChan chan struct{}
+
+	// Timer events
+	timers     []*Timer
+	timerMutex sync.Mutex
+
+	// Callbacks
+	onStartup  func()
+	onShutdown func()
+	onIdle     func()
+
+	// Event filters (processed before widgets)
+	eventFilters []EventFilter
+
+	// Application name
+	name string
+
+	// Exit code
+	exitCode int
+}
+
+// EventFilter is a function that can intercept events before they reach widgets.
+// Return true to consume the event (prevent further processing).
+type EventFilter func(event core.Event) bool
+
+// Timer represents a scheduled timer callback.
+type Timer struct {
+	ID       int
+	Interval time.Duration
+	Repeat   bool
+	Callback func()
+	nextFire time.Time
+	stopped  bool
+}
+
+// Global application instance
+var instance *Application
+var instanceOnce sync.Once
+
+// Instance returns the global application instance.
+func Instance() *Application {
+	instanceOnce.Do(func() {
+		instance = &Application{
+			quitChan:   make(chan struct{}),
+			updateChan: make(chan struct{}, 100),
+		}
+	})
+	return instance
+}
+
+// New creates a new application with the given backend.
+func New(backend core.RenderBackend) *Application {
+	app := Instance()
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	app.backend = backend
+	app.windowManager = window.NewWindowManager()
+	app.focusManager = core.NewGlobalFocusManager()
+	app.accessibilityManager = core.NewAccessibilityManager()
+	app.shortcuts = core.DefaultShortcuts()
+	app.theme = style.DefaultTheme()
+
+	// Connect accessibility to focus manager
+	app.focusManager.SetAccessibilityManager(app.accessibilityManager)
+
+	return app
+}
+
+// SetName sets the application name.
+func (app *Application) SetName(name string) {
+	app.mu.Lock()
+	app.name = name
+	app.mu.Unlock()
+}
+
+// Name returns the application name.
+func (app *Application) Name() string {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.name
+}
+
+// Backend returns the render backend.
+func (app *Application) Backend() core.RenderBackend {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.backend
+}
+
+// WindowManager returns the window manager.
+func (app *Application) WindowManager() *window.WindowManager {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.windowManager
+}
+
+// FocusManager returns the global focus manager.
+func (app *Application) FocusManager() *core.GlobalFocusManager {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.focusManager
+}
+
+// AccessibilityManager returns the accessibility manager.
+func (app *Application) AccessibilityManager() *core.AccessibilityManager {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.accessibilityManager
+}
+
+// Shortcuts returns the global shortcut map.
+func (app *Application) Shortcuts() *core.ShortcutMap {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.shortcuts
+}
+
+// Theme returns the current theme.
+func (app *Application) Theme() *style.Theme {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.theme
+}
+
+// SetTheme sets the current theme.
+func (app *Application) SetTheme(theme *style.Theme) {
+	app.mu.Lock()
+	app.theme = theme
+	app.mu.Unlock()
+	app.RequestUpdate()
+}
+
+// SetDesktop sets the desktop widget.
+func (app *Application) SetDesktop(desktop core.Widget) {
+	app.mu.Lock()
+	app.desktop = desktop
+	wm := app.windowManager
+	app.mu.Unlock()
+
+	if wm != nil {
+		wm.SetDesktop(desktop)
+	}
+}
+
+// Desktop returns the desktop widget.
+func (app *Application) Desktop() core.Widget {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.desktop
+}
+
+// SetOnStartup sets the startup callback.
+func (app *Application) SetOnStartup(handler func()) {
+	app.mu.Lock()
+	app.onStartup = handler
+	app.mu.Unlock()
+}
+
+// SetOnShutdown sets the shutdown callback.
+func (app *Application) SetOnShutdown(handler func()) {
+	app.mu.Lock()
+	app.onShutdown = handler
+	app.mu.Unlock()
+}
+
+// SetOnIdle sets the idle callback (called when no events are pending).
+func (app *Application) SetOnIdle(handler func()) {
+	app.mu.Lock()
+	app.onIdle = handler
+	app.mu.Unlock()
+}
+
+// AddEventFilter adds an event filter.
+func (app *Application) AddEventFilter(filter EventFilter) {
+	app.mu.Lock()
+	app.eventFilters = append(app.eventFilters, filter)
+	app.mu.Unlock()
+}
+
+// Run starts the application event loop.
+// Returns the exit code when the application quits.
+func (app *Application) Run() int {
+	app.mu.Lock()
+	backend := app.backend
+	onStartup := app.onStartup
+	app.mu.Unlock()
+
+	if backend == nil {
+		return 1
+	}
+
+	// Initialize backend
+	if err := backend.Init(); err != nil {
+		return 1
+	}
+	defer backend.Shutdown()
+
+	// Update screen bounds
+	app.mu.Lock()
+	wm := app.windowManager
+	app.mu.Unlock()
+
+	size := backend.Size()
+	wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+
+	// Mark as running
+	app.running.Store(true)
+	defer app.running.Store(false)
+
+	// Call startup handler
+	if onStartup != nil {
+		onStartup()
+	}
+
+	// Run event loop
+	app.eventLoop()
+
+	// Call shutdown handler
+	app.mu.RLock()
+	onShutdown := app.onShutdown
+	exitCode := app.exitCode
+	app.mu.RUnlock()
+
+	if onShutdown != nil {
+		onShutdown()
+	}
+
+	return exitCode
+}
+
+// eventLoop is the main event processing loop.
+func (app *Application) eventLoop() {
+	for app.running.Load() {
+		app.processTimers()
+		app.processEvents()
+		app.render()
+	}
+}
+
+// processEvents handles pending events.
+func (app *Application) processEvents() {
+	app.mu.RLock()
+	backend := app.backend
+	wm := app.windowManager
+	fm := app.focusManager
+	onIdle := app.onIdle
+	app.mu.RUnlock()
+
+	// Process all pending events
+	for {
+		event := backend.PollEvent()
+		if event == nil {
+			// No more events
+			if onIdle != nil {
+				onIdle()
+			}
+
+			// Wait for next event or update request
+			select {
+			case <-app.quitChan:
+				return
+			case <-app.updateChan:
+				return
+			default:
+				// Wait briefly for events
+				event = app.waitEventWithTimeout(50 * time.Millisecond)
+				if event == nil {
+					return
+				}
+			}
+		}
+
+		// Run through event filters
+		if app.filterEvent(event) {
+			continue
+		}
+
+		// Handle event based on type
+		switch e := event.(type) {
+		case core.ResizeEvent:
+			wm.SetScreenBounds(core.UnitRect{Width: e.Width, Height: e.Height})
+
+		case core.QuitEvent:
+			app.running.Store(false)
+			return
+
+		case core.KeyPressEvent:
+			// Check global shortcuts first
+			if app.handleShortcut(e) {
+				continue
+			}
+			// Try focus manager
+			if fm.HandleKeyPress(e) {
+				continue
+			}
+			// Pass to window manager
+			wm.HandleKeyPress(e)
+
+		case core.MousePressEvent:
+			wm.HandleMousePress(e)
+
+		case core.MouseMoveEvent:
+			wm.HandleMouseMove(e)
+
+		case core.MouseReleaseEvent:
+			wm.HandleMouseRelease(e)
+		}
+	}
+}
+
+// waitEventWithTimeout waits for an event with a timeout.
+func (app *Application) waitEventWithTimeout(timeout time.Duration) core.Event {
+	app.mu.RLock()
+	backend := app.backend
+	app.mu.RUnlock()
+
+	// Simple polling with timeout
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		event := backend.PollEvent()
+		if event != nil {
+			return event
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return nil
+}
+
+// filterEvent runs an event through the filter chain.
+func (app *Application) filterEvent(event core.Event) bool {
+	app.mu.RLock()
+	filters := app.eventFilters
+	app.mu.RUnlock()
+
+	for _, filter := range filters {
+		if filter(event) {
+			return true
+		}
+	}
+	return false
+}
+
+// handleShortcut checks if a key event matches a global shortcut.
+func (app *Application) handleShortcut(event core.KeyPressEvent) bool {
+	app.mu.RLock()
+	shortcuts := app.shortcuts
+	app.mu.RUnlock()
+
+	if shortcuts == nil {
+		return false
+	}
+
+	shortcut := core.Shortcut{
+		Key:       event.Key,
+		Modifiers: event.Modifiers,
+	}
+
+	actionID := shortcuts.FindAction(shortcut)
+	if actionID != "" {
+		// TODO: Trigger the action when action registry is implemented
+		return true
+	}
+
+	return false
+}
+
+// render redraws the screen.
+func (app *Application) render() {
+	app.mu.RLock()
+	backend := app.backend
+	wm := app.windowManager
+	theme := app.theme
+	app.mu.RUnlock()
+
+	backend.BeginFrame()
+
+	// Clear with theme background
+	backend.Clear(theme.Normal)
+
+	// Create painter
+	painter := core.NewPainter(backend)
+
+	// Paint window manager (includes desktop and windows)
+	wm.Paint(painter)
+
+	backend.EndFrame()
+}
+
+// processTimers checks and fires due timers.
+func (app *Application) processTimers() {
+	app.timerMutex.Lock()
+	now := time.Now()
+	var toFire []*Timer
+	var remaining []*Timer
+
+	for _, timer := range app.timers {
+		if timer.stopped {
+			continue
+		}
+
+		if now.After(timer.nextFire) || now.Equal(timer.nextFire) {
+			toFire = append(toFire, timer)
+			if timer.Repeat {
+				timer.nextFire = now.Add(timer.Interval)
+				remaining = append(remaining, timer)
+			}
+		} else {
+			remaining = append(remaining, timer)
+		}
+	}
+
+	app.timers = remaining
+	app.timerMutex.Unlock()
+
+	// Fire timers outside lock
+	for _, timer := range toFire {
+		if timer.Callback != nil {
+			timer.Callback()
+		}
+	}
+}
+
+// RequestUpdate requests a screen update.
+func (app *Application) RequestUpdate() {
+	select {
+	case app.updateChan <- struct{}{}:
+	default:
+		// Channel full, update already pending
+	}
+}
+
+// Quit requests the application to quit.
+func (app *Application) Quit() {
+	app.QuitWithCode(0)
+}
+
+// QuitWithCode requests the application to quit with an exit code.
+func (app *Application) QuitWithCode(code int) {
+	app.mu.Lock()
+	app.exitCode = code
+	app.mu.Unlock()
+	app.running.Store(false)
+	close(app.quitChan)
+}
+
+// IsRunning returns whether the application is running.
+func (app *Application) IsRunning() bool {
+	return app.running.Load()
+}
+
+// StartTimer starts a single-shot timer.
+func (app *Application) StartTimer(interval time.Duration, callback func()) *Timer {
+	return app.startTimerInternal(interval, false, callback)
+}
+
+// StartRepeatingTimer starts a repeating timer.
+func (app *Application) StartRepeatingTimer(interval time.Duration, callback func()) *Timer {
+	return app.startTimerInternal(interval, true, callback)
+}
+
+func (app *Application) startTimerInternal(interval time.Duration, repeat bool, callback func()) *Timer {
+	app.timerMutex.Lock()
+	defer app.timerMutex.Unlock()
+
+	timer := &Timer{
+		ID:       len(app.timers) + 1,
+		Interval: interval,
+		Repeat:   repeat,
+		Callback: callback,
+		nextFire: time.Now().Add(interval),
+	}
+	app.timers = append(app.timers, timer)
+	return timer
+}
+
+// StopTimer stops a timer.
+func (app *Application) StopTimer(timer *Timer) {
+	if timer != nil {
+		timer.stopped = true
+	}
+}
+
+// ProcessEvents processes pending events without blocking.
+// Useful for modal dialogs or long-running operations.
+func (app *Application) ProcessEvents() {
+	app.processEvents()
+}
+
+// ProcessEventsAndRender processes events and renders.
+func (app *Application) ProcessEventsAndRender() {
+	app.processEvents()
+	app.render()
+}
+
+// Alert shows a simple message to the user.
+// This is a convenience method for simple notifications.
+func (app *Application) Alert(title, message string) {
+	app.mu.RLock()
+	am := app.accessibilityManager
+	app.mu.RUnlock()
+
+	if am != nil {
+		am.AnnounceAlert(message)
+	}
+	// TODO: Show alert dialog when dialogs are implemented
+}
+
+// Beep produces an audible alert.
+func (app *Application) Beep() {
+	app.mu.RLock()
+	backend := app.backend
+	app.mu.RUnlock()
+
+	if backend != nil {
+		backend.Beep()
+	}
+}
+
+// Clipboard returns the clipboard contents.
+func (app *Application) Clipboard() string {
+	app.mu.RLock()
+	backend := app.backend
+	app.mu.RUnlock()
+
+	if backend != nil {
+		return backend.GetClipboard()
+	}
+	return ""
+}
+
+// SetClipboard sets the clipboard contents.
+func (app *Application) SetClipboard(text string) {
+	app.mu.RLock()
+	backend := app.backend
+	app.mu.RUnlock()
+
+	if backend != nil {
+		backend.SetClipboard(text)
+	}
+}
+
+// ScreenSize returns the current screen size in units.
+func (app *Application) ScreenSize() core.UnitSize {
+	app.mu.RLock()
+	backend := app.backend
+	app.mu.RUnlock()
+
+	if backend != nil {
+		return backend.Size()
+	}
+	return core.UnitSize{}
+}

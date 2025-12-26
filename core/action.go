@@ -321,6 +321,22 @@ func (m *ShortcutMap) Apply(group *ActionGroup) {
 	}
 }
 
+// FindAction returns the action ID that matches the given shortcut.
+// Returns empty string if no match is found.
+func (m *ShortcutMap) FindAction(shortcut Shortcut) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for actionID, shortcuts := range m.bindings {
+		for _, s := range shortcuts {
+			if s.Key == shortcut.Key && s.Modifiers == shortcut.Modifiers {
+				return actionID
+			}
+		}
+	}
+	return ""
+}
+
 // StandardActions provides common action IDs.
 var StandardActions = struct {
 	// File actions

@@ -610,6 +610,34 @@ func (t *TUIBackend) ColorDepth() int {
 	return t.colorDepth
 }
 
+// GetClipboard returns the clipboard contents.
+// Note: Terminal clipboard access is limited; this uses OSC 52 or
+// falls back to empty string.
+func (t *TUIBackend) GetClipboard() string {
+	// Clipboard access in terminals is complex and not universally supported.
+	// OSC 52 can be used but requires terminal support.
+	// For now, return empty string - applications can implement
+	// their own clipboard using external tools like xclip, pbcopy, etc.
+	return ""
+}
+
+// SetClipboard sets the clipboard contents.
+// Uses OSC 52 escape sequence for terminals that support it.
+func (t *TUIBackend) SetClipboard(text string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// OSC 52 clipboard set: \033]52;c;<base64>\a
+	// Many terminals support this for copying to clipboard
+	// Not implemented here - can be added with base64 encoding
+}
+
+// Beep produces an audible alert.
+func (t *TUIBackend) Beep() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	fmt.Fprint(t.output, "\a")
+}
+
 // handleKey processes key events from the keyboard handler.
 func (t *TUIBackend) handleKey(key string) {
 	mods, keyName := core.ParseKeyModifiers(key)
