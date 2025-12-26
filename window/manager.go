@@ -96,8 +96,8 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	bounds := win.Bounds()
 	metrics := core.DefaultCellMetrics()
 
-	// Edge detection threshold (half a cell for edges)
-	edgeThreshold := metrics.CellWidth / 2
+	// Edge detection threshold (one cell for edges)
+	edgeThreshold := metrics.CellWidth
 	// Corner detection threshold (2 cells for corners)
 	cornerThreshold := metrics.CellWidth * 2
 
@@ -627,6 +627,22 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 			metrics := core.DefaultCellMetrics()
 			if event.Y < bounds.Y+metrics.CellHeight &&
 				win.Flags()&WindowFlagNoTitle == 0 {
+
+				// First, let the window handle button clicks (close, minimize, maximize)
+				// Pass the event to the window - if it handles a button click, don't drag
+				localEvent := event
+				localEvent.X -= bounds.X
+				localEvent.Y -= bounds.Y
+				if win.HandleMousePress(localEvent) {
+					// Window handled it (button click) - update click tracking but don't drag
+					m.mu.Lock()
+					m.lastClickTime = time.Now()
+					m.lastClickX = event.X
+					m.lastClickY = event.Y
+					m.lastClickWindow = win
+					m.mu.Unlock()
+					return true
+				}
 
 				// Check for double-click on titlebar (for maximize/restore)
 				now := time.Now()

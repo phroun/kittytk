@@ -772,8 +772,8 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 			}
 		}
 
-		// Title bar click - could start drag (handled by window manager)
-		return true
+		// Title bar click outside buttons - return false to let WindowManager handle drag
+		return false
 	}
 
 	// Pass to content
