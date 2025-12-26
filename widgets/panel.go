@@ -201,6 +201,11 @@ func (p *Panel) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
+// HandleResize is called when the panel is resized.
+func (p *Panel) HandleResize(oldSize, newSize core.UnitSize) {
+	p.Layout()
+}
+
 // AccessibleInfo returns accessibility information.
 func (p *Panel) AccessibleInfo() core.AccessibleInfo {
 	info := p.AccessibleWidget.AccessibleInfo()

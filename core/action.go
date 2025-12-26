@@ -427,11 +427,8 @@ func DefaultShortcuts() *ShortcutMap {
 	m.Set(StandardActions.Find, "^F")
 	m.Set(StandardActions.Replace, "^H")
 
-	// Navigation
-	m.Set(StandardActions.FocusNext, "Tab")
-	m.Set(StandardActions.FocusPrev, "S-Tab") // Shift+Tab
-	m.Set(StandardActions.Escape, "Escape")
-	m.Set(StandardActions.Confirm, "Enter")
+	// Note: Tab, S-Tab, Escape, Enter are handled by Window's FocusManager
+	// and dialog widgets directly, not through the global shortcut system.
 
 	return m
 }

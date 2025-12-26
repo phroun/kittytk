@@ -771,6 +771,18 @@ func (t *TabWidget) HandleFocusOut() {
 	t.Update()
 }
 
+// HandleResize is called when the tab widget is resized.
+func (t *TabWidget) HandleResize(oldSize, newSize core.UnitSize) {
+	// Update content bounds for the current tab
+	if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
+		content := t.tabs[t.currentIndex].Content
+		if content != nil {
+			contentBounds := t.contentBounds()
+			content.SetBounds(contentBounds)
+		}
+	}
+}
+
 // AccessibleInfo returns accessibility information.
 func (t *TabWidget) AccessibleInfo() core.AccessibleInfo {
 	info := t.AccessibleWidget.AccessibleInfo()
