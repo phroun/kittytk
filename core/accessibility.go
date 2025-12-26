@@ -2,6 +2,7 @@
 package core
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 )
@@ -365,7 +366,7 @@ func (am *AccessibilityManager) AnnounceAlert(message string) {
 
 // formatPosition formats "N of M" text.
 func formatPosition(position, total int) string {
-	return strings.Builder{}.String() // Placeholder
+	return fmt.Sprintf("%d of %d", position, total)
 }
 
 // AccessibleWidget provides a base implementation of accessibility features.

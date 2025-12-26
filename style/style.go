@@ -416,7 +416,7 @@ func DarkTheme() *Theme {
 	blue := RGB(137, 180, 250)
 	lavender := RGB(180, 190, 254)
 	green := RGB(166, 227, 161)
-	red := RGB(243, 139, 168)
+	_ = RGB(243, 139, 168) // red - reserved for future use
 
 	return &Theme{
 		Background: DefaultStyle().WithBg(bg),
