@@ -324,26 +324,15 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 	// Check if click is on divider
 	divider := s.dividerBounds()
 	if s.orientation == core.Horizontal {
-		// Slightly wider hit area for easier grabbing
-		hitArea := core.UnitRect{
-			X:      divider.X - 4,
-			Y:      0,
-			Width:  divider.Width + 8,
-			Height: s.Bounds().Height,
-		}
-		if hitArea.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+		// Hit area is just the divider itself (no extension into child areas)
+		if divider.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
 			s.dragging = true
 			s.Update()
 			return true
 		}
 	} else {
-		hitArea := core.UnitRect{
-			X:      0,
-			Y:      divider.Y - 4,
-			Width:  s.Bounds().Width,
-			Height: divider.Height + 8,
-		}
-		if hitArea.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+		// Hit area is just the divider itself
+		if divider.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
 			s.dragging = true
 			s.Update()
 			return true

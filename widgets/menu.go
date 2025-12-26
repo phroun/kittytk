@@ -740,6 +740,7 @@ func (m *MenuBar) CloseMenu() {
 		m.activeMenu.Hide()
 		m.activeMenu = nil
 	}
+	m.currentIndex = -1
 	m.Update()
 }
 

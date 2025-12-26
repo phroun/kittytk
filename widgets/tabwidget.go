@@ -21,6 +21,12 @@ type TabWidget struct {
 	movable   bool // Can tabs be reordered
 	closable  bool // Can tabs be closed
 
+	// Tab scrolling (when tabs don't fit)
+	tabScrollOffset int  // First visible tab index
+	scrollLeftHovered bool  // Mouse over [<] button while pressed
+	scrollRightHovered bool // Mouse over [>] button while pressed
+	scrollButtonPressed int // 0=none, -1=left, 1=right
+
 	// Callbacks
 	onCurrentChanged func(index int)
 	onTabCloseRequested func(index int)
@@ -407,6 +413,63 @@ func (t *TabWidget) calculateTabBarWidth() core.Unit {
 	return core.Unit(maxLen+4) * metrics.CellWidth
 }
 
+// calculateTotalTabsWidth returns the total width needed to display all tabs.
+func (t *TabWidget) calculateTotalTabsWidth() core.Unit {
+	metrics := core.DefaultCellMetrics()
+	total := core.Unit(0)
+	for _, tab := range t.tabs {
+		// Each tab: 3 chars prefix + text + 3 chars suffix
+		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
+		total += tabWidth
+	}
+	return total
+}
+
+// tabsNeedScrolling returns true if tabs don't fit and need scroll buttons.
+func (t *TabWidget) tabsNeedScrolling() bool {
+	bounds := t.Bounds()
+	metrics := core.DefaultCellMetrics()
+	// Reserve space for scroll buttons [<][>] = 6 chars
+	scrollButtonsWidth := metrics.TextWidth(6)
+	availableWidth := bounds.Width - scrollButtonsWidth
+	return t.calculateTotalTabsWidth() > availableWidth
+}
+
+// scrollButtonWidth returns the width of each scroll button.
+func (t *TabWidget) scrollButtonWidth() core.Unit {
+	return core.DefaultCellMetrics().TextWidth(3) // [<] or [>]
+}
+
+// ensureCurrentTabVisible adjusts scroll offset to make current tab visible.
+func (t *TabWidget) ensureCurrentTabVisible() {
+	if t.currentIndex < 0 || !t.tabsNeedScrolling() {
+		t.tabScrollOffset = 0
+		return
+	}
+	if t.currentIndex < t.tabScrollOffset {
+		t.tabScrollOffset = t.currentIndex
+	}
+	// Check if current tab is past the visible area
+	// (This is a simplified check - could be improved)
+	maxVisible := t.tabScrollOffset + 3 // Rough estimate
+	if t.currentIndex >= maxVisible && maxVisible < len(t.tabs) {
+		t.tabScrollOffset = t.currentIndex - 2
+		if t.tabScrollOffset < 0 {
+			t.tabScrollOffset = 0
+		}
+	}
+}
+
+// canScrollLeft returns true if there are tabs to the left.
+func (t *TabWidget) canScrollLeft() bool {
+	return t.tabScrollOffset > 0
+}
+
+// canScrollRight returns true if there are tabs to the right.
+func (t *TabWidget) canScrollRight() bool {
+	return t.tabScrollOffset < len(t.tabs)-1
+}
+
 // SizeHint returns the preferred size.
 func (t *TabWidget) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
@@ -448,17 +511,33 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
 	// Selected tab style: bold yellow on blue
 	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorBlue).Bold()
+	// Pressed button style (inverted)
+	pressedStyle := tabBarStyle.WithFg(tabBarStyle.Bg).WithBg(tabBarStyle.Fg)
 
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
+
+	// Calculate if we need scroll buttons
+	needsScrolling := t.tabsNeedScrolling()
+	scrollButtonsWidth := core.Unit(0)
+	if needsScrolling {
+		scrollButtonsWidth = metrics.TextWidth(6) // [<][>] = 6 chars
+	}
+	availableWidth := bounds.Width - scrollButtonsWidth
 
 	// Draw tabs with tab-style decorators:
 	// Selected:   _/ TabText \_
 	// Unselected:    TabText
 	x := core.Unit(0)
-	for i, tab := range t.tabs {
+	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
+		tab := t.tabs[i]
 		// Each tab: 3 chars prefix + text + 3 chars suffix
 		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
+
+		// Stop if we've run out of space
+		if x+tabWidth > availableWidth {
+			break
+		}
 
 		var s style.CellStyle
 		if !tab.Enabled {
@@ -508,6 +587,29 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		}
 
 		x += tabWidth
+	}
+
+	// Draw scroll buttons if needed
+	if needsScrolling {
+		buttonX := bounds.Width - scrollButtonsWidth
+
+		// [<] button
+		leftStyle := tabBarStyle
+		if t.scrollButtonPressed == -1 && t.scrollLeftHovered {
+			leftStyle = pressedStyle
+		}
+		p.DrawCell(buttonX, 0, '[', leftStyle)
+		p.DrawCell(buttonX+metrics.CellWidth, 0, '<', leftStyle)
+		p.DrawCell(buttonX+metrics.CellWidth*2, 0, ']', leftStyle)
+
+		// [>] button
+		rightStyle := tabBarStyle
+		if t.scrollButtonPressed == 1 && t.scrollRightHovered {
+			rightStyle = pressedStyle
+		}
+		p.DrawCell(buttonX+metrics.CellWidth*3, 0, '[', rightStyle)
+		p.DrawCell(buttonX+metrics.CellWidth*4, 0, '>', rightStyle)
+		p.DrawCell(buttonX+metrics.CellWidth*5, 0, ']', rightStyle)
 	}
 }
 
@@ -657,9 +759,15 @@ func (t *TabWidget) paintContent(p *core.Painter) {
 	}
 
 	contentBounds := t.contentBounds()
-	content.SetBounds(contentBounds)
+	// Set content bounds without X,Y offset - painter handles positioning
+	content.SetBounds(core.UnitRect{
+		X:      0,
+		Y:      0,
+		Width:  contentBounds.Width,
+		Height: contentBounds.Height,
+	})
 
-	// Create clipped painter for content
+	// Create clipped painter for content at the content area position
 	contentPainter := p.WithOffset(contentBounds.X, contentBounds.Y).
 		WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height})
 	content.Paint(contentPainter)
@@ -788,11 +896,47 @@ func (t *TabWidget) HandleMousePress(event core.MousePressEvent) bool {
 
 func (t *TabWidget) handleTabBarClick(x core.Unit) {
 	metrics := core.DefaultCellMetrics()
-	tabX := core.Unit(0)
+	bounds := t.Bounds()
 
-	for i, tab := range t.tabs {
+	// Check if clicking on scroll buttons
+	if t.tabsNeedScrolling() {
+		scrollButtonsWidth := metrics.TextWidth(6)
+		buttonX := bounds.Width - scrollButtonsWidth
+
+		// [<] button (3 chars wide)
+		if x >= buttonX && x < buttonX+metrics.TextWidth(3) {
+			t.scrollButtonPressed = -1
+			t.scrollLeftHovered = true
+			t.Update()
+			return
+		}
+
+		// [>] button (3 chars wide)
+		if x >= buttonX+metrics.TextWidth(3) && x < buttonX+scrollButtonsWidth {
+			t.scrollButtonPressed = 1
+			t.scrollRightHovered = true
+			t.Update()
+			return
+		}
+	}
+
+	// Calculate available width for tabs
+	scrollButtonsWidth := core.Unit(0)
+	if t.tabsNeedScrolling() {
+		scrollButtonsWidth = metrics.TextWidth(6)
+	}
+	availableWidth := bounds.Width - scrollButtonsWidth
+
+	tabX := core.Unit(0)
+	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
+		tab := t.tabs[i]
 		// Each tab: 3 chars prefix + text + 3 chars suffix
 		tabWidth := core.Unit(len(tab.Text)+6) * metrics.CellWidth
+
+		// Stop if past visible area
+		if tabX+tabWidth > availableWidth {
+			break
+		}
 
 		if x >= tabX && x < tabX+tabWidth {
 			// Check for close button (in the text area, before suffix)
@@ -826,6 +970,35 @@ func (t *TabWidget) HandleFocusOut() {
 
 // HandleMouseMove handles mouse movement.
 func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// If tracking scroll button press, update hover state
+	if t.scrollButtonPressed != 0 {
+		metrics := core.DefaultCellMetrics()
+		bounds := t.Bounds()
+		scrollButtonsWidth := metrics.TextWidth(6)
+		buttonX := bounds.Width - scrollButtonsWidth
+		tabHeight := t.tabBarHeight()
+
+		// Must be in tab bar
+		inTabBar := event.Y >= 0 && event.Y < tabHeight
+
+		if t.scrollButtonPressed == -1 {
+			// Tracking [<] button
+			newHovered := inTabBar && event.X >= buttonX && event.X < buttonX+metrics.TextWidth(3)
+			if newHovered != t.scrollLeftHovered {
+				t.scrollLeftHovered = newHovered
+				t.Update()
+			}
+		} else if t.scrollButtonPressed == 1 {
+			// Tracking [>] button
+			newHovered := inTabBar && event.X >= buttonX+metrics.TextWidth(3) && event.X < buttonX+scrollButtonsWidth
+			if newHovered != t.scrollRightHovered {
+				t.scrollRightHovered = newHovered
+				t.Update()
+			}
+		}
+		return true
+	}
+
 	// Forward to current content
 	if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
 		content := t.tabs[t.currentIndex].Content
@@ -846,6 +1019,35 @@ func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 // HandleMouseRelease handles mouse button release.
 func (t *TabWidget) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	// If tracking scroll button press, handle release
+	if t.scrollButtonPressed != 0 {
+		pressedButton := t.scrollButtonPressed
+		wasLeftHovered := t.scrollLeftHovered
+		wasRightHovered := t.scrollRightHovered
+
+		// Clear press state
+		t.scrollButtonPressed = 0
+		t.scrollLeftHovered = false
+		t.scrollRightHovered = false
+		t.Update()
+
+		// Only trigger action if still hovering
+		if pressedButton == -1 && wasLeftHovered {
+			// Scroll left
+			if t.tabScrollOffset > 0 {
+				t.tabScrollOffset--
+				t.Update()
+			}
+		} else if pressedButton == 1 && wasRightHovered {
+			// Scroll right
+			if t.tabScrollOffset < len(t.tabs)-1 {
+				t.tabScrollOffset++
+				t.Update()
+			}
+		}
+		return true
+	}
+
 	// Forward to current content
 	if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
 		content := t.tabs[t.currentIndex].Content

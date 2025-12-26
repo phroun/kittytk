@@ -289,6 +289,10 @@ func createSelectionDemo() core.Widget {
 	check3.SetTriState(true)
 	panel.AddChild(check3)
 
+	// Separator between checkboxes and radio buttons
+	separator := widgets.NewHSeparator("")
+	panel.AddChild(separator)
+
 	// Radio buttons
 	radioLabel := widgets.NewLabel("Radio buttons:")
 	panel.AddChild(radioLabel)
