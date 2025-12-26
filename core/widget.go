@@ -286,10 +286,16 @@ func (w *WidgetBase) SetBounds(bounds UnitRect) {
 	w.bounds = bounds
 	newSize := bounds.Size()
 	w.needsRepaint = true
+	app := w.app
 	w.mu.Unlock()
 
 	if oldSize != newSize {
 		w.HandleResize(oldSize, newSize)
+	}
+
+	// Notify app to repaint
+	if app != nil {
+		app.requestRepaint()
 	}
 }
 
@@ -303,10 +309,16 @@ func (w *WidgetBase) Pos() UnitPoint {
 // SetPos sets the widget's position.
 func (w *WidgetBase) SetPos(pos UnitPoint) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.bounds.X = pos.X
 	w.bounds.Y = pos.Y
 	w.needsRepaint = true
+	app := w.app
+	w.mu.Unlock()
+
+	// Notify app to repaint
+	if app != nil {
+		app.requestRepaint()
+	}
 }
 
 // Size returns the widget's size.
