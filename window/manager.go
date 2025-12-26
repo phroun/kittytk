@@ -3,6 +3,7 @@ package window
 
 import (
 	"sync"
+	"time"
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
@@ -54,11 +55,19 @@ type WindowManager struct {
 	resizeStartY   core.Unit
 	resizeOriginal core.UnitRect
 
+	// Double-click detection
+	lastClickTime   time.Time
+	lastClickX      core.Unit
+	lastClickY      core.Unit
+	lastClickWindow *Window
+
 	// Callbacks
-	onWindowAdded   func(*Window)
-	onWindowRemoved func(*Window)
-	onActiveChanged func(*Window)
-	onRepaintNeeded func()
+	onWindowAdded     func(*Window)
+	onWindowRemoved   func(*Window)
+	onActiveChanged   func(*Window)
+	onRepaintNeeded   func()
+	onWindowMinimized func(*Window) // Called when a window is minimized
+	onWindowRestored  func(*Window) // Called when a window is restored
 }
 
 // NewWindowManager creates a new window manager.
@@ -68,8 +77,17 @@ func NewWindowManager() *WindowManager {
 	}
 }
 
+// abs returns the absolute value of an integer.
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 // detectResizeEdge determines which window edge(s) the mouse is near.
 // Returns a combination of ResizeEdge constants.
+// Note: Top edge is excluded since the titlebar is used for dragging.
 func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	if win.Flags()&WindowFlagNoResize != 0 {
 		return ResizeEdgeNone
@@ -78,25 +96,36 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	bounds := win.Bounds()
 	metrics := core.DefaultCellMetrics()
 
-	// Edge detection threshold (half a cell)
-	threshold := metrics.CellWidth / 2
+	// Edge detection threshold (half a cell for edges)
+	edgeThreshold := metrics.CellWidth / 2
+	// Corner detection threshold (2 cells for corners)
+	cornerThreshold := metrics.CellWidth * 2
 
 	edge := ResizeEdgeNone
 
-	// Check horizontal edges
-	if x >= bounds.X && x < bounds.X+threshold {
+	// Check if at bottom edge
+	atBottom := y >= bounds.Y+bounds.Height-metrics.CellHeight && y < bounds.Y+bounds.Height
+
+	// Check horizontal edges (left/right)
+	if x >= bounds.X && x < bounds.X+edgeThreshold {
 		edge |= ResizeEdgeLeft
-	} else if x >= bounds.X+bounds.Width-threshold && x < bounds.X+bounds.Width {
+	} else if x >= bounds.X+bounds.Width-edgeThreshold && x < bounds.X+bounds.Width {
 		edge |= ResizeEdgeRight
 	}
 
-	// Check vertical edges
-	if y >= bounds.Y && y < bounds.Y+threshold {
-		edge |= ResizeEdgeTop
-	} else if y >= bounds.Y+bounds.Height-threshold && y < bounds.Y+bounds.Height {
+	// Check bottom edge
+	if atBottom {
 		edge |= ResizeEdgeBottom
+		// For bottom corners, extend the left/right detection zone
+		if x >= bounds.X && x < bounds.X+cornerThreshold {
+			edge |= ResizeEdgeLeft
+		} else if x >= bounds.X+bounds.Width-cornerThreshold && x < bounds.X+bounds.Width {
+			edge |= ResizeEdgeRight
+		}
 	}
 
+	// Only return resize edge if we're on a side or bottom edge
+	// (top edge is the titlebar for dragging)
 	return edge
 }
 
@@ -176,6 +205,18 @@ func (m *WindowManager) AddWindow(win *Window) {
 	m.windows = append(m.windows, win)
 	handler := m.onWindowAdded
 	m.mu.Unlock()
+
+	// Set up request callbacks so button clicks go through WindowManager
+	win.SetOnMinimizeRequest(func() {
+		m.MinimizeWindow(win)
+	})
+	win.SetOnMaximizeRequest(func() {
+		if win.IsMaximized() {
+			m.RestoreWindow(win)
+		} else {
+			m.MaximizeWindow(win)
+		}
+	})
 
 	// Position if not explicitly set (X and Y both at default 0)
 	bounds := win.Bounds()
@@ -343,6 +384,53 @@ func (m *WindowManager) MaximizeWindow(win *Window) {
 	clientArea := m.ClientArea()
 	win.Maximize()
 	win.SetBounds(clientArea)
+}
+
+// MinimizeWindow minimizes a window.
+func (m *WindowManager) MinimizeWindow(win *Window) {
+	win.Minimize()
+
+	// Notify via callback (for dock row integration)
+	m.mu.RLock()
+	handler := m.onWindowMinimized
+	m.mu.RUnlock()
+
+	if handler != nil {
+		handler(win)
+	}
+
+	m.RequestRepaint()
+}
+
+// RestoreWindow restores a minimized window.
+func (m *WindowManager) RestoreWindow(win *Window) {
+	win.Restore()
+	m.ActivateWindow(win)
+
+	// Notify via callback (for dock row integration)
+	m.mu.RLock()
+	handler := m.onWindowRestored
+	m.mu.RUnlock()
+
+	if handler != nil {
+		handler(win)
+	}
+
+	m.RequestRepaint()
+}
+
+// SetOnWindowMinimized sets the callback for window minimization.
+func (m *WindowManager) SetOnWindowMinimized(handler func(*Window)) {
+	m.mu.Lock()
+	m.onWindowMinimized = handler
+	m.mu.Unlock()
+}
+
+// SetOnWindowRestored sets the callback for window restoration.
+func (m *WindowManager) SetOnWindowRestored(handler func(*Window)) {
+	m.mu.Lock()
+	m.onWindowRestored = handler
+	m.mu.Unlock()
 }
 
 // positionWindow positions a new window using cascading.
@@ -535,20 +623,49 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				return true
 			}
 
-			// Check for title bar drag
+			// Check for title bar interaction
 			metrics := core.DefaultCellMetrics()
 			if event.Y < bounds.Y+metrics.CellHeight &&
-				win.Flags()&WindowFlagNoMove == 0 &&
 				win.Flags()&WindowFlagNoTitle == 0 {
 
-				// Start drag
+				// Check for double-click on titlebar (for maximize/restore)
+				now := time.Now()
 				m.mu.Lock()
-				m.dragging = win
-				m.dragStartX = event.X
-				m.dragStartY = event.Y
-				m.dragOffsetX = event.X - bounds.X
-				m.dragOffsetY = event.Y - bounds.Y
+				isDoubleClick := m.lastClickWindow == win &&
+					now.Sub(m.lastClickTime) < 400*time.Millisecond &&
+					abs(int(event.X-m.lastClickX)) < int(metrics.CellWidth) &&
+					abs(int(event.Y-m.lastClickY)) < int(metrics.CellHeight)
+
+				// Update last click info
+				m.lastClickTime = now
+				m.lastClickX = event.X
+				m.lastClickY = event.Y
+				m.lastClickWindow = win
 				m.mu.Unlock()
+
+				if isDoubleClick && win.Flags()&WindowFlagNoMaximize == 0 {
+					if win.IsMaximized() {
+						win.Restore()
+					} else {
+						m.MaximizeWindow(win)
+					}
+					// Clear double-click state so next click starts fresh
+					m.mu.Lock()
+					m.lastClickWindow = nil
+					m.mu.Unlock()
+					return true
+				}
+
+				// Start drag (if movable)
+				if win.Flags()&WindowFlagNoMove == 0 {
+					m.mu.Lock()
+					m.dragging = win
+					m.dragStartX = event.X
+					m.dragStartY = event.Y
+					m.dragOffsetX = event.X - bounds.X
+					m.dragOffsetY = event.Y - bounds.Y
+					m.mu.Unlock()
+				}
 				return true
 			}
 

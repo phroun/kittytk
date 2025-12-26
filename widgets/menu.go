@@ -1041,6 +1041,11 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 			}
 			return true
 		}
+		// Mouse is outside both menu bar and dropdown - deselect item
+		if m.activeMenu.currentIndex != -1 {
+			m.activeMenu.currentIndex = -1
+			m.activeMenu.Update()
+		}
 	}
 
 	return true

@@ -17,6 +17,9 @@ type Desktop struct {
 	// Status bar at the bottom
 	statusBar *StatusBar
 
+	// Dock row for minimized windows (above status bar)
+	dockRow *DockRow
+
 	// Background pattern
 	bgChar rune
 
@@ -27,10 +30,12 @@ type Desktop struct {
 // NewDesktop creates a new desktop widget.
 func NewDesktop() *Desktop {
 	d := &Desktop{
-		bgChar: '░', // Default pattern
+		bgChar:  '░', // Default pattern
+		dockRow: NewDockRow(),
 	}
 	d.WidgetBase = *core.NewWidgetBase()
 	d.SetFocusPolicy(core.NoFocus)
+	d.dockRow.SetParent(d)
 	return d
 }
 
@@ -42,6 +47,9 @@ func (d *Desktop) Children() []core.Widget {
 	}
 	if d.content != nil {
 		children = append(children, d.content)
+	}
+	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+		children = append(children, d.dockRow)
 	}
 	if d.statusBar != nil {
 		children = append(children, d.statusBar)
@@ -177,7 +185,7 @@ func (d *Desktop) SetBounds(bounds core.UnitRect) {
 	d.layoutChildren()
 }
 
-// layoutChildren updates the bounds of menu bar, status bar, and content.
+// layoutChildren updates the bounds of menu bar, status bar, dock row, and content.
 func (d *Desktop) layoutChildren() {
 	bounds := d.Bounds()
 	metrics := core.DefaultCellMetrics()
@@ -192,6 +200,18 @@ func (d *Desktop) layoutChildren() {
 		})
 	}
 
+	// Calculate dock row position and size (above status bar)
+	dockHeight := core.Unit(0)
+	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+		// First set width so RowCount works correctly
+		d.dockRow.SetBounds(core.UnitRect{
+			X:     0,
+			Y:     0,
+			Width: bounds.Width,
+		})
+		dockHeight = d.dockRow.RequiredHeight()
+	}
+
 	// Status bar at bottom
 	if d.statusBar != nil {
 		d.statusBar.SetBounds(core.UnitRect{
@@ -199,6 +219,20 @@ func (d *Desktop) layoutChildren() {
 			Y:      bounds.Height - metrics.CellHeight,
 			Width:  bounds.Width,
 			Height: metrics.CellHeight,
+		})
+	}
+
+	// Dock row above status bar
+	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+		dockY := bounds.Height - metrics.CellHeight - dockHeight
+		if d.statusBar == nil {
+			dockY = bounds.Height - dockHeight
+		}
+		d.dockRow.SetBounds(core.UnitRect{
+			X:      0,
+			Y:      dockY,
+			Width:  bounds.Width,
+			Height: dockHeight,
 		})
 	}
 
@@ -214,7 +248,7 @@ func (d *Desktop) layoutChildren() {
 	}
 }
 
-// ClientArea returns the area available for windows (excluding menu/status bars).
+// ClientArea returns the area available for windows (excluding menu/status/dock bars).
 func (d *Desktop) ClientArea() core.UnitRect {
 	bounds := d.Bounds()
 	metrics := core.DefaultCellMetrics()
@@ -227,6 +261,12 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	}
 	if d.statusBar != nil {
 		bottom -= metrics.CellHeight
+	}
+	// Account for dock row height (when not empty)
+	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+		// Need to calculate height based on current width
+		d.dockRow.SetBounds(core.UnitRect{Width: bounds.Width})
+		bottom -= d.dockRow.RequiredHeight()
 	}
 
 	return core.UnitRect{
@@ -251,6 +291,19 @@ func (d *Desktop) StatusBarHeight() core.Unit {
 		return 0
 	}
 	return core.DefaultCellMetrics().CellHeight
+}
+
+// DockRow returns the dock row widget.
+func (d *Desktop) DockRow() *DockRow {
+	return d.dockRow
+}
+
+// DockRowHeight returns the height of the dock row area (0 if empty).
+func (d *Desktop) DockRowHeight() core.Unit {
+	if d.dockRow == nil || d.dockRow.IsEmpty() {
+		return 0
+	}
+	return d.dockRow.RequiredHeight()
 }
 
 // SizeHint returns the preferred size.
@@ -291,6 +344,23 @@ func (d *Desktop) Paint(p *core.Painter) {
 			Height: metrics.CellHeight,
 		})
 		d.menuBar.Paint(p)
+	}
+
+	// Draw dock row above status bar (if not empty)
+	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+		dockHeight := d.dockRow.RequiredHeight()
+		dockY := bounds.Height - metrics.CellHeight - dockHeight
+		if d.statusBar == nil {
+			dockY = bounds.Height - dockHeight
+		}
+		d.dockRow.SetBounds(core.UnitRect{
+			X:      0,
+			Y:      dockY,
+			Width:  bounds.Width,
+			Height: dockHeight,
+		})
+		dockPainter := p.WithOffset(0, dockY)
+		d.dockRow.Paint(dockPainter)
 	}
 
 	// Draw status bar at bottom
@@ -346,6 +416,7 @@ func (d *Desktop) PaintMenuDropdown(p *core.Painter) {
 // HandleMousePress handles mouse clicks.
 func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 	metrics := core.DefaultCellMetrics()
+	bounds := d.Bounds()
 
 	// Check menu bar first - either in menu bar area or when menu is open
 	if d.menuBar != nil {
@@ -356,12 +427,25 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 
 	// Check status bar
 	if d.statusBar != nil {
-		bounds := d.Bounds()
 		statusY := bounds.Height - metrics.CellHeight
 		if event.Y >= statusY {
 			localEvent := event
 			localEvent.Y -= statusY
 			return d.statusBar.HandleMousePress(localEvent)
+		}
+	}
+
+	// Check dock row (above status bar)
+	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+		dockHeight := d.dockRow.RequiredHeight()
+		dockY := bounds.Height - metrics.CellHeight - dockHeight
+		if d.statusBar == nil {
+			dockY = bounds.Height - dockHeight
+		}
+		if event.Y >= dockY && event.Y < dockY+dockHeight {
+			localEvent := event
+			localEvent.Y -= dockY
+			return d.dockRow.HandleMousePress(localEvent)
 		}
 	}
 

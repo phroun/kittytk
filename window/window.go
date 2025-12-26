@@ -72,11 +72,15 @@ type Window struct {
 	maxHeight    core.Unit
 
 	// Callbacks
-	onClose     func() bool // Return false to prevent close
-	onResize    func(width, height core.Unit)
-	onMove      func(x, y core.Unit)
-	onActivate  func(active bool)
+	onClose       func() bool // Return false to prevent close
+	onResize      func(width, height core.Unit)
+	onMove        func(x, y core.Unit)
+	onActivate    func(active bool)
 	onStateChange func(state WindowState)
+
+	// Request callbacks (for WindowManager integration)
+	onMinimizeRequest func() // Called when user clicks minimize button
+	onMaximizeRequest func() // Called when user clicks maximize button
 }
 
 // NewWindow creates a new window with the given title.
@@ -382,6 +386,24 @@ func (w *Window) SetOnActivate(handler func(active bool)) {
 	w.mu.Unlock()
 }
 
+// SetOnMinimizeRequest sets the minimize request handler.
+// Called when the user clicks the minimize button. The handler should
+// call WindowManager.MinimizeWindow() to properly minimize the window.
+func (w *Window) SetOnMinimizeRequest(handler func()) {
+	w.mu.Lock()
+	w.onMinimizeRequest = handler
+	w.mu.Unlock()
+}
+
+// SetOnMaximizeRequest sets the maximize/restore request handler.
+// Called when the user clicks the maximize button or double-clicks titlebar.
+// The handler should call WindowManager.MaximizeWindow() or RestoreWindow().
+func (w *Window) SetOnMaximizeRequest(handler func()) {
+	w.mu.Lock()
+	w.onMaximizeRequest = handler
+	w.mu.Unlock()
+}
+
 // SetBorderStyle sets the border style.
 func (w *Window) SetBorderStyle(border style.BorderStyle) {
 	w.mu.Lock()
@@ -570,6 +592,11 @@ func (w *Window) Paint(p *core.Painter) {
 func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metrics core.CellMetrics,
 	title string, titleStyle, frameStyle style.CellStyle, border style.BorderStyle) {
 
+	w.mu.RLock()
+	flags := w.flags
+	state := w.state
+	w.mu.RUnlock()
+
 	// Fill title bar background
 	titleRect := core.UnitRect{
 		X:      0,
@@ -579,17 +606,36 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	}
 	p.FillRect(titleRect, ' ', titleStyle)
 
+	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
+	controlX := core.Unit(0)
+	if flags&WindowFlagNoClose == 0 {
+		p.DrawText(controlX, 0, "[x]", frameStyle)
+		controlX += metrics.TextWidth(3)
+	}
+	if flags&WindowFlagNoMinimize == 0 {
+		p.DrawText(controlX, 0, "[.]", frameStyle)
+		controlX += metrics.TextWidth(3)
+	}
+	if flags&WindowFlagNoMaximize == 0 {
+		if state == WindowStateMaximized {
+			p.DrawText(controlX, 0, "[o]", frameStyle) // Restore icon
+		} else {
+			p.DrawText(controlX, 0, "[^]", frameStyle) // Maximize icon
+		}
+		controlX += metrics.TextWidth(3)
+	}
+
 	// Draw title text centered
 	p.DrawTextAligned(titleRect, title, core.AlignCenter, core.AlignMiddle, titleStyle)
-
-	// Draw window controls on the right
-	controlX := bounds.Width - metrics.TextWidth(3)
-	p.DrawText(controlX, 0, "[X]", titleStyle)
 }
 
 // paintNormalFrame draws the full window frame with borders.
 func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics core.CellMetrics,
 	title string, titleStyle, frameStyle style.CellStyle, border style.BorderStyle, flags WindowFlags) {
+
+	w.mu.RLock()
+	state := w.state
+	w.mu.RUnlock()
 
 	// Draw border at local (0,0) - painter is already offset to window position
 	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
@@ -597,23 +643,40 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
-		// Calculate title area (top border)
-		maxTitleWidth := metrics.CharsForWidth(bounds.Width) - 6 // Leave room for controls
+		// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
+		controlX := metrics.CellWidth // Start after left border
+		if flags&WindowFlagNoClose == 0 {
+			p.DrawText(controlX, 0, "[x]", frameStyle)
+			controlX += metrics.TextWidth(3)
+		}
+		if flags&WindowFlagNoMinimize == 0 {
+			p.DrawText(controlX, 0, "[.]", frameStyle)
+			controlX += metrics.TextWidth(3)
+		}
+		if flags&WindowFlagNoMaximize == 0 {
+			if state == WindowStateMaximized {
+				p.DrawText(controlX, 0, "[o]", frameStyle) // Restore icon
+			} else {
+				p.DrawText(controlX, 0, "[^]", frameStyle) // Maximize icon
+			}
+			controlX += metrics.TextWidth(3)
+		}
 
+		// Calculate title area (centered on top border)
+		titleRect := core.UnitRect{
+			X:      0,
+			Y:      0,
+			Width:  bounds.Width,
+			Height: metrics.CellHeight,
+		}
+
+		// Draw title text centered
 		displayTitle := title
-		if len(displayTitle) > maxTitleWidth {
+		maxTitleWidth := metrics.CharsForWidth(bounds.Width) - 12 // Leave room for controls on both sides
+		if len(displayTitle) > maxTitleWidth && maxTitleWidth > 0 {
 			displayTitle = displayTitle[:maxTitleWidth-1] + "…"
 		}
-
-		// Draw title on top border
-		titleX := metrics.CellWidth + metrics.TextWidth(1)
-		p.DrawText(titleX, 0, " "+displayTitle+" ", titleStyle)
-
-		// Draw window controls
-		if flags&WindowFlagNoClose == 0 {
-			controlX := bounds.Width - metrics.TextWidth(4)
-			p.DrawText(controlX, 0, "[X]", frameStyle)
-		}
+		p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleStyle)
 	}
 
 	// Fill content area with background
@@ -657,19 +720,58 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	w.mu.RLock()
 	content := w.content
 	flags := w.flags
+	state := w.state
+	minHandler := w.onMinimizeRequest
+	maxHandler := w.onMaximizeRequest
 	w.mu.RUnlock()
 
-	bounds := w.Bounds()
 	metrics := core.DefaultCellMetrics()
 
 	// Check for title bar clicks
 	if flags&WindowFlagNoTitle == 0 && event.Y < metrics.CellHeight {
-		// Check close button
-		closeX := bounds.Width - metrics.TextWidth(4)
-		if event.X >= closeX && flags&WindowFlagNoClose == 0 {
-			w.Close()
-			return true
+		// Control buttons are on the left: [x][.][^]
+		// Each button is 3 characters wide
+		controlX := metrics.CellWidth // Start after left border (for normal frame)
+		if state == WindowStateMaximized {
+			controlX = 0 // No border in maximized state
 		}
+
+		// Check close button [x]
+		if flags&WindowFlagNoClose == 0 {
+			if event.X >= controlX && event.X < controlX+metrics.TextWidth(3) {
+				w.Close()
+				return true
+			}
+			controlX += metrics.TextWidth(3)
+		}
+
+		// Check minimize button [.]
+		if flags&WindowFlagNoMinimize == 0 {
+			if event.X >= controlX && event.X < controlX+metrics.TextWidth(3) {
+				if minHandler != nil {
+					minHandler()
+				} else {
+					w.Minimize()
+				}
+				return true
+			}
+			controlX += metrics.TextWidth(3)
+		}
+
+		// Check maximize/restore button [^] or [o]
+		if flags&WindowFlagNoMaximize == 0 {
+			if event.X >= controlX && event.X < controlX+metrics.TextWidth(3) {
+				if maxHandler != nil {
+					maxHandler()
+				} else if w.IsMaximized() {
+					w.Restore()
+				} else {
+					w.Maximize()
+				}
+				return true
+			}
+		}
+
 		// Title bar click - could start drag (handled by window manager)
 		return true
 	}

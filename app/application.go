@@ -8,6 +8,7 @@ import (
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
+	"github.com/phroun/tuitk/widgets"
 	"github.com/phroun/tuitk/window"
 )
 
@@ -190,6 +191,28 @@ func (app *Application) SetDesktop(desktop core.Widget) {
 
 	if wm != nil {
 		wm.SetDesktop(desktop)
+
+		// Wire up dock row integration if desktop is a *widgets.Desktop
+		if d, ok := desktop.(*widgets.Desktop); ok {
+			dockRow := d.DockRow()
+			if dockRow != nil {
+				// When a window is minimized, add it to the dock row
+				wm.SetOnWindowMinimized(func(win *window.Window) {
+					entry := &widgets.DockEntry{
+						Title: win.Title(),
+						OnClick: func() {
+							wm.RestoreWindow(win)
+						},
+					}
+					dockRow.AddEntry(entry)
+				})
+
+				// When a window is restored, remove it from the dock row
+				wm.SetOnWindowRestored(func(win *window.Window) {
+					dockRow.RemoveEntryByTitle(win.Title())
+				})
+			}
+		}
 	}
 }
 
