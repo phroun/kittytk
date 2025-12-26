@@ -362,39 +362,68 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement for dragging.
 func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
-	if !s.dragging {
-		return false
+	if s.dragging {
+		bounds := s.Bounds()
+
+		if s.orientation == core.Horizontal {
+			totalWidth := bounds.Width - s.dividerWidth
+			if totalWidth > 0 {
+				newPos := float64(event.X) / float64(totalWidth)
+				if newPos < 0.1 {
+					newPos = 0.1
+				} else if newPos > 0.9 {
+					newPos = 0.9
+				}
+				s.position = newPos
+				s.Update()
+			}
+		} else {
+			totalHeight := bounds.Height - s.dividerWidth
+			if totalHeight > 0 {
+				newPos := float64(event.Y) / float64(totalHeight)
+				if newPos < 0.1 {
+					newPos = 0.1
+				} else if newPos > 0.9 {
+					newPos = 0.9
+				}
+				s.position = newPos
+				s.Update()
+			}
+		}
+
+		return true
 	}
 
-	bounds := s.Bounds()
+	// Forward to children (needed for drag operations within children)
+	firstBounds, secondBounds := s.childBounds()
 
-	if s.orientation == core.Horizontal {
-		totalWidth := bounds.Width - s.dividerWidth
-		if totalWidth > 0 {
-			newPos := float64(event.X) / float64(totalWidth)
-			if newPos < 0.1 {
-				newPos = 0.1
-			} else if newPos > 0.9 {
-				newPos = 0.9
+	if s.first != nil {
+		if handler, ok := s.first.(interface {
+			HandleMouseMove(core.MouseMoveEvent) bool
+		}); ok {
+			localEvent := event
+			localEvent.X -= firstBounds.X
+			localEvent.Y -= firstBounds.Y
+			if handler.HandleMouseMove(localEvent) {
+				return true
 			}
-			s.position = newPos
-			s.Update()
-		}
-	} else {
-		totalHeight := bounds.Height - s.dividerWidth
-		if totalHeight > 0 {
-			newPos := float64(event.Y) / float64(totalHeight)
-			if newPos < 0.1 {
-				newPos = 0.1
-			} else if newPos > 0.9 {
-				newPos = 0.9
-			}
-			s.position = newPos
-			s.Update()
 		}
 	}
 
-	return true
+	if s.second != nil {
+		if handler, ok := s.second.(interface {
+			HandleMouseMove(core.MouseMoveEvent) bool
+		}); ok {
+			localEvent := event
+			localEvent.X -= secondBounds.X
+			localEvent.Y -= secondBounds.Y
+			if handler.HandleMouseMove(localEvent) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // HandleMouseRelease handles mouse button releases.
@@ -404,6 +433,36 @@ func (s *Splitter) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		s.Update()
 		return true
 	}
+
+	// Forward to children (needed for drag operations within children)
+	firstBounds, secondBounds := s.childBounds()
+
+	if s.first != nil {
+		if handler, ok := s.first.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			localEvent := event
+			localEvent.X -= firstBounds.X
+			localEvent.Y -= firstBounds.Y
+			if handler.HandleMouseRelease(localEvent) {
+				return true
+			}
+		}
+	}
+
+	if s.second != nil {
+		if handler, ok := s.second.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			localEvent := event
+			localEvent.X -= secondBounds.X
+			localEvent.Y -= secondBounds.Y
+			if handler.HandleMouseRelease(localEvent) {
+				return true
+			}
+		}
+	}
+
 	return false
 }
 

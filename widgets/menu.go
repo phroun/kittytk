@@ -3,6 +3,7 @@ package widgets
 
 import (
 	"strings"
+	"time"
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
@@ -112,6 +113,13 @@ type Menu struct {
 	// Currently open submenu
 	activeSubMenu *Menu
 
+	// Scroll state
+	scrollOffset    int       // First visible item index
+	maxVisible      int       // Max items to show (0 = unlimited)
+	scrollHoverTime time.Time // When drag started hovering over scroll indicator
+	scrollHoverZone int       // -1 = top indicator, 1 = bottom indicator, 0 = none
+	clickedMode     bool      // If true, was opened via click (not drag), release won't dismiss
+
 	// Callbacks
 	onAboutToShow func()
 	onAboutToHide func()
@@ -122,12 +130,18 @@ func NewMenu(title string) *Menu {
 	m := &Menu{
 		title:        title,
 		currentIndex: -1,
+		maxVisible:   12, // Default max visible items
 	}
 	m.WidgetBase = *core.NewWidgetBase()
 	m.SetFocusPolicy(core.StrongFocus)
 	m.SetAccessibleRole(core.RoleMenu)
 	m.SetAccessibleName(title)
 	return m
+}
+
+// SetMaxVisible sets the maximum number of visible items (0 = unlimited).
+func (m *Menu) SetMaxVisible(max int) {
+	m.maxVisible = max
 }
 
 // Title returns the menu title.
@@ -231,8 +245,21 @@ func (m *Menu) Show(x, y core.Unit) {
 	m.popupY = y
 	m.visible = true
 	m.currentIndex = -1 // No item selected until user hovers over one
+	m.scrollOffset = 0
+	m.scrollHoverZone = 0
+	m.scrollHoverTime = time.Time{}
 	m.SetFocus()
 	m.Update()
+}
+
+// SetClickedMode sets whether the menu is in clicked mode (release won't dismiss).
+func (m *Menu) SetClickedMode(clicked bool) {
+	m.clickedMode = clicked
+}
+
+// IsClickedMode returns whether the menu is in clicked mode.
+func (m *Menu) IsClickedMode() bool {
+	return m.clickedMode
 }
 
 // Hide hides the menu.
@@ -312,9 +339,91 @@ func (m *Menu) calculateSize() core.UnitSize {
 	// Add padding
 	maxWidth += 4
 
+	// Calculate visible item count
+	visibleItems := len(m.items)
+	if m.maxVisible > 0 && visibleItems > m.maxVisible {
+		visibleItems = m.maxVisible
+	}
+
+	// Add space for scroll indicators if needed
+	height := visibleItems
+	if m.needsScrolling() {
+		height += 2 // One row for each scroll indicator
+	}
+
 	return core.UnitSize{
 		Width:  core.Unit(maxWidth) * metrics.CellWidth,
-		Height: core.Unit(len(m.items)) * metrics.CellHeight,
+		Height: core.Unit(height) * metrics.CellHeight,
+	}
+}
+
+// needsScrolling returns true if the menu has more items than maxVisible.
+func (m *Menu) needsScrolling() bool {
+	return m.maxVisible > 0 && len(m.items) > m.maxVisible
+}
+
+// visibleItemCount returns the number of items that can be shown at once.
+func (m *Menu) visibleItemCount() int {
+	if m.maxVisible <= 0 || len(m.items) <= m.maxVisible {
+		return len(m.items)
+	}
+	return m.maxVisible
+}
+
+// canScrollUp returns true if there are items above the visible area.
+func (m *Menu) canScrollUp() bool {
+	return m.scrollOffset > 0
+}
+
+// canScrollDown returns true if there are items below the visible area.
+func (m *Menu) canScrollDown() bool {
+	return m.scrollOffset+m.visibleItemCount() < len(m.items)
+}
+
+// scrollUp scrolls the menu up by the given number of items.
+func (m *Menu) scrollUp(count int) {
+	m.scrollOffset -= count
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
+	m.Update()
+}
+
+// scrollDown scrolls the menu down by the given number of items.
+func (m *Menu) scrollDown(count int) {
+	maxOffset := len(m.items) - m.visibleItemCount()
+	m.scrollOffset += count
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
+	}
+	m.Update()
+}
+
+// scrollPageUp scrolls up by one page.
+func (m *Menu) scrollPageUp() {
+	m.scrollUp(m.visibleItemCount())
+}
+
+// scrollPageDown scrolls down by one page.
+func (m *Menu) scrollPageDown() {
+	m.scrollDown(m.visibleItemCount())
+}
+
+// ensureVisible ensures the given item index is visible.
+func (m *Menu) ensureVisible(index int) {
+	if index < 0 || !m.needsScrolling() {
+		return
+	}
+
+	// If item is above visible area, scroll up
+	if index < m.scrollOffset {
+		m.scrollOffset = index
+	}
+
+	// If item is below visible area, scroll down
+	visibleEnd := m.scrollOffset + m.visibleItemCount() - 1
+	if index > visibleEnd {
+		m.scrollOffset = index - m.visibleItemCount() + 1
 	}
 }
 
@@ -347,6 +456,7 @@ func (m *Menu) Paint(p *core.Painter) {
 	theme := m.Theme()
 	metrics := p.Metrics()
 	size := m.calculateSize()
+	needsScroll := m.needsScrolling()
 
 	// Draw menu background with border
 	menuBounds := core.UnitRect{
@@ -358,9 +468,31 @@ func (m *Menu) Paint(p *core.Painter) {
 	p.FillRect(menuBounds, ' ', theme.MenuItem)
 	p.DrawRect(menuBounds, theme.DefaultBorder, theme.MenuItem)
 
-	// Draw items
-	for i, item := range m.items {
-		itemY := m.popupY + core.Unit(i)*metrics.CellHeight
+	// Track Y offset for drawing
+	currentY := m.popupY
+
+	// Draw top scroll indicator if needed
+	if needsScroll {
+		indicatorStyle := theme.MenuItem
+		if m.canScrollUp() {
+			// Draw "^ ^ ^" centered
+			centerX := m.popupX + size.Width/2
+			p.DrawCell(centerX-metrics.CellWidth*2, currentY, '^', indicatorStyle)
+			p.DrawCell(centerX, currentY, '^', indicatorStyle)
+			p.DrawCell(centerX+metrics.CellWidth*2, currentY, '^', indicatorStyle)
+		}
+		currentY += metrics.CellHeight
+	}
+
+	// Draw visible items
+	visibleCount := m.visibleItemCount()
+	for i := 0; i < visibleCount; i++ {
+		itemIndex := m.scrollOffset + i
+		if itemIndex >= len(m.items) {
+			break
+		}
+		item := m.items[itemIndex]
+		itemY := currentY
 
 		// Determine style
 		var s style.CellStyle
@@ -368,7 +500,7 @@ func (m *Menu) Paint(p *core.Painter) {
 			s = theme.MenuSeparator
 		} else if !item.Enabled {
 			s = theme.MenuItemDisabled
-		} else if i == m.currentIndex {
+		} else if itemIndex == m.currentIndex {
 			s = theme.MenuItemSelected
 		} else {
 			s = theme.MenuItem
@@ -387,6 +519,7 @@ func (m *Menu) Paint(p *core.Painter) {
 			for x := m.popupX + metrics.CellWidth; x < m.popupX+size.Width-metrics.CellWidth; x += metrics.CellWidth {
 				p.DrawCell(x, itemY, '─', s)
 			}
+			currentY += metrics.CellHeight
 			continue
 		}
 
@@ -425,6 +558,20 @@ func (m *Menu) Paint(p *core.Painter) {
 				shortcutX += metrics.CellWidth
 			}
 		}
+
+		currentY += metrics.CellHeight
+	}
+
+	// Draw bottom scroll indicator if needed
+	if needsScroll {
+		indicatorStyle := theme.MenuItem
+		if m.canScrollDown() {
+			// Draw "v v v" centered
+			centerX := m.popupX + size.Width/2
+			p.DrawCell(centerX-metrics.CellWidth*2, currentY, 'v', indicatorStyle)
+			p.DrawCell(centerX, currentY, 'v', indicatorStyle)
+			p.DrawCell(centerX+metrics.CellWidth*2, currentY, 'v', indicatorStyle)
+		}
 	}
 
 	// Draw active submenu
@@ -445,12 +592,14 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 	switch event.Key {
 	case "Up":
 		m.currentIndex = m.findPrevEnabled(m.currentIndex)
+		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
 		m.Update()
 		return true
 
 	case "Down":
 		m.currentIndex = m.findNextEnabled(m.currentIndex)
+		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
 		m.Update()
 		return true
@@ -487,12 +636,43 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	case "Home":
 		m.currentIndex = m.findNextEnabled(-1)
+		m.scrollOffset = 0
 		m.closeSubMenu()
 		m.Update()
 		return true
 
 	case "End":
 		m.currentIndex = m.findPrevEnabled(0)
+		m.ensureVisible(m.currentIndex)
+		m.closeSubMenu()
+		m.Update()
+		return true
+
+	case "PageUp":
+		m.scrollPageUp()
+		// Move current index to top of visible area
+		if m.currentIndex >= 0 {
+			m.currentIndex = m.scrollOffset
+			for m.currentIndex < len(m.items) && (m.items[m.currentIndex].Separator || !m.items[m.currentIndex].Enabled) {
+				m.currentIndex++
+			}
+		}
+		m.closeSubMenu()
+		m.Update()
+		return true
+
+	case "PageDown":
+		m.scrollPageDown()
+		// Move current index to bottom of visible area
+		if m.currentIndex >= 0 {
+			m.currentIndex = m.scrollOffset + m.visibleItemCount() - 1
+			if m.currentIndex >= len(m.items) {
+				m.currentIndex = len(m.items) - 1
+			}
+			for m.currentIndex >= 0 && (m.items[m.currentIndex].Separator || !m.items[m.currentIndex].Enabled) {
+				m.currentIndex--
+			}
+		}
 		m.closeSubMenu()
 		m.Update()
 		return true
@@ -529,6 +709,7 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 
 	metrics := core.DefaultCellMetrics()
 	size := m.calculateSize()
+	needsScroll := m.needsScrolling()
 
 	// Position submenu to the right of current item
 	itemIndex := -1
@@ -539,8 +720,14 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 		}
 	}
 
+	// Calculate Y position accounting for scroll offset and indicators
+	visibleIndex := itemIndex - m.scrollOffset
+	subY := m.popupY + core.Unit(visibleIndex)*metrics.CellHeight
+	if needsScroll {
+		subY += metrics.CellHeight // Account for top scroll indicator row
+	}
+
 	subX := m.popupX + size.Width
-	subY := m.popupY + core.Unit(itemIndex)*metrics.CellHeight
 
 	m.activeSubMenu = item.SubMenu
 	item.SubMenu.Show(subX, subY)
@@ -580,12 +767,40 @@ func (m *Menu) HandleMousePress(event core.MousePressEvent) bool {
 
 	metrics := core.DefaultCellMetrics()
 	size := m.calculateSize()
+	needsScroll := m.needsScrolling()
 
 	// Check if click is in menu bounds
 	if event.X >= m.popupX && event.X < m.popupX+size.Width &&
 		event.Y >= m.popupY && event.Y < m.popupY+size.Height {
 
-		itemIndex := int((event.Y - m.popupY) / metrics.CellHeight)
+		// Calculate which row was clicked
+		rowIndex := int((event.Y - m.popupY) / metrics.CellHeight)
+
+		// Check if clicking on scroll indicators
+		if needsScroll {
+			// Top scroll indicator (row 0)
+			if rowIndex == 0 && m.canScrollUp() {
+				// Click on scroll indicator - transition to clicked mode and scroll
+				m.clickedMode = true
+				m.scrollUp(1)
+				return true
+			}
+
+			// Bottom scroll indicator (last row)
+			lastRow := m.visibleItemCount() + 1 // +1 for top indicator
+			if rowIndex == lastRow && m.canScrollDown() {
+				// Click on scroll indicator - transition to clicked mode and scroll
+				m.clickedMode = true
+				m.scrollDown(1)
+				return true
+			}
+
+			// Adjust row index for items (subtract 1 for top indicator)
+			rowIndex--
+		}
+
+		// Convert row to item index
+		itemIndex := m.scrollOffset + rowIndex
 		if itemIndex >= 0 && itemIndex < len(m.items) {
 			item := m.items[itemIndex]
 			if !item.Separator && item.Enabled {
@@ -603,6 +818,76 @@ func (m *Menu) HandleMousePress(event core.MousePressEvent) bool {
 	// Click outside - close menu
 	m.Hide()
 	return false
+}
+
+// HandleMouseMove handles mouse movement for hover-scrolling.
+func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
+	if !m.visible || !m.needsScrolling() {
+		m.scrollHoverZone = 0
+		return false
+	}
+
+	metrics := core.DefaultCellMetrics()
+	size := m.calculateSize()
+
+	// Check if mouse is in menu bounds
+	if event.X < m.popupX || event.X >= m.popupX+size.Width ||
+		event.Y < m.popupY || event.Y >= m.popupY+size.Height {
+		m.scrollHoverZone = 0
+		return false
+	}
+
+	// Calculate which row the mouse is in
+	rowIndex := int((event.Y - m.popupY) / metrics.CellHeight)
+	lastRow := m.visibleItemCount() + 1 // +1 for top indicator
+
+	// Check if on top scroll indicator
+	if rowIndex == 0 && m.canScrollUp() {
+		if m.scrollHoverZone != -1 {
+			m.scrollHoverZone = -1
+			m.scrollHoverTime = time.Now()
+		} else {
+			// Check if we've been hovering for 1 second
+			if time.Since(m.scrollHoverTime) >= time.Second {
+				m.scrollPageUp()
+				m.scrollHoverTime = time.Now() // Reset for next page scroll
+			}
+		}
+		return true
+	}
+
+	// Check if on bottom scroll indicator
+	if rowIndex == lastRow && m.canScrollDown() {
+		if m.scrollHoverZone != 1 {
+			m.scrollHoverZone = 1
+			m.scrollHoverTime = time.Now()
+		} else {
+			// Check if we've been hovering for 1 second
+			if time.Since(m.scrollHoverTime) >= time.Second {
+				m.scrollPageDown()
+				m.scrollHoverTime = time.Now() // Reset for next page scroll
+			}
+		}
+		return true
+	}
+
+	// Not on a scroll indicator
+	m.scrollHoverZone = 0
+
+	// Update highlighted item
+	if rowIndex >= 0 {
+		adjustedRow := rowIndex - 1 // Subtract 1 for top indicator
+		itemIndex := m.scrollOffset + adjustedRow
+		if itemIndex >= 0 && itemIndex < len(m.items) {
+			item := m.items[itemIndex]
+			if !item.Separator && item.Enabled {
+				m.currentIndex = itemIndex
+				m.Update()
+			}
+		}
+	}
+
+	return true
 }
 
 // HandleFocusOut is called when focus is lost.

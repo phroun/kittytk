@@ -65,6 +65,18 @@ func NewTabWidget() *TabWidget {
 	return t
 }
 
+// SetBounds sets the widget's bounds and updates content layout.
+func (t *TabWidget) SetBounds(bounds core.UnitRect) {
+	oldSize := t.Bounds().Size()
+	t.WidgetBase.SetBounds(bounds)
+	newSize := bounds.Size()
+
+	// Manually call our HandleResize since embedded SetBounds won't do it
+	if oldSize != newSize {
+		t.HandleResize(oldSize, newSize)
+	}
+}
+
 // AddTab adds a tab with the given text and content widget.
 func (t *TabWidget) AddTab(text string, content core.Widget) int {
 	tab := &Tab{
@@ -1245,7 +1257,14 @@ func (t *TabWidget) HandleResize(oldSize, newSize core.UnitSize) {
 		content := t.tabs[t.currentIndex].Content
 		if content != nil {
 			contentBounds := t.contentBounds()
-			content.SetBounds(contentBounds)
+			// Set bounds with 0,0 for content-relative coordinates
+			// (painter handles positioning with WithOffset)
+			content.SetBounds(core.UnitRect{
+				X:      0,
+				Y:      0,
+				Width:  contentBounds.Width,
+				Height: contentBounds.Height,
+			})
 		}
 	}
 }
