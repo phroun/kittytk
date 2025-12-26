@@ -15,7 +15,6 @@ import (
 
 func main() {
 	// Create the TUI backend with default options
-	// Note: Don't call Init/Shutdown here - Application.Run() handles that
 	tuiBackend := backend.NewTUIBackend(backend.TUIOptions{
 		Output: os.Stdout,
 		Input:  os.Stdin,
@@ -24,49 +23,31 @@ func main() {
 	// Create the application
 	application := app.New(tuiBackend)
 
-	// Create main window
-	mainWindow := createMainWindow(application)
+	// Create desktop with Mac-style menu bar at top
+	desktop := widgets.NewDesktop()
+
+	// Create the application menu bar (at desktop level, not per-window)
+	menuBar := createMenuBar(application)
+	desktop.SetMenuBar(menuBar)
+
+	// Create a status bar at the bottom
+	statusBar := widgets.NewStatusBar()
+	statusBar.SetText("Ready - Press F10 for menu, Tab to navigate, Ctrl+Q to quit")
+	desktop.SetStatusBar(statusBar)
+
+	// Set desktop as the application's desktop widget
+	application.SetDesktop(desktop)
+
+	// Create the main demo window (floats over the desktop)
+	mainWindow := createMainWindow(application, statusBar)
 	application.WindowManager().AddWindow(mainWindow)
 
-	// Run the application (handles Init/Shutdown internally)
+	// Run the application
 	application.Run()
 }
 
-// createMainWindow creates the main demo window.
-func createMainWindow(application *app.Application) *window.Window {
-	mainWindow := window.NewWindow("TUI Toolkit Demo")
-	mainWindow.SetSize(core.UnitSize{
-		Width:  core.Unit(80 * 8), // 80 columns
-		Height: core.Unit(24 * 16), // 24 rows
-	})
-
-	// Create menu bar
-	menuBar := createMenuBar(application, mainWindow)
-
-	// Create tab widget to organize demos
-	tabWidget := widgets.NewTabWidget()
-
-	// Add demo tabs
-	tabWidget.AddTab("Basic Widgets", createBasicWidgetsDemo())
-	tabWidget.AddTab("Selection", createSelectionDemo())
-	tabWidget.AddTab("Lists", createListDemo())
-	tabWidget.AddTab("Progress", createProgressDemo())
-
-	// Create main panel with vertical layout
-	mainPanel := widgets.NewPanel()
-	mainLayout := layout.NewBoxLayout(core.Vertical)
-
-	mainPanel.AddChild(menuBar)
-	mainPanel.AddChild(tabWidget)
-	mainPanel.SetLayoutManager(mainLayout)
-
-	mainWindow.SetContent(mainPanel)
-
-	return mainWindow
-}
-
-// createMenuBar creates the application menu bar.
-func createMenuBar(application *app.Application, mainWindow *window.Window) *widgets.MenuBar {
+// createMenuBar creates the application menu bar (Mac-style, at desktop level).
+func createMenuBar(application *app.Application) *widgets.MenuBar {
 	menuBar := widgets.NewMenuBar()
 
 	// File menu
@@ -135,6 +116,20 @@ func createMenuBar(application *app.Application, mainWindow *window.Window) *wid
 	})
 	windowMenu.AddItem(newWindowItem)
 
+	windowMenu.AddSeparator()
+
+	tileItem := widgets.NewMenuItem("Tile")
+	tileItem.SetOnTriggered(func() {
+		application.WindowManager().TileWindows()
+	})
+	windowMenu.AddItem(tileItem)
+
+	cascadeItem := widgets.NewMenuItem("Cascade")
+	cascadeItem.SetOnTriggered(func() {
+		application.WindowManager().CascadeWindows()
+	})
+	windowMenu.AddItem(cascadeItem)
+
 	menuBar.AddMenu(windowMenu)
 
 	// Help menu
@@ -151,8 +146,30 @@ func createMenuBar(application *app.Application, mainWindow *window.Window) *wid
 	return menuBar
 }
 
+// createMainWindow creates the main demo window.
+func createMainWindow(application *app.Application, statusBar *widgets.StatusBar) *window.Window {
+	mainWindow := window.NewWindow("TUI Toolkit Demo")
+	mainWindow.SetSize(core.UnitSize{
+		Width:  core.Unit(60 * 8), // 60 columns
+		Height: core.Unit(18 * 16), // 18 rows
+	})
+
+	// Create tab widget to organize demos
+	tabWidget := widgets.NewTabWidget()
+
+	// Add demo tabs
+	tabWidget.AddTab("Basic Widgets", createBasicWidgetsDemo(statusBar))
+	tabWidget.AddTab("Selection", createSelectionDemo())
+	tabWidget.AddTab("Lists", createListDemo())
+	tabWidget.AddTab("Progress", createProgressDemo())
+
+	mainWindow.SetContent(tabWidget)
+
+	return mainWindow
+}
+
 // createBasicWidgetsDemo creates a panel with basic widgets.
-func createBasicWidgetsDemo() core.Widget {
+func createBasicWidgetsDemo(statusBar *widgets.StatusBar) core.Widget {
 	panel := widgets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	boxLayout.SetSpacing(8)
@@ -164,6 +181,11 @@ func createBasicWidgetsDemo() core.Widget {
 	// Text input
 	textInput := widgets.NewTextInput()
 	textInput.SetPlaceholder("Enter text here...")
+	textInput.SetOnTextChanged(func(text string) {
+		if statusBar != nil {
+			statusBar.SetText(fmt.Sprintf("Text: %s", text))
+		}
+	})
 	panel.AddChild(textInput)
 
 	// Buttons in a horizontal layout
@@ -173,14 +195,26 @@ func createBasicWidgetsDemo() core.Widget {
 
 	okButton := widgets.NewButton("OK")
 	okButton.SetOnClick(func() {
-		// Button action
+		if statusBar != nil {
+			statusBar.SetText("OK button clicked!")
+		}
 	})
 	buttonPanel.AddChild(okButton)
 
 	cancelButton := widgets.NewButton("Cancel")
+	cancelButton.SetOnClick(func() {
+		if statusBar != nil {
+			statusBar.SetText("Cancel button clicked!")
+		}
+	})
 	buttonPanel.AddChild(cancelButton)
 
 	applyButton := widgets.NewButton("Apply")
+	applyButton.SetOnClick(func() {
+		if statusBar != nil {
+			statusBar.SetText("Apply button clicked!")
+		}
+	})
 	buttonPanel.AddChild(applyButton)
 
 	buttonPanel.SetLayoutManager(hLayout)
@@ -227,7 +261,6 @@ func createSelectionDemo() core.Widget {
 	radioGroup.AddButton(radio1)
 	radioGroup.AddButton(radio2)
 	radioGroup.AddButton(radio3)
-	// First button is automatically selected when added to the group
 
 	panel.AddChild(radio1)
 	panel.AddChild(radio2)
@@ -354,7 +387,7 @@ func createDemoWindow(application *app.Application) *window.Window {
 	w := window.NewWindow("Demo Window")
 	w.SetSize(core.UnitSize{
 		Width:  core.Unit(40 * 8),
-		Height: core.Unit(15 * 16),
+		Height: core.Unit(12 * 16),
 	})
 
 	panel := widgets.NewPanel()

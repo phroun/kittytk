@@ -353,6 +353,10 @@ type Theme struct {
 	ProgressFilled CellStyle
 	ProgressEmpty  CellStyle
 
+	// Desktop/Status bar
+	Desktop   CellStyle
+	StatusBar CellStyle
+
 	// Border styles
 	DefaultBorder BorderStyle
 	WindowBorder  BorderStyle
@@ -399,6 +403,9 @@ func DefaultTheme() *Theme {
 
 		ProgressFilled: DefaultStyle().WithFg(ColorWhite).WithBg(ColorGreen),
 		ProgressEmpty:  DefaultStyle().WithFg(ColorWhite).WithBg(ColorBrightBlack),
+
+		Desktop:   DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlue),
+		StatusBar: DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
 
 		DefaultBorder: BorderSingle,
 		WindowBorder:  BorderDouble,
@@ -457,6 +464,9 @@ func DarkTheme() *Theme {
 		ProgressFilled: DefaultStyle().WithBg(green),
 		ProgressEmpty:  DefaultStyle().WithBg(overlay),
 
+		Desktop:   DefaultStyle().WithFg(overlay).WithBg(bg),
+		StatusBar: DefaultStyle().WithFg(text).WithBg(surface),
+
 		DefaultBorder: BorderRounded,
 		WindowBorder:  BorderRounded,
 		MenuBorder:    BorderRounded,
@@ -503,6 +513,9 @@ func ClassicTheme() *Theme {
 
 		ProgressFilled: DefaultStyle().WithBg(ColorGreen),
 		ProgressEmpty:  DefaultStyle().WithBg(ColorBlack),
+
+		Desktop:   DefaultStyle().WithFg(ColorCyan).WithBg(ColorBlue),
+		StatusBar: DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
 
 		DefaultBorder: BorderDouble,
 		WindowBorder:  BorderDouble,

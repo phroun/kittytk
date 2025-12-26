@@ -59,7 +59,13 @@ func NewWindowManager() *WindowManager {
 func (m *WindowManager) SetDesktop(desktop core.Widget) {
 	m.mu.Lock()
 	m.desktop = desktop
+	bounds := m.screenBounds
 	m.mu.Unlock()
+
+	// Set the desktop bounds to the screen size
+	if desktop != nil && !bounds.IsEmpty() {
+		desktop.SetBounds(bounds)
+	}
 }
 
 // Desktop returns the desktop widget.
@@ -73,14 +79,36 @@ func (m *WindowManager) Desktop() core.Widget {
 func (m *WindowManager) SetScreenBounds(bounds core.UnitRect) {
 	m.mu.Lock()
 	m.screenBounds = bounds
+	desktop := m.desktop
 	m.mu.Unlock()
 
-	// Adjust maximized windows
+	// Update desktop bounds
+	if desktop != nil {
+		desktop.SetBounds(bounds)
+	}
+
+	// Adjust maximized windows to client area
+	clientArea := m.ClientArea()
 	for _, win := range m.windows {
 		if win.IsMaximized() {
-			win.SetBounds(bounds)
+			win.SetBounds(clientArea)
 		}
 	}
+}
+
+// ClientArea returns the area available for windows (excluding desktop chrome like menu bars).
+func (m *WindowManager) ClientArea() core.UnitRect {
+	m.mu.RLock()
+	screen := m.screenBounds
+	desktop := m.desktop
+	m.mu.RUnlock()
+
+	// If desktop has a ClientArea method, use it
+	if da, ok := desktop.(interface{ ClientArea() core.UnitRect }); ok {
+		return da.ClientArea()
+	}
+
+	return screen
 }
 
 // ScreenBounds returns the screen bounds.
@@ -264,38 +292,35 @@ func (m *WindowManager) CloseModal() {
 	win.Close()
 }
 
-// MaximizeWindow maximizes a window to fill the screen.
+// MaximizeWindow maximizes a window to fill the client area.
 func (m *WindowManager) MaximizeWindow(win *Window) {
-	m.mu.RLock()
-	bounds := m.screenBounds
-	m.mu.RUnlock()
-
+	clientArea := m.ClientArea()
 	win.Maximize()
-	win.SetBounds(bounds)
+	win.SetBounds(clientArea)
 }
 
 // positionWindow positions a new window using cascading.
 func (m *WindowManager) positionWindow(win *Window) {
 	m.mu.RLock()
-	screen := m.screenBounds
 	numWindows := len(m.windows)
 	m.mu.RUnlock()
 
+	clientArea := m.ClientArea()
 	hint := win.SizeHint()
 	metrics := core.DefaultCellMetrics()
 
 	// Cascade offset
 	offset := core.Unit(numWindows) * metrics.CellWidth * 2
 
-	x := screen.X + offset
-	y := screen.Y + offset
+	x := clientArea.X + offset
+	y := clientArea.Y + offset
 
 	// Wrap if off screen
-	if x+hint.Width > screen.X+screen.Width {
-		x = screen.X
+	if x+hint.Width > clientArea.X+clientArea.Width {
+		x = clientArea.X
 	}
-	if y+hint.Height > screen.Y+screen.Height {
-		y = screen.Y
+	if y+hint.Height > clientArea.Y+clientArea.Height {
+		y = clientArea.Y
 	}
 
 	win.SetBounds(core.UnitRect{
@@ -309,7 +334,6 @@ func (m *WindowManager) positionWindow(win *Window) {
 // TileWindows arranges windows in a tiled layout.
 func (m *WindowManager) TileWindows() {
 	m.mu.RLock()
-	screen := m.screenBounds
 	windows := make([]*Window, 0)
 	for _, w := range m.windows {
 		if w.IsVisible() && !w.IsMinimized() {
@@ -322,6 +346,8 @@ func (m *WindowManager) TileWindows() {
 		return
 	}
 
+	clientArea := m.ClientArea()
+
 	// Calculate grid dimensions
 	cols := 1
 	rows := len(windows)
@@ -330,16 +356,16 @@ func (m *WindowManager) TileWindows() {
 	}
 	rows = (len(windows) + cols - 1) / cols
 
-	cellWidth := screen.Width / core.Unit(cols)
-	cellHeight := screen.Height / core.Unit(rows)
+	cellWidth := clientArea.Width / core.Unit(cols)
+	cellHeight := clientArea.Height / core.Unit(rows)
 
 	for i, win := range windows {
 		col := i % cols
 		row := i / cols
 
 		win.SetBounds(core.UnitRect{
-			X:      screen.X + core.Unit(col)*cellWidth,
-			Y:      screen.Y + core.Unit(row)*cellHeight,
+			X:      clientArea.X + core.Unit(col)*cellWidth,
+			Y:      clientArea.Y + core.Unit(row)*cellHeight,
 			Width:  cellWidth,
 			Height: cellHeight,
 		})
@@ -350,7 +376,6 @@ func (m *WindowManager) TileWindows() {
 // CascadeWindows arranges windows in a cascade.
 func (m *WindowManager) CascadeWindows() {
 	m.mu.RLock()
-	screen := m.screenBounds
 	windows := make([]*Window, 0)
 	for _, w := range m.windows {
 		if w.IsVisible() && !w.IsMinimized() {
@@ -363,23 +388,24 @@ func (m *WindowManager) CascadeWindows() {
 		return
 	}
 
+	clientArea := m.ClientArea()
 	metrics := core.DefaultCellMetrics()
 	offset := metrics.CellWidth * 2
 
 	// Standard size for cascaded windows
-	width := screen.Width * 3 / 4
-	height := screen.Height * 3 / 4
+	width := clientArea.Width * 3 / 4
+	height := clientArea.Height * 3 / 4
 
 	for i, win := range windows {
-		x := screen.X + core.Unit(i)*offset
-		y := screen.Y + core.Unit(i)*offset
+		x := clientArea.X + core.Unit(i)*offset
+		y := clientArea.Y + core.Unit(i)*offset
 
 		// Wrap if off screen
-		if x+width > screen.X+screen.Width {
-			x = screen.X
+		if x+width > clientArea.X+clientArea.Width {
+			x = clientArea.X
 		}
-		if y+height > screen.Y+screen.Height {
-			y = screen.Y
+		if y+height > clientArea.Y+clientArea.Height {
+			y = clientArea.Y
 		}
 
 		win.SetBounds(core.UnitRect{
