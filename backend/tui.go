@@ -63,6 +63,9 @@ type TUIBackend struct {
 	colorDepth int
 	hasMouse   bool
 	hasUnicode bool
+
+	// Flag to clear lines on next render (after resize)
+	needsLineClear bool
 }
 
 // TUIOptions configures the TUI backend.
@@ -281,11 +284,22 @@ func (t *TUIBackend) EndFrame() {
 	defer t.mu.Unlock()
 
 	var sb strings.Builder
+	clearLines := t.needsLineClear
+	t.needsLineClear = false
 
 	// Perform differential update
 	for y := 0; y < t.rows; y++ {
+		lineCleared := false
+
+		// After resize, clear each line before updating
+		if clearLines {
+			// Move to line start, reset attributes, clear line
+			sb.WriteString(fmt.Sprintf("\033[%d;1H\033[0m\033[2K", y+1))
+			lineCleared = true
+		}
+
 		for x := 0; x < t.cols; x++ {
-			if t.backBuffer[y][x] != t.frontBuffer[y][x] {
+			if lineCleared || t.backBuffer[y][x] != t.frontBuffer[y][x] {
 				// Move cursor to position
 				sb.WriteString(fmt.Sprintf("\033[%d;%dH", y+1, x+1))
 
@@ -783,9 +797,8 @@ func (t *TUIBackend) handleResize() {
 					t.rows = rows
 					t.allocateBuffers()
 
-					// Clear screen properly before repaint
-					// CSI 0m = reset attributes, CSI 2J = clear entire screen
-					t.write("\033[0m\033[2J")
+					// Set flag to clear each line on next render
+					t.needsLineClear = true
 
 					// Queue resize event
 					event := core.ResizeEvent{
