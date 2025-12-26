@@ -50,10 +50,19 @@ func main() {
 					if fm != nil {
 						chain := fm.FocusChain()
 						focused := fm.FocusedWidget()
+
+						// Count focusable widgets (visible + enabled)
+						focusable := 0
+						for _, w := range chain {
+							if w.IsVisible() && w.IsEnabled() {
+								focusable++
+							}
+						}
+
 						if focused != nil {
-							focusInfo = fmt.Sprintf("focused: %T (chain: %d)", focused, len(chain))
+							focusInfo = fmt.Sprintf("%T chain:%d ok:%d", focused, len(chain), focusable)
 						} else {
-							focusInfo = fmt.Sprintf("focused: nil (chain: %d)", len(chain))
+							focusInfo = fmt.Sprintf("nil chain:%d ok:%d", len(chain), focusable)
 						}
 					}
 				}

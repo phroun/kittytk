@@ -18,6 +18,7 @@ type Button struct {
 	checked   bool
 	pressed   bool
 	flat      bool // No border when not focused/hovered
+	isDefault bool // Default button (shown bold when not focused)
 
 	onClick  func()
 	onToggle func(checked bool)
@@ -114,6 +115,17 @@ func (b *Button) SetFlat(flat bool) {
 	b.Update()
 }
 
+// IsDefault returns whether this is the default button.
+func (b *Button) IsDefault() bool {
+	return b.isDefault
+}
+
+// SetDefault makes this the default button (shown bold when not focused).
+func (b *Button) SetDefault(isDefault bool) {
+	b.isDefault = isDefault
+	b.Update()
+}
+
 // SetOnClick sets the click handler.
 func (b *Button) SetOnClick(handler func()) {
 	b.onClick = handler
@@ -169,6 +181,10 @@ func (b *Button) SizeHint() core.UnitSize {
 }
 
 // Paint renders the button.
+// TUI button rendering:
+//   - Normal:  " OK "  (space-padded)
+//   - Focused: "<OK>"  (angle brackets)
+//   - Default: Bold text when another button isn't focused
 func (b *Button) Paint(p *core.Painter) {
 	bounds := b.Bounds()
 	theme := b.Theme()
@@ -182,6 +198,9 @@ func (b *Button) Paint(p *core.Painter) {
 		s = theme.ButtonPressed
 	} else if focused {
 		s = theme.ButtonFocused
+	} else if b.isDefault {
+		// Default button gets bold text when not focused
+		s = theme.Button.WithAttrs(style.StyleBold)
 	} else {
 		s = theme.Button
 	}
@@ -191,14 +210,12 @@ func (b *Button) Paint(p *core.Painter) {
 		s = *customStyle
 	}
 
+	metrics := p.Metrics()
+
 	// Draw background
 	if !b.flat || focused || b.pressed || b.checked {
 		p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', s)
 	}
-
-	// Calculate content
-	metrics := p.Metrics()
-	content := b.text
 
 	// Draw icon if present
 	iconWidth := core.Unit(0)
@@ -225,23 +242,29 @@ func (b *Button) Paint(p *core.Painter) {
 		}
 	}
 
-	// Draw text centered
-	if content != "" {
-		textRect := core.UnitRect{
-			X:      iconWidth,
-			Y:      0,
-			Width:  bounds.Width - iconWidth,
-			Height: bounds.Height,
-		}
-		p.DrawTextAligned(textRect, content, core.AlignCenter, core.AlignMiddle, s)
+	// Draw button with TUI-style brackets
+	// Focused: <text>  Normal: " text "
+	leftBracket := ' '
+	rightBracket := ' '
+	if focused {
+		leftBracket = '<'
+		rightBracket = '>'
 	}
 
-	// Draw focus indicator
-	if focused && !b.flat {
-		// Draw brackets around content
-		p.DrawCell(0, 0, '[', s)
-		p.DrawCell(bounds.Width-metrics.CellWidth, 0, ']', s)
+	// Draw left bracket/space
+	p.DrawCell(iconWidth, 0, leftBracket, s)
+
+	// Draw text
+	if b.text != "" {
+		textX := iconWidth + metrics.CellWidth
+		for i, ch := range b.text {
+			p.DrawCell(textX+metrics.CellToUnitsX(i), 0, ch, s)
+		}
 	}
+
+	// Draw right bracket/space
+	rightX := bounds.Width - metrics.CellWidth
+	p.DrawCell(rightX, 0, rightBracket, s)
 }
 
 // HandleKeyPress handles keyboard input.
