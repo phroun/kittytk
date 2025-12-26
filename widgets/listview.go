@@ -40,7 +40,10 @@ type ListView struct {
 	showIcons          bool
 
 	// Mouse state
-	isDragging bool
+	isDragging         bool
+	scrollbarDragging  bool    // Whether scrollbar thumb is being dragged
+	scrollbarDragStart int     // Y position where drag started
+	scrollbarDragOffset int    // Scroll offset when drag started
 
 	// Callbacks
 	onCurrentChanged  func(index int)
@@ -423,35 +426,68 @@ func (l *ListView) Paint(p *core.Painter) {
 	}
 }
 
-// paintScrollbar draws a vertical scrollbar.
-func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
+// scrollbarGeometry returns scrollbar dimensions and thumb position.
+// Returns: scrollbarX, thumbStart, thumbHeight, trackHeight (all in rows)
+func (l *ListView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
 	bounds := l.Bounds()
-	theme := l.Theme()
-	metrics := p.Metrics()
-
-	scrollbarX := bounds.Width - metrics.CellWidth
-
-	// Calculate scrollbar position
+	metrics := core.DefaultCellMetrics()
 	totalItems := len(l.items)
-	thumbHeight := visibleCount * visibleCount / totalItems
+
+	scrollbarX = bounds.Width - metrics.CellWidth
+	trackHeight = visibleCount
+
+	if totalItems <= visibleCount {
+		// No scrolling needed - thumb fills track
+		thumbStart = 0
+		thumbHeight = trackHeight
+		return
+	}
+
+	// Calculate thumb height - proportional to visible/total, minimum 1 row
+	thumbHeight = visibleCount * visibleCount / totalItems
 	if thumbHeight < 1 {
 		thumbHeight = 1
 	}
 
-	thumbPos := l.scrollOffset * visibleCount / totalItems
+	// Calculate thumb position
+	// The thumb should only be at position 0 when scrollOffset is 0
+	// The thumb should only be at the bottom when scrollOffset is at max
+	maxScroll := totalItems - visibleCount
+	scrollableTrack := trackHeight - thumbHeight
+
+	if maxScroll > 0 && scrollableTrack > 0 {
+		// Map scroll position to thumb position, ensuring extremes are only at extremes
+		thumbStart = l.scrollOffset * scrollableTrack / maxScroll
+
+		// Ensure thumb doesn't go to extremes unless scroll is at extremes
+		if l.scrollOffset > 0 && thumbStart == 0 {
+			thumbStart = 1
+		}
+		if l.scrollOffset < maxScroll && thumbStart >= scrollableTrack {
+			thumbStart = scrollableTrack - 1
+		}
+	}
+
+	return
+}
+
+// paintScrollbar draws a vertical scrollbar.
+func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
+	theme := l.Theme()
+	metrics := p.Metrics()
+
+	scrollbarX, thumbStart, thumbHeight, trackHeight := l.scrollbarGeometry(visibleCount)
 
 	// Draw scrollbar track
-	for i := 0; i < visibleCount; i++ {
+	for i := 0; i < trackHeight; i++ {
 		y := core.Unit(i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '│', theme.Disabled)
 	}
 
 	// Draw scrollbar thumb
 	for i := 0; i < thumbHeight; i++ {
-		y := core.Unit(thumbPos+i) * metrics.CellHeight
-		if y < bounds.Height {
-			p.DrawCell(scrollbarX, y, '█', theme.Normal)
-		}
+		y := core.Unit(thumbStart+i) * metrics.CellHeight
+		p.DrawCell(scrollbarX, y, '█', theme.Normal)
 	}
 }
 
@@ -518,6 +554,13 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 	return false
 }
 
+// visibleCount returns the number of visible rows.
+func (l *ListView) visibleCount() int {
+	bounds := l.Bounds()
+	metrics := core.DefaultCellMetrics()
+	return int(bounds.Height / metrics.CellHeight)
+}
+
 // HandleMousePress handles mouse clicks.
 func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button != core.LeftButton {
@@ -525,13 +568,51 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	l.SetFocus()
-	l.isDragging = true
-
+	bounds := l.Bounds()
 	metrics := core.DefaultCellMetrics()
+
+	// Check if click is on scrollbar
+	scrollbarX, thumbStart, thumbHeight, _ := l.scrollbarGeometry(l.visibleCount())
+	if event.X >= scrollbarX && len(l.items) > l.visibleCount() {
+		clickedRow := int(event.Y / metrics.CellHeight)
+
+		// Check if on thumb
+		if clickedRow >= thumbStart && clickedRow < thumbStart+thumbHeight {
+			// Start scrollbar drag
+			l.scrollbarDragging = true
+			l.scrollbarDragStart = clickedRow
+			l.scrollbarDragOffset = l.scrollOffset
+			return true
+		}
+
+		// Click on track - page up or page down
+		visibleCount := l.visibleCount()
+		if clickedRow < thumbStart {
+			// Page up
+			l.scrollOffset -= visibleCount
+			if l.scrollOffset < 0 {
+				l.scrollOffset = 0
+			}
+		} else {
+			// Page down
+			maxScroll := len(l.items) - visibleCount
+			l.scrollOffset += visibleCount
+			if l.scrollOffset > maxScroll {
+				l.scrollOffset = maxScroll
+			}
+		}
+		l.Update()
+		return true
+	}
+
+	// Click on list content
+	l.isDragging = true
 	clickedRow := int(event.Y / metrics.CellHeight)
 	clickedIndex := l.scrollOffset + clickedRow
 
-	if clickedIndex >= 0 && clickedIndex < len(l.items) {
+	// Account for scrollbar width
+	contentWidth := bounds.Width - metrics.CellWidth
+	if event.X < contentWidth && clickedIndex >= 0 && clickedIndex < len(l.items) {
 		l.SetCurrentIndex(clickedIndex)
 	}
 
@@ -540,11 +621,47 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse drag to sweep selection.
 func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
+	metrics := core.DefaultCellMetrics()
+
+	// Handle scrollbar thumb drag
+	if l.scrollbarDragging {
+		currentRow := int(event.Y / metrics.CellHeight)
+		rowDelta := currentRow - l.scrollbarDragStart
+
+		visibleCount := l.visibleCount()
+		totalItems := len(l.items)
+		maxScroll := totalItems - visibleCount
+
+		if maxScroll > 0 {
+			_, _, thumbHeight, trackHeight := l.scrollbarGeometry(visibleCount)
+			scrollableTrack := trackHeight - thumbHeight
+
+			if scrollableTrack > 0 {
+				// Convert row delta to scroll offset delta
+				scrollDelta := rowDelta * maxScroll / scrollableTrack
+				newOffset := l.scrollbarDragOffset + scrollDelta
+
+				// Clamp
+				if newOffset < 0 {
+					newOffset = 0
+				} else if newOffset > maxScroll {
+					newOffset = maxScroll
+				}
+
+				if newOffset != l.scrollOffset {
+					l.scrollOffset = newOffset
+					l.Update()
+				}
+			}
+		}
+		return true
+	}
+
+	// Handle list item drag
 	if !l.isDragging {
 		return false
 	}
 
-	metrics := core.DefaultCellMetrics()
 	row := int(event.Y / metrics.CellHeight)
 	index := l.scrollOffset + row
 
@@ -565,6 +682,39 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 // HandleMouseRelease handles mouse release.
 func (l *ListView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	l.isDragging = false
+	l.scrollbarDragging = false
+	return true
+}
+
+// HandleMouseWheel handles mouse wheel scrolling.
+func (l *ListView) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	if len(l.items) == 0 {
+		return false
+	}
+
+	visibleCount := l.visibleCount()
+	maxScroll := len(l.items) - visibleCount
+	if maxScroll <= 0 {
+		return false
+	}
+
+	// Scroll by 3 lines per wheel click
+	scrollAmount := 3
+	if event.DeltaY < 0 {
+		// Scroll up
+		l.scrollOffset -= scrollAmount
+		if l.scrollOffset < 0 {
+			l.scrollOffset = 0
+		}
+	} else if event.DeltaY > 0 {
+		// Scroll down
+		l.scrollOffset += scrollAmount
+		if l.scrollOffset > maxScroll {
+			l.scrollOffset = maxScroll
+		}
+	}
+
+	l.Update()
 	return true
 }
 
