@@ -233,6 +233,11 @@ func (m *WindowManager) AddWindow(win *Window) {
 		}
 	})
 
+	// Set popup controller on window content so widgets can use overlays
+	if content := win.Content(); content != nil {
+		m.setPopupControllerRecursive(content)
+	}
+
 	// Position if not explicitly set (X and Y both at default 0)
 	bounds := win.Bounds()
 	if bounds.X == 0 && bounds.Y == 0 {
@@ -244,6 +249,22 @@ func (m *WindowManager) AddWindow(win *Window) {
 
 	if handler != nil {
 		handler(win)
+	}
+}
+
+// setPopupControllerRecursive sets this WindowManager as the popup controller
+// for a widget and all its descendants.
+func (m *WindowManager) setPopupControllerRecursive(widget core.Widget) {
+	// Set on this widget if it has the method
+	if setter, ok := widget.(interface{ SetPopupController(core.PopupController) }); ok {
+		setter.SetPopupController(m)
+	}
+
+	// Recurse into children
+	if container, ok := widget.(core.Container); ok {
+		for _, child := range container.Children() {
+			m.setPopupControllerRecursive(child)
+		}
 	}
 }
 
@@ -448,18 +469,26 @@ func (m *WindowManager) SetOnWindowRestored(handler func(*Window)) {
 	m.mu.Unlock()
 }
 
-// RegisterPopup registers a popup overlay to be painted on top of all windows.
-func (m *WindowManager) RegisterPopup(popup *PopupOverlay) {
+// RegisterPopup implements core.PopupController.
+// It registers a popup overlay to be painted on top of all windows.
+func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Remove any existing popup with the same ID
 	for i, p := range m.popups {
-		if p.ID == popup.ID {
+		if p.ID == request.ID {
 			m.popups = append(m.popups[:i], m.popups[i+1:]...)
 			break
 		}
 	}
-	m.popups = append(m.popups, popup)
+	// Convert core.PopupRequest to internal PopupOverlay
+	overlay := &PopupOverlay{
+		ID:               request.ID,
+		Bounds:           request.Bounds,
+		Paint:            request.Paint,
+		HandleMousePress: request.HandleMousePress,
+	}
+	m.popups = append(m.popups, overlay)
 }
 
 // UnregisterPopup removes a popup overlay by ID.
@@ -479,6 +508,69 @@ func (m *WindowManager) HasPopups() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.popups) > 0
+}
+
+// MapToScreen implements core.PopupController.
+// It converts local widget coordinates to screen coordinates.
+func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
+	// Traverse up the widget hierarchy to accumulate offsets
+	result := local
+
+	// Find the widget's position by traversing up through parents
+	current := widget
+	for current != nil {
+		bounds := current.Bounds()
+		result.X += bounds.X
+		result.Y += bounds.Y
+
+		parent := current.Parent()
+		if parent == nil {
+			break
+		}
+		// Type assert to Widget to continue traversal
+		if pw, ok := parent.(core.Widget); ok {
+			current = pw
+		} else {
+			break
+		}
+	}
+
+	// If the widget is in a window, we need to find that window's position
+	m.mu.RLock()
+	for _, win := range m.windows {
+		// Check if this widget is a descendant of this window
+		if m.widgetIsInWindow(widget, win) {
+			winBounds := win.Bounds()
+			// Adjust for window client area (title bar etc)
+			clientOffset := win.ClientAreaOffset()
+			result.X += winBounds.X + clientOffset.X
+			result.Y += winBounds.Y + clientOffset.Y
+			break
+		}
+	}
+	m.mu.RUnlock()
+
+	return result
+}
+
+// widgetIsInWindow checks if a widget is contained within a window.
+func (m *WindowManager) widgetIsInWindow(widget core.Widget, win *Window) bool {
+	current := widget
+	for current != nil {
+		if current == win.Content() {
+			return true
+		}
+		parent := current.Parent()
+		if parent == nil {
+			break
+		}
+		if pw, ok := parent.(core.Widget); ok {
+			current = pw
+		} else {
+			break
+		}
+	}
+	return false
 }
 
 // positionWindow positions a new window using cascading.

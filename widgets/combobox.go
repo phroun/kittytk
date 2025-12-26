@@ -222,13 +222,69 @@ func (c *ComboBox) ShowPopup() {
 			c.scrollOffset = c.currentIndex - c.maxVisible + 1
 		}
 	}
+
+	// Register popup overlay if we have a popup controller
+	if pc := c.PopupController(); pc != nil {
+		c.registerPopupOverlay(pc)
+	}
+
 	c.Update()
 }
 
 // HidePopup closes the drop-down.
 func (c *ComboBox) HidePopup() {
 	c.isOpen = false
+
+	// Unregister popup overlay if we have a popup controller
+	if pc := c.PopupController(); pc != nil {
+		pc.UnregisterPopup(c.popupID())
+	}
+
 	c.Update()
+}
+
+// popupID returns a unique identifier for this ComboBox's popup.
+func (c *ComboBox) popupID() string {
+	return "combobox-" + c.Name()
+}
+
+// registerPopupOverlay registers the popup with the popup controller.
+func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
+	bounds := c.Bounds()
+	metrics := core.DefaultCellMetrics()
+
+	// Calculate popup height
+	popupHeight := len(c.items)
+	if popupHeight > c.maxVisible {
+		popupHeight = c.maxVisible
+	}
+
+	// Get popup position in local coordinates (below the widget)
+	localPopupPos := core.UnitPoint{X: 0, Y: metrics.CellHeight}
+
+	// Convert to screen coordinates
+	screenPos := pc.MapToScreen(c, localPopupPos)
+
+	popupBounds := core.UnitRect{
+		X:      screenPos.X,
+		Y:      screenPos.Y,
+		Width:  bounds.Width,
+		Height: core.Unit(popupHeight) * metrics.CellHeight,
+	}
+
+	// Create popup request
+	request := &core.PopupRequest{
+		ID:     c.popupID(),
+		Bounds: popupBounds,
+		Paint: func(p *core.Painter) {
+			c.paintPopupOverlay(p, popupBounds)
+		},
+		HandleMousePress: func(event core.MousePressEvent) bool {
+			return c.handlePopupMousePress(event, popupBounds)
+		},
+	}
+
+	pc.RegisterPopup(request)
 }
 
 // SetMaxVisibleItems sets the maximum number of visible items in the drop-down.
@@ -329,8 +385,8 @@ func (c *ComboBox) Paint(p *core.Painter) {
 	p.DrawCell(arrowX, 0, ' ', s)
 	p.DrawCell(arrowX+metrics.CellWidth, 0, '▼', s)
 
-	// Draw popup if open
-	if c.isOpen {
+	// Draw popup if open - only use fallback if no popup controller
+	if c.isOpen && c.PopupController() == nil {
 		c.paintPopup(p)
 	}
 }
@@ -404,6 +460,108 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 		endY := popupY + core.Unit(popupHeight-1)*metrics.CellHeight
 		p.DrawCell(bounds.Width-metrics.CellWidth*2, endY, '▼', theme.MenuItem)
 	}
+}
+
+// paintPopupOverlay renders the popup for the overlay system.
+// The popup is rendered at its screen position.
+func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect) {
+	theme := c.Theme()
+	metrics := p.Metrics()
+
+	// Calculate popup height
+	popupHeight := len(c.items)
+	if popupHeight > c.maxVisible {
+		popupHeight = c.maxVisible
+	}
+
+	// Use a painter offset to the popup position
+	popupPainter := p.WithOffset(popupBounds.X, popupBounds.Y)
+
+	// Draw popup background
+	localBounds := core.UnitRect{
+		X:      0,
+		Y:      0,
+		Width:  popupBounds.Width,
+		Height: popupBounds.Height,
+	}
+	popupPainter.FillRect(localBounds, ' ', theme.MenuItem)
+	popupPainter.DrawRect(localBounds, theme.DefaultBorder, theme.MenuItem)
+
+	// Draw items
+	for i := 0; i < popupHeight; i++ {
+		itemIndex := c.scrollOffset + i
+		if itemIndex >= len(c.items) {
+			break
+		}
+
+		item := c.items[itemIndex]
+		itemY := core.Unit(i) * metrics.CellHeight
+
+		// Determine item style
+		var itemStyle style.CellStyle
+		if itemIndex == c.currentIndex {
+			itemStyle = theme.MenuItemSelected
+		} else {
+			itemStyle = theme.MenuItem
+		}
+
+		// Draw item background
+		popupPainter.FillRect(core.UnitRect{
+			X:      0,
+			Y:      itemY,
+			Width:  popupBounds.Width,
+			Height: metrics.CellHeight,
+		}, ' ', itemStyle)
+
+		// Draw item text
+		x := metrics.CellWidth
+		for _, ch := range item {
+			if x >= popupBounds.Width-metrics.CellWidth {
+				break
+			}
+			popupPainter.DrawCell(x, itemY, ch, itemStyle)
+			x += metrics.CellWidth
+		}
+	}
+
+	// Draw scroll indicators if needed
+	if c.scrollOffset > 0 {
+		popupPainter.DrawCell(popupBounds.Width-metrics.CellWidth*2, 0, '▲', theme.MenuItem)
+	}
+	if c.scrollOffset+popupHeight < len(c.items) {
+		endY := core.Unit(popupHeight-1) * metrics.CellHeight
+		popupPainter.DrawCell(popupBounds.Width-metrics.CellWidth*2, endY, '▼', theme.MenuItem)
+	}
+}
+
+// handlePopupMousePress handles mouse clicks on the popup overlay.
+func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds core.UnitRect) bool {
+	if event.Button != core.LeftButton {
+		return false
+	}
+
+	// Check if the click is within the popup bounds
+	if event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
+		event.Y >= popupBounds.Y && event.Y < popupBounds.Y+popupBounds.Height {
+		// Calculate which item was clicked
+		metrics := core.DefaultCellMetrics()
+		relY := event.Y - popupBounds.Y
+		itemIndex := int(relY / metrics.CellHeight)
+		actualIndex := c.scrollOffset + itemIndex
+
+		if actualIndex >= 0 && actualIndex < len(c.items) {
+			c.SetCurrentIndex(actualIndex)
+			if c.onActivated != nil {
+				c.onActivated(actualIndex)
+			}
+			c.HidePopup()
+			return true
+		}
+	}
+
+	// Click was outside popup - close it
+	c.HidePopup()
+	return true
 }
 
 // HandleKeyPress handles keyboard input.

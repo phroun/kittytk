@@ -166,7 +166,7 @@ func (c *Checkbox) Paint(p *core.Painter) {
 	case Unchecked:
 		indicator = "[ ]"
 	case Checked:
-		indicator = "[X]"
+		indicator = "[x]"
 	case PartiallyChecked:
 		indicator = "[-]"
 	}

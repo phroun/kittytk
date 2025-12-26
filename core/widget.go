@@ -199,6 +199,30 @@ type FocusableWidget interface {
 	SetPrevFocusWidget(w Widget)
 }
 
+// PopupRequest contains information about a popup to be shown.
+type PopupRequest struct {
+	// Unique identifier for the popup
+	ID string
+	// Bounds in screen coordinates
+	Bounds UnitRect
+	// Paint function to render the popup
+	Paint func(p *Painter)
+	// HandleMousePress function to handle clicks (returns true if handled)
+	HandleMousePress func(event MousePressEvent) bool
+}
+
+// PopupController is an interface for managing popup overlays.
+// Widgets that need to show popups (like ComboBox) can use this
+// to have their popups rendered on top of all windows.
+type PopupController interface {
+	// RegisterPopup registers a popup to be rendered on top of windows.
+	RegisterPopup(request *PopupRequest)
+	// UnregisterPopup removes a popup by ID.
+	UnregisterPopup(id string)
+	// MapToScreen converts local widget coordinates to screen coordinates.
+	MapToScreen(widget Widget, local UnitPoint) UnitPoint
+}
+
 // Application is a forward declaration (defined in app package).
 // This interface allows widgets to access application-level services.
 type Application struct {
@@ -231,8 +255,9 @@ type WidgetBase struct {
 	enabled bool
 	focused bool
 
-	focusPolicy FocusPolicy
-	style       *style.CellStyle
+	focusPolicy     FocusPolicy
+	style           *style.CellStyle
+	popupController PopupController
 
 	needsRepaint bool
 }
@@ -640,6 +665,22 @@ func (w *WidgetBase) SetApplication(app *Application) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.app = app
+}
+
+// PopupController returns the popup controller for this widget.
+// Returns nil if no popup controller has been set.
+func (w *WidgetBase) PopupController() PopupController {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.popupController
+}
+
+// SetPopupController sets the popup controller for this widget.
+// This is typically called by the window manager when adding windows.
+func (w *WidgetBase) SetPopupController(pc PopupController) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.popupController = pc
 }
 
 // setFocusWidget updates the focused widget, clearing focus from the previous one.

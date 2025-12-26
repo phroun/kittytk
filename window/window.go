@@ -481,6 +481,13 @@ func (w *Window) contentBounds() core.UnitRect {
 	}
 }
 
+// ClientAreaOffset returns the offset from the window's top-left corner
+// to the client (content) area. This accounts for title bar and frame.
+func (w *Window) ClientAreaOffset() core.UnitPoint {
+	cb := w.contentBounds()
+	return core.UnitPoint{X: cb.X, Y: cb.Y}
+}
+
 // layoutContent lays out the content widget.
 func (w *Window) layoutContent() {
 	w.mu.RLock()

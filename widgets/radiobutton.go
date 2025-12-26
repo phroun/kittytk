@@ -109,7 +109,7 @@ func (r *RadioButton) Paint(p *core.Painter) {
 	// Draw radio indicator
 	var indicator string
 	if r.checked {
-		indicator = "(●)"
+		indicator = "(*)"
 	} else {
 		indicator = "( )"
 	}
