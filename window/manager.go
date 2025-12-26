@@ -493,6 +493,7 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RUnlock()
 
 	// Window switching shortcuts
+	// Uses direct-key-handler naming: M- = Alt, C- = Ctrl, S- = Shift
 	switch event.Key {
 	case "M-Tab", "C-Tab":
 		m.CycleWindows(true)

@@ -15,15 +15,11 @@ import (
 
 func main() {
 	// Create the TUI backend with default options
+	// Note: Don't call Init/Shutdown here - Application.Run() handles that
 	tuiBackend := backend.NewTUIBackend(backend.TUIOptions{
 		Output: os.Stdout,
 		Input:  os.Stdin,
 	})
-	if err := tuiBackend.Init(); err != nil {
-		fmt.Printf("Failed to initialize backend: %v\n", err)
-		return
-	}
-	defer tuiBackend.Shutdown()
 
 	// Create the application
 	application := app.New(tuiBackend)
@@ -32,7 +28,7 @@ func main() {
 	mainWindow := createMainWindow(application)
 	application.WindowManager().AddWindow(mainWindow)
 
-	// Run the application
+	// Run the application (handles Init/Shutdown internally)
 	application.Run()
 }
 

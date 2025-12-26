@@ -640,6 +640,13 @@ func (t *TUIBackend) Beep() {
 
 // handleKey processes key events from the keyboard handler.
 func (t *TUIBackend) handleKey(key string) {
+	// Parse modifiers while keeping the full key string
+	// Key names follow direct-key-handler convention:
+	// - Control+letter: "^A", "^X" etc.
+	// - Special keys: "Left", "Right", "Up", "Down", "Enter", "Tab", "Escape", etc.
+	// - Function keys: "F1", "F2", ... "F12"
+	// - Alt combinations: "M-" prefix
+	// - Shift combinations: "S-" prefix
 	mods, keyName := core.ParseKeyModifiers(key)
 
 	// Determine text content for printable characters
@@ -649,8 +656,8 @@ func (t *TUIBackend) handleKey(key string) {
 	}
 
 	event := core.KeyPressEvent{
-		Key:       key,
-		Modifiers: mods,
+		Key:       key,  // Full key string including modifier prefixes
+		Modifiers: mods, // Also provide parsed modifiers for widget convenience
 		Text:      text,
 	}
 
