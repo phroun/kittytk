@@ -482,12 +482,6 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 		x += tabWidth
 	}
-
-	// Draw line under tabs
-	y := tabHeight - 1
-	for i := core.Unit(0); i < bounds.Width; i += metrics.CellWidth {
-		p.DrawCell(i, y, '─', theme.Normal)
-	}
 }
 
 func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
@@ -769,6 +763,46 @@ func (t *TabWidget) HandleFocusIn() {
 // HandleFocusOut is called when focus is lost.
 func (t *TabWidget) HandleFocusOut() {
 	t.Update()
+}
+
+// HandleMouseMove handles mouse movement.
+func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Forward to current content
+	if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
+		content := t.tabs[t.currentIndex].Content
+		if content != nil {
+			if handler, ok := content.(interface {
+				HandleMouseMove(core.MouseMoveEvent) bool
+			}); ok {
+				contentBounds := t.contentBounds()
+				localEvent := event
+				localEvent.X -= contentBounds.X
+				localEvent.Y -= contentBounds.Y
+				return handler.HandleMouseMove(localEvent)
+			}
+		}
+	}
+	return false
+}
+
+// HandleMouseRelease handles mouse button release.
+func (t *TabWidget) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	// Forward to current content
+	if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
+		content := t.tabs[t.currentIndex].Content
+		if content != nil {
+			if handler, ok := content.(interface {
+				HandleMouseRelease(core.MouseReleaseEvent) bool
+			}); ok {
+				contentBounds := t.contentBounds()
+				localEvent := event
+				localEvent.X -= contentBounds.X
+				localEvent.Y -= contentBounds.Y
+				return handler.HandleMouseRelease(localEvent)
+			}
+		}
+	}
+	return false
 }
 
 // HandleResize is called when the tab widget is resized.

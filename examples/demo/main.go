@@ -320,11 +320,11 @@ func createSelectionDemo() core.Widget {
 	return panel
 }
 
-// createListDemo creates a panel with list widgets.
+// createListDemo creates a panel with list widgets using a draggable splitter.
 func createListDemo() core.Widget {
-	panel := widgets.NewPanel()
-	hLayout := layout.NewBoxLayout(core.Horizontal)
-	hLayout.SetSpacing(8)
+	// Use a horizontal splitter to divide space between ListView and TreeView
+	splitter := widgets.NewHSplitter()
+	splitter.SetPosition(0.5) // Start with 50/50 split
 
 	// ListView
 	listViewPanel := widgets.NewPanel()
@@ -341,7 +341,7 @@ func createListDemo() core.Widget {
 	listViewPanel.AddChild(listView)
 
 	listViewPanel.SetLayoutManager(listLayout)
-	panel.AddChild(listViewPanel)
+	splitter.SetFirst(listViewPanel)
 
 	// TreeView
 	treeViewPanel := widgets.NewPanel()
@@ -377,10 +377,9 @@ func createListDemo() core.Widget {
 	treeViewPanel.AddChild(treeView)
 
 	treeViewPanel.SetLayoutManager(treeLayout)
-	panel.AddChild(treeViewPanel)
+	splitter.SetSecond(treeViewPanel)
 
-	panel.SetLayoutManager(hLayout)
-	return panel
+	return splitter
 }
 
 // createProgressDemo creates a panel with progress indicators.

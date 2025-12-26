@@ -508,6 +508,33 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return true
 	}
 
+	// Forward to desktop first (for menu bar drag navigation)
+	m.mu.RLock()
+	desktop := m.desktop
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if desktop != nil {
+		if handler, ok := desktop.(interface {
+			HandleMouseMove(core.MouseMoveEvent) bool
+		}); ok {
+			if handler.HandleMouseMove(event) {
+				return true
+			}
+		}
+	}
+
+	// Forward to active window (for splitter/widget dragging)
+	if active != nil {
+		bounds := active.Bounds()
+		localEvent := event
+		localEvent.X -= bounds.X
+		localEvent.Y -= bounds.Y
+		if active.HandleMouseMove(localEvent) {
+			return true
+		}
+	}
+
 	return false
 }
 
@@ -521,6 +548,33 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 	if dragging != nil {
 		return true
+	}
+
+	// Forward to desktop first (for menu bar drag release)
+	m.mu.RLock()
+	desktop := m.desktop
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if desktop != nil {
+		if handler, ok := desktop.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			if handler.HandleMouseRelease(event) {
+				return true
+			}
+		}
+	}
+
+	// Forward to active window (for splitter/widget release)
+	if active != nil {
+		bounds := active.Bounds()
+		localEvent := event
+		localEvent.X -= bounds.X
+		localEvent.Y -= bounds.Y
+		if active.HandleMouseRelease(localEvent) {
+			return true
+		}
 	}
 
 	return false

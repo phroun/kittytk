@@ -688,6 +688,54 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	return true // Consume click
 }
 
+// HandleMouseMove handles mouse movement.
+func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
+	w.mu.RLock()
+	content := w.content
+	w.mu.RUnlock()
+
+	// Forward to content
+	if content != nil {
+		if handler, ok := content.(interface {
+			HandleMouseMove(core.MouseMoveEvent) bool
+		}); ok {
+			contentBounds := w.contentBounds()
+			localEvent := event
+			localEvent.X -= contentBounds.X
+			localEvent.Y -= contentBounds.Y
+			if handler.HandleMouseMove(localEvent) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// HandleMouseRelease handles mouse button release.
+func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	w.mu.RLock()
+	content := w.content
+	w.mu.RUnlock()
+
+	// Forward to content
+	if content != nil {
+		if handler, ok := content.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			contentBounds := w.contentBounds()
+			localEvent := event
+			localEvent.X -= contentBounds.X
+			localEvent.Y -= contentBounds.Y
+			if handler.HandleMouseRelease(localEvent) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // HandleResize is called when the window is resized.
 func (w *Window) HandleResize(oldSize, newSize core.UnitSize) {
 	w.layoutContent()

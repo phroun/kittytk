@@ -1,0 +1,428 @@
+// Package widgets provides standard UI widgets for the TUI toolkit.
+package widgets
+
+import (
+	"github.com/phroun/tuitk/core"
+)
+
+// Splitter is a container widget that divides space between two children
+// with a draggable divider.
+type Splitter struct {
+	core.WidgetBase
+	core.AccessibleWidget
+
+	// Child widgets
+	first  core.Widget
+	second core.Widget
+
+	// Orientation (Horizontal or Vertical)
+	orientation core.Orientation
+
+	// Split position (0.0-1.0 ratio, or absolute if > 1)
+	position float64
+
+	// Divider dragging state
+	dragging bool
+
+	// Appearance
+	dividerWidth core.Unit // Width of the divider bar
+}
+
+// NewSplitter creates a new splitter with the given orientation.
+func NewSplitter(orientation core.Orientation) *Splitter {
+	s := &Splitter{
+		orientation:  orientation,
+		position:     0.5, // Default to 50/50 split
+		dividerWidth: 8,   // 1 cell width
+	}
+	s.WidgetBase = *core.NewWidgetBase()
+	s.SetFocusPolicy(core.NoFocus)
+	s.SetAccessibleRole(core.RoleSplitter)
+	return s
+}
+
+// NewHSplitter creates a horizontal splitter (children side by side).
+func NewHSplitter() *Splitter {
+	return NewSplitter(core.Horizontal)
+}
+
+// NewVSplitter creates a vertical splitter (children stacked).
+func NewVSplitter() *Splitter {
+	return NewSplitter(core.Vertical)
+}
+
+// SetFirst sets the first child widget (left/top).
+func (s *Splitter) SetFirst(w core.Widget) {
+	if s.first != nil {
+		s.first.SetParent(nil)
+	}
+	s.first = w
+	if w != nil {
+		w.SetParent(s)
+	}
+	s.Update()
+}
+
+// First returns the first child widget.
+func (s *Splitter) First() core.Widget {
+	return s.first
+}
+
+// SetSecond sets the second child widget (right/bottom).
+func (s *Splitter) SetSecond(w core.Widget) {
+	if s.second != nil {
+		s.second.SetParent(nil)
+	}
+	s.second = w
+	if w != nil {
+		w.SetParent(s)
+	}
+	s.Update()
+}
+
+// Second returns the second child widget.
+func (s *Splitter) Second() core.Widget {
+	return s.second
+}
+
+// SetPosition sets the split position (0.0-1.0 as ratio).
+func (s *Splitter) SetPosition(pos float64) {
+	if pos < 0 {
+		pos = 0
+	} else if pos > 1 {
+		pos = 1
+	}
+	s.position = pos
+	s.Update()
+}
+
+// Position returns the split position.
+func (s *Splitter) Position() float64 {
+	return s.position
+}
+
+// Orientation returns the splitter orientation.
+func (s *Splitter) Orientation() core.Orientation {
+	return s.orientation
+}
+
+// SetOrientation sets the splitter orientation.
+func (s *Splitter) SetOrientation(o core.Orientation) {
+	s.orientation = o
+	s.Update()
+}
+
+// Children returns all child widgets.
+func (s *Splitter) Children() []core.Widget {
+	var children []core.Widget
+	if s.first != nil {
+		children = append(children, s.first)
+	}
+	if s.second != nil {
+		children = append(children, s.second)
+	}
+	return children
+}
+
+// AddChild adds a child widget.
+func (s *Splitter) AddChild(child core.Widget) {
+	if s.first == nil {
+		s.SetFirst(child)
+	} else if s.second == nil {
+		s.SetSecond(child)
+	}
+}
+
+// RemoveChild removes a child widget.
+func (s *Splitter) RemoveChild(child core.Widget) {
+	if s.first == child {
+		s.first = nil
+	} else if s.second == child {
+		s.second = nil
+	}
+}
+
+// ChildAt returns the child at the given position.
+func (s *Splitter) ChildAt(pos core.UnitPoint) core.Widget {
+	dividerRect := s.dividerBounds()
+	if dividerRect.Contains(pos) {
+		return nil // On divider
+	}
+
+	firstBounds, secondBounds := s.childBounds()
+	if firstBounds.Contains(pos) && s.first != nil {
+		return s.first
+	}
+	if secondBounds.Contains(pos) && s.second != nil {
+		return s.second
+	}
+	return nil
+}
+
+// Layout arranges children.
+func (s *Splitter) Layout() {
+	firstBounds, secondBounds := s.childBounds()
+	if s.first != nil {
+		s.first.SetBounds(firstBounds)
+	}
+	if s.second != nil {
+		s.second.SetBounds(secondBounds)
+	}
+}
+
+// LayoutManager returns nil (Splitter manages its own layout).
+func (s *Splitter) LayoutManager() core.LayoutManager {
+	return nil
+}
+
+// SetLayoutManager is a no-op (Splitter manages its own layout).
+func (s *Splitter) SetLayoutManager(layout core.LayoutManager) {
+	// Splitter manages its own layout
+}
+
+// dividerBounds returns the bounds of the divider bar.
+func (s *Splitter) dividerBounds() core.UnitRect {
+	bounds := s.Bounds()
+	metrics := core.DefaultCellMetrics()
+
+	if s.orientation == core.Horizontal {
+		totalWidth := bounds.Width - s.dividerWidth
+		firstWidth := core.Unit(float64(totalWidth) * s.position)
+		// Round to cell boundary
+		firstWidth = core.Unit(metrics.UnitsToCellX(firstWidth)) * metrics.CellWidth
+
+		return core.UnitRect{
+			X:      firstWidth,
+			Y:      0,
+			Width:  s.dividerWidth,
+			Height: bounds.Height,
+		}
+	}
+
+	// Vertical
+	totalHeight := bounds.Height - s.dividerWidth
+	firstHeight := core.Unit(float64(totalHeight) * s.position)
+	// Round to cell boundary
+	firstHeight = core.Unit(metrics.UnitsToCellY(firstHeight)) * metrics.CellHeight
+
+	return core.UnitRect{
+		X:      0,
+		Y:      firstHeight,
+		Width:  bounds.Width,
+		Height: s.dividerWidth,
+	}
+}
+
+// childBounds returns the bounds for both children.
+func (s *Splitter) childBounds() (core.UnitRect, core.UnitRect) {
+	bounds := s.Bounds()
+	divider := s.dividerBounds()
+
+	if s.orientation == core.Horizontal {
+		return core.UnitRect{
+				X:      0,
+				Y:      0,
+				Width:  divider.X,
+				Height: bounds.Height,
+			}, core.UnitRect{
+				X:      divider.X + divider.Width,
+				Y:      0,
+				Width:  bounds.Width - divider.X - divider.Width,
+				Height: bounds.Height,
+			}
+	}
+
+	// Vertical
+	return core.UnitRect{
+			X:      0,
+			Y:      0,
+			Width:  bounds.Width,
+			Height: divider.Y,
+		}, core.UnitRect{
+			X:      0,
+			Y:      divider.Y + divider.Height,
+			Width:  bounds.Width,
+			Height: bounds.Height - divider.Y - divider.Height,
+		}
+}
+
+// SizeHint returns the preferred size.
+func (s *Splitter) SizeHint() core.UnitSize {
+	return s.Bounds().Size()
+}
+
+// Paint renders the splitter.
+func (s *Splitter) Paint(p *core.Painter) {
+	bounds := s.Bounds()
+	theme := s.Theme()
+	metrics := p.Metrics()
+
+	// Draw background
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
+
+	// Update child bounds
+	s.Layout()
+
+	// Draw first child
+	if s.first != nil {
+		firstBounds, _ := s.childBounds()
+		firstPainter := p.WithOffset(firstBounds.X, firstBounds.Y).
+			WithClip(core.UnitRect{Width: firstBounds.Width, Height: firstBounds.Height})
+		s.first.Paint(firstPainter)
+	}
+
+	// Draw divider
+	divider := s.dividerBounds()
+	dividerStyle := theme.ScrollTrack // Use scrollbar track color for divider
+	if s.dragging {
+		dividerStyle = theme.Selected
+	}
+
+	if s.orientation == core.Horizontal {
+		// Vertical divider bar
+		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
+			p.DrawCell(divider.X, y, '│', dividerStyle)
+		}
+	} else {
+		// Horizontal divider bar
+		for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
+			p.DrawCell(x, divider.Y, '─', dividerStyle)
+		}
+	}
+
+	// Draw second child
+	if s.second != nil {
+		_, secondBounds := s.childBounds()
+		secondPainter := p.WithOffset(secondBounds.X, secondBounds.Y).
+			WithClip(core.UnitRect{Width: secondBounds.Width, Height: secondBounds.Height})
+		s.second.Paint(secondPainter)
+	}
+}
+
+// HandleMousePress handles mouse button presses.
+func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
+	if event.Button != core.LeftButton {
+		return false
+	}
+
+	// Check if click is on divider
+	divider := s.dividerBounds()
+	if s.orientation == core.Horizontal {
+		// Slightly wider hit area for easier grabbing
+		hitArea := core.UnitRect{
+			X:      divider.X - 4,
+			Y:      0,
+			Width:  divider.Width + 8,
+			Height: s.Bounds().Height,
+		}
+		if hitArea.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+			s.dragging = true
+			s.Update()
+			return true
+		}
+	} else {
+		hitArea := core.UnitRect{
+			X:      0,
+			Y:      divider.Y - 4,
+			Width:  s.Bounds().Width,
+			Height: divider.Height + 8,
+		}
+		if hitArea.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+			s.dragging = true
+			s.Update()
+			return true
+		}
+	}
+
+	// Forward to children
+	firstBounds, secondBounds := s.childBounds()
+	pos := core.UnitPoint{X: event.X, Y: event.Y}
+
+	if firstBounds.Contains(pos) && s.first != nil {
+		localEvent := event
+		localEvent.X -= firstBounds.X
+		localEvent.Y -= firstBounds.Y
+		return s.first.HandleMousePress(localEvent)
+	}
+
+	if secondBounds.Contains(pos) && s.second != nil {
+		localEvent := event
+		localEvent.X -= secondBounds.X
+		localEvent.Y -= secondBounds.Y
+		return s.second.HandleMousePress(localEvent)
+	}
+
+	return false
+}
+
+// HandleMouseMove handles mouse movement for dragging.
+func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
+	if !s.dragging {
+		return false
+	}
+
+	bounds := s.Bounds()
+
+	if s.orientation == core.Horizontal {
+		totalWidth := bounds.Width - s.dividerWidth
+		if totalWidth > 0 {
+			newPos := float64(event.X) / float64(totalWidth)
+			if newPos < 0.1 {
+				newPos = 0.1
+			} else if newPos > 0.9 {
+				newPos = 0.9
+			}
+			s.position = newPos
+			s.Update()
+		}
+	} else {
+		totalHeight := bounds.Height - s.dividerWidth
+		if totalHeight > 0 {
+			newPos := float64(event.Y) / float64(totalHeight)
+			if newPos < 0.1 {
+				newPos = 0.1
+			} else if newPos > 0.9 {
+				newPos = 0.9
+			}
+			s.position = newPos
+			s.Update()
+		}
+	}
+
+	return true
+}
+
+// HandleMouseRelease handles mouse button releases.
+func (s *Splitter) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	if s.dragging {
+		s.dragging = false
+		s.Update()
+		return true
+	}
+	return false
+}
+
+// IsDragging returns whether the divider is being dragged.
+func (s *Splitter) IsDragging() bool {
+	return s.dragging
+}
+
+// HandleKeyPress handles keyboard input.
+func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
+	// Forward to focused child
+	if s.first != nil && s.first.HasFocus() {
+		return s.first.HandleKeyPress(event)
+	}
+	if s.second != nil && s.second.HasFocus() {
+		return s.second.HandleKeyPress(event)
+	}
+	return false
+}
+
+// AccessibleInfo returns accessibility information.
+func (s *Splitter) AccessibleInfo() core.AccessibleInfo {
+	info := s.AccessibleWidget.AccessibleInfo()
+	info.Role = core.RoleSplitter
+	info.Value = ""
+	return info
+}

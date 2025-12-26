@@ -625,6 +625,9 @@ type MenuBar struct {
 
 	// Appearance
 	showShortcuts bool
+
+	// Drag tracking for click-and-drag menu navigation
+	dragging bool
 }
 
 // NewMenuBar creates a new menu bar.
@@ -884,8 +887,8 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 	metrics := core.DefaultCellMetrics()
 	bounds := m.Bounds()
 
-	// Check active menu first
-	if m.activeMenu != nil && m.activeMenu.HandleMousePress(event) {
+	// Check active menu first (but not if we're in drag mode - drag handles this differently)
+	if m.activeMenu != nil && !m.dragging && m.activeMenu.HandleMousePress(event) {
 		return true
 	}
 
@@ -896,10 +899,12 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 		for i, menu := range m.menus {
 			menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
 			if event.X >= x && event.X < x+menuWidth {
-				if m.activeMenu == menu {
+				if m.activeMenu == menu && !m.dragging {
 					m.CloseMenu()
+					m.dragging = false
 				} else {
 					m.OpenMenu(i)
+					m.dragging = true // Start drag mode
 				}
 				return true
 			}
@@ -908,6 +913,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 
 		// Clicked on empty part of menu bar
 		m.CloseMenu()
+		m.dragging = false
 		return true
 	}
 
@@ -916,8 +922,13 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 		return true
 	}
 
-	// Click outside
-	m.CloseMenu()
+	// Click outside - if menu was open, consume the event to dismiss without activating anything
+	if m.activeMenu != nil {
+		m.CloseMenu()
+		m.dragging = false
+		return true
+	}
+
 	return false
 }
 
@@ -932,8 +943,93 @@ func (m *MenuBar) HandleFocusIn() {
 // HandleFocusOut is called when focus is lost.
 func (m *MenuBar) HandleFocusOut() {
 	m.CloseMenu()
+	m.dragging = false
 	m.currentIndex = -1
 	m.Update()
+}
+
+// HandleMouseMove handles mouse movement during drag.
+func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
+	if !m.dragging || m.activeMenu == nil {
+		return false
+	}
+
+	metrics := core.DefaultCellMetrics()
+
+	// Check if mouse is in menu bar - switch menus
+	if event.Y < metrics.CellHeight {
+		x := core.Unit(0)
+		for i, menu := range m.menus {
+			menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
+			if event.X >= x && event.X < x+menuWidth {
+				if m.activeMenu != menu {
+					m.OpenMenu(i)
+				}
+				return true
+			}
+			x += menuWidth
+		}
+		return true
+	}
+
+	// Check if mouse is in dropdown menu - highlight item
+	if m.activeMenu != nil && m.activeMenu.visible {
+		size := m.activeMenu.calculateSize()
+		if event.X >= m.activeMenu.popupX && event.X < m.activeMenu.popupX+size.Width &&
+			event.Y >= m.activeMenu.popupY && event.Y < m.activeMenu.popupY+size.Height {
+			itemIndex := int((event.Y - m.activeMenu.popupY) / metrics.CellHeight)
+			if itemIndex >= 0 && itemIndex < len(m.activeMenu.items) {
+				item := m.activeMenu.items[itemIndex]
+				if !item.Separator && item.Enabled {
+					m.activeMenu.currentIndex = itemIndex
+					m.activeMenu.Update()
+				}
+			}
+			return true
+		}
+	}
+
+	return true
+}
+
+// HandleMouseRelease handles mouse release during drag.
+func (m *MenuBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	if !m.dragging {
+		return false
+	}
+
+	m.dragging = false
+	metrics := core.DefaultCellMetrics()
+
+	// Check if release is on a dropdown menu item - trigger it
+	if m.activeMenu != nil && m.activeMenu.visible {
+		size := m.activeMenu.calculateSize()
+		if event.X >= m.activeMenu.popupX && event.X < m.activeMenu.popupX+size.Width &&
+			event.Y >= m.activeMenu.popupY && event.Y < m.activeMenu.popupY+size.Height {
+			itemIndex := int((event.Y - m.activeMenu.popupY) / metrics.CellHeight)
+			if itemIndex >= 0 && itemIndex < len(m.activeMenu.items) {
+				item := m.activeMenu.items[itemIndex]
+				if !item.Separator && item.Enabled {
+					if item.SubMenu != nil {
+						m.activeMenu.currentIndex = itemIndex
+						m.activeMenu.openSubMenu(item)
+					} else {
+						m.activeMenu.triggerItem(item)
+					}
+					return true
+				}
+			}
+		}
+	}
+
+	// Release not on a menu item - dismiss menu
+	m.CloseMenu()
+	return true
+}
+
+// IsDragging returns whether a menu drag is in progress.
+func (m *MenuBar) IsDragging() bool {
+	return m.dragging
 }
 
 // AccessibleInfo returns accessibility information.

@@ -363,6 +363,28 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
+// HandleMouseMove handles mouse movement.
+func (d *Desktop) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Forward to menu bar for drag navigation
+	if d.menuBar != nil {
+		if d.menuBar.HandleMouseMove(event) {
+			return true
+		}
+	}
+	return false
+}
+
+// HandleMouseRelease handles mouse release.
+func (d *Desktop) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	// Forward to menu bar for drag release
+	if d.menuBar != nil {
+		if d.menuBar.HandleMouseRelease(event) {
+			return true
+		}
+	}
+	return false
+}
+
 // StatusBar is a simple status bar widget.
 type StatusBar struct {
 	core.WidgetBase

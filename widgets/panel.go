@@ -201,6 +201,44 @@ func (p *Panel) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
+// HandleMouseMove handles mouse movement.
+func (p *Panel) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Forward to all children (needed for drag operations)
+	for _, child := range p.children {
+		if handler, ok := child.(interface {
+			HandleMouseMove(core.MouseMoveEvent) bool
+		}); ok {
+			childBounds := child.Bounds()
+			childEvent := event
+			childEvent.X -= childBounds.X
+			childEvent.Y -= childBounds.Y
+			if handler.HandleMouseMove(childEvent) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// HandleMouseRelease handles mouse button release.
+func (p *Panel) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	// Forward to all children (needed for drag operations)
+	for _, child := range p.children {
+		if handler, ok := child.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			childBounds := child.Bounds()
+			childEvent := event
+			childEvent.X -= childBounds.X
+			childEvent.Y -= childBounds.Y
+			if handler.HandleMouseRelease(childEvent) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // HandleResize is called when the panel is resized.
 func (p *Panel) HandleResize(oldSize, newSize core.UnitSize) {
 	p.Layout()
