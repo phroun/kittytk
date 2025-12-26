@@ -132,8 +132,9 @@ func (m *WindowManager) AddWindow(win *Window) {
 	handler := m.onWindowAdded
 	m.mu.Unlock()
 
-	// Position if not set
-	if win.Bounds().IsEmpty() {
+	// Position if not explicitly set (X and Y both at default 0)
+	bounds := win.Bounds()
+	if bounds.X == 0 && bounds.Y == 0 {
 		m.positionWindow(win)
 	}
 
