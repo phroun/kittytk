@@ -114,9 +114,20 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	// Apply margins
 	rect := l.effectiveBounds(bounds)
 
+	// Round spacing to whole cell size based on orientation
+	metrics := core.DefaultCellMetrics()
+	var spacing core.Unit
+	if l.orientation == core.Horizontal {
+		// Round to CellWidth
+		spacing = core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.CellWidth
+	} else {
+		// Round to CellHeight
+		spacing = core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.CellHeight
+	}
+
 	// Collect size hints and stretch factors
 	stretchItems := make([]stretchItem, len(l.items))
-	totalSpacing := l.spacing * core.Unit(len(l.items)-1)
+	totalSpacing := spacing * core.Unit(len(l.items)-1)
 
 	var availablePrimary core.Unit
 	if l.orientation == core.Horizontal {
@@ -176,7 +187,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 				Width:  sizes[i],
 				Height: rect.Height,
 			}
-			pos += sizes[i] + l.spacing
+			pos += sizes[i] + spacing
 		} else {
 			itemBounds = core.UnitRect{
 				X:      rect.X,
@@ -184,7 +195,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 				Width:  rect.Width,
 				Height: sizes[i],
 			}
-			pos += sizes[i] + l.spacing
+			pos += sizes[i] + spacing
 		}
 
 		// Apply alignment within the item bounds

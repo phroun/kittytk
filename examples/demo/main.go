@@ -209,7 +209,7 @@ func createMainWindow(application *app.Application, statusBar *widgets.StatusBar
 func createBasicWidgetsDemo(statusBar *widgets.StatusBar) core.Widget {
 	panel := widgets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
-	boxLayout.SetSpacing(8)
+	boxLayout.SetSpacing(0)
 
 	// Label
 	label := widgets.NewLabel("This is a demo of basic widgets:")
