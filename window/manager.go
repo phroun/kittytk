@@ -758,6 +758,23 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			newBounds.Height = minHeight
 		}
 
+		// Keep window on screen (don't allow left edge or top to go off screen)
+		clientArea := m.ClientArea()
+		if newBounds.X < clientArea.X {
+			if resizeEdge&ResizeEdgeLeft != 0 {
+				// Resizing from left - adjust width instead
+				newBounds.Width = resizeOriginal.X + resizeOriginal.Width - clientArea.X
+			}
+			newBounds.X = clientArea.X
+		}
+		if newBounds.Y < clientArea.Y {
+			if resizeEdge&ResizeEdgeTop != 0 {
+				// Resizing from top - adjust height instead
+				newBounds.Height = resizeOriginal.Y + resizeOriginal.Height - clientArea.Y
+			}
+			newBounds.Y = clientArea.Y
+		}
+
 		resizing.SetBounds(newBounds)
 		m.RequestRepaint()
 		return true
@@ -812,11 +829,13 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if bounds.Y > maxY {
 			bounds.Y = maxY
 		}
-		// Allow some horizontal overflow but keep part of window visible
-		minVisibleWidth := metrics.CellWidth * 4
-		if bounds.X+bounds.Width < clientArea.X+minVisibleWidth {
-			bounds.X = clientArea.X + minVisibleWidth - bounds.Width
+		// Keep window mostly on screen horizontally
+		// Don't allow left edge to go off screen (would clip the frame)
+		if bounds.X < clientArea.X {
+			bounds.X = clientArea.X
 		}
+		// Allow some overflow to the right but keep part visible
+		minVisibleWidth := metrics.CellWidth * 4
 		if bounds.X > clientArea.X+clientArea.Width-minVisibleWidth {
 			bounds.X = clientArea.X + clientArea.Width - minVisibleWidth
 		}
