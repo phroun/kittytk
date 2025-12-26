@@ -41,7 +41,23 @@ func main() {
 	// Add event filter to show key presses in status bar (for debugging)
 	application.AddEventFilter(func(event core.Event) bool {
 		if keyEvent, ok := event.(core.KeyPressEvent); ok {
-			statusBar.SetText(fmt.Sprintf("Key: %q  Modifiers: %d", keyEvent.Key, keyEvent.Modifiers))
+			// Show key and current focus info
+			wm := application.WindowManager()
+			focusInfo := "no window"
+			if wm != nil {
+				if activeWin := wm.ActiveWindow(); activeWin != nil {
+					fm := activeWin.FocusManager()
+					if fm != nil {
+						focused := fm.FocusedWidget()
+						if focused != nil {
+							focusInfo = fmt.Sprintf("focused: %T", focused)
+						} else {
+							focusInfo = "focused: nil"
+						}
+					}
+				}
+			}
+			statusBar.SetText(fmt.Sprintf("Key: %q  %s", keyEvent.Key, focusInfo))
 		}
 		return false // Don't consume the event
 	})

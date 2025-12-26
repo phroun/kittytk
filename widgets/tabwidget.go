@@ -153,8 +153,19 @@ func (t *TabWidget) Clear() {
 	t.Update()
 }
 
-// Children returns all content widgets from all tabs.
+// Children returns the content of the current active tab only.
+// This ensures focus navigation only includes visible widgets.
 func (t *TabWidget) Children() []core.Widget {
+	if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
+		if content := t.tabs[t.currentIndex].Content; content != nil {
+			return []core.Widget{content}
+		}
+	}
+	return nil
+}
+
+// AllChildren returns content widgets from all tabs (for layout/painting).
+func (t *TabWidget) AllChildren() []core.Widget {
 	var children []core.Widget
 	for _, tab := range t.tabs {
 		if tab.Content != nil {
