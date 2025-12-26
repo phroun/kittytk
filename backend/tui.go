@@ -164,6 +164,14 @@ func (t *TUIBackend) Init() error {
 		t.write("\033[?1006h") // Enable SGR extended mouse mode
 	}
 
+	// Enable Kitty keyboard protocol for better key detection
+	// Mode 1 = Report disambiguated keys
+	// Mode 2 = Report event types (press, repeat, release)
+	// Mode 4 = Report alternate keys
+	// Mode 8 = Report all keys as escape codes
+	// We use mode 1 for basic disambiguated key reporting
+	t.write("\033[>1u")
+
 	// Set up keyboard handler
 	kbOpts := keyboard.Options{
 		InputReader: os.Stdin,
@@ -193,6 +201,9 @@ func (t *TUIBackend) Shutdown() {
 	if t.keyboard != nil {
 		t.keyboard.Stop()
 	}
+
+	// Disable Kitty keyboard protocol
+	t.write("\033[<u")
 
 	// Disable mouse
 	if t.hasMouse {
