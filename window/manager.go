@@ -437,6 +437,7 @@ func (m *WindowManager) CascadeWindows() {
 func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 	m.mu.RLock()
 	windows := m.windows
+	desktop := m.desktop
 	m.mu.RUnlock()
 
 	// Check windows from top to bottom
@@ -448,6 +449,15 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 
 		bounds := win.Bounds()
 		if bounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+			// Close any active menu before processing window click
+			if desktop != nil {
+				if menuCloser, ok := desktop.(interface {
+					CloseActiveMenu()
+				}); ok {
+					menuCloser.CloseActiveMenu()
+				}
+			}
+
 			// Activate window
 			m.ActivateWindow(win)
 
@@ -476,11 +486,7 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 		}
 	}
 
-	// Check desktop
-	m.mu.RLock()
-	desktop := m.desktop
-	m.mu.RUnlock()
-
+	// Check desktop (already read above, but re-read in case it changed)
 	if desktop != nil {
 		return desktop.HandleMousePress(event)
 	}

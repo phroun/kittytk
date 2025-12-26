@@ -116,6 +116,13 @@ func (d *Desktop) MenuBar() *MenuBar {
 	return d.menuBar
 }
 
+// CloseActiveMenu closes any active dropdown menu.
+func (d *Desktop) CloseActiveMenu() {
+	if d.menuBar != nil && d.menuBar.ActiveMenu() != nil {
+		d.menuBar.CloseMenu()
+	}
+}
+
 // SetStatusBar sets the status bar (displayed at the bottom).
 func (d *Desktop) SetStatusBar(statusBar *StatusBar) {
 	d.statusBar = statusBar
