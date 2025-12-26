@@ -1085,12 +1085,32 @@ func (m *WindowManager) Paint(p *core.Painter) {
 		desktop.Paint(p)
 	}
 
-	// Paint windows from bottom to top
+	// Get client area to clip windows properly (avoid covering status bar)
+	clientArea := m.ClientArea()
+
+	// Paint windows from bottom to top, clipped to client area
 	for _, win := range windows {
 		if win.IsVisible() && !win.IsMinimized() {
 			bounds := win.Bounds()
+
+			// Calculate visible portion within client area
+			visibleBounds := bounds.Intersection(clientArea)
+			if visibleBounds.IsEmpty() {
+				continue
+			}
+
+			// Offset into window's local coordinates
+			localClipX := visibleBounds.X - bounds.X
+			localClipY := visibleBounds.Y - bounds.Y
+			localClip := core.UnitRect{
+				X:      localClipX,
+				Y:      localClipY,
+				Width:  visibleBounds.Width,
+				Height: visibleBounds.Height,
+			}
+
 			windowPainter := p.WithOffset(bounds.X, bounds.Y).
-				WithClip(core.UnitRect{Width: bounds.Width, Height: bounds.Height})
+				WithClip(localClip)
 			win.Paint(windowPainter)
 		}
 	}
