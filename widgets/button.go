@@ -17,6 +17,7 @@ type Button struct {
 	checkable bool
 	checked   bool
 	pressed   bool
+	hovered   bool // Mouse is over button while pressed
 	flat      bool // No border when not focused/hovered
 	isDefault bool // Default button (shown bold when not focused)
 
@@ -172,29 +173,34 @@ func (b *Button) SizeHint() core.UnitSize {
 	}
 
 	// Add brackets/spaces: "<text>" or " text "
-	totalChars := textLen + iconWidth + 2 // bracket + text + bracket
+	// Plus 1 for drop shadow on the right
+	totalChars := textLen + iconWidth + 2 + 1 // bracket + text + bracket + shadow
 
 	return core.UnitSize{
 		Width:  metrics.TextWidth(totalChars),
-		Height: metrics.TextHeight(1),
+		Height: metrics.TextHeight(2), // 2 rows: button + shadow row
 	}
 }
 
 // Paint renders the button.
-// TUI button rendering:
-//   - Normal:  " OK "  (space-padded)
-//   - Focused: "<OK>"  (angle brackets)
-//   - Default: Bold text when another button isn't focused
+// TUI button rendering with drop shadow:
+//   - Normal:  " OK ▄" on top row, " ▀▀▀" on bottom row (shifted right)
+//   - Pressed: "  OK " shifted right by 1, no shadow
+//   - Focused: "<OK>" with angle brackets
 func (b *Button) Paint(p *core.Painter) {
 	bounds := b.Bounds()
 	theme := b.Theme()
 	focused := b.HasFocus()
+	metrics := p.Metrics()
+
+	// Determine if showing pressed visual (pressed and hovering, or checked)
+	showPressed := (b.pressed && b.hovered) || b.checked
 
 	// Determine style
 	var s style.CellStyle
 	if !b.IsEnabled() {
 		s = theme.Disabled
-	} else if b.pressed || b.checked {
+	} else if showPressed {
 		s = theme.ButtonPressed
 	} else if focused {
 		s = theme.ButtonFocused
@@ -210,14 +216,14 @@ func (b *Button) Paint(p *core.Painter) {
 		s = *customStyle
 	}
 
-	metrics := p.Metrics()
+	// Shadow style (black on transparent/normal background)
+	shadowStyle := theme.Normal.WithFg(style.ColorBlack)
 
-	// Draw background
-	if !b.flat || focused || b.pressed || b.checked {
-		p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', s)
-	}
+	// Calculate button content width (excluding shadow)
+	textLen := len([]rune(b.text))
+	buttonWidth := metrics.TextWidth(textLen + 2) // brackets + text
 
-	// Draw icon if present
+	// Icon handling
 	iconWidth := core.Unit(0)
 	if b.icon != nil {
 		var textIcon style.TextIcon
@@ -226,11 +232,55 @@ func (b *Button) Paint(p *core.Painter) {
 		} else if b.icon.HasText(style.IconLarge) {
 			textIcon = b.icon.TextLarge
 		}
-
 		if textIcon.Width > 0 {
 			iconWidth = metrics.TextWidth(textIcon.Width + 1)
-			// Draw icon at left side
-			x := metrics.CellWidth
+			buttonWidth += iconWidth
+		}
+	}
+
+	// X offset: pressed state shifts right by 1 cell
+	xOffset := core.Unit(0)
+	if showPressed {
+		xOffset = metrics.CellWidth
+	}
+
+	// Clear the entire button area first (to handle pressed state transition)
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
+
+	// Draw button background
+	if !b.flat || focused || showPressed {
+		p.FillRect(core.UnitRect{
+			X:      xOffset,
+			Y:      0,
+			Width:  buttonWidth,
+			Height: metrics.CellHeight,
+		}, ' ', s)
+	}
+
+	// Draw drop shadow (only when not pressed)
+	if !showPressed && b.IsEnabled() {
+		// Bottom half block on right edge of button (top row)
+		shadowX := xOffset + buttonWidth
+		p.DrawCell(shadowX, 0, '▄', shadowStyle)
+
+		// Top half blocks on second row (shifted right by 1)
+		shadowY := metrics.CellHeight
+		for i := 0; i < int(buttonWidth/metrics.CellWidth); i++ {
+			p.DrawCell(metrics.CellWidth+metrics.CellToUnitsX(i), shadowY, '▀', shadowStyle)
+		}
+	}
+
+	// Draw icon if present
+	if b.icon != nil && iconWidth > 0 {
+		var textIcon style.TextIcon
+		if b.iconSize == style.IconSmall && b.icon.HasText(style.IconSmall) {
+			textIcon = b.icon.TextSmall
+		} else if b.icon.HasText(style.IconLarge) {
+			textIcon = b.icon.TextLarge
+		}
+
+		if textIcon.Width > 0 {
+			x := xOffset + metrics.CellWidth
 			y := core.Unit(0)
 			for row := 0; row < textIcon.Height; row++ {
 				for col := 0; col < textIcon.Width; col++ {
@@ -252,18 +302,18 @@ func (b *Button) Paint(p *core.Painter) {
 	}
 
 	// Draw left bracket/space
-	p.DrawCell(iconWidth, 0, leftBracket, s)
+	p.DrawCell(xOffset+iconWidth, 0, leftBracket, s)
 
 	// Draw text
 	if b.text != "" {
-		textX := iconWidth + metrics.CellWidth
+		textX := xOffset + iconWidth + metrics.CellWidth
 		for i, ch := range b.text {
 			p.DrawCell(textX+metrics.CellToUnitsX(i), 0, ch, s)
 		}
 	}
 
 	// Draw right bracket/space
-	rightX := bounds.Width - metrics.CellWidth
+	rightX := xOffset + buttonWidth - metrics.CellWidth
 	p.DrawCell(rightX, 0, rightBracket, s)
 }
 
@@ -280,19 +330,49 @@ func (b *Button) HandleKeyPress(event core.KeyPressEvent) bool {
 // HandleMousePress handles mouse clicks.
 func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.LeftButton {
+		b.SetFocus() // Focus on mouse down
 		b.pressed = true
+		b.hovered = true
 		b.Update()
 		return true
 	}
 	return false
 }
 
+// HandleMouseMove handles mouse movement during press.
+func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
+	if !b.pressed {
+		return false
+	}
+
+	// Check if mouse is still inside button area
+	bounds := b.Bounds()
+	metrics := core.DefaultCellMetrics()
+
+	// Simple bounds check for first row (button area, not shadow)
+	newHovered := event.X >= 0 && event.X < bounds.Width &&
+		event.Y >= 0 && event.Y < metrics.CellHeight
+
+	if newHovered != b.hovered {
+		b.hovered = newHovered
+		b.Update()
+	}
+
+	return true // Capture mouse while pressed
+}
+
 // HandleMouseRelease handles mouse release.
 func (b *Button) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if b.pressed {
+		wasHovered := b.hovered
 		b.pressed = false
+		b.hovered = false
 		b.Update()
-		b.Click()
+
+		// Only trigger click if mouse was still on the button
+		if wasHovered {
+			b.Click()
+		}
 		return true
 	}
 	return false
@@ -306,6 +386,7 @@ func (b *Button) HandleFocusIn() {
 // HandleFocusOut is called when focus is lost.
 func (b *Button) HandleFocusOut() {
 	b.pressed = false
+	b.hovered = false
 	b.Update()
 }
 
