@@ -320,6 +320,13 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 	return false
 }
 
+// PaintMenuDropdown paints the active menu dropdown (call after windows for z-order).
+func (d *Desktop) PaintMenuDropdown(p *core.Painter) {
+	if d.menuBar != nil {
+		d.menuBar.PaintDropdown(p)
+	}
+}
+
 // HandleMousePress handles mouse clicks.
 func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 	metrics := core.DefaultCellMetrics()

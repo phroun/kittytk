@@ -747,7 +747,7 @@ func (m *MenuBar) SizeHint() core.UnitSize {
 	}
 }
 
-// Paint renders the menu bar.
+// Paint renders the menu bar (without dropdown - use PaintDropdown for that).
 func (m *MenuBar) Paint(p *core.Painter) {
 	bounds := m.Bounds()
 	theme := m.Theme()
@@ -786,8 +786,10 @@ func (m *MenuBar) Paint(p *core.Painter) {
 
 		x += menuWidth
 	}
+}
 
-	// Draw active menu
+// PaintDropdown renders the active menu dropdown (call after windows for correct z-order).
+func (m *MenuBar) PaintDropdown(p *core.Painter) {
 	if m.activeMenu != nil {
 		m.activeMenu.Paint(p)
 	}

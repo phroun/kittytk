@@ -673,11 +673,12 @@ func (t *TUIBackend) handleKey(key string) {
 	// Mouse events come as two keys: "Mouse@x,y" (position) followed by action
 	if strings.HasPrefix(key, "Mouse@") {
 		// Parse position: Mouse@x,y
+		// Terminal mouse coordinates are 1-indexed, convert to 0-indexed
 		var x, y int
 		if _, err := fmt.Sscanf(key, "Mouse@%d,%d", &x, &y); err == nil {
 			t.mu.Lock()
-			t.pendingMouseX = x
-			t.pendingMouseY = y
+			t.pendingMouseX = x - 1
+			t.pendingMouseY = y - 1
 			t.mu.Unlock()
 		}
 		return // Position events don't generate UI events
@@ -729,13 +730,14 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	unitY := t.metrics.CellToUnitsY(y)
 
 	// For drag events, position may be embedded: MouseLeftDrag@x,y
+	// Terminal coordinates are 1-indexed, convert to 0-indexed
 	if strings.Contains(key, "@") {
 		var dragX, dragY int
 		parts := strings.SplitN(key, "@", 2)
 		if len(parts) == 2 {
 			if _, err := fmt.Sscanf(parts[1], "%d,%d", &dragX, &dragY); err == nil {
-				unitX = t.metrics.CellToUnitsX(dragX)
-				unitY = t.metrics.CellToUnitsY(dragY)
+				unitX = t.metrics.CellToUnitsX(dragX - 1)
+				unitY = t.metrics.CellToUnitsY(dragY - 1)
 			}
 		}
 		key = parts[0] // Strip position from key for matching

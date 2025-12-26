@@ -625,6 +625,13 @@ func (m *WindowManager) Paint(p *core.Painter) {
 			win.Paint(windowPainter)
 		}
 	}
+
+	// Paint menu dropdown on top of windows (if any is open)
+	if desktop != nil {
+		if dd, ok := desktop.(interface{ PaintMenuDropdown(*core.Painter) }); ok {
+			dd.PaintMenuDropdown(p)
+		}
+	}
 }
 
 // SetOnWindowAdded sets the window added callback.
