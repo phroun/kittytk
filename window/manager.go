@@ -68,6 +68,21 @@ type WindowManager struct {
 	onRepaintNeeded   func()
 	onWindowMinimized func(*Window) // Called when a window is minimized
 	onWindowRestored  func(*Window) // Called when a window is restored
+
+	// Popup overlays (painted on top of everything)
+	popups []*PopupOverlay
+}
+
+// PopupOverlay represents a popup that should be painted on top of all windows.
+type PopupOverlay struct {
+	// Unique identifier for the popup
+	ID string
+	// Bounds in screen coordinates
+	Bounds core.UnitRect
+	// Paint function to render the popup
+	Paint func(p *core.Painter)
+	// HandleMousePress function to handle clicks (returns true if handled)
+	HandleMousePress func(event core.MousePressEvent) bool
 }
 
 // NewWindowManager creates a new window manager.
@@ -433,6 +448,39 @@ func (m *WindowManager) SetOnWindowRestored(handler func(*Window)) {
 	m.mu.Unlock()
 }
 
+// RegisterPopup registers a popup overlay to be painted on top of all windows.
+func (m *WindowManager) RegisterPopup(popup *PopupOverlay) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Remove any existing popup with the same ID
+	for i, p := range m.popups {
+		if p.ID == popup.ID {
+			m.popups = append(m.popups[:i], m.popups[i+1:]...)
+			break
+		}
+	}
+	m.popups = append(m.popups, popup)
+}
+
+// UnregisterPopup removes a popup overlay by ID.
+func (m *WindowManager) UnregisterPopup(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, p := range m.popups {
+		if p.ID == id {
+			m.popups = append(m.popups[:i], m.popups[i+1:]...)
+			return
+		}
+	}
+}
+
+// HasPopups returns true if there are any registered popups.
+func (m *WindowManager) HasPopups() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.popups) > 0
+}
+
 // positionWindow positions a new window using cascading.
 func (m *WindowManager) positionWindow(win *Window) {
 	m.mu.RLock()
@@ -572,7 +620,28 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 	m.mu.RLock()
 	windows := m.windows
 	desktop := m.desktop
+	popups := m.popups
 	m.mu.RUnlock()
+
+	// Check popups first (highest z-order)
+	for i := len(popups) - 1; i >= 0; i-- {
+		popup := popups[i]
+		if popup.Bounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+			if popup.HandleMousePress != nil {
+				return popup.HandleMousePress(event)
+			}
+			return true // Consume click even if no handler
+		}
+	}
+
+	// If there are popups but click was outside them, close all popups
+	if len(popups) > 0 {
+		m.mu.Lock()
+		m.popups = nil
+		m.mu.Unlock()
+		m.RequestRepaint()
+		// Don't consume the click - let it propagate to close the underlying popup source
+	}
 
 	// Check if click is within an active menu dropdown (rendered on top of windows)
 	// Menu dropdowns have higher z-order than windows, so check them first
@@ -1030,6 +1099,16 @@ func (m *WindowManager) Paint(p *core.Painter) {
 	if desktop != nil {
 		if dd, ok := desktop.(interface{ PaintMenuDropdown(*core.Painter) }); ok {
 			dd.PaintMenuDropdown(p)
+		}
+	}
+
+	// Paint registered popups on top of everything
+	m.mu.RLock()
+	popups := m.popups
+	m.mu.RUnlock()
+	for _, popup := range popups {
+		if popup.Paint != nil {
+			popup.Paint(p)
 		}
 	}
 }
