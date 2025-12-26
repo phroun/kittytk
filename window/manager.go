@@ -307,8 +307,17 @@ func (m *WindowManager) positionWindow(win *Window) {
 	m.mu.RUnlock()
 
 	clientArea := m.ClientArea()
-	hint := win.SizeHint()
 	metrics := core.DefaultCellMetrics()
+
+	// Use the window's current size if set, otherwise use SizeHint
+	bounds := win.Bounds()
+	width := bounds.Width
+	height := bounds.Height
+	if width <= 0 || height <= 0 {
+		hint := win.SizeHint()
+		width = hint.Width
+		height = hint.Height
+	}
 
 	// Cascade offset
 	offset := core.Unit(numWindows) * metrics.CellWidth * 2
@@ -317,18 +326,18 @@ func (m *WindowManager) positionWindow(win *Window) {
 	y := clientArea.Y + offset
 
 	// Wrap if off screen
-	if x+hint.Width > clientArea.X+clientArea.Width {
+	if x+width > clientArea.X+clientArea.Width {
 		x = clientArea.X
 	}
-	if y+hint.Height > clientArea.Y+clientArea.Height {
+	if y+height > clientArea.Y+clientArea.Height {
 		y = clientArea.Y
 	}
 
 	win.SetBounds(core.UnitRect{
 		X:      x,
 		Y:      y,
-		Width:  hint.Width,
-		Height: hint.Height,
+		Width:  width,
+		Height: height,
 	})
 }
 

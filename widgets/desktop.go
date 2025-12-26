@@ -324,9 +324,11 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 	metrics := core.DefaultCellMetrics()
 
-	// Check menu bar first
-	if d.menuBar != nil && event.Y < metrics.CellHeight {
-		return d.menuBar.HandleMousePress(event)
+	// Check menu bar first - either in menu bar area or when menu is open
+	if d.menuBar != nil {
+		if event.Y < metrics.CellHeight || d.menuBar.ActiveMenu() != nil {
+			return d.menuBar.HandleMousePress(event)
+		}
 	}
 
 	// Check status bar
