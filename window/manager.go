@@ -798,13 +798,12 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		metrics := core.DefaultCellMetrics()
 
 		// Dragging into menu bar area = maximize gesture
+		// But keep dragging so user can drag back down to restore
 		if bounds.Y < clientArea.Y && dragging.Flags()&WindowFlagNoMaximize == 0 {
-			m.MaximizeWindow(dragging)
-			// Stop dragging since we maximized
-			m.mu.Lock()
-			m.dragging = nil
-			m.mu.Unlock()
-			m.RequestRepaint()
+			if !dragging.IsMaximized() {
+				m.MaximizeWindow(dragging)
+				m.RequestRepaint()
+			}
 			return true
 		}
 
