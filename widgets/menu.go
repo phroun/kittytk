@@ -1492,7 +1492,6 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	}
 
 	// Draw visible menus
-	lastDrawnIndex := m.scrollOffset - 1
 	for i := m.scrollOffset; i < len(m.menus); i++ {
 		menu := m.menus[i]
 		menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
@@ -1587,15 +1586,6 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		}
 
 		x += menuWidth
-		lastDrawnIndex = i
-	}
-
-	// Draw right ellipsis if there are more menus beyond what was drawn
-	if lastDrawnIndex < len(m.menus)-1 && x+metrics.TextWidth(3) <= availableWidth {
-		for _, ch := range "..." {
-			p.DrawCell(x, 0, ch, theme.MenuBar)
-			x += metrics.CellWidth
-		}
 	}
 
 	// Draw date/time background and text
