@@ -86,22 +86,22 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 	menuBar := widgets.NewMenuBar()
 
 	// File menu
-	fileMenu := widgets.NewMenu("File")
-	newItem := widgets.NewMenuItem("New")
+	fileMenu := widgets.NewMenu("&File")
+	newItem := widgets.NewMenuItem("&New")
 	newItem.SetShortcut(core.NewShortcut("^N"))
 	fileMenu.AddItem(newItem)
 
-	openItem := widgets.NewMenuItem("Open...")
+	openItem := widgets.NewMenuItem("&Open...")
 	openItem.SetShortcut(core.NewShortcut("^O"))
 	fileMenu.AddItem(openItem)
 
-	saveItem := widgets.NewMenuItem("Save")
+	saveItem := widgets.NewMenuItem("&Save")
 	saveItem.SetShortcut(core.NewShortcut("^S"))
 	fileMenu.AddItem(saveItem)
 
 	fileMenu.AddSeparator()
 
-	exitItem := widgets.NewMenuItem("Exit")
+	exitItem := widgets.NewMenuItem("E&xit")
 	exitItem.SetShortcut(core.NewShortcut("^Q"))
 	exitItem.SetOnTriggered(func() {
 		application.Quit()
@@ -111,30 +111,30 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 	menuBar.AddMenu(fileMenu)
 
 	// Edit menu
-	editMenu := widgets.NewMenu("Edit")
-	cutItem := widgets.NewMenuItem("Cut")
+	editMenu := widgets.NewMenu("&Edit")
+	cutItem := widgets.NewMenuItem("Cu&t")
 	cutItem.SetShortcut(core.NewShortcut("^X"))
 	editMenu.AddItem(cutItem)
 
-	copyItem := widgets.NewMenuItem("Copy")
+	copyItem := widgets.NewMenuItem("&Copy")
 	copyItem.SetShortcut(core.NewShortcut("^C"))
 	editMenu.AddItem(copyItem)
 
-	pasteItem := widgets.NewMenuItem("Paste")
+	pasteItem := widgets.NewMenuItem("&Paste")
 	pasteItem.SetShortcut(core.NewShortcut("^V"))
 	editMenu.AddItem(pasteItem)
 
 	menuBar.AddMenu(editMenu)
 
 	// View menu
-	viewMenu := widgets.NewMenu("View")
+	viewMenu := widgets.NewMenu("&View")
 
-	toolbarItem := widgets.NewMenuItem("Toolbar")
+	toolbarItem := widgets.NewMenuItem("&Toolbar")
 	toolbarItem.SetCheckable(true)
 	toolbarItem.SetChecked(true)
 	viewMenu.AddItem(toolbarItem)
 
-	statusBarItem := widgets.NewMenuItem("Status Bar")
+	statusBarItem := widgets.NewMenuItem("&Status Bar")
 	statusBarItem.SetCheckable(true)
 	statusBarItem.SetChecked(true)
 	viewMenu.AddItem(statusBarItem)
@@ -142,9 +142,9 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 	menuBar.AddMenu(viewMenu)
 
 	// Window menu
-	windowMenu := widgets.NewMenu("Window")
+	windowMenu := widgets.NewMenu("&Window")
 
-	newWindowItem := widgets.NewMenuItem("New Window")
+	newWindowItem := widgets.NewMenuItem("&New Window")
 	newWindowItem.SetOnTriggered(func() {
 		demoWindow := createDemoWindow(application)
 		application.WindowManager().AddWindow(demoWindow)
@@ -153,13 +153,13 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 
 	windowMenu.AddSeparator()
 
-	tileItem := widgets.NewMenuItem("Tile")
+	tileItem := widgets.NewMenuItem("&Tile")
 	tileItem.SetOnTriggered(func() {
 		application.WindowManager().TileWindows()
 	})
 	windowMenu.AddItem(tileItem)
 
-	cascadeItem := widgets.NewMenuItem("Cascade")
+	cascadeItem := widgets.NewMenuItem("&Cascade")
 	cascadeItem.SetOnTriggered(func() {
 		application.WindowManager().CascadeWindows()
 	})
@@ -168,9 +168,9 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 	menuBar.AddMenu(windowMenu)
 
 	// Help menu
-	helpMenu := widgets.NewMenu("Help")
+	helpMenu := widgets.NewMenu("&Help")
 
-	aboutItem := widgets.NewMenuItem("About")
+	aboutItem := widgets.NewMenuItem("&About")
 	aboutItem.SetOnTriggered(func() {
 		showAboutDialog(application)
 	})
