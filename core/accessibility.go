@@ -51,6 +51,7 @@ const (
 	RoleSeparator
 	RoleStatusBar
 	RoleSplitter
+	RoleTerminal
 )
 
 // String returns the role name.
@@ -96,6 +97,7 @@ func (r AccessibleRole) String() string {
 		RoleSeparator:        "separator",
 		RoleStatusBar:        "status bar",
 		RoleSplitter:         "splitter",
+		RoleTerminal:         "terminal",
 	}
 	if name, ok := names[r]; ok {
 		return name
