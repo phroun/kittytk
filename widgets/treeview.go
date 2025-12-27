@@ -96,6 +96,7 @@ func NewTreeView() *TreeView {
 		lastClickIndex: -1,
 	}
 	t.WidgetBase = *core.NewWidgetBase()
+	t.Init(t) // Enable polymorphic focus handling
 	t.SetFocusPolicy(core.StrongFocus)
 	t.SetAccessibleRole(core.RoleTree)
 	return t

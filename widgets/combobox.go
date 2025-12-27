@@ -37,6 +37,7 @@ func NewComboBox() *ComboBox {
 		maxVisible:   8,
 	}
 	c.WidgetBase = *core.NewWidgetBase()
+	c.Init(c) // Enable polymorphic focus handling
 	c.SetFocusPolicy(core.StrongFocus)
 	c.SetAccessibleRole(core.RoleComboBox)
 	return c

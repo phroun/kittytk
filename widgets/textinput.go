@@ -47,6 +47,7 @@ func NewTextInput() *TextInput {
 		maxLength: -1, // No limit
 	}
 	t.WidgetBase = *core.NewWidgetBase()
+	t.Init(t) // Enable polymorphic focus handling
 	t.SetFocusPolicy(core.StrongFocus)
 	t.SetAccessibleRole(core.RoleTextInput)
 	return t

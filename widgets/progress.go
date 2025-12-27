@@ -35,6 +35,7 @@ func NewProgressBar() *ProgressBar {
 		indeterminateDir: 1,
 	}
 	p.WidgetBase = *core.NewWidgetBase()
+	p.Init(p)
 	p.SetFocusPolicy(core.NoFocus)
 	p.SetAccessibleRole(core.RoleProgressBar)
 	return p

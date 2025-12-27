@@ -26,6 +26,7 @@ func NewPanel() *Panel {
 		background: style.DefaultStyle(),
 	}
 	p.WidgetBase = *core.NewWidgetBase()
+	p.Init(p)
 	p.SetFocusPolicy(core.NoFocus)
 	p.SetAccessibleRole(core.RoleGroup)
 	return p

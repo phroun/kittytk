@@ -34,6 +34,7 @@ func NewDesktop() *Desktop {
 		dockRow: NewDockRow(),
 	}
 	d.WidgetBase = *core.NewWidgetBase()
+	d.Init(d)
 	d.SetFocusPolicy(core.NoFocus)
 	d.dockRow.SetParent(d)
 	return d
@@ -504,6 +505,7 @@ type StatusSection struct {
 func NewStatusBar() *StatusBar {
 	s := &StatusBar{}
 	s.WidgetBase = *core.NewWidgetBase()
+	s.Init(s)
 	s.SetFocusPolicy(core.NoFocus)
 	return s
 }

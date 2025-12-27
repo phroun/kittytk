@@ -37,6 +37,7 @@ func NewCheckbox(text string) *Checkbox {
 		checkState: Unchecked,
 	}
 	c.WidgetBase = *core.NewWidgetBase()
+	c.Init(c) // Enable polymorphic focus handling
 	c.SetFocusPolicy(core.StrongFocus)
 	c.SetAccessibleRole(core.RoleCheckbox)
 	c.SetAccessibleName(text)

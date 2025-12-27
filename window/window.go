@@ -127,6 +127,7 @@ func NewWindow(title string) *Window {
 		maxHeight:   1<<30 - 1,
 	}
 	w.WidgetBase = *core.NewWidgetBase()
+	w.Init(w)
 	w.SetFocusPolicy(core.StrongFocus)
 	w.focusManager = core.NewFocusManager(nil)
 	return w

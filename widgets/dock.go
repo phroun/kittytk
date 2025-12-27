@@ -30,6 +30,7 @@ func NewDockRow() *DockRow {
 		entryWidth: 16, // Default 16 chars per entry
 	}
 	d.WidgetBase = *core.NewWidgetBase()
+	d.Init(d)
 	d.SetFocusPolicy(core.NoFocus)
 	return d
 }

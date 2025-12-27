@@ -133,6 +133,8 @@ func NewMenu(title string) *Menu {
 		maxVisible:   12, // Default max visible items
 	}
 	m.WidgetBase = *core.NewWidgetBase()
+	// Note: Menu doesn't call Init because it has a Show(x,y) method
+	// with different signature than Widget.Show()
 	m.SetFocusPolicy(core.StrongFocus)
 	m.SetAccessibleRole(core.RoleMenu)
 	m.SetAccessibleName(title)
@@ -940,6 +942,7 @@ func NewMenuBar() *MenuBar {
 		showShortcuts: true,
 	}
 	m.WidgetBase = *core.NewWidgetBase()
+	m.Init(m)
 	m.SetFocusPolicy(core.StrongFocus)
 	m.SetAccessibleRole(core.RoleMenuBar)
 	return m

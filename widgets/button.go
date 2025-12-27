@@ -37,6 +37,7 @@ func NewButton(text string) *Button {
 		iconSize: style.IconSmall,
 	}
 	b.WidgetBase = *core.NewWidgetBase()
+	b.Init(b) // Enable polymorphic focus handling
 	b.SetFocusPolicy(core.StrongFocus)
 	b.SetAccessibleRole(core.RoleButton)
 	b.SetAccessibleName(text)

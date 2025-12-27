@@ -69,6 +69,7 @@ func NewListView() *ListView {
 		selectedItems: make(map[int]bool),
 	}
 	l.WidgetBase = *core.NewWidgetBase()
+	l.Init(l) // Enable polymorphic focus handling
 	l.SetFocusPolicy(core.StrongFocus)
 	l.SetAccessibleRole(core.RoleList)
 	return l

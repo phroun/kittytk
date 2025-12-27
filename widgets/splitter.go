@@ -32,6 +32,7 @@ func NewSplitter(orientation core.Orientation) *Splitter {
 		position:    0.5, // Default to 50/50 split
 	}
 	s.WidgetBase = *core.NewWidgetBase()
+	s.Init(s)
 	s.SetFocusPolicy(core.NoFocus)
 	s.SetAccessibleRole(core.RoleSplitter)
 	return s

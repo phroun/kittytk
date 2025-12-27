@@ -59,6 +59,7 @@ func NewTabWidget() *TabWidget {
 		tabPosition:  TabsTop,
 	}
 	t.WidgetBase = *core.NewWidgetBase()
+	t.Init(t)
 	// TabWidget is a container - let children inside get focus
 	t.SetFocusPolicy(core.NoFocus)
 	t.SetAccessibleRole(core.RoleTabList)

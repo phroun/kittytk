@@ -41,6 +41,7 @@ func NewScrollBar(orientation core.Orientation) *ScrollBar {
 		tracking:    true,
 	}
 	s.WidgetBase = *core.NewWidgetBase()
+	s.Init(s)
 	s.SetFocusPolicy(core.NoFocus)
 	s.SetAccessibleRole(core.RoleScrollBar)
 	return s
@@ -325,6 +326,7 @@ func NewScrollArea() *ScrollArea {
 		vScrollBarPolicy: ScrollBarAsNeeded,
 	}
 	s.WidgetBase = *core.NewWidgetBase()
+	s.Init(s)
 	s.SetFocusPolicy(core.StrongFocus)
 	s.SetAccessibleRole(core.RoleGroup)
 

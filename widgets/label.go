@@ -23,6 +23,7 @@ func NewLabel(text string) *Label {
 		alignment: core.AlignLeft,
 	}
 	l.WidgetBase = *core.NewWidgetBase()
+	l.Init(l)
 	l.SetFocusPolicy(core.NoFocus)
 	l.SetAccessibleRole(core.RoleLabel)
 	l.SetAccessibleName(text)

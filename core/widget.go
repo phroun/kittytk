@@ -241,6 +241,12 @@ type Application struct {
 type WidgetBase struct {
 	mu sync.RWMutex
 
+	// self is a reference to the outer widget that embeds this WidgetBase.
+	// This is needed because Go embedding doesn't support polymorphism -
+	// when WidgetBase methods are called, 'w' refers to WidgetBase, not the
+	// outer type. Widgets should call Init(self) after embedding.
+	self Widget
+
 	name   string
 	parent Container
 	app    *Application
@@ -271,6 +277,25 @@ func NewWidgetBase() *WidgetBase {
 		sizePolicy:  NewSizePolicy(SizePreferred, SizePreferred),
 		maxSize:     UnitSize{Width: 1<<30 - 1, Height: 1<<30 - 1},
 	}
+}
+
+// Init initializes the WidgetBase with a reference to the outer widget.
+// This must be called by widgets after embedding WidgetBase to enable
+// proper polymorphic behavior (focus management, key forwarding, etc.).
+func (w *WidgetBase) Init(self Widget) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.self = self
+}
+
+// Self returns the outer widget reference, or w if not set.
+func (w *WidgetBase) Self() Widget {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.self != nil {
+		return w.self
+	}
+	return w
 }
 
 // Name returns the widget's name.
@@ -508,6 +533,7 @@ func (w *WidgetBase) SetFocus() {
 	w.focused = true
 	app := w.app
 	parent := w.parent
+	self := w.self // Get the outer widget reference
 	w.mu.Unlock()
 
 	if !wasFocused {
@@ -515,26 +541,32 @@ func (w *WidgetBase) SetFocus() {
 		w.Update()
 	}
 
+	// Use self (the outer widget) for focus management, falling back to w
+	focusWidget := Widget(w)
+	if self != nil {
+		focusWidget = self
+	}
+
 	// Find a parent with a FocusManager and notify it
 	// This ensures the old focused widget gets ClearFocus() called
-	w.notifyFocusManager(parent)
+	w.notifyFocusManager(parent, focusWidget)
 
 	// Notify application of focus change
 	if app != nil {
-		app.setFocusWidget(w)
+		app.setFocusWidget(focusWidget)
 	}
 }
 
 // notifyFocusManager walks up the parent chain to find a FocusManagerOwner
 // and calls SetFocusedWidget to properly transfer focus.
-func (w *WidgetBase) notifyFocusManager(parent Container) {
+func (w *WidgetBase) notifyFocusManager(parent Container, focusWidget Widget) {
 	current := parent
 	for current != nil {
 		if owner, ok := current.(FocusManagerOwner); ok {
 			if fm := owner.FocusManager(); fm != nil {
 				// Use internal method to avoid calling SetFocus again
 				// The FocusManager will clear focus from the old widget
-				fm.setFocusedWidgetInternal(w)
+				fm.setFocusedWidgetInternal(focusWidget)
 				return
 			}
 		}

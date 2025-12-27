@@ -23,6 +23,7 @@ func NewLineSeparator() *LineSeparator {
 		orientation: core.Horizontal,
 	}
 	s.WidgetBase = *core.NewWidgetBase()
+	s.Init(s)
 	s.SetFocusPolicy(core.NoFocus)
 	s.SetAccessibleRole(core.RoleSeparator)
 	return s

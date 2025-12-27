@@ -27,6 +27,7 @@ func NewRadioButton(text string) *RadioButton {
 		text: text,
 	}
 	r.WidgetBase = *core.NewWidgetBase()
+	r.Init(r) // Enable polymorphic focus handling
 	r.SetFocusPolicy(core.StrongFocus)
 	r.SetAccessibleRole(core.RoleRadioButton)
 	r.SetAccessibleName(text)
