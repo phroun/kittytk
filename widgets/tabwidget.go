@@ -629,12 +629,9 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		}
 	}
 
-	// Reserve space for right ellipsis when scrolling is needed (drawn later, right before buttons)
-	rightEllipseWidth := core.Unit(0)
-	if needsScrolling {
-		rightEllipseWidth = metrics.TextWidth(3) // "..."
-	}
-	availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth - rightEllipseWidth
+	// Don't reserve space for right ellipsis upfront - we'll only need it if tabs don't fit
+	// The gap-filling code after the loop will handle any remaining space
+	availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth
 
 	// New tab format: [prefix][tab1 text][sep][tab2 text][sep]...
 	// - Prefix: " _/ " (4 chars) if first visible tab is selected, else "  " (2 chars)
@@ -705,8 +702,12 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 					}
 				}
 
-				// Calculate how much text we can show
-				textSpace := int((availableWidth - x) / metrics.CellWidth)
+				// Calculate how much text we can show (leave room for ellipsis)
+				ellipsisReserve := core.Unit(0)
+				if needsScrolling {
+					ellipsisReserve = metrics.TextWidth(3)
+				}
+				textSpace := int((availableWidth - x - ellipsisReserve) / metrics.CellWidth)
 				if textSpace < 0 {
 					textSpace = 0
 				}
