@@ -232,6 +232,9 @@ func (m *WindowManager) AddWindow(win *Window) {
 			m.MaximizeWindow(win)
 		}
 	})
+	win.SetGetConstrainingBounds(func() core.UnitRect {
+		return m.ClientArea()
+	})
 
 	// Set popup controller on window content so widgets can use overlays
 	if content := win.Content(); content != nil {
@@ -985,20 +988,31 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		// Keep at least the titlebar visible at bottom
+		// Keep titlebar visible vertically (within client area)
+		// Don't allow titlebar above client area
+		if bounds.Y < clientArea.Y {
+			bounds.Y = clientArea.Y
+		}
+		// Don't allow titlebar below client area
 		maxY := clientArea.Y + clientArea.Height - metrics.CellHeight
 		if bounds.Y > maxY {
 			bounds.Y = maxY
 		}
-		// Keep window mostly on screen horizontally
-		// Don't allow left edge to go off screen (would clip the frame)
-		if bounds.X < clientArea.X {
-			bounds.X = clientArea.X
+
+		// Allow window to go almost completely off-screen horizontally
+		// Just keep 1 unit (border) visible for retrieval
+		minVisibleX := core.Unit(1) // Just border visible on right
+		minVisibleFromLeft := core.Unit(1) // Just border visible on left
+
+		// Left constraint: window can go so far left that only right border is visible
+		minX := clientArea.X - bounds.Width + minVisibleFromLeft
+		if bounds.X < minX {
+			bounds.X = minX
 		}
-		// Allow some overflow to the right but keep part visible
-		minVisibleWidth := metrics.CellWidth * 4
-		if bounds.X > clientArea.X+clientArea.Width-minVisibleWidth {
-			bounds.X = clientArea.X + clientArea.Width - minVisibleWidth
+		// Right constraint: window can go so far right that only left border is visible
+		maxX := clientArea.X + clientArea.Width - minVisibleX
+		if bounds.X > maxX {
+			bounds.X = maxX
 		}
 
 		dragging.SetBounds(bounds)

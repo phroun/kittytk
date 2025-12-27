@@ -589,6 +589,12 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
+	// Check if click is within our bounds
+	bounds := t.Bounds()
+	if event.X < 0 || event.Y < 0 || event.X >= bounds.Width || event.Y >= bounds.Height {
+		return false
+	}
+
 	t.SetFocus()
 	metrics := core.DefaultCellMetrics()
 
@@ -626,7 +632,11 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		return true
 	}
 
-	// Click on tree content
+	// Click on tree content (before scrollbar)
+	if event.X >= scrollbarX {
+		return false // Click is past the content area
+	}
+
 	t.isDragging = true
 	clickedRow := int(event.Y / metrics.CellHeight)
 	clickedIndex := t.scrollOffset + clickedRow

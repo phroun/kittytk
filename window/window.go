@@ -102,8 +102,9 @@ type Window struct {
 	onStateChange func(state WindowState)
 
 	// Request callbacks (for WindowManager integration)
-	onMinimizeRequest func() // Called when user clicks minimize button
-	onMaximizeRequest func() // Called when user clicks maximize button
+	onMinimizeRequest     func()              // Called when user clicks minimize button
+	onMaximizeRequest     func()              // Called when user clicks maximize button
+	getConstrainingBounds func() core.UnitRect // Returns the client area for movement constraints
 
 	// Button press tracking
 	pressedButton TitleButton // Currently pressed titlebar button
@@ -433,6 +434,14 @@ func (w *Window) SetOnMinimizeRequest(handler func()) {
 func (w *Window) SetOnMaximizeRequest(handler func()) {
 	w.mu.Lock()
 	w.onMaximizeRequest = handler
+	w.mu.Unlock()
+}
+
+// SetGetConstrainingBounds sets the callback to get the client area for movement constraints.
+// This is called during keyboard window movement to constrain the window position.
+func (w *Window) SetGetConstrainingBounds(handler func() core.UnitRect) {
+	w.mu.Lock()
+	w.getConstrainingBounds = handler
 	w.mu.Unlock()
 }
 
@@ -940,13 +949,12 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		hasCtrl := event.Modifiers&core.ControlModifier != 0
 		hasMeta := event.Modifiers&core.MetaModifier != 0
 		hasAlt := event.Modifiers&core.AltModifier != 0
-		moveToEdge := hasCtrl
 
 		// Determine movement multiplier based on modifiers
-		// Alt/Meta increases horizontal by 10 chars, vertical by 4 lines
+		// Alt/Meta/Ctrl increases horizontal by 10 chars, vertical by 4 lines
 		horizStep := metrics.CellWidth
 		vertStep := metrics.CellHeight
-		if hasMeta || hasAlt {
+		if hasMeta || hasAlt || hasCtrl {
 			horizStep = metrics.CellWidth * 10
 			vertStep = metrics.CellHeight * 4
 		}
@@ -957,9 +965,10 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			hasShift = true
 			key = key[2:]
 		}
-		if strings.HasPrefix(key, "M-") || strings.HasPrefix(key, "A-") {
+		if strings.HasPrefix(key, "M-") || strings.HasPrefix(key, "A-") || strings.HasPrefix(key, "C-") {
 			hasMeta = true
 			hasAlt = true
+			hasCtrl = true
 			key = key[2:]
 			horizStep = metrics.CellWidth * 10
 			vertStep = metrics.CellHeight * 4
@@ -970,13 +979,11 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			if hasShift {
 				// Start/continue resizing left edge
 				if resizeEdges&ResizeEdgeLeft != 0 {
-					// Continue: shrink from left
+					// Continue left resize: expand left
 					newBounds := bounds
-					newBounds.X += horizStep
-					newBounds.Width -= horizStep
-					if newBounds.Width >= w.minWidth {
-						w.SetBounds(newBounds)
-					}
+					newBounds.X -= horizStep
+					newBounds.Width += horizStep
+					w.SetBounds(newBounds)
 				} else if resizeEdges&ResizeEdgeRight != 0 {
 					// Continue right resize: shrink right edge
 					newBounds := bounds
@@ -994,16 +1001,11 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					newBounds.Width += horizStep
 					w.SetBounds(newBounds)
 				}
-			} else if moveToEdge {
-				// Move to left edge
-				newBounds := bounds
-				newBounds.X = 0
-				w.SetBounds(newBounds)
 			} else {
 				// Move window left
 				newBounds := bounds
 				newBounds.X -= horizStep
-				w.SetBounds(newBounds)
+				w.SetBounds(w.constrainBoundsForMovement(newBounds))
 			}
 			return true
 
@@ -1011,12 +1013,10 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			if hasShift {
 				// Start/continue resizing right edge
 				if resizeEdges&ResizeEdgeRight != 0 {
-					// Continue: shrink from right
+					// Continue right resize: expand right
 					newBounds := bounds
-					newBounds.Width -= horizStep
-					if newBounds.Width >= w.minWidth {
-						w.SetBounds(newBounds)
-					}
+					newBounds.Width += horizStep
+					w.SetBounds(newBounds)
 				} else if resizeEdges&ResizeEdgeLeft != 0 {
 					// Continue left resize: shrink left edge
 					newBounds := bounds
@@ -1034,18 +1034,11 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					newBounds.Width += horizStep
 					w.SetBounds(newBounds)
 				}
-			} else if moveToEdge {
-				// Move to right edge - handled by window manager
-				// (we don't know screen bounds here)
-				w.mu.Lock()
-				w.resizeEdges = ResizeEdgeNone
-				w.mu.Unlock()
-				return true
 			} else {
 				// Move window right
 				newBounds := bounds
 				newBounds.X += horizStep
-				w.SetBounds(newBounds)
+				w.SetBounds(w.constrainBoundsForMovement(newBounds))
 			}
 			return true
 
@@ -1053,13 +1046,11 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			if hasShift {
 				// Start/continue resizing top edge
 				if resizeEdges&ResizeEdgeTop != 0 {
-					// Continue: shrink from top
+					// Continue top resize: expand top
 					newBounds := bounds
-					newBounds.Y += vertStep
-					newBounds.Height -= vertStep
-					if newBounds.Height >= w.minHeight {
-						w.SetBounds(newBounds)
-					}
+					newBounds.Y -= vertStep
+					newBounds.Height += vertStep
+					w.SetBounds(newBounds)
 				} else if resizeEdges&ResizeEdgeBottom != 0 {
 					// Continue bottom resize: shrink bottom edge
 					newBounds := bounds
@@ -1077,16 +1068,11 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					newBounds.Height += vertStep
 					w.SetBounds(newBounds)
 				}
-			} else if moveToEdge {
-				// Move to top edge
-				newBounds := bounds
-				newBounds.Y = 0
-				w.SetBounds(newBounds)
 			} else {
 				// Move window up
 				newBounds := bounds
 				newBounds.Y -= vertStep
-				w.SetBounds(newBounds)
+				w.SetBounds(w.constrainBoundsForMovement(newBounds))
 			}
 			return true
 
@@ -1094,12 +1080,10 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			if hasShift {
 				// Start/continue resizing bottom edge
 				if resizeEdges&ResizeEdgeBottom != 0 {
-					// Continue: shrink from bottom
+					// Continue bottom resize: expand bottom
 					newBounds := bounds
-					newBounds.Height -= vertStep
-					if newBounds.Height >= w.minHeight {
-						w.SetBounds(newBounds)
-					}
+					newBounds.Height += vertStep
+					w.SetBounds(newBounds)
 				} else if resizeEdges&ResizeEdgeTop != 0 {
 					// Continue top resize: shrink top edge
 					newBounds := bounds
@@ -1117,23 +1101,62 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					newBounds.Height += vertStep
 					w.SetBounds(newBounds)
 				}
-			} else if moveToEdge {
-				// Move to bottom edge - handled by window manager
-				w.mu.Lock()
-				w.resizeEdges = ResizeEdgeNone
-				w.mu.Unlock()
-				return true
 			} else {
 				// Move window down
 				newBounds := bounds
 				newBounds.Y += vertStep
-				w.SetBounds(newBounds)
+				w.SetBounds(w.constrainBoundsForMovement(newBounds))
 			}
 			return true
 		}
 	}
 
 	return false
+}
+
+// constrainBoundsForMovement adjusts bounds to keep titlebar visible within client area.
+// Horizontally: allows window to go almost off-screen (just 1 unit border visible)
+// Vertically: titlebar must stay within client area
+func (w *Window) constrainBoundsForMovement(newBounds core.UnitRect) core.UnitRect {
+	w.mu.RLock()
+	getBounds := w.getConstrainingBounds
+	w.mu.RUnlock()
+
+	if getBounds == nil {
+		return newBounds
+	}
+
+	clientArea := getBounds()
+	metrics := core.DefaultCellMetrics()
+
+	// Keep titlebar visible vertically
+	// Don't allow titlebar above client area
+	if newBounds.Y < clientArea.Y {
+		newBounds.Y = clientArea.Y
+	}
+	// Don't allow titlebar below client area
+	maxY := clientArea.Y + clientArea.Height - metrics.CellHeight
+	if newBounds.Y > maxY {
+		newBounds.Y = maxY
+	}
+
+	// Allow window to go almost completely off-screen horizontally
+	// Just keep 1 unit (border) visible for retrieval
+	minVisibleX := core.Unit(1)
+	minVisibleFromLeft := core.Unit(1)
+
+	// Left constraint: window can go so far left that only right border is visible
+	minX := clientArea.X - newBounds.Width + minVisibleFromLeft
+	if newBounds.X < minX {
+		newBounds.X = minX
+	}
+	// Right constraint: window can go so far right that only left border is visible
+	maxX := clientArea.X + clientArea.Width - minVisibleX
+	if newBounds.X > maxX {
+		newBounds.X = maxX
+	}
+
+	return newBounds
 }
 
 // nextTitleFocus returns the next title bar element after the given one.

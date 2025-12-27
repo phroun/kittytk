@@ -568,8 +568,14 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
-	l.SetFocus()
 	bounds := l.Bounds()
+
+	// Check if click is within our bounds
+	if event.X < 0 || event.Y < 0 || event.X >= bounds.Width || event.Y >= bounds.Height {
+		return false
+	}
+
+	l.SetFocus()
 	metrics := core.DefaultCellMetrics()
 
 	// Check if click is on scrollbar
@@ -606,7 +612,11 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		return true
 	}
 
-	// Click on list content
+	// Click on list content (before scrollbar)
+	if event.X >= scrollbarX {
+		return false // Click is past the content area
+	}
+
 	l.isDragging = true
 	clickedRow := int(event.Y / metrics.CellHeight)
 	clickedIndex := l.scrollOffset + clickedRow
