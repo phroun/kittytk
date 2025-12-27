@@ -171,10 +171,14 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, theme
 	// Draw track
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, '░', theme.Disabled)
 
-	// Calculate thumb
+	// Calculate thumb using ListView-style formula:
+	// thumbSize = visibleCount² / totalItems
+	// where visibleCount = trackCells, totalItems = maximum + trackCells (when min=0)
 	if s.maximum > s.minimum {
 		trackCells := metrics.CharsForWidth(bounds.Width)
-		thumbSize := trackCells * s.pageStep / (s.maximum - s.minimum + s.pageStep)
+		// totalItems = scrollRange + visibleCount = (max - min) + trackCells
+		totalItems := s.maximum - s.minimum + trackCells
+		thumbSize := trackCells * trackCells / totalItems
 		if thumbSize < 1 {
 			thumbSize = 1
 		}
@@ -182,7 +186,13 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, theme
 			thumbSize = trackCells
 		}
 
-		thumbPos := (s.value - s.minimum) * (trackCells - thumbSize) / (s.maximum - s.minimum)
+		// thumbPos = scrollOffset * scrollableTrack / maxScroll
+		scrollableTrack := trackCells - thumbSize
+		maxScroll := s.maximum - s.minimum
+		thumbPos := 0
+		if maxScroll > 0 && scrollableTrack > 0 {
+			thumbPos = (s.value - s.minimum) * scrollableTrack / maxScroll
+		}
 		if thumbPos < 0 {
 			thumbPos = 0
 		}
@@ -199,10 +209,14 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, theme *
 	// Draw track
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, '░', theme.Disabled)
 
-	// Calculate thumb
+	// Calculate thumb using ListView-style formula:
+	// thumbSize = visibleCount² / totalItems
+	// where visibleCount = trackCells, totalItems = maximum + trackCells (when min=0)
 	if s.maximum > s.minimum {
 		trackCells := int(bounds.Height / metrics.CellHeight)
-		thumbSize := trackCells * s.pageStep / (s.maximum - s.minimum + s.pageStep)
+		// totalItems = scrollRange + visibleCount = (max - min) + trackCells
+		totalItems := s.maximum - s.minimum + trackCells
+		thumbSize := trackCells * trackCells / totalItems
 		if thumbSize < 1 {
 			thumbSize = 1
 		}
@@ -210,7 +224,13 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, theme *
 			thumbSize = trackCells
 		}
 
-		thumbPos := (s.value - s.minimum) * (trackCells - thumbSize) / (s.maximum - s.minimum)
+		// thumbPos = scrollOffset * scrollableTrack / maxScroll
+		scrollableTrack := trackCells - thumbSize
+		maxScroll := s.maximum - s.minimum
+		thumbPos := 0
+		if maxScroll > 0 && scrollableTrack > 0 {
+			thumbPos = (s.value - s.minimum) * scrollableTrack / maxScroll
+		}
 		if thumbPos < 0 {
 			thumbPos = 0
 		}
@@ -235,11 +255,18 @@ func (s *ScrollBar) HandleMousePress(event core.MousePressEvent) bool {
 	if s.orientation == core.Horizontal {
 		clickPos := metrics.UnitsToCellX(event.X)
 		trackCells := metrics.CharsForWidth(bounds.Width)
-		thumbSize := trackCells * s.pageStep / (s.maximum - s.minimum + s.pageStep)
+		// Use ListView-style formula
+		totalItems := s.maximum - s.minimum + trackCells
+		thumbSize := trackCells * trackCells / totalItems
 		if thumbSize < 1 {
 			thumbSize = 1
 		}
-		thumbPos := (s.value - s.minimum) * (trackCells - thumbSize) / (s.maximum - s.minimum)
+		scrollableTrack := trackCells - thumbSize
+		maxScroll := s.maximum - s.minimum
+		thumbPos := 0
+		if maxScroll > 0 && scrollableTrack > 0 {
+			thumbPos = (s.value - s.minimum) * scrollableTrack / maxScroll
+		}
 
 		if clickPos >= thumbPos && clickPos < thumbPos+thumbSize {
 			// Start dragging
@@ -255,11 +282,18 @@ func (s *ScrollBar) HandleMousePress(event core.MousePressEvent) bool {
 	} else {
 		clickPos := int(event.Y / metrics.CellHeight)
 		trackCells := int(bounds.Height / metrics.CellHeight)
-		thumbSize := trackCells * s.pageStep / (s.maximum - s.minimum + s.pageStep)
+		// Use ListView-style formula
+		totalItems := s.maximum - s.minimum + trackCells
+		thumbSize := trackCells * trackCells / totalItems
 		if thumbSize < 1 {
 			thumbSize = 1
 		}
-		thumbPos := (s.value - s.minimum) * (trackCells - thumbSize) / (s.maximum - s.minimum)
+		scrollableTrack := trackCells - thumbSize
+		maxScroll := s.maximum - s.minimum
+		thumbPos := 0
+		if maxScroll > 0 && scrollableTrack > 0 {
+			thumbPos = (s.value - s.minimum) * scrollableTrack / maxScroll
+		}
 
 		if clickPos >= thumbPos && clickPos < thumbPos+thumbSize {
 			// Start dragging
@@ -289,42 +323,55 @@ func (s *ScrollBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if s.orientation == core.Horizontal {
 		dragPos := metrics.UnitsToCellX(event.X)
 		trackCells := metrics.CharsForWidth(bounds.Width)
-		thumbSize := trackCells * s.pageStep / (s.maximum - s.minimum + s.pageStep)
+		// Use ListView-style formula
+		totalItems := s.maximum - s.minimum + trackCells
+		thumbSize := trackCells * trackCells / totalItems
 		if thumbSize < 1 {
 			thumbSize = 1
 		}
 
+		scrollableTrack := trackCells - thumbSize
 		newThumbPos := dragPos - s.dragOffset
 		if newThumbPos < 0 {
 			newThumbPos = 0
 		}
-		if newThumbPos > trackCells-thumbSize {
-			newThumbPos = trackCells - thumbSize
+		if newThumbPos > scrollableTrack {
+			newThumbPos = scrollableTrack
 		}
 
-		newValue := s.minimum + newThumbPos*(s.maximum-s.minimum)/(trackCells-thumbSize)
+		// Convert thumb position to scroll value
+		maxScroll := s.maximum - s.minimum
+		newValue := s.minimum
+		if scrollableTrack > 0 {
+			newValue = s.minimum + newThumbPos*maxScroll/scrollableTrack
+		}
 		if s.tracking {
 			s.SetValue(newValue)
 		}
 	} else {
 		dragPos := int(event.Y / metrics.CellHeight)
 		trackCells := int(bounds.Height / metrics.CellHeight)
-		thumbSize := trackCells * s.pageStep / (s.maximum - s.minimum + s.pageStep)
+		// Use ListView-style formula
+		totalItems := s.maximum - s.minimum + trackCells
+		thumbSize := trackCells * trackCells / totalItems
 		if thumbSize < 1 {
 			thumbSize = 1
 		}
 
+		scrollableTrack := trackCells - thumbSize
 		newThumbPos := dragPos - s.dragOffset
 		if newThumbPos < 0 {
 			newThumbPos = 0
 		}
-		if newThumbPos > trackCells-thumbSize {
-			newThumbPos = trackCells - thumbSize
+		if newThumbPos > scrollableTrack {
+			newThumbPos = scrollableTrack
 		}
 
+		// Convert thumb position to scroll value
+		maxScroll := s.maximum - s.minimum
 		newValue := s.minimum
-		if trackCells > thumbSize {
-			newValue = s.minimum + newThumbPos*(s.maximum-s.minimum)/(trackCells-thumbSize)
+		if scrollableTrack > 0 {
+			newValue = s.minimum + newThumbPos*maxScroll/scrollableTrack
 		}
 		if s.tracking {
 			s.SetValue(newValue)
@@ -646,16 +693,25 @@ func (s *ScrollArea) updateScrollBars() {
 	viewport := s.viewportBounds()
 	metrics := core.DefaultCellMetrics()
 
-	// Update horizontal scrollbar
+	// Update horizontal scrollbar using ListView-style calculation
+	// visible = viewport cells, total = content cells
 	viewCellWidth := metrics.CharsForWidth(viewport.Width)
 	contentCellWidth := metrics.CharsForWidth(s.contentWidth)
-	s.hScrollBar.SetRange(0, contentCellWidth-viewCellWidth)
+	maxScrollX := contentCellWidth - viewCellWidth
+	if maxScrollX < 0 {
+		maxScrollX = 0
+	}
+	s.hScrollBar.SetRange(0, maxScrollX)
 	s.hScrollBar.SetPageStep(viewCellWidth)
 
-	// Update vertical scrollbar
+	// Update vertical scrollbar using ListView-style calculation
 	viewCellHeight := int(viewport.Height / metrics.CellHeight)
 	contentCellHeight := int(s.contentHeight / metrics.CellHeight)
-	s.vScrollBar.SetRange(0, contentCellHeight-viewCellHeight)
+	maxScrollY := contentCellHeight - viewCellHeight
+	if maxScrollY < 0 {
+		maxScrollY = 0
+	}
+	s.vScrollBar.SetRange(0, maxScrollY)
 	s.vScrollBar.SetPageStep(viewCellHeight)
 }
 
