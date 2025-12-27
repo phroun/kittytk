@@ -1796,6 +1796,21 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 			x += tabSlotWidth
 
 			if i == index && x > availableWidth {
+				// For top tabs, check grace margin - if only non-essential trailing
+				// content (underscore + space) would be cut off, consider it as fitting
+				isLastTab := i == len(t.tabs)-1
+				if !isBottomTabs && isLastTab {
+					essentialSepWidth := 0
+					if isSelected {
+						essentialSepWidth = 2 // space/bracket + backslash are essential
+					}
+					essentialWidth := core.Unit(prefixWidth+len(tab.Text)+essentialSepWidth) * metrics.CellWidth
+					essentialX := x - tabSlotWidth + essentialWidth
+					if essentialX <= availableWidth {
+						// Essential content fits - consider it as fitting
+						break
+					}
+				}
 				fits = false
 				break
 			}
