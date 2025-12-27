@@ -620,8 +620,23 @@ func (s *ScrollArea) ScrollChildIntoView(child core.Widget) {
 	offsetX := childBounds.X
 	offsetY := childBounds.Y
 
+	// Check if this is a proxy from ScrollRectIntoView - if so, the parent
+	// will be the ScrollArea itself and the bounds already contain the
+	// content-relative position (no need to accumulate more offsets)
+	parent := child.Parent()
+	if parent == s {
+		// Bounds already contain content-relative coordinates
+		s.EnsureRectVisible(core.UnitRect{
+			X:      offsetX,
+			Y:      offsetY,
+			Width:  childBounds.Width,
+			Height: childBounds.Height,
+		})
+		return
+	}
+
 	// Walk up the parent chain until we reach our content widget
-	current := child.Parent()
+	current := parent
 	for current != nil {
 		// Stop if we've reached our content widget
 		if widget, ok := current.(core.Widget); ok {
