@@ -102,9 +102,10 @@ type Window struct {
 	onStateChange func(state WindowState)
 
 	// Request callbacks (for WindowManager integration)
-	onMinimizeRequest     func()              // Called when user clicks minimize button
-	onMaximizeRequest     func()              // Called when user clicks maximize button
+	onMinimizeRequest     func()               // Called when user clicks minimize button
+	onMaximizeRequest     func()               // Called when user clicks maximize button
 	getConstrainingBounds func() core.UnitRect // Returns the client area for movement constraints
+	popupController       core.PopupController // Popup controller for ComboBox etc.
 
 	// Button press tracking
 	pressedButton TitleButton // Currently pressed titlebar button
@@ -445,6 +446,53 @@ func (w *Window) SetGetConstrainingBounds(handler func() core.UnitRect) {
 	w.mu.Lock()
 	w.getConstrainingBounds = handler
 	w.mu.Unlock()
+}
+
+// SetPopupController sets the popup controller for this window.
+// This is called by WindowManager when the window is added.
+func (w *Window) SetPopupController(pc core.PopupController) {
+	w.mu.Lock()
+	w.popupController = pc
+	w.mu.Unlock()
+}
+
+// PopupController returns the popup controller for this window.
+// This implements the interface needed by widgets like ComboBox.
+func (w *Window) PopupController() core.PopupController {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.popupController
+}
+
+// RegisterPopup implements core.PopupController by delegating to the stored controller.
+func (w *Window) RegisterPopup(request *core.PopupRequest) {
+	w.mu.RLock()
+	pc := w.popupController
+	w.mu.RUnlock()
+	if pc != nil {
+		pc.RegisterPopup(request)
+	}
+}
+
+// UnregisterPopup implements core.PopupController by delegating to the stored controller.
+func (w *Window) UnregisterPopup(id string) {
+	w.mu.RLock()
+	pc := w.popupController
+	w.mu.RUnlock()
+	if pc != nil {
+		pc.UnregisterPopup(id)
+	}
+}
+
+// MapToScreen implements core.PopupController by delegating to the stored controller.
+func (w *Window) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
+	w.mu.RLock()
+	pc := w.popupController
+	w.mu.RUnlock()
+	if pc != nil {
+		return pc.MapToScreen(widget, local)
+	}
+	return local
 }
 
 // SetBorderStyle sets the border style.

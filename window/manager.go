@@ -248,7 +248,8 @@ func (m *WindowManager) AddWindow(win *Window) {
 		return m.ClientArea()
 	})
 
-	// Set popup controller on window content so widgets can use overlays
+	// Set popup controller on window and its content so widgets can use overlays
+	win.SetPopupController(m)
 	if content := win.Content(); content != nil {
 		m.setPopupControllerRecursive(content)
 	}

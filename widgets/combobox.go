@@ -260,8 +260,8 @@ func (c *ComboBox) findPopupController() core.PopupController {
 func (c *ComboBox) HidePopup() {
 	c.isOpen = false
 
-	// Unregister popup overlay if we have a popup controller
-	if pc := c.PopupController(); pc != nil {
+	// Unregister popup overlay - find popup controller by walking parent chain
+	if pc := c.findPopupController(); pc != nil {
 		pc.UnregisterPopup(c.popupID())
 	}
 
