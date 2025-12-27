@@ -834,12 +834,30 @@ func (s *ScrollArea) HandleKeyPress(event core.KeyPressEvent) bool {
 	return false
 }
 
+// SetBounds sets the scroll area bounds and triggers layout.
+func (s *ScrollArea) SetBounds(bounds core.UnitRect) {
+	oldSize := s.Bounds().Size()
+	s.WidgetBase.SetBounds(bounds)
+	newSize := bounds.Size()
+	if oldSize != newSize {
+		s.HandleResize(oldSize, newSize)
+	}
+}
+
+// HandleResize is called when the scroll area is resized.
+func (s *ScrollArea) HandleResize(oldSize, newSize core.UnitSize) {
+	// Update scrollbar ranges when viewport size changes
+	s.updateScrollBars()
+}
+
 // HandleMousePress handles mouse clicks.
 func (s *ScrollArea) HandleMousePress(event core.MousePressEvent) bool {
 	viewport := s.viewportBounds()
 
-	// Check scrollbars
+	// Check if click is on vertical scrollbar
 	if s.needsVScrollBar() && event.X >= viewport.Width {
+		// Clear horizontal scrollbar drag state
+		s.hScrollBar.dragging = false
 		return s.vScrollBar.HandleMousePress(core.MousePressEvent{
 			X:      event.X - viewport.Width,
 			Y:      event.Y,
@@ -847,13 +865,20 @@ func (s *ScrollArea) HandleMousePress(event core.MousePressEvent) bool {
 		})
 	}
 
+	// Check if click is on horizontal scrollbar
 	if s.needsHScrollBar() && event.Y >= viewport.Height {
+		// Clear vertical scrollbar drag state
+		s.vScrollBar.dragging = false
 		return s.hScrollBar.HandleMousePress(core.MousePressEvent{
 			X:      event.X,
 			Y:      event.Y - viewport.Height,
 			Button: event.Button,
 		})
 	}
+
+	// Click is on content area - clear both scrollbar drag states
+	s.vScrollBar.dragging = false
+	s.hScrollBar.dragging = false
 
 	// Pass to content
 	if s.content != nil {
@@ -949,6 +974,9 @@ func (s *ScrollArea) HandleFocusIn() {
 
 // HandleFocusOut is called when focus is lost.
 func (s *ScrollArea) HandleFocusOut() {
+	// Clear any active scrollbar drag states when focus is lost
+	s.vScrollBar.dragging = false
+	s.hScrollBar.dragging = false
 	s.Update()
 }
 
