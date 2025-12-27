@@ -1078,6 +1078,9 @@ type MenuBar struct {
 	dragging   bool // Actually dragging (mouse moved while down)
 	mouseDownX core.Unit
 	mouseDownY core.Unit
+
+	// Callback when a menu is opened
+	onMenuOpen func()
 }
 
 // NewMenuBar creates a new menu bar.
@@ -1091,6 +1094,11 @@ func NewMenuBar() *MenuBar {
 	m.SetFocusPolicy(core.StrongFocus)
 	m.SetAccessibleRole(core.RoleMenuBar)
 	return m
+}
+
+// SetOnMenuOpen sets a callback that is called when a menu is opened.
+func (m *MenuBar) SetOnMenuOpen(callback func()) {
+	m.onMenuOpen = callback
 }
 
 // hasAcceleratorConflict checks if a menu accelerator key conflicts with any
@@ -1199,6 +1207,11 @@ func (m *MenuBar) OpenMenu(index int) {
 	m.currentIndex = index
 	m.activeMenu = m.menus[index]
 	m.acceleratorsActive = false // Disable bar accelerators when menu is down
+
+	// Notify that a menu is opening
+	if m.onMenuOpen != nil {
+		m.onMenuOpen()
+	}
 
 	// Calculate position
 	metrics := core.DefaultCellMetrics()

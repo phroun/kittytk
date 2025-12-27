@@ -400,6 +400,30 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 	}
 }
 
+// DeactivateActiveWindow removes focus from the active window without closing it.
+// This is used when the menu bar becomes active.
+func (m *WindowManager) DeactivateActiveWindow() {
+	m.mu.Lock()
+	oldActive := m.activeWindow
+	if oldActive == nil {
+		m.mu.Unlock()
+		return
+	}
+
+	m.activeWindow = nil
+	handler := m.onActiveChanged
+	m.mu.Unlock()
+
+	oldActive.ClearFocus()
+	if oldActive.onActivate != nil {
+		oldActive.onActivate(false)
+	}
+
+	if handler != nil {
+		handler(nil)
+	}
+}
+
 // FocusWindow gives a window focus without raising it to the front.
 // This is used for focus-follows-click behavior where the window only
 // raises on mouse release within its bounds.

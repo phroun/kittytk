@@ -212,6 +212,13 @@ func (app *Application) SetDesktop(desktop core.Widget) {
 					dockRow.RemoveEntryByTitle(win.Title())
 				})
 			}
+
+			// Wire up menu bar to deactivate windows when a menu opens
+			if menuBar := d.MenuBar(); menuBar != nil {
+				menuBar.SetOnMenuOpen(func() {
+					wm.DeactivateActiveWindow()
+				})
+			}
 		}
 	}
 }
