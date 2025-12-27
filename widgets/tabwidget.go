@@ -60,8 +60,8 @@ func NewTabWidget() *TabWidget {
 	}
 	t.WidgetBase = *core.NewWidgetBase()
 	t.Init(t)
-	// TabWidget is a container - let children inside get focus
-	t.SetFocusPolicy(core.NoFocus)
+	// TabWidget can receive focus for tab bar keyboard navigation
+	t.SetFocusPolicy(core.TabFocus)
 	t.SetAccessibleRole(core.RoleTabList)
 	return t
 }
@@ -497,9 +497,60 @@ func (t *TabWidget) canScrollLeft() bool {
 	return t.tabScrollOffset > 0
 }
 
-// canScrollRight returns true if there are tabs to the right.
+// canScrollRight returns true if there are more tabs to show on the right.
+// This checks if the last tab is fully visible, not just if there are more tabs.
 func (t *TabWidget) canScrollRight() bool {
-	return t.tabScrollOffset < len(t.tabs)-1
+	if t.tabScrollOffset >= len(t.tabs)-1 {
+		return false
+	}
+	// Check if the last tab is fully visible
+	return !t.isLastTabFullyVisible()
+}
+
+// isLastTabFullyVisible returns true if the last tab is completely visible.
+func (t *TabWidget) isLastTabFullyVisible() bool {
+	bounds := t.Bounds()
+	metrics := core.DefaultCellMetrics()
+
+	scrollButtonsWidth := core.Unit(0)
+	if t.tabsNeedScrolling() {
+		scrollButtonsWidth = metrics.TextWidth(6)
+	}
+	leftEllipseWidth := core.Unit(0)
+	if t.tabScrollOffset > 0 {
+		leftEllipseWidth = metrics.TextWidth(3)
+	}
+	availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth
+
+	// Calculate width needed for visible tabs
+	x := core.Unit(0)
+	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
+		tab := t.tabs[i]
+		isFirstVisible := i == t.tabScrollOffset
+		isSelected := i == t.currentIndex
+		isLastVisible := i == len(t.tabs)-1
+		nextIsSelected := !isLastVisible && i+1 == t.currentIndex
+
+		prefixWidth := 0
+		if isFirstVisible {
+			if isSelected {
+				prefixWidth = 4
+			} else {
+				prefixWidth = 2
+			}
+		}
+		sepWidth := 2
+		if isSelected || nextIsSelected {
+			sepWidth = 4
+		}
+		tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
+		x += tabSlotWidth
+
+		if x > availableWidth {
+			return false
+		}
+	}
+	return true
 }
 
 // SizeHint returns the preferred size.
@@ -538,11 +589,14 @@ func (t *TabWidget) Paint(p *core.Painter) {
 
 func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
 	tabHeight := t.tabBarHeight()
+	hasFocus := t.HasFocus()
 
 	// Tab bar style: silver on blue
 	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
 	// Selected tab style: bold yellow on blue
 	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorBlue).Bold()
+	// Focused selected tab style: yellow on teal (for angle brackets and title)
+	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold()
 	// Pressed button style (inverted)
 	pressedStyle := tabBarStyle.WithFg(tabBarStyle.Bg).WithBg(tabBarStyle.Fg)
 
@@ -620,7 +674,11 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 						p.DrawCell(x, 0, ' ', tabBarStyle)
 						p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarStyle)
 						p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
-						p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+						if hasFocus {
+							p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
+						} else {
+							p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+						}
 						x += metrics.CellWidth * 4
 					} else {
 						p.DrawCell(x, 0, ' ', tabBarStyle)
@@ -659,7 +717,11 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		if !tab.Enabled {
 			s = theme.Disabled
 		} else if isSelected {
-			s = selectedStyle
+			if hasFocus {
+				s = focusedSelectedStyle
+			} else {
+				s = selectedStyle
+			}
 		} else {
 			s = tabBarStyle
 		}
@@ -667,11 +729,15 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		// Draw prefix if first visible tab
 		if isFirstVisible {
 			if isSelected {
-				// " _/ " (4 chars)
+				// " _/<" (4 chars) when focused, " _/ " when not focused
 				p.DrawCell(x, 0, ' ', tabBarStyle)
 				p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarStyle)
 				p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
-				p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+				if hasFocus {
+					p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
+				} else {
+					p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+				}
 				x += metrics.CellWidth * 4
 			} else {
 				// "  " (2 chars)
@@ -697,18 +763,26 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 		// Draw separator after tab
 		if isSelected {
-			// " \_ " (4 chars) after selected tab
-			p.DrawCell(x, 0, ' ', tabBarStyle)
+			// ">\_ " (4 chars) when focused, " \_ " when not focused
+			if hasFocus {
+				p.DrawCell(x, 0, '>', focusedSelectedStyle)
+			} else {
+				p.DrawCell(x, 0, ' ', tabBarStyle)
+			}
 			p.DrawCell(x+metrics.CellWidth, 0, '\\', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*2, 0, '_', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
 			x += metrics.CellWidth * 4
 		} else if nextIsSelected {
-			// " _/ " (4 chars) before selected tab
+			// " _/<" (4 chars) when focused, " _/ " when not focused
 			p.DrawCell(x, 0, ' ', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+			if hasFocus {
+				p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
+			} else {
+				p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+			}
 			x += metrics.CellWidth * 4
 		} else {
 			// "  " (2 chars) regular separator
@@ -721,24 +795,41 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	// Draw scroll buttons if needed
 	if needsScrolling {
 		buttonX := bounds.Width - scrollButtonsWidth
+		disabledStyle := tabBarStyle.WithFg(style.ColorBrightBlack)
 
-		// [<] button
-		leftStyle := tabBarStyle
-		if t.scrollButtonPressed == -1 && t.scrollLeftHovered {
-			leftStyle = pressedStyle
+		// [<] button - disabled when can't scroll left
+		canLeft := t.canScrollLeft()
+		if canLeft {
+			leftStyle := tabBarStyle
+			if t.scrollButtonPressed == -1 && t.scrollLeftHovered {
+				leftStyle = pressedStyle
+			}
+			p.DrawCell(buttonX, 0, '[', leftStyle)
+			p.DrawCell(buttonX+metrics.CellWidth, 0, '<', leftStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*2, 0, ']', leftStyle)
+		} else {
+			// Disabled: " < " (no brackets, grayed out)
+			p.DrawCell(buttonX, 0, ' ', disabledStyle)
+			p.DrawCell(buttonX+metrics.CellWidth, 0, '<', disabledStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*2, 0, ' ', disabledStyle)
 		}
-		p.DrawCell(buttonX, 0, '[', leftStyle)
-		p.DrawCell(buttonX+metrics.CellWidth, 0, '<', leftStyle)
-		p.DrawCell(buttonX+metrics.CellWidth*2, 0, ']', leftStyle)
 
-		// [>] button
-		rightStyle := tabBarStyle
-		if t.scrollButtonPressed == 1 && t.scrollRightHovered {
-			rightStyle = pressedStyle
+		// [>] button - disabled when can't scroll right
+		canRight := t.canScrollRight()
+		if canRight {
+			rightStyle := tabBarStyle
+			if t.scrollButtonPressed == 1 && t.scrollRightHovered {
+				rightStyle = pressedStyle
+			}
+			p.DrawCell(buttonX+metrics.CellWidth*3, 0, '[', rightStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*4, 0, '>', rightStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*5, 0, ']', rightStyle)
+		} else {
+			// Disabled: " > " (no brackets, grayed out)
+			p.DrawCell(buttonX+metrics.CellWidth*3, 0, ' ', disabledStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*4, 0, '>', disabledStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*5, 0, ' ', disabledStyle)
 		}
-		p.DrawCell(buttonX+metrics.CellWidth*3, 0, '[', rightStyle)
-		p.DrawCell(buttonX+metrics.CellWidth*4, 0, '>', rightStyle)
-		p.DrawCell(buttonX+metrics.CellWidth*5, 0, ']', rightStyle)
 	}
 }
 
@@ -924,7 +1015,27 @@ func (t *TabWidget) paintContent(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (t *TabWidget) HandleKeyPress(event core.KeyPressEvent) bool {
-	// Pass to current content first
+	// When TabWidget has focus, handle tab bar navigation
+	if t.HasFocus() {
+		switch event.Key {
+		case "Left":
+			t.prevTabAndEnsureVisible()
+			return true
+		case "Right":
+			t.nextTabAndEnsureVisible()
+			return true
+		case "C-Left", "M-Left", "A-Left":
+			// Jump to first tab
+			t.firstTab()
+			return true
+		case "C-Right", "M-Right", "A-Right":
+			// Jump to last tab
+			t.lastTab()
+			return true
+		}
+	}
+
+	// Pass to current content
 	if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
 		content := t.tabs[t.currentIndex].Content
 		if content != nil && content.HandleKeyPress(event) {
@@ -978,6 +1089,60 @@ func (t *TabWidget) prevTab() {
 		idx := (t.currentIndex - i + len(t.tabs)) % len(t.tabs)
 		if t.tabs[idx].Enabled {
 			t.SetCurrentIndex(idx)
+			return
+		}
+	}
+}
+
+// nextTabAndEnsureVisible moves to next tab and ensures it's fully visible.
+func (t *TabWidget) nextTabAndEnsureVisible() {
+	if len(t.tabs) == 0 {
+		return
+	}
+
+	for i := 1; i <= len(t.tabs); i++ {
+		idx := (t.currentIndex + i) % len(t.tabs)
+		if t.tabs[idx].Enabled {
+			t.SetCurrentIndex(idx)
+			t.ensureTabFullyVisible(idx)
+			return
+		}
+	}
+}
+
+// prevTabAndEnsureVisible moves to previous tab and ensures it's fully visible.
+func (t *TabWidget) prevTabAndEnsureVisible() {
+	if len(t.tabs) == 0 {
+		return
+	}
+
+	for i := 1; i <= len(t.tabs); i++ {
+		idx := (t.currentIndex - i + len(t.tabs)) % len(t.tabs)
+		if t.tabs[idx].Enabled {
+			t.SetCurrentIndex(idx)
+			t.ensureTabFullyVisible(idx)
+			return
+		}
+	}
+}
+
+// firstTab jumps to the first enabled tab.
+func (t *TabWidget) firstTab() {
+	for i := 0; i < len(t.tabs); i++ {
+		if t.tabs[i].Enabled {
+			t.SetCurrentIndex(i)
+			t.ensureTabFullyVisible(i)
+			return
+		}
+	}
+}
+
+// lastTab jumps to the last enabled tab.
+func (t *TabWidget) lastTab() {
+	for i := len(t.tabs) - 1; i >= 0; i-- {
+		if t.tabs[i].Enabled {
+			t.SetCurrentIndex(i)
+			t.ensureTabFullyVisible(i)
 			return
 		}
 	}
@@ -1062,19 +1227,23 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 		scrollButtonsWidth := metrics.TextWidth(6)
 		buttonX := bounds.Width - scrollButtonsWidth
 
-		// [<] button (3 chars wide)
+		// [<] button (3 chars wide) - only active if can scroll left
 		if x >= buttonX && x < buttonX+metrics.TextWidth(3) {
-			t.scrollButtonPressed = -1
-			t.scrollLeftHovered = true
-			t.Update()
+			if t.canScrollLeft() {
+				t.scrollButtonPressed = -1
+				t.scrollLeftHovered = true
+				t.Update()
+			}
 			return
 		}
 
-		// [>] button (3 chars wide)
+		// [>] button (3 chars wide) - only active if can scroll right
 		if x >= buttonX+metrics.TextWidth(3) && x < buttonX+scrollButtonsWidth {
-			t.scrollButtonPressed = 1
-			t.scrollRightHovered = true
-			t.Update()
+			if t.canScrollRight() {
+				t.scrollButtonPressed = 1
+				t.scrollRightHovered = true
+				t.Update()
+			}
 			return
 		}
 	}
@@ -1115,9 +1284,16 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 		}
 		tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
 
-		// Stop if past visible area
+		// Check if this tab doesn't fully fit (partial tab with ellipsis)
 		if tabX+tabSlotWidth > availableWidth {
-			break
+			// Click is in the partial tab area - select this tab and scroll to show it
+			if x >= tabX && x < availableWidth {
+				if tab.Enabled {
+					t.SetCurrentIndex(i)
+					t.ensureTabFullyVisible(i)
+				}
+			}
+			return
 		}
 
 		if x >= tabX && x < tabX+tabSlotWidth {
@@ -1141,6 +1317,75 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 
 		tabX += tabSlotWidth
 	}
+}
+
+// ensureTabFullyVisible scrolls to make the given tab fully visible.
+func (t *TabWidget) ensureTabFullyVisible(index int) {
+	if index < 0 || index >= len(t.tabs) {
+		return
+	}
+
+	// If tab is before visible area, scroll left to show it
+	if index < t.tabScrollOffset {
+		t.tabScrollOffset = index
+		t.Update()
+		return
+	}
+
+	// Check if tab is fully visible
+	bounds := t.Bounds()
+	metrics := core.DefaultCellMetrics()
+
+	scrollButtonsWidth := core.Unit(0)
+	if t.tabsNeedScrolling() {
+		scrollButtonsWidth = metrics.TextWidth(6)
+	}
+
+	// Try scrolling right until the tab is fully visible
+	for t.tabScrollOffset < index {
+		leftEllipseWidth := core.Unit(0)
+		if t.tabScrollOffset > 0 {
+			leftEllipseWidth = metrics.TextWidth(3)
+		}
+		availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth
+
+		// Calculate if tab at index fits
+		x := core.Unit(0)
+		fits := true
+		for i := t.tabScrollOffset; i <= index; i++ {
+			tab := t.tabs[i]
+			isFirstVisible := i == t.tabScrollOffset
+			isSelected := i == t.currentIndex
+			isLastVisible := i == len(t.tabs)-1
+			nextIsSelected := !isLastVisible && i+1 == t.currentIndex
+
+			prefixWidth := 0
+			if isFirstVisible {
+				if isSelected {
+					prefixWidth = 4
+				} else {
+					prefixWidth = 2
+				}
+			}
+			sepWidth := 2
+			if isSelected || nextIsSelected {
+				sepWidth = 4
+			}
+			tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
+			x += tabSlotWidth
+
+			if i == index && x > availableWidth {
+				fits = false
+				break
+			}
+		}
+
+		if fits {
+			break
+		}
+		t.tabScrollOffset++
+	}
+	t.Update()
 }
 
 // HandleFocusIn is called when focus is gained.
