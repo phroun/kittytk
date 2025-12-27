@@ -2100,6 +2100,9 @@ func (t *TabWidget) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 // HandleResize is called when the tab widget is resized.
 func (t *TabWidget) HandleResize(oldSize, newSize core.UnitSize) {
+	// Adjust scroll offset based on new size
+	t.adjustScrollOffsetForResize(oldSize.Width > newSize.Width)
+
 	// Update content bounds for the current tab
 	if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
 		content := t.tabs[t.currentIndex].Content
@@ -2113,6 +2116,44 @@ func (t *TabWidget) HandleResize(oldSize, newSize core.UnitSize) {
 				Width:  contentBounds.Width,
 				Height: contentBounds.Height,
 			})
+		}
+	}
+}
+
+// adjustScrollOffsetForResize adjusts the tab scroll offset when the widget is resized.
+// When widening: scroll left if possible to avoid blank space on the right.
+// When narrowing: ensure the current tab stays visible.
+func (t *TabWidget) adjustScrollOffsetForResize(isNarrowing bool) {
+	if len(t.tabs) == 0 {
+		t.tabScrollOffset = 0
+		return
+	}
+
+	// If scrolling isn't needed at all, reset to 0
+	if !t.tabsNeedScrolling() {
+		t.tabScrollOffset = 0
+		return
+	}
+
+	if isNarrowing {
+		// When narrowing, ensure current tab is still visible
+		// If it's now off the right edge, we need to scroll right (increase offset)
+		// But we should try to keep it in view
+		t.ensureTabFullyVisible(t.currentIndex)
+	} else {
+		// When widening, scroll left as much as possible to fill available space
+		// Keep reducing offset while the last tab would still be visible
+		for t.tabScrollOffset > 0 {
+			// Try scrolling left by one
+			t.tabScrollOffset--
+			// Check if last tab is now fully visible
+			if t.isLastTabFullyVisible() {
+				// Good, we can keep this offset
+				continue
+			}
+			// Last tab no longer fully visible, restore and stop
+			t.tabScrollOffset++
+			break
 		}
 	}
 }
