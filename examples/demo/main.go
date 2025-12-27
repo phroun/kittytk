@@ -196,6 +196,8 @@ func createMainWindow(application *app.Application, statusBar *widgets.StatusBar
 	tabWidget.AddTab("Basic Widgets", createBasicWidgetsDemo(statusBar))
 	tabWidget.AddTab("Selection", createSelectionDemo(tabWidget))
 	tabWidget.AddTab("Lists", createListDemo())
+	tabWidget.AddTab("Scroll Selection", createScrollSelectionDemo(tabWidget))
+	tabWidget.AddTab("Scroll Lists", createScrollListDemo())
 	tabWidget.AddTab("Progress", createProgressDemo())
 	tabWidget.AddTab("Bottom Tabs", createBottomTabsDemo())
 
@@ -469,6 +471,244 @@ func createListDemo() core.Widget {
 
 	treeViewPanel.SetLayoutManager(treeLayout)
 	splitter.SetSecond(treeViewPanel)
+
+	return splitter
+}
+
+// createScrollSelectionDemo creates a panel with selection widgets wrapped in scroll areas.
+func createScrollSelectionDemo(tabWidget *widgets.TabWidget) core.Widget {
+	// Use a vertical splitter to divide checkboxes from radio buttons
+	splitter := widgets.NewVSplitter()
+	splitter.SetPosition(0.4) // Checkboxes get 40% of space
+
+	// Top panel: Checkboxes (wrapped in scroll area)
+	checkPanel := widgets.NewPanel()
+	checkLayout := layout.NewBoxLayout(core.Vertical)
+	checkLayout.SetSpacing(0)
+
+	checkLabel := widgets.NewLabel("Checkboxes (scrollable):")
+	checkPanel.AddChild(checkLabel)
+
+	// Add more checkboxes to demonstrate scrolling
+	for i := 1; i <= 15; i++ {
+		check := widgets.NewCheckbox(fmt.Sprintf("Feature option %d", i))
+		if i%3 == 0 {
+			check.SetChecked(true)
+		}
+		checkPanel.AddChild(check)
+	}
+
+	checkPanel.SetLayoutManager(checkLayout)
+
+	// Wrap in scroll area
+	checkScroll := widgets.NewScrollArea()
+	checkScroll.SetContent(checkPanel)
+	checkScroll.SetVerticalScrollBarPolicy(widgets.ScrollBarAsNeeded)
+	checkScroll.SetHorizontalScrollBarPolicy(widgets.ScrollBarAsNeeded)
+	splitter.SetFirst(checkScroll)
+
+	// Bottom panel: Radio buttons and ComboBox (wrapped in scroll area)
+	radioPanel := widgets.NewPanel()
+	radioLayout := layout.NewBoxLayout(core.Vertical)
+	radioLayout.SetSpacing(0)
+
+	radioLabel := widgets.NewLabel("Radio buttons (scrollable):")
+	radioPanel.AddChild(radioLabel)
+
+	radioGroup := widgets.NewRadioGroup()
+	for i := 1; i <= 10; i++ {
+		radio := widgets.NewRadioButton(fmt.Sprintf("Radio option %d with longer text", i))
+		radioGroup.AddButton(radio)
+		radioPanel.AddChild(radio)
+	}
+
+	// Background color radio buttons
+	bgLabel := widgets.NewLabel("Tab Background Color:")
+	radioPanel.AddChild(bgLabel)
+
+	bgGroup := widgets.NewRadioGroup()
+	bgDefault := widgets.NewRadioButton("Default")
+	bgGreen := widgets.NewRadioButton("Dark Green")
+	bgGray := widgets.NewRadioButton("TrueColor #333")
+	bgGroup.AddButton(bgDefault)
+	bgGroup.AddButton(bgGreen)
+	bgGroup.AddButton(bgGray)
+	bgDefault.SetChecked(true)
+
+	// Set up callbacks to change TabWidget background
+	bgDefault.SetOnToggled(func(checked bool) {
+		if checked {
+			tabWidget.SetBackgroundColor(nil) // Inherit/default
+			tabWidget.Update()
+		}
+	})
+	bgGreen.SetOnToggled(func(checked bool) {
+		if checked {
+			green := style.ColorGreen
+			tabWidget.SetBackgroundColor(&green)
+			tabWidget.Update()
+		}
+	})
+	bgGray.SetOnToggled(func(checked bool) {
+		if checked {
+			gray := style.RGB(0x33, 0x33, 0x33)
+			tabWidget.SetBackgroundColor(&gray)
+			tabWidget.Update()
+		}
+	})
+
+	radioPanel.AddChild(bgDefault)
+	radioPanel.AddChild(bgGreen)
+	radioPanel.AddChild(bgGray)
+
+	// ComboBox
+	comboLabel := widgets.NewLabel("ComboBox:")
+	radioPanel.AddChild(comboLabel)
+
+	combo := widgets.NewComboBox()
+	combo.AddItem("First item")
+	combo.AddItem("Second item")
+	combo.AddItem("Third item")
+	combo.AddItem("Fourth item")
+	radioPanel.AddChild(combo)
+
+	radioPanel.SetLayoutManager(radioLayout)
+
+	// Wrap in scroll area
+	radioScroll := widgets.NewScrollArea()
+	radioScroll.SetContent(radioPanel)
+	radioScroll.SetVerticalScrollBarPolicy(widgets.ScrollBarAsNeeded)
+	radioScroll.SetHorizontalScrollBarPolicy(widgets.ScrollBarAsNeeded)
+	splitter.SetSecond(radioScroll)
+
+	return splitter
+}
+
+// createScrollListDemo creates a panel with list widgets wrapped in scroll areas.
+func createScrollListDemo() core.Widget {
+	// Use a horizontal splitter to divide space between ListView and TreeView
+	splitter := widgets.NewHSplitter()
+	splitter.SetPosition(0.5) // Start with 50/50 split
+
+	// ListView (wrapped in scroll area)
+	listViewPanel := widgets.NewPanel()
+	listLayout := layout.NewBoxLayout(core.Vertical)
+
+	listLabel := widgets.NewLabel("ListView (scrollable container):")
+	listViewPanel.AddChild(listLabel)
+
+	listView := widgets.NewListView()
+	for i := 1; i <= 20; i++ {
+		item := widgets.NewListItem(fmt.Sprintf("Item %d", i))
+		listView.AddItem(item)
+	}
+	listViewPanel.AddChild(listView)
+
+	// Add some extra widgets to make the panel taller than the view
+	extraLabel := widgets.NewLabel("Extra content below ListView:")
+	listViewPanel.AddChild(extraLabel)
+
+	for i := 1; i <= 5; i++ {
+		btn := widgets.NewButton(fmt.Sprintf("Button %d", i))
+		listViewPanel.AddChild(btn)
+	}
+
+	listViewPanel.SetLayoutManager(listLayout)
+
+	// Wrap in scroll area
+	listScroll := widgets.NewScrollArea()
+	listScroll.SetContent(listViewPanel)
+	listScroll.SetVerticalScrollBarPolicy(widgets.ScrollBarAsNeeded)
+	listScroll.SetHorizontalScrollBarPolicy(widgets.ScrollBarAsNeeded)
+	splitter.SetFirst(listScroll)
+
+	// TreeView (wrapped in scroll area)
+	treeViewPanel := widgets.NewPanel()
+	treeLayout := layout.NewBoxLayout(core.Vertical)
+
+	treeLabel := widgets.NewLabel("TreeView (scrollable container):")
+	treeViewPanel.AddChild(treeLabel)
+
+	treeView := widgets.NewTreeView()
+
+	// Build tree structure
+	root1 := widgets.NewTreeItem("Documents")
+	root1.Expanded = true
+	child1 := widgets.NewTreeItem("Work")
+	child1.Expanded = true
+	child1.AddChild(widgets.NewTreeItem("Report.txt"))
+	child1.AddChild(widgets.NewTreeItem("Presentation.pptx"))
+	child1.AddChild(widgets.NewTreeItem("Budget.xlsx"))
+	child1.AddChild(widgets.NewTreeItem("Meeting Notes.md"))
+	root1.AddChild(child1)
+	child2 := widgets.NewTreeItem("Personal")
+	child2.AddChild(widgets.NewTreeItem("Notes.txt"))
+	child2.AddChild(widgets.NewTreeItem("Journal.md"))
+	child2.AddChild(widgets.NewTreeItem("Ideas.txt"))
+	root1.AddChild(child2)
+	child3 := widgets.NewTreeItem("Projects")
+	child3.AddChild(widgets.NewTreeItem("Alpha"))
+	child3.AddChild(widgets.NewTreeItem("Beta"))
+	child3.AddChild(widgets.NewTreeItem("Gamma"))
+	root1.AddChild(child3)
+
+	root2 := widgets.NewTreeItem("Pictures")
+	root2.AddChild(widgets.NewTreeItem("Vacation"))
+	root2.AddChild(widgets.NewTreeItem("Family"))
+	root2.AddChild(widgets.NewTreeItem("Pets"))
+	root2.AddChild(widgets.NewTreeItem("Events"))
+	root2.AddChild(widgets.NewTreeItem("Screenshots"))
+
+	root3 := widgets.NewTreeItem("Downloads")
+	root3.AddChild(widgets.NewTreeItem("Software"))
+	root3.AddChild(widgets.NewTreeItem("Documents"))
+	root3.AddChild(widgets.NewTreeItem("Music"))
+
+	root4 := widgets.NewTreeItem("Music")
+	root4.AddChild(widgets.NewTreeItem("Rock"))
+	root4.AddChild(widgets.NewTreeItem("Jazz"))
+	root4.AddChild(widgets.NewTreeItem("Classical"))
+	root4.AddChild(widgets.NewTreeItem("Electronic"))
+
+	root5 := widgets.NewTreeItem("Videos")
+	root5.AddChild(widgets.NewTreeItem("Movies"))
+	root5.AddChild(widgets.NewTreeItem("TV Shows"))
+	root5.AddChild(widgets.NewTreeItem("Tutorials"))
+
+	root6 := widgets.NewTreeItem("Code")
+	codeChild1 := widgets.NewTreeItem("Go")
+	codeChild1.AddChild(widgets.NewTreeItem("main.go"))
+	codeChild1.AddChild(widgets.NewTreeItem("utils.go"))
+	root6.AddChild(codeChild1)
+	codeChild2 := widgets.NewTreeItem("Python")
+	codeChild2.AddChild(widgets.NewTreeItem("script.py"))
+	root6.AddChild(codeChild2)
+
+	treeView.AddRootItem(root1)
+	treeView.AddRootItem(root2)
+	treeView.AddRootItem(root3)
+	treeView.AddRootItem(root4)
+	treeView.AddRootItem(root5)
+	treeView.AddRootItem(root6)
+
+	treeViewPanel.AddChild(treeView)
+
+	// Add extra content below TreeView
+	extraLabel2 := widgets.NewLabel("Extra content below TreeView:")
+	treeViewPanel.AddChild(extraLabel2)
+
+	textInput := widgets.NewTextInput()
+	textInput.SetPlaceholder("Type something...")
+	treeViewPanel.AddChild(textInput)
+
+	treeViewPanel.SetLayoutManager(treeLayout)
+
+	// Wrap in scroll area
+	treeScroll := widgets.NewScrollArea()
+	treeScroll.SetContent(treeViewPanel)
+	treeScroll.SetVerticalScrollBarPolicy(widgets.ScrollBarAsNeeded)
+	treeScroll.SetHorizontalScrollBarPolicy(widgets.ScrollBarAsNeeded)
+	splitter.SetSecond(treeScroll)
 
 	return splitter
 }
