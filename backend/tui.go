@@ -158,13 +158,7 @@ func (t *TUIBackend) Init() error {
 	// Allocate buffers
 	t.allocateBuffers()
 
-	// Enter alternate screen
-	t.write("\033[?1049h")
-
-	// Hide cursor initially
-	t.write("\033[?25l")
-
-	// Set up keyboard handler BEFORE enabling terminal modes
+	// Set up keyboard handler FIRST, before any terminal mode changes
 	// This matches the pattern used in direct-key-handler's test program
 	kbOpts := keyboard.Options{
 		InputReader: os.Stdin,
@@ -172,13 +166,17 @@ func (t *TUIBackend) Init() error {
 	t.keyboard = keyboard.New(kbOpts)
 	t.keyboard.OnKey = t.handleKey
 
+	// Enter alternate screen
+	fmt.Print("\033[?1049h")
+
+	// Hide cursor initially
+	fmt.Print("\033[?25l")
+
 	// Enable Kitty keyboard protocol for better key detection
 	// Mode 1 = Report disambiguated keys
-	t.write("\033[>1u")
+	fmt.Print("\033[>1u")
 
 	// Enable mouse if requested
-	// NOTE: Must write directly to os.Stdout like direct-key-handler's test app
-	// Using fmt.Print ensures proper terminal handling
 	if t.hasMouse {
 		fmt.Print("\033[?1000h\033[?1002h\033[?1006h")
 	}
