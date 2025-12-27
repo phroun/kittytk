@@ -183,6 +183,11 @@ func (t *TUIBackend) Init() error {
 		t.write("\033[?1000h\033[?1002h\033[?1006h")
 	}
 
+	// Ensure all escape sequences are flushed to terminal before starting keyboard
+	if f, ok := t.output.(*os.File); ok {
+		f.Sync()
+	}
+
 	// Now start the keyboard handler
 	if err := t.keyboard.Start(); err != nil {
 		return fmt.Errorf("failed to start keyboard handler: %w", err)
