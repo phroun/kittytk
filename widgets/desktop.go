@@ -30,7 +30,7 @@ type Desktop struct {
 // NewDesktop creates a new desktop widget.
 func NewDesktop() *Desktop {
 	d := &Desktop{
-		bgChar:  '░', // Default pattern
+		bgChar:  '▓', // Default pattern (three-quarter shade block)
 		dockRow: NewDockRow(),
 	}
 	d.WidgetBase = *core.NewWidgetBase()

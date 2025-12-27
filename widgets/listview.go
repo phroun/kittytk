@@ -661,19 +661,22 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		return false // Click is past the content area
 	}
 
-	// Start content drag - clear scrollbar drag flag
-	l.isDragging = true
-	l.scrollbarDragging = false
+	// Calculate which item was clicked
 	clickedRow := int(event.Y / metrics.CellHeight)
 	clickedIndex := l.scrollOffset + clickedRow
 
-	// Account for scrollbar width
+	// Only start content drag if click is on a valid item
 	contentWidth := bounds.Width - metrics.CellWidth
-	if event.X < contentWidth && clickedIndex >= 0 && clickedIndex < len(l.items) {
+	if event.X >= 0 && event.X < contentWidth && clickedIndex >= 0 && clickedIndex < len(l.items) {
+		// Start content drag - clear scrollbar drag flag
+		l.isDragging = true
+		l.scrollbarDragging = false
 		l.SetCurrentIndex(clickedIndex)
+		return true
 	}
 
-	return true
+	// Click is in content area but not on a valid item
+	return false
 }
 
 // HandleMouseMove handles mouse drag to sweep selection.

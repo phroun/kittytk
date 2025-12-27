@@ -734,13 +734,13 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		return false // Click is past the content area
 	}
 
-	// Start content drag - clear scrollbar drag flag
-	t.isDragging = true
-	t.scrollbarDragging = false
+	// Calculate which item was clicked
 	clickedRow := int(event.Y / metrics.CellHeight)
 	clickedIndex := t.scrollOffset + clickedRow
 
-	if clickedIndex >= 0 && clickedIndex < len(t.flatList) {
+	// Only process if click is on a valid item
+	contentWidth := bounds.Width - metrics.CellWidth
+	if event.X >= 0 && event.X < contentWidth && clickedIndex >= 0 && clickedIndex < len(t.flatList) {
 		item := t.flatList[clickedIndex]
 		level := item.Level()
 
@@ -752,6 +752,10 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 				return true
 			}
 		}
+
+		// Start content drag - clear scrollbar drag flag
+		t.isDragging = true
+		t.scrollbarDragging = false
 
 		// Check for double-click (400ms threshold)
 		now := time.Now().UnixNano()
@@ -776,9 +780,11 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		}
 
 		t.SetCurrentIndex(clickedIndex)
+		return true
 	}
 
-	return true
+	// Click is in content area but not on a valid item
+	return false
 }
 
 // HandleMouseMove handles mouse drag to sweep selection.

@@ -413,7 +413,7 @@ func DefaultTheme() *Theme {
 		ProgressFilled: DefaultStyle().WithFg(ColorWhite).WithBg(ColorGreen),
 		ProgressEmpty:  DefaultStyle().WithFg(ColorWhite).WithBg(ColorBrightBlack),
 
-		Desktop:   DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlue),
+		Desktop:   DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorGreen).WithAttrs(StyleDim),
 		StatusBar: DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
 
 		DefaultBorder: BorderSingle,
@@ -523,7 +523,7 @@ func ClassicTheme() *Theme {
 		ProgressFilled: DefaultStyle().WithBg(ColorGreen),
 		ProgressEmpty:  DefaultStyle().WithBg(ColorBlack),
 
-		Desktop:   DefaultStyle().WithFg(ColorCyan).WithBg(ColorBlue),
+		Desktop:   DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorGreen).WithAttrs(StyleDim),
 		StatusBar: DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
 
 		DefaultBorder: BorderDouble,
