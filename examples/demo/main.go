@@ -266,36 +266,41 @@ func createBasicWidgetsDemo(statusBar *widgets.StatusBar) core.Widget {
 	return panel
 }
 
-// createSelectionDemo creates a panel with selection widgets.
+// createSelectionDemo creates a panel with selection widgets using a draggable splitter.
 func createSelectionDemo() core.Widget {
-	panel := widgets.NewPanel()
-	boxLayout := layout.NewBoxLayout(core.Vertical)
-	// Use spacing of 0 - items are already one cell tall each
-	// Using non-cell-aligned spacing (like 8) causes visual/click issues
-	boxLayout.SetSpacing(0)
+	// Use a vertical splitter to divide checkboxes from radio buttons
+	splitter := widgets.NewVSplitter()
+	splitter.SetPosition(0.4) // Checkboxes get 40% of space
 
-	// Checkboxes
+	// Top panel: Checkboxes
+	checkPanel := widgets.NewPanel()
+	checkLayout := layout.NewBoxLayout(core.Vertical)
+	checkLayout.SetSpacing(0)
+
 	checkLabel := widgets.NewLabel("Checkboxes:")
-	panel.AddChild(checkLabel)
+	checkPanel.AddChild(checkLabel)
 
 	check1 := widgets.NewCheckbox("Enable feature A")
 	check1.SetChecked(true)
-	panel.AddChild(check1)
+	checkPanel.AddChild(check1)
 
 	check2 := widgets.NewCheckbox("Enable feature B")
-	panel.AddChild(check2)
+	checkPanel.AddChild(check2)
 
 	check3 := widgets.NewCheckbox("Tri-state checkbox")
 	check3.SetTriState(true)
-	panel.AddChild(check3)
+	checkPanel.AddChild(check3)
 
-	// Separator between checkboxes and radio buttons
-	separator := widgets.NewHSeparator("")
-	panel.AddChild(separator)
+	checkPanel.SetLayoutManager(checkLayout)
+	splitter.SetFirst(checkPanel)
 
-	// Radio buttons
+	// Bottom panel: Radio buttons and ComboBox
+	radioPanel := widgets.NewPanel()
+	radioLayout := layout.NewBoxLayout(core.Vertical)
+	radioLayout.SetSpacing(0)
+
 	radioLabel := widgets.NewLabel("Radio buttons:")
-	panel.AddChild(radioLabel)
+	radioPanel.AddChild(radioLabel)
 
 	radioGroup := widgets.NewRadioGroup()
 	radio1 := widgets.NewRadioButton("Option 1")
@@ -305,23 +310,25 @@ func createSelectionDemo() core.Widget {
 	radioGroup.AddButton(radio2)
 	radioGroup.AddButton(radio3)
 
-	panel.AddChild(radio1)
-	panel.AddChild(radio2)
-	panel.AddChild(radio3)
+	radioPanel.AddChild(radio1)
+	radioPanel.AddChild(radio2)
+	radioPanel.AddChild(radio3)
 
 	// ComboBox
 	comboLabel := widgets.NewLabel("ComboBox:")
-	panel.AddChild(comboLabel)
+	radioPanel.AddChild(comboLabel)
 
 	combo := widgets.NewComboBox()
 	combo.AddItem("First item")
 	combo.AddItem("Second item")
 	combo.AddItem("Third item")
 	combo.AddItem("Fourth item")
-	panel.AddChild(combo)
+	radioPanel.AddChild(combo)
 
-	panel.SetLayoutManager(boxLayout)
-	return panel
+	radioPanel.SetLayoutManager(radioLayout)
+	splitter.SetSecond(radioPanel)
+
+	return splitter
 }
 
 // createListDemo creates a panel with list widgets using a draggable splitter.

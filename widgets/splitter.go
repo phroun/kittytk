@@ -6,7 +6,9 @@ import (
 )
 
 // Splitter is a container widget that divides space between two children
-// with a draggable divider.
+// with a draggable divider. The divider displays middots as a drag handle:
+// For vertical splitters: ────·· Title ··────
+// For horizontal splitters: vertical line with stacked middots
 type Splitter struct {
 	core.WidgetBase
 	core.AccessibleWidget
@@ -23,6 +25,9 @@ type Splitter struct {
 
 	// Divider dragging state
 	dragging bool
+
+	// Optional title displayed in the divider
+	title string
 }
 
 // NewSplitter creates a new splitter with the given orientation.
@@ -106,6 +111,17 @@ func (s *Splitter) Orientation() core.Orientation {
 // SetOrientation sets the splitter orientation.
 func (s *Splitter) SetOrientation(o core.Orientation) {
 	s.orientation = o
+	s.Update()
+}
+
+// Title returns the splitter divider title.
+func (s *Splitter) Title() string {
+	return s.title
+}
+
+// SetTitle sets the splitter divider title.
+func (s *Splitter) SetTitle(title string) {
+	s.title = title
 	s.Update()
 }
 
@@ -271,7 +287,7 @@ func (s *Splitter) Paint(p *core.Painter) {
 		s.first.Paint(firstPainter)
 	}
 
-	// Draw divider
+	// Draw divider with middot drag handle styling
 	divider := s.dividerBounds()
 	dividerStyle := theme.ScrollTrack // Use scrollbar track color for divider
 	if s.dragging {
@@ -279,30 +295,86 @@ func (s *Splitter) Paint(p *core.Painter) {
 	}
 
 	if s.orientation == core.Horizontal {
-		// Vertical divider bar
-		midY := bounds.Height / 2
-		// Round to cell boundary
-		midY = (midY / metrics.CellHeight) * metrics.CellHeight
-		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
-			ch := '│'
-			// Draw drag handle indicator in the middle
-			if y == midY {
-				ch = ':'
+		// Vertical divider bar with stacked middots
+		height := int(bounds.Height / metrics.CellHeight)
+		titleRunes := []rune(s.title)
+		titleLen := len(titleRunes)
+
+		if titleLen == 0 {
+			// No title: draw line with 4 middots centered
+			center := height / 2
+			for yi := 0; yi < height; yi++ {
+				y := metrics.CellToUnitsY(yi)
+				ch := '│'
+				// Draw ·· ·· (4 dots with space) at center
+				if yi == center-1 || yi == center || yi == center+1 || yi == center+2 {
+					ch = '·'
+				}
+				p.DrawCell(divider.X, y, ch, dividerStyle)
 			}
-			p.DrawCell(divider.X, y, ch, dividerStyle)
+		} else {
+			// With title: vertical title with middots above and below
+			middleLen := titleLen + 4 // 2 dots above, title, 2 dots below
+			startMiddle := (height - middleLen) / 2
+			if startMiddle < 0 {
+				startMiddle = 0
+			}
+
+			for yi := 0; yi < height; yi++ {
+				y := metrics.CellToUnitsY(yi)
+				var ch rune
+				relY := yi - startMiddle
+				if yi < startMiddle || relY >= middleLen {
+					ch = '│'
+				} else if relY == 0 || relY == 1 {
+					ch = '·'
+				} else if relY >= 2 && relY < 2+titleLen {
+					ch = titleRunes[relY-2]
+				} else if relY == 2+titleLen || relY == 3+titleLen {
+					ch = '·'
+				} else {
+					ch = '│'
+				}
+				p.DrawCell(divider.X, y, ch, dividerStyle)
+			}
 		}
 	} else {
-		// Horizontal divider bar
-		midX := bounds.Width / 2
-		// Round to cell boundary
-		midX = (midX / metrics.CellWidth) * metrics.CellWidth
-		for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
-			ch := '─'
-			// Draw drag handle indicator in the middle
-			if x == midX {
-				ch = ':'
+		// Horizontal divider bar: ────·· Title ··────
+		width := int(bounds.Width / metrics.CellWidth)
+		titleRunes := []rune(s.title)
+		titleLen := len(titleRunes)
+
+		if titleLen == 0 {
+			// No title: draw line with 4 middots centered
+			center := width / 2
+			for xi := 0; xi < width; xi++ {
+				x := metrics.CellToUnitsX(xi)
+				ch := '─'
+				// Draw ·· ·· (4 dots) at center
+				if xi == center-1 || xi == center || xi == center+1 || xi == center+2 {
+					ch = '·'
+				}
+				p.DrawCell(x, divider.Y, ch, dividerStyle)
 			}
-			p.DrawCell(x, divider.Y, ch, dividerStyle)
+		} else {
+			// With title: ────·· Title ··────
+			middleContent := "·· " + s.title + " ··"
+			middleRunes := []rune(middleContent)
+			middleLen := len(middleRunes)
+			startMiddle := (width - middleLen) / 2
+
+			for xi := 0; xi < width; xi++ {
+				x := metrics.CellToUnitsX(xi)
+				var ch rune
+				if xi < startMiddle {
+					ch = '─'
+				} else if xi < startMiddle+middleLen {
+					ch = middleRunes[xi-startMiddle]
+				} else {
+					ch = '─'
+				}
+				p.DrawCell(x, divider.Y, ch, dividerStyle)
+			}
 		}
 	}
 
