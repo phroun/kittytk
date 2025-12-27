@@ -9,6 +9,7 @@ import (
 	"github.com/phroun/tuitk/backend"
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/layout"
+	"github.com/phroun/tuitk/style"
 	"github.com/phroun/tuitk/widgets"
 	"github.com/phroun/tuitk/window"
 )
@@ -196,7 +197,7 @@ func createMainWindow(application *app.Application, statusBar *widgets.StatusBar
 
 	// Add demo tabs
 	tabWidget.AddTab("Basic Widgets", createBasicWidgetsDemo(statusBar))
-	tabWidget.AddTab("Selection", createSelectionDemo())
+	tabWidget.AddTab("Selection", createSelectionDemo(tabWidget))
 	tabWidget.AddTab("Lists", createListDemo())
 	tabWidget.AddTab("Progress", createProgressDemo())
 
@@ -271,7 +272,7 @@ func createBasicWidgetsDemo(statusBar *widgets.StatusBar) core.Widget {
 }
 
 // createSelectionDemo creates a panel with selection widgets using a draggable splitter.
-func createSelectionDemo() core.Widget {
+func createSelectionDemo(tabWidget *widgets.TabWidget) core.Widget {
 	// Use a vertical splitter to divide checkboxes from radio buttons
 	splitter := widgets.NewVSplitter()
 	splitter.SetPosition(0.4) // Checkboxes get 40% of space
@@ -317,6 +318,45 @@ func createSelectionDemo() core.Widget {
 	radioPanel.AddChild(radio1)
 	radioPanel.AddChild(radio2)
 	radioPanel.AddChild(radio3)
+
+	// Background color radio buttons
+	bgLabel := widgets.NewLabel("Tab Background Color:")
+	radioPanel.AddChild(bgLabel)
+
+	bgGroup := widgets.NewRadioGroup()
+	bgDefault := widgets.NewRadioButton("Default")
+	bgGreen := widgets.NewRadioButton("Dark Green")
+	bgGray := widgets.NewRadioButton("TrueColor #333")
+	bgGroup.AddButton(bgDefault)
+	bgGroup.AddButton(bgGreen)
+	bgGroup.AddButton(bgGray)
+	bgDefault.SetChecked(true)
+
+	// Set up callbacks to change TabWidget background
+	bgDefault.SetOnToggled(func(checked bool) {
+		if checked {
+			tabWidget.SetBackgroundColor(nil) // Inherit/default
+			tabWidget.Update()
+		}
+	})
+	bgGreen.SetOnToggled(func(checked bool) {
+		if checked {
+			green := style.ColorGreen
+			tabWidget.SetBackgroundColor(&green)
+			tabWidget.Update()
+		}
+	})
+	bgGray.SetOnToggled(func(checked bool) {
+		if checked {
+			gray := style.RGB(0x33, 0x33, 0x33)
+			tabWidget.SetBackgroundColor(&gray)
+			tabWidget.Update()
+		}
+	})
+
+	radioPanel.AddChild(bgDefault)
+	radioPanel.AddChild(bgGreen)
+	radioPanel.AddChild(bgGray)
 
 	// ComboBox
 	comboLabel := widgets.NewLabel("ComboBox:")

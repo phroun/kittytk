@@ -264,8 +264,18 @@ func (b *Button) Paint(p *core.Painter) {
 		s = *customStyle
 	}
 
-	// Shadow style (black foreground on default/inherited background)
+	// Get inherited background color for shadow and clear areas
+	inheritedBg := b.EffectiveBackgroundColor()
+	clearStyle := theme.Normal
+	if inheritedBg != style.ColorDefault {
+		clearStyle = clearStyle.WithBg(inheritedBg)
+	}
+
+	// Shadow style (black foreground on inherited background)
 	shadowStyle := style.DefaultStyle().WithFg(style.ColorBlack)
+	if inheritedBg != style.ColorDefault {
+		shadowStyle = shadowStyle.WithBg(inheritedBg)
+	}
 
 	// Calculate button content width (excluding shadow)
 	textLen := len([]rune(b.text))
@@ -293,7 +303,7 @@ func (b *Button) Paint(p *core.Painter) {
 	}
 
 	// Clear the entire button area first (to handle pressed state transition)
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', clearStyle)
 
 	// Draw button background
 	if !b.flat || focused || showPressed {

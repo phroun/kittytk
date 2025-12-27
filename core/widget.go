@@ -273,6 +273,7 @@ type WidgetBase struct {
 
 	focusPolicy     FocusPolicy
 	style           *style.CellStyle
+	backgroundColor *style.Color // nil = inherit from parent
 	popupController PopupController
 
 	needsRepaint bool
@@ -615,6 +616,55 @@ func (w *WidgetBase) SetStyle(s *style.CellStyle) {
 	defer w.mu.Unlock()
 	w.style = s
 	w.needsRepaint = true
+}
+
+// BackgroundColor returns the explicitly set background color, or nil if inherited.
+func (w *WidgetBase) BackgroundColor() *style.Color {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.backgroundColor
+}
+
+// SetBackgroundColor sets an explicit background color.
+// Pass nil to inherit from parent.
+func (w *WidgetBase) SetBackgroundColor(c *style.Color) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.backgroundColor = c
+	w.needsRepaint = true
+}
+
+// EffectiveBackgroundColor returns the background color to use for this widget.
+// If this widget has an explicit background color set, it returns that.
+// Otherwise, it walks up the parent chain to find an inherited background color.
+// If no parent has a background color set, it returns style.ColorDefault.
+func (w *WidgetBase) EffectiveBackgroundColor() style.Color {
+	w.mu.RLock()
+	if w.backgroundColor != nil {
+		c := *w.backgroundColor
+		w.mu.RUnlock()
+		return c
+	}
+	parent := w.parent
+	w.mu.RUnlock()
+
+	// Walk up the parent chain
+	for parent != nil {
+		// Check if parent has BackgroundColor method
+		if bgProvider, ok := parent.(interface{ BackgroundColor() *style.Color }); ok {
+			if bg := bgProvider.BackgroundColor(); bg != nil {
+				return *bg
+			}
+		}
+		// Move to next parent
+		if widget, ok := parent.(Widget); ok {
+			parent = widget.Parent()
+		} else {
+			break
+		}
+	}
+
+	return style.ColorDefault
 }
 
 // Theme returns the theme for this widget.

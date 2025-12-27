@@ -103,14 +103,22 @@ func (r *RadioButton) Paint(p *core.Painter) {
 	focused := r.HasFocus()
 	metrics := p.Metrics()
 
-	// Determine style
+	// Determine style - use inherited background color
+	inheritedBg := r.EffectiveBackgroundColor()
 	var s style.CellStyle
 	if !r.IsEnabled() {
 		s = theme.Disabled
 	} else if focused {
-		s = theme.Focused
+		// Focused: bright cyan foreground on inherited background
+		s = style.DefaultStyle().WithFg(style.ColorBrightCyan)
+		if inheritedBg != style.ColorDefault {
+			s = s.WithBg(inheritedBg)
+		}
 	} else {
 		s = theme.Normal
+		if inheritedBg != style.ColorDefault {
+			s = s.WithBg(inheritedBg)
+		}
 	}
 
 	// Draw radio indicator

@@ -95,6 +95,12 @@ func (l *Label) Paint(p *core.Painter) {
 		s = *customStyle
 	}
 
+	// Use inherited background color
+	inheritedBg := l.EffectiveBackgroundColor()
+	if inheritedBg != style.ColorDefault {
+		s = s.WithBg(inheritedBg)
+	}
+
 	// Clear background
 	p.Clear(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, s)
 
