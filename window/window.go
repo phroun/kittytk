@@ -344,6 +344,7 @@ func (w *Window) Restore() {
 
 	bounds := w.normalBounds
 	w.state = WindowStateNormal
+	w.pressedButton = TitleButtonNone // Reset pressed button state
 	handler := w.onStateChange
 	w.mu.Unlock()
 
