@@ -547,15 +547,16 @@ func (w *WidgetBase) SetFocus() {
 	self := w.self // Get the outer widget reference
 	w.mu.Unlock()
 
-	if !wasFocused {
-		w.HandleFocusIn()
-		w.Update()
-	}
-
 	// Use self (the outer widget) for focus management, falling back to w
 	focusWidget := Widget(w)
 	if self != nil {
 		focusWidget = self
+	}
+
+	if !wasFocused {
+		// Call HandleFocusIn on the actual widget (self) to get polymorphic behavior
+		focusWidget.HandleFocusIn()
+		w.Update()
 	}
 
 	// Find a parent with a FocusManager and notify it
@@ -595,10 +596,16 @@ func (w *WidgetBase) ClearFocus() {
 	w.mu.Lock()
 	wasFocused := w.focused
 	w.focused = false
+	self := w.self
 	w.mu.Unlock()
 
 	if wasFocused {
-		w.HandleFocusOut()
+		// Call HandleFocusOut on the actual widget (self) to get polymorphic behavior
+		if self != nil {
+			self.HandleFocusOut()
+		} else {
+			w.HandleFocusOut()
+		}
 		w.Update()
 	}
 }

@@ -624,7 +624,12 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		}
 	}
 
-	availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth
+	// Reserve space for right ellipsis when scrolling is needed (drawn later, right before buttons)
+	rightEllipseWidth := core.Unit(0)
+	if needsScrolling {
+		rightEllipseWidth = metrics.TextWidth(3) // "..."
+	}
+	availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth - rightEllipseWidth
 
 	// New tab format: [prefix][tab1 text][sep][tab2 text][sep]...
 	// - Prefix: " _/ " (4 chars) if first visible tab is selected, else "  " (2 chars)
@@ -659,9 +664,9 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 		// Check if this tab fits
 		if x+tabSlotWidth > availableWidth {
-			// Try to draw partial tab with ellipsis
+			// Try to draw partial tab (ellipsis is drawn separately after the loop)
 			remainingSpace := availableWidth - x
-			minPartialWidth := metrics.TextWidth(prefixWidth + 3) // prefix + "..."
+			minPartialWidth := metrics.TextWidth(prefixWidth) // just prefix needed
 			if remainingSpace >= minPartialWidth {
 				var s style.CellStyle
 				if !tab.Enabled {
@@ -692,7 +697,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 				}
 
 				// Calculate how much text we can show
-				textSpace := int((availableWidth-x)/metrics.CellWidth) - 3 // -3 for ellipsis
+				textSpace := int((availableWidth - x) / metrics.CellWidth)
 				if textSpace < 0 {
 					textSpace = 0
 				}
@@ -705,12 +710,6 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 				// Draw partial text
 				for j := 0; j < charsToShow; j++ {
 					p.DrawCell(x, 0, textRunes[j], s)
-					x += metrics.CellWidth
-				}
-
-				// Draw ellipsis
-				for j := 0; j < 3; j++ {
-					p.DrawCell(x, 0, '.', s)
 					x += metrics.CellWidth
 				}
 			}
@@ -793,6 +792,14 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 			p.DrawCell(x, 0, ' ', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarStyle)
 			x += metrics.CellWidth * 2
+		}
+	}
+
+	// Draw right ellipsis if tabs are truncated (right before scroll buttons)
+	if needsScrolling && !t.isLastTabFullyVisible() {
+		ellipsisX := bounds.Width - scrollButtonsWidth - metrics.TextWidth(3)
+		for i := 0; i < 3; i++ {
+			p.DrawCell(ellipsisX+core.Unit(i)*metrics.CellWidth, 0, '.', tabBarStyle)
 		}
 	}
 

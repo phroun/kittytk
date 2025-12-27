@@ -407,8 +407,8 @@ func (t *TextInput) Paint(p *core.Painter) {
 	if focused && !t.readOnly {
 		cursorX := metrics.CellToUnitsX(t.cursorPos - t.scrollOffset)
 		if cursorX >= 0 && cursorX < bounds.Width {
-			// Use reverse video for cursor
-			cursorStyle := s.Reverse()
+			// Use black on bright white for cursor
+			cursorStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorBrightWhite)
 			var cursorChar rune = ' '
 			if t.cursorPos < len(displayText)+t.scrollOffset {
 				cursorChar = t.getDisplayText()[t.cursorPos]
