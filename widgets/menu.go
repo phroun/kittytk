@@ -423,8 +423,8 @@ func (m *Menu) calculateSize() core.UnitSize {
 		}
 	}
 
-	// Add padding
-	maxWidth += 4
+	// Add padding (gutter: 4 cells, right border: 1 cell)
+	maxWidth += 5
 
 	// Calculate visible item count
 	visibleItems := len(m.items)
@@ -593,13 +593,31 @@ func (m *Menu) Paint(p *core.Painter) {
 			s = theme.MenuItem
 		}
 
-		// Draw item background
+		// Gutter area: 4 cells (border + checkmark + 2 spaces) in regular white
+		// Content area: rest of the item in bright white (for non-selected items)
+		gutterWidth := metrics.CellWidth * 4
+		gutterStyle := s
+		contentStyle := s
+		if item.Enabled && itemIndex != m.currentIndex {
+			// Use bright white background for content area of enabled, non-selected items
+			contentStyle = s.WithBg(style.ColorBrightWhite)
+		}
+
+		// Draw gutter background (regular white)
 		p.FillRect(core.UnitRect{
 			X:      m.popupX,
 			Y:      itemY,
-			Width:  size.Width,
+			Width:  gutterWidth,
 			Height: metrics.CellHeight,
-		}, ' ', s)
+		}, ' ', gutterStyle)
+
+		// Draw content background (bright white for enabled items)
+		p.FillRect(core.UnitRect{
+			X:      m.popupX + gutterWidth,
+			Y:      itemY,
+			Width:  size.Width - gutterWidth,
+			Height: metrics.CellHeight,
+		}, ' ', contentStyle)
 
 		if item.Separator {
 			// Draw separator line
@@ -612,28 +630,28 @@ func (m *Menu) Paint(p *core.Painter) {
 
 		x := m.popupX + metrics.CellWidth
 
-		// Draw checkmark or icon
+		// Draw checkmark or icon in gutter area
 		if item.Checkable {
 			if item.Checked {
-				p.DrawCell(x, itemY, '✓', s)
+				p.DrawCell(x, itemY, '✓', gutterStyle)
 			}
 		} else if item.Icon != nil && len(item.Icon.Cells) > 0 {
 			cell := item.Icon.Cells[0]
 			p.DrawCell(x, itemY, cell.Char, cell.Style)
 		}
-		x += metrics.CellWidth * 2
+		x += metrics.CellWidth * 3 // Move past checkmark + 2 gutter spaces
 
-		// Draw text with accelerator highlighting
+		// Now in content area - draw text with accelerator highlighting
 		var accelStyle style.CellStyle
 		if itemIndex == m.currentIndex {
 			// Selected item: dark magenta on cyan
 			accelStyle = style.DefaultStyle().WithFg(style.ColorMagenta).WithBg(style.ColorCyan)
 		} else {
-			// Normal item: red on white
-			accelStyle = style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+			// Normal item: red on bright white
+			accelStyle = style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorBrightWhite)
 		}
 		for idx, ch := range item.Text {
-			charStyle := s
+			charStyle := contentStyle
 			// Highlight accelerator for enabled items
 			if item.Enabled && idx == item.acceleratorPos {
 				charStyle = accelStyle
@@ -642,16 +660,16 @@ func (m *Menu) Paint(p *core.Painter) {
 			x += metrics.CellWidth
 		}
 
-		// Draw shortcut or submenu arrow at the right
+		// Draw shortcut or submenu arrow at the right (in content area)
 		if item.SubMenu != nil {
 			arrowX := m.popupX + size.Width - metrics.CellWidth*2
-			p.DrawCell(arrowX, itemY, '▸', s)
+			p.DrawCell(arrowX, itemY, '▸', contentStyle)
 		} else if item.Shortcut != "" {
 			shortcutStr := item.Shortcut.DisplayString()
 			shortcutX := m.popupX + size.Width - core.Unit(len(shortcutStr)+2)*metrics.CellWidth
-			shortcutStyle := s
+			shortcutStyle := contentStyle
 			if item.Enabled {
-				shortcutStyle = s.WithAttrs(style.StyleDim)
+				shortcutStyle = contentStyle.WithAttrs(style.StyleDim)
 			}
 			for _, ch := range shortcutStr {
 				p.DrawCell(shortcutX, itemY, ch, shortcutStyle)
