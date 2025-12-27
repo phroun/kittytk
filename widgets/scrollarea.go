@@ -105,11 +105,16 @@ func (s *ScrollBar) SetMaximum(max int) {
 func (s *ScrollBar) SetRange(min, max int) {
 	s.minimum = min
 	s.maximum = max
+	oldValue := s.value
 	if s.value < min {
 		s.value = min
 	}
 	if s.value > max {
 		s.value = max
+	}
+	// Notify if value was clamped
+	if s.value != oldValue && s.onValueChanged != nil {
+		s.onValueChanged(s.value)
 	}
 	s.Update()
 }
