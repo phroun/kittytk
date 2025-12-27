@@ -552,28 +552,86 @@ func (s *ScrollArea) ScrollTo(x, y int) {
 
 // EnsureVisible scrolls to make a point visible.
 func (s *ScrollArea) EnsureVisible(x, y core.Unit) {
+	s.EnsureRectVisible(core.UnitRect{X: x, Y: y, Width: 1, Height: 1})
+}
+
+// EnsureRectVisible scrolls to make a rectangle visible within the viewport.
+func (s *ScrollArea) EnsureRectVisible(rect core.UnitRect) {
 	viewport := s.viewportBounds()
 	metrics := core.DefaultCellMetrics()
 
 	// Calculate cell positions
-	cellX := metrics.UnitsToCellX(x)
-	cellY := int(y / metrics.CellHeight)
+	cellX := metrics.UnitsToCellX(rect.X)
+	cellY := int(rect.Y / metrics.CellHeight)
+	cellWidth := metrics.CharsForWidth(rect.Width)
+	cellHeight := int(rect.Height / metrics.CellHeight)
+	if cellWidth < 1 {
+		cellWidth = 1
+	}
+	if cellHeight < 1 {
+		cellHeight = 1
+	}
 
 	viewCellWidth := metrics.CharsForWidth(viewport.Width)
 	viewCellHeight := int(viewport.Height / metrics.CellHeight)
 
-	// Adjust scroll if needed
+	// Adjust horizontal scroll if needed
 	if cellX < s.scrollX {
+		// Widget is to the left of viewport - scroll left
 		s.SetScrollX(cellX)
-	} else if cellX >= s.scrollX+viewCellWidth {
-		s.SetScrollX(cellX - viewCellWidth + 1)
+	} else if cellX+cellWidth > s.scrollX+viewCellWidth {
+		// Widget extends past right edge - scroll right (show as much as possible)
+		s.SetScrollX(cellX + cellWidth - viewCellWidth)
 	}
 
+	// Adjust vertical scroll if needed
 	if cellY < s.scrollY {
+		// Widget is above viewport - scroll up
 		s.SetScrollY(cellY)
-	} else if cellY >= s.scrollY+viewCellHeight {
-		s.SetScrollY(cellY - viewCellHeight + 1)
+	} else if cellY+cellHeight > s.scrollY+viewCellHeight {
+		// Widget extends past bottom - scroll down (show as much as possible)
+		s.SetScrollY(cellY + cellHeight - viewCellHeight)
 	}
+}
+
+// ScrollChildIntoView scrolls to make a descendant widget visible.
+// Implements core.ScrollIntoViewHandler for automatic focus scrolling.
+func (s *ScrollArea) ScrollChildIntoView(child core.Widget) {
+	if s.content == nil {
+		return
+	}
+
+	// Calculate the child's position relative to our content
+	// by walking up from the child to our content widget
+	childBounds := child.Bounds()
+	offsetX := childBounds.X
+	offsetY := childBounds.Y
+
+	// Walk up the parent chain until we reach our content widget
+	current := child.Parent()
+	for current != nil {
+		// Stop if we've reached our content widget
+		if widget, ok := current.(core.Widget); ok {
+			if widget == s.content {
+				break
+			}
+			// Accumulate the offset from this parent
+			parentBounds := widget.Bounds()
+			offsetX += parentBounds.X
+			offsetY += parentBounds.Y
+			current = widget.Parent()
+		} else {
+			break
+		}
+	}
+
+	// Ensure the calculated rectangle is visible
+	s.EnsureRectVisible(core.UnitRect{
+		X:      offsetX,
+		Y:      offsetY,
+		Width:  childBounds.Width,
+		Height: childBounds.Height,
+	})
 }
 
 // HorizontalScrollBarPolicy returns the horizontal scrollbar policy.

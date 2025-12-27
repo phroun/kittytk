@@ -178,6 +178,20 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	t.ensureVisible(index)
 	t.Update()
 
+	// Notify parent scroll containers to scroll this item into view
+	if index >= 0 {
+		metrics := core.DefaultCellMetrics()
+		// Calculate the item's position relative to the TreeView (in visible area)
+		visibleRow := index - t.scrollOffset
+		itemRect := core.UnitRect{
+			X:      0,
+			Y:      core.Unit(visibleRow) * metrics.CellHeight,
+			Width:  t.Bounds().Width,
+			Height: metrics.CellHeight,
+		}
+		t.ScrollRectIntoView(itemRect)
+	}
+
 	if t.onCurrentChanged != nil && index >= 0 {
 		t.onCurrentChanged(t.flatList[index])
 	}

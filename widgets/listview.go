@@ -195,6 +195,20 @@ func (l *ListView) SetCurrentIndex(index int) {
 	l.ensureVisible(index)
 	l.Update()
 
+	// Notify parent scroll containers to scroll this item into view
+	if index >= 0 {
+		metrics := core.DefaultCellMetrics()
+		// Calculate the item's position relative to the ListView (in visible area)
+		visibleRow := index - l.scrollOffset
+		itemRect := core.UnitRect{
+			X:      0,
+			Y:      core.Unit(visibleRow) * metrics.CellHeight,
+			Width:  l.Bounds().Width,
+			Height: metrics.CellHeight,
+		}
+		l.ScrollRectIntoView(itemRect)
+	}
+
 	if l.selectionMode == SingleSelection {
 		l.selectedItems = make(map[int]bool)
 		if index >= 0 {

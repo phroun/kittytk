@@ -311,6 +311,16 @@ type FocusChainProvider interface {
 	CollectFocusChain(collector func(Widget))
 }
 
+// ScrollIntoViewHandler is implemented by scrollable containers (like ScrollArea)
+// that need to scroll to make focused widgets visible. When a widget gains focus,
+// the focus system walks up the parent chain and calls ScrollChildIntoView on each
+// handler, allowing nested scroll containers to each adjust their scroll position.
+type ScrollIntoViewHandler interface {
+	// ScrollChildIntoView scrolls the container to make the given descendant widget visible.
+	// The widget may be a direct child or a deeply nested descendant.
+	ScrollChildIntoView(child Widget)
+}
+
 // collectFocusable recursively collects focusable widgets.
 func (fm *FocusManager) collectFocusable(widget Widget, chain *[]Widget) {
 	fm.collectFocusableWithSkip(widget, chain, nil)
