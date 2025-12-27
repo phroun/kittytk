@@ -111,8 +111,9 @@ type Window struct {
 	buttonHovered bool        // Whether mouse is still over the pressed button
 
 	// Title bar keyboard focus
-	titleFocus   TitleFocus // Which title bar element has keyboard focus
-	resizeEdges  int        // Which edges are being keyboard-resized (ResizeEdge* constants)
+	titleFocus        TitleFocus    // Which title bar element has keyboard focus
+	resizeEdges       int           // Which edges are being keyboard-resized (ResizeEdge* constants)
+	resizeStartBounds core.UnitRect // Bounds when resize operation started (for Escape to revert)
 }
 
 // NewWindow creates a new window with the given title.
@@ -994,6 +995,9 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				} else {
 					// Start: expand left edge
 					w.mu.Lock()
+					if w.resizeEdges == ResizeEdgeNone {
+						w.resizeStartBounds = bounds // Save for Escape to revert
+					}
 					w.resizeEdges = ResizeEdgeLeft
 					w.mu.Unlock()
 					newBounds := bounds
@@ -1028,6 +1032,9 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				} else {
 					// Start: expand right edge
 					w.mu.Lock()
+					if w.resizeEdges == ResizeEdgeNone {
+						w.resizeStartBounds = bounds // Save for Escape to revert
+					}
 					w.resizeEdges = ResizeEdgeRight
 					w.mu.Unlock()
 					newBounds := bounds
@@ -1061,6 +1068,9 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				} else {
 					// Start: expand top edge
 					w.mu.Lock()
+					if w.resizeEdges == ResizeEdgeNone {
+						w.resizeStartBounds = bounds // Save for Escape to revert
+					}
 					w.resizeEdges |= ResizeEdgeTop
 					w.mu.Unlock()
 					newBounds := bounds
@@ -1095,6 +1105,9 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				} else {
 					// Start: expand bottom edge
 					w.mu.Lock()
+					if w.resizeEdges == ResizeEdgeNone {
+						w.resizeStartBounds = bounds // Save for Escape to revert
+					}
 					w.resizeEdges |= ResizeEdgeBottom
 					w.mu.Unlock()
 					newBounds := bounds
@@ -1106,6 +1119,30 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				newBounds := bounds
 				newBounds.Y += vertStep
 				w.SetBounds(w.constrainBoundsForMovement(newBounds))
+			}
+			return true
+
+		case "Enter", "Return", "KPEnter":
+			// Confirm resize - clear edges so next Shift+arrow starts fresh
+			// Also update resizeStartBounds to current bounds
+			w.mu.Lock()
+			if w.resizeEdges != ResizeEdgeNone {
+				w.resizeEdges = ResizeEdgeNone
+				w.resizeStartBounds = w.Bounds()
+			}
+			w.mu.Unlock()
+			return true
+
+		case "Escape", "Esc":
+			// Cancel resize - revert to bounds from when resize started
+			w.mu.Lock()
+			if w.resizeEdges != ResizeEdgeNone {
+				startBounds := w.resizeStartBounds
+				w.resizeEdges = ResizeEdgeNone
+				w.mu.Unlock()
+				w.SetBounds(startBounds)
+			} else {
+				w.mu.Unlock()
 			}
 			return true
 		}
