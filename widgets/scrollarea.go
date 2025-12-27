@@ -834,6 +834,18 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 		})
 	}
 
+	// Forward to content widget
+	if s.content != nil {
+		metrics := core.DefaultCellMetrics()
+		scrollOffsetX := core.Unit(s.scrollX) * metrics.CellWidth
+		scrollOffsetY := core.Unit(s.scrollY) * metrics.CellHeight
+
+		return s.content.HandleMouseMove(core.MouseMoveEvent{
+			X: event.X + scrollOffsetX,
+			Y: event.Y + scrollOffsetY,
+		})
+	}
+
 	return false
 }
 
@@ -854,6 +866,19 @@ func (s *ScrollArea) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		return s.hScrollBar.HandleMouseRelease(core.MouseReleaseEvent{
 			X:      event.X,
 			Y:      event.Y - viewport.Height,
+			Button: event.Button,
+		})
+	}
+
+	// Forward to content widget
+	if s.content != nil {
+		metrics := core.DefaultCellMetrics()
+		scrollOffsetX := core.Unit(s.scrollX) * metrics.CellWidth
+		scrollOffsetY := core.Unit(s.scrollY) * metrics.CellHeight
+
+		return s.content.HandleMouseRelease(core.MouseReleaseEvent{
+			X:      event.X + scrollOffsetX,
+			Y:      event.Y + scrollOffsetY,
 			Button: event.Button,
 		})
 	}
