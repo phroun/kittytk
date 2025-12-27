@@ -1781,12 +1781,13 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 			}
 		}
 
-		// Check for click on left ellipsis ("... ") to scroll left
+		// Check for click on left ellipsis ("...") to scroll left and open that menu
 		if m.scrollOffset > 0 {
 			ellipsisWidth := metrics.TextWidth(3) // "..."
 			if event.X >= 0 && event.X < ellipsisWidth {
 				m.scrollOffset--
-				m.Update()
+				// Open the menu that was just scrolled into view
+				m.OpenMenu(m.scrollOffset)
 				return true
 			}
 		}
