@@ -506,34 +506,66 @@ func (s *ScrollArea) viewportBounds() core.UnitRect {
 	width := bounds.Width
 	height := bounds.Height
 
-	if s.needsVScrollBar() {
+	// Calculate scrollbar needs based on raw bounds to avoid recursion
+	needsV, needsH := s.calculateScrollBarNeeds()
+
+	if needsV {
 		width -= metrics.CellWidth
 	}
-	if s.needsHScrollBar() {
+	if needsH {
 		height -= metrics.CellHeight
 	}
 
 	return core.UnitRect{Width: width, Height: height}
 }
 
+// calculateScrollBarNeeds determines if scrollbars are needed without recursion.
+// Returns (needsVertical, needsHorizontal).
+func (s *ScrollArea) calculateScrollBarNeeds() (bool, bool) {
+	bounds := s.Bounds()
+	metrics := core.DefaultCellMetrics()
+
+	// First pass: check if scrollbars needed with full bounds
+	needsV := false
+	needsH := false
+
+	switch s.vScrollBarPolicy {
+	case ScrollBarAlwaysOff:
+		needsV = false
+	case ScrollBarAlwaysOn:
+		needsV = true
+	default: // ScrollBarAsNeeded
+		needsV = s.contentHeight > bounds.Height
+	}
+
+	switch s.hScrollBarPolicy {
+	case ScrollBarAlwaysOff:
+		needsH = false
+	case ScrollBarAlwaysOn:
+		needsH = true
+	default: // ScrollBarAsNeeded
+		needsH = s.contentWidth > bounds.Width
+	}
+
+	// Second pass: if one scrollbar is shown, it reduces space for the other
+	if needsV && s.hScrollBarPolicy == ScrollBarAsNeeded {
+		needsH = s.contentWidth > (bounds.Width - metrics.CellWidth)
+	}
+	if needsH && s.vScrollBarPolicy == ScrollBarAsNeeded {
+		needsV = s.contentHeight > (bounds.Height - metrics.CellHeight)
+	}
+
+	return needsV, needsH
+}
+
 func (s *ScrollArea) needsHScrollBar() bool {
-	if s.hScrollBarPolicy == ScrollBarAlwaysOff {
-		return false
-	}
-	if s.hScrollBarPolicy == ScrollBarAlwaysOn {
-		return true
-	}
-	return s.contentWidth > s.viewportBounds().Width
+	_, needsH := s.calculateScrollBarNeeds()
+	return needsH
 }
 
 func (s *ScrollArea) needsVScrollBar() bool {
-	if s.vScrollBarPolicy == ScrollBarAlwaysOff {
-		return false
-	}
-	if s.vScrollBarPolicy == ScrollBarAlwaysOn {
-		return true
-	}
-	return s.contentHeight > s.viewportBounds().Height
+	needsV, _ := s.calculateScrollBarNeeds()
+	return needsV
 }
 
 func (s *ScrollArea) updateScrollBars() {
