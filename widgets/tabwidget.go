@@ -700,23 +700,97 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 		// Check if this tab fits
 		if x+tabSlotWidth > availableWidth {
-			// Try to draw partial tab (ellipsis is drawn separately after the loop)
+			// Check if we're in the "grace margin" - if only trailing non-essential
+			// content (underscore + space) would be cut off
+			overage := (x + tabSlotWidth) - availableWidth
+			isLastTab := i == len(t.tabs)-1
+			graceMargin := metrics.TextWidth(2)
+			inGraceMargin := isLastTab && overage <= graceMargin
+
+			var s style.CellStyle
+			if !tab.Enabled {
+				s = theme.Disabled
+			} else if isSelected {
+				if hasFocus {
+					s = focusedSelectedStyle
+				} else {
+					s = selectedStyle
+				}
+			} else {
+				s = tabBarUnderlined // Unselected tabs are underlined
+			}
+
+			if inGraceMargin {
+				// Grace margin: draw full text + as much separator as fits
+				// No ellipsis needed since only non-essential content is cut off
+
+				// Draw prefix if first visible
+				if isFirstVisible {
+					if isSelected {
+						p.DrawCell(x, 0, ' ', tabBarUnderlined)
+						p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
+						p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
+						if hasFocus {
+							p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
+						} else {
+							p.DrawCell(x+metrics.CellWidth*3, 0, ' ', s)
+						}
+						x += metrics.CellWidth * 4
+					} else {
+						p.DrawCell(x, 0, ' ', tabBarUnderlined)
+						p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarUnderlined)
+						x += metrics.CellWidth * 2
+					}
+				}
+
+				// Draw full text
+				for _, ch := range tab.Text {
+					p.DrawCell(x, 0, ch, s)
+					x += metrics.CellWidth
+				}
+
+				// Draw as much separator as fits (character by character)
+				if isSelected {
+					// ">\_ " or " \_ " - backslash is essential, underscore+space are not
+					if x < availableWidth {
+						if hasFocus {
+							p.DrawCell(x, 0, '>', focusedSelectedStyle)
+						} else {
+							p.DrawCell(x, 0, ' ', s)
+						}
+						x += metrics.CellWidth
+					}
+					if x < availableWidth {
+						p.DrawCell(x, 0, '\\', tabBarStyle)
+						x += metrics.CellWidth
+					}
+					if x < availableWidth {
+						p.DrawCell(x, 0, '_', tabBarUnderlined)
+						x += metrics.CellWidth
+					}
+					if x < availableWidth {
+						p.DrawCell(x, 0, ' ', tabBarUnderlined)
+						x += metrics.CellWidth
+					}
+				} else {
+					// "  " - both are non-essential filler
+					if x < availableWidth {
+						p.DrawCell(x, 0, ' ', tabBarUnderlined)
+						x += metrics.CellWidth
+					}
+					if x < availableWidth {
+						p.DrawCell(x, 0, ' ', tabBarUnderlined)
+						x += metrics.CellWidth
+					}
+				}
+				// Not marked as truncated - tab is essentially complete
+				break
+			}
+
+			// Not in grace margin - try to draw partial tab with ellipsis reserve
 			remainingSpace := availableWidth - x
 			minPartialWidth := metrics.TextWidth(prefixWidth) // just prefix needed
 			if remainingSpace >= minPartialWidth {
-				var s style.CellStyle
-				if !tab.Enabled {
-					s = theme.Disabled
-				} else if isSelected {
-					if hasFocus {
-						s = focusedSelectedStyle
-					} else {
-						s = selectedStyle
-					}
-				} else {
-					s = tabBarUnderlined // Unselected tabs are underlined
-				}
-
 				// Draw prefix if first visible
 				if isFirstVisible {
 					if isSelected {
