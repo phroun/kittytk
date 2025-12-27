@@ -1,5 +1,5 @@
-github.com/phroun/direct-key-handler v0.3.2 h1:z9cH1o8Vj1zsgpoq+B8OgCOYOizkYd/EERqZ16F3Epc=
-github.com/phroun/direct-key-handler v0.3.2/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
+github.com/phroun/direct-key-handler v0.3.3 h1:O7MPzTRZav3JevLdQD6sGewP6US3oESxjKhPZqyX1Eg=
+github.com/phroun/direct-key-handler v0.3.3/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
 github.com/phroun/purfecterm v0.2.14 h1:EIooWdm7DlBnnRi+pFtWT81b5CWTH5J0hZ1lihM/Zvw=
 github.com/phroun/purfecterm v0.2.14/go.mod h1:CBYqkuMl5Wt2NtN8DJ72lyjlTN68d18etM3/hEtCmiQ=
 golang.org/x/sys v0.39.0 h1:CvCKL8MeisomCi6qNZ+wbb0DN9E5AATixKsvNtMoMFk=

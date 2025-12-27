@@ -3,11 +3,9 @@ module github.com/phroun/tuitk
 go 1.24.7
 
 require (
-	github.com/phroun/direct-key-handler v0.3.2
+	github.com/phroun/direct-key-handler v0.3.3
+	github.com/phroun/purfecterm v0.2.14
 	golang.org/x/term v0.38.0
 )
 
-require (
-	github.com/phroun/purfecterm v0.2.14 // indirect
-	golang.org/x/sys v0.39.0 // indirect
-)
+require golang.org/x/sys v0.39.0 // indirect
