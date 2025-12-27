@@ -568,8 +568,12 @@ func (t *TabWidget) Paint(p *core.Painter) {
 	theme := t.Theme()
 	metrics := p.Metrics()
 
-	// Draw background
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
+	// Draw background using TabWidget's background color if set
+	bgStyle := style.DefaultStyle()
+	if bg := t.BackgroundColor(); bg != nil {
+		bgStyle = bgStyle.WithBg(*bg)
+	}
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
 	// Draw tab bar based on position
 	switch t.tabPosition {
