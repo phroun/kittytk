@@ -518,10 +518,14 @@ func (t *TabWidget) isLastTabFullyVisible() bool {
 	if t.tabScrollOffset > 0 {
 		leftEllipseWidth = metrics.TextWidth(3)
 	}
-	availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth
+	// Available width is the absolute position where tabs must stop
+	availableWidth := bounds.Width - scrollButtonsWidth
+
+	// Tab format varies by position
+	isBottomTabs := t.tabPosition == TabsBottom
 
 	// Calculate width needed for visible tabs
-	x := core.Unit(0)
+	x := leftEllipseWidth
 	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
 		tab := t.tabs[i]
 		isFirstVisible := i == t.tabScrollOffset
@@ -531,15 +535,27 @@ func (t *TabWidget) isLastTabFullyVisible() bool {
 
 		prefixWidth := 0
 		if isFirstVisible {
-			if isSelected {
-				prefixWidth = 4
+			if isBottomTabs {
+				if isSelected {
+					prefixWidth = 3
+				} else {
+					prefixWidth = 2
+				}
 			} else {
-				prefixWidth = 2
+				if isSelected {
+					prefixWidth = 4
+				} else {
+					prefixWidth = 2
+				}
 			}
 		}
 		sepWidth := 2
 		if isSelected || nextIsSelected {
-			sepWidth = 4
+			if isBottomTabs {
+				sepWidth = 3
+			} else {
+				sepWidth = 4
+			}
 		}
 		tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
 		x += tabSlotWidth
@@ -1504,11 +1520,14 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 	if t.tabScrollOffset > 0 {
 		leftEllipseWidth = metrics.TextWidth(3)
 	}
-	availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth
+	// Available width is the absolute position where tabs must stop (before scroll buttons)
+	availableWidth := bounds.Width - scrollButtonsWidth
 
-	// New tab format: [prefix][tab1 text][sep][tab2 text][sep]...
-	// - Prefix: 4 chars if first visible tab is selected, else 2 chars
-	// - Separator: 4 chars if adjacent to selected, else 2 chars
+	// Tab format varies by position:
+	// Top tabs: prefix 4 chars if selected, else 2; separator 4 chars if adjacent to selected, else 2
+	// Bottom tabs: prefix 3 chars if selected, else 2; separator 3 chars if adjacent to selected, else 2
+	isBottomTabs := t.tabPosition == TabsBottom
+
 	tabX := leftEllipseWidth
 	for i := t.tabScrollOffset; i < len(t.tabs); i++ {
 		tab := t.tabs[i]
@@ -1517,17 +1536,28 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 		isLastVisible := i == len(t.tabs)-1
 		nextIsSelected := !isLastVisible && i+1 == t.currentIndex
 
-		// Calculate this tab's width
+		// Calculate this tab's width based on tab position
 		prefixWidth := 0
 		if isFirstVisible {
-			prefixWidth = 4 // " _/ " if selected
-			if !isSelected {
-				prefixWidth = 2 // "  " if not selected
+			if isBottomTabs {
+				prefixWidth = 3 // " \_" if selected
+				if !isSelected {
+					prefixWidth = 2 // "  " if not selected
+				}
+			} else {
+				prefixWidth = 4 // " _/ " if selected
+				if !isSelected {
+					prefixWidth = 2 // "  " if not selected
+				}
 			}
 		}
 		sepWidth := 2 // Default "  "
 		if isSelected || nextIsSelected {
-			sepWidth = 4 // " \_ " or " _/ "
+			if isBottomTabs {
+				sepWidth = 3 // "_/ " or " \_"
+			} else {
+				sepWidth = 4 // " \_ " or " _/ "
+			}
 		}
 		tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
 
@@ -1588,16 +1618,20 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 		scrollButtonsWidth = metrics.TextWidth(6)
 	}
 
+	// Tab format varies by position
+	isBottomTabs := t.tabPosition == TabsBottom
+
 	// Try scrolling right until the tab is fully visible
 	for t.tabScrollOffset < index {
 		leftEllipseWidth := core.Unit(0)
 		if t.tabScrollOffset > 0 {
 			leftEllipseWidth = metrics.TextWidth(3)
 		}
-		availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth
+		// Available width is the absolute position where tabs must stop
+		availableWidth := bounds.Width - scrollButtonsWidth
 
 		// Calculate if tab at index fits
-		x := core.Unit(0)
+		x := leftEllipseWidth
 		fits := true
 		for i := t.tabScrollOffset; i <= index; i++ {
 			tab := t.tabs[i]
@@ -1608,15 +1642,27 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 
 			prefixWidth := 0
 			if isFirstVisible {
-				if isSelected {
-					prefixWidth = 4
+				if isBottomTabs {
+					if isSelected {
+						prefixWidth = 3
+					} else {
+						prefixWidth = 2
+					}
 				} else {
-					prefixWidth = 2
+					if isSelected {
+						prefixWidth = 4
+					} else {
+						prefixWidth = 2
+					}
 				}
 			}
 			sepWidth := 2
 			if isSelected || nextIsSelected {
-				sepWidth = 4
+				if isBottomTabs {
+					sepWidth = 3
+				} else {
+					sepWidth = 4
+				}
 			}
 			tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
 			x += tabSlotWidth
