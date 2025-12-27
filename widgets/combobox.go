@@ -224,12 +224,36 @@ func (c *ComboBox) ShowPopup() {
 		}
 	}
 
-	// Register popup overlay if we have a popup controller
-	if pc := c.PopupController(); pc != nil {
+	// Register popup overlay - find popup controller by walking parent chain
+	if pc := c.findPopupController(); pc != nil {
 		c.registerPopupOverlay(pc)
 	}
 
 	c.Update()
+}
+
+// findPopupController walks up the parent chain to find a popup controller.
+func (c *ComboBox) findPopupController() core.PopupController {
+	// First check if we have one set directly
+	if pc := c.PopupController(); pc != nil {
+		return pc
+	}
+
+	// Walk up parent chain looking for a widget with a popup controller
+	current := c.Parent()
+	for current != nil {
+		if widget, ok := current.(core.Widget); ok {
+			if getter, ok := widget.(interface{ PopupController() core.PopupController }); ok {
+				if pc := getter.PopupController(); pc != nil {
+					return pc
+				}
+			}
+			current = widget.Parent()
+		} else {
+			break
+		}
+	}
+	return nil
 }
 
 // HidePopup closes the drop-down.

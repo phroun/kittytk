@@ -519,6 +519,19 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.SelectAll()
 		return true
 
+	case "^A":
+		// Go to beginning (Emacs binding)
+		t.cursorPos = 0
+		if event.Modifiers&core.ShiftModifier == 0 {
+			t.selStart = 0
+			t.selEnd = 0
+		} else {
+			t.selEnd = 0
+		}
+		t.ensureCursorVisible()
+		t.Update()
+		return true
+
 	case "^E":
 		// Go to end (Emacs binding)
 		t.cursorPos = len(t.text)

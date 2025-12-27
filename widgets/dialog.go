@@ -61,34 +61,50 @@ const (
 type MessageBox struct {
 	window.Window
 
-	icon    MessageBoxIcon
-	text    string
+	content *messageBoxContent
 	buttons DialogButton
 	result  DialogResult
-
-	// Button widgets
-	buttonWidgets []*Button
 
 	// Callbacks
 	onFinished func(result DialogResult)
 }
 
+// messageBoxContent is the content widget for a MessageBox.
+type messageBoxContent struct {
+	core.WidgetBase
+	icon          MessageBoxIcon
+	text          string
+	buttonWidgets []*Button
+	onDone        func(result DialogResult)
+}
+
 // NewMessageBox creates a new message box.
 func NewMessageBox(title, text string, buttons DialogButton) *MessageBox {
 	m := &MessageBox{
-		text:    text,
 		buttons: buttons,
 		result:  ResultNone,
 	}
 	m.Window = *window.NewWindow(title)
 	m.SetFlags(window.WindowFlagModal | window.WindowFlagNoResize)
-	m.createButtons()
+
+	// Create content widget
+	m.content = &messageBoxContent{
+		text:   text,
+		onDone: m.done,
+	}
+	m.content.WidgetBase = *core.NewWidgetBase()
+	m.content.Init(m.content)
+	m.content.SetFocusPolicy(core.StrongFocus)
+	m.content.createButtons(buttons)
+
+	// Set as window content
+	m.SetContent(m.content)
 	m.calculateSize()
 	return m
 }
 
-// createButtons creates the dialog buttons.
-func (m *MessageBox) createButtons() {
+// createButtons creates the dialog buttons for the content.
+func (c *messageBoxContent) createButtons(buttons DialogButton) {
 	buttonDefs := []struct {
 		flag   DialogButton
 		text   string
@@ -108,11 +124,15 @@ func (m *MessageBox) createButtons() {
 	}
 
 	for _, def := range buttonDefs {
-		if m.buttons&def.flag != 0 {
+		if buttons&def.flag != 0 {
 			btn := NewButton(def.text)
 			result := def.result // Capture for closure
-			btn.SetOnClick(func() { m.done(result) })
-			m.buttonWidgets = append(m.buttonWidgets, btn)
+			btn.SetOnClick(func() {
+				if c.onDone != nil {
+					c.onDone(result)
+				}
+			})
+			c.buttonWidgets = append(c.buttonWidgets, btn)
 		}
 	}
 }
@@ -121,7 +141,7 @@ func (m *MessageBox) createButtons() {
 func (m *MessageBox) calculateSize() {
 	metrics := core.DefaultCellMetrics()
 
-	textWidth := len(m.text)
+	textWidth := len(m.content.text)
 	if textWidth > 60 {
 		textWidth = 60
 	}
@@ -136,8 +156,8 @@ func (m *MessageBox) calculateSize() {
 }
 
 // getIconText returns the text representation of the icon.
-func (m *MessageBox) getIconText() string {
-	switch m.icon {
+func (c *messageBoxContent) getIconText() string {
+	switch c.icon {
 	case IconInformation:
 		return "ℹ"
 	case IconWarning:
@@ -153,7 +173,7 @@ func (m *MessageBox) getIconText() string {
 
 // SetIcon sets the message box icon.
 func (m *MessageBox) SetIcon(icon MessageBoxIcon) {
-	m.icon = icon
+	m.content.icon = icon
 }
 
 // SetOnFinished sets the finished callback.
@@ -176,38 +196,41 @@ func (m *MessageBox) done(result DialogResult) {
 }
 
 // Paint renders the message box content.
-func (m *MessageBox) Paint(p *core.Painter) {
-	// First paint the window frame
-	m.Window.Paint(p)
-
-	bounds := m.Bounds()
-	theme := m.Theme()
+func (c *messageBoxContent) Paint(p *core.Painter) {
+	bounds := c.Bounds()
+	theme := c.Theme()
 	metrics := p.Metrics()
 
-	// Content area (inside window frame)
-	contentY := metrics.CellHeight * 2
+	// Draw background
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
 
 	// Draw icon
-	iconText := m.getIconText()
+	iconText := c.getIconText()
+	textY := metrics.CellHeight
 	if iconText != "" {
-		p.DrawCell(metrics.CellWidth*2, contentY, []rune(iconText)[0], theme.Normal)
+		p.DrawCell(metrics.CellWidth, textY, []rune(iconText)[0], theme.Normal)
 	}
 
-	// Draw message
-	textX := metrics.CellWidth * 5
-	for _, ch := range m.text {
-		if textX >= bounds.Width-metrics.CellWidth*2 {
+	// Draw message text
+	textX := metrics.CellWidth * 4
+	for _, ch := range c.text {
+		if ch == '\n' {
+			textY += metrics.CellHeight
+			textX = metrics.CellWidth * 4
+			continue
+		}
+		if textX >= bounds.Width-metrics.CellWidth {
 			break
 		}
-		p.DrawCell(textX, contentY, ch, theme.Normal)
+		p.DrawCell(textX, textY, ch, theme.Normal)
 		textX += metrics.CellWidth
 	}
 
 	// Draw buttons at bottom
 	buttonY := bounds.Height - metrics.CellHeight*2
-	buttonX := metrics.CellWidth * 2
+	buttonX := metrics.CellWidth
 
-	for _, btn := range m.buttonWidgets {
+	for _, btn := range c.buttonWidgets {
 		btnWidth := core.Unit(len(btn.Text())+4) * metrics.CellWidth
 		btn.SetBounds(core.UnitRect{
 			X:      buttonX,
