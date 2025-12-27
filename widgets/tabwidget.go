@@ -633,7 +633,8 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 	// Don't reserve space for right ellipsis upfront - we'll only need it if tabs don't fit
 	// The gap-filling code after the loop will handle any remaining space
-	availableWidth := bounds.Width - scrollButtonsWidth - leftEllipseWidth
+	// Available width is the absolute position where tabs must stop (before scroll buttons)
+	availableWidth := bounds.Width - scrollButtonsWidth
 
 	// New tab format: [prefix][tab1 text][sep][tab2 text][sep]...
 	// - Prefix: " _/ " (4 chars) if first visible tab is selected, else "  " (2 chars)
@@ -877,39 +878,139 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 
 	// Tab bar style: silver on blue
 	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
-	// Selected tab style when unfocused: uses page control's background color, underlined
-	// Overline is added so that the content above gets underlined
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold().Underline().Overline()
+	// Tab bar style with overline - used for areas outside the active tab opening
+	// This causes the content border above to be underlined everywhere except the active tab
+	tabBarOverlined := tabBarStyle.Overline()
+	// Selected tab style when unfocused: uses page control's background color, underlined (no overline)
+	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold().Underline()
 	if bg := t.BackgroundColor(); bg != nil {
 		selectedStyle = selectedStyle.WithBg(*bg)
 	} else {
 		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
 	}
-	// Focused selected tab style: yellow on teal with underline
-	// Overline is added so that the content above gets underlined
-	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold().Underline().Overline()
+	// Focused selected tab style: yellow on teal with underline (no overline)
+	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold().Underline()
+	// Pressed button style (inverted, with overline)
+	pressedStyle := tabBarStyle.WithFg(tabBarStyle.Bg).WithBg(tabBarStyle.Fg).Overline()
 
-	// Draw tab bar background
-	p.FillRect(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
+	// Draw tab bar background with overline (will be overwritten by active tab area without overline)
+	p.FillRect(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', tabBarOverlined)
 
-	// New tab format: [prefix][tab1 text][sep][tab2 text][sep]...
-	// For bottom tabs, connectors are inverted:
-	// - Prefix: " \_ " (4 chars) if first tab is selected, else "  " (2 chars)
+	// Calculate if we need scroll buttons
+	needsScrolling := t.tabsNeedScrolling()
+	scrollButtonsWidth := core.Unit(0)
+	if needsScrolling {
+		scrollButtonsWidth = metrics.TextWidth(6) // [<][>] = 6 chars
+	}
+
+	// If scrolled right, show left ellipse indicator (clickable to scroll left)
+	leftEllipseWidth := core.Unit(0)
+	if t.tabScrollOffset > 0 {
+		leftEllipseWidth = metrics.TextWidth(3) // "..."
+		// Draw the left ellipse (with overline)
+		for i := 0; i < 3; i++ {
+			p.DrawCell(metrics.CellToUnitsX(i), tabY, '.', tabBarOverlined)
+		}
+	}
+
+	// Available width is the absolute position where tabs must stop (before scroll buttons)
+	availableWidth := bounds.Width - scrollButtonsWidth
+
+	// Tab format for bottom tabs (inverted connectors):
+	// - Prefix: " \_" (3 chars) if first visible tab is selected, else "  " (2 chars)
 	// - Separator after each tab:
-	//   - " _/ " (4 chars) if current tab is selected
-	//   - " \_ " (4 chars) if next tab is selected
+	//   - "_/ " (3 chars) if current tab is selected
+	//   - " \_" (3 chars) if next tab is selected
 	//   - "  " (2 chars) otherwise
-	x := core.Unit(0)
+	x := leftEllipseWidth
 
-	for i, tab := range t.tabs {
-		isSelected := i == t.currentIndex
+	visibleTabs := t.tabs[t.tabScrollOffset:]
+	for i := 0; i < len(visibleTabs); i++ {
+		tabIndex := t.tabScrollOffset + i
+		tab := visibleTabs[i]
+		isSelected := tabIndex == t.currentIndex
 		isFirstVisible := i == 0
-		isLastVisible := i == len(t.tabs)-1
-		nextIsSelected := !isLastVisible && i+1 == t.currentIndex
+		isLastVisible := tabIndex == len(t.tabs)-1
+		nextIsSelected := !isLastVisible && tabIndex+1 == t.currentIndex
+
+		// Calculate this tab's width
+		prefixWidth := 0
+		if isFirstVisible {
+			prefixWidth = 3 // " \_" if selected
+			if !isSelected {
+				prefixWidth = 2 // "  " if not selected
+			}
+		}
+		sepWidth := 2 // Default "  "
+		if isSelected || nextIsSelected {
+			sepWidth = 3 // "_/ " or " \_"
+		}
+		tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
+
+		// Check if this tab fits
+		if x+tabSlotWidth > availableWidth {
+			// Try to draw partial tab (ellipsis is drawn separately after the loop)
+			remainingSpace := availableWidth - x
+			minPartialWidth := metrics.TextWidth(prefixWidth) // just prefix needed
+			if remainingSpace >= minPartialWidth {
+				var s style.CellStyle
+				if !tab.Enabled {
+					s = theme.Disabled.Overline()
+				} else if isSelected {
+					if hasFocus {
+						s = focusedSelectedStyle
+					} else {
+						s = selectedStyle
+					}
+				} else {
+					s = tabBarOverlined
+				}
+
+				// Draw prefix if first visible
+				if isFirstVisible {
+					if isSelected {
+						p.DrawCell(x, tabY, ' ', tabBarOverlined)
+						p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
+						if hasFocus {
+							p.DrawCell(x+metrics.CellWidth*2, tabY, '<', focusedSelectedStyle)
+						} else {
+							p.DrawCell(x+metrics.CellWidth*2, tabY, '_', s)
+						}
+						x += metrics.CellWidth * 3
+					} else {
+						p.DrawCell(x, tabY, ' ', tabBarOverlined)
+						p.DrawCell(x+metrics.CellWidth, tabY, ' ', tabBarOverlined)
+						x += metrics.CellWidth * 2
+					}
+				}
+
+				// Calculate how much text we can show (leave room for ellipsis)
+				ellipsisReserve := core.Unit(0)
+				if needsScrolling {
+					ellipsisReserve = metrics.TextWidth(3)
+				}
+				textSpace := int((availableWidth - x - ellipsisReserve) / metrics.CellWidth)
+				if textSpace < 0 {
+					textSpace = 0
+				}
+				textRunes := []rune(tab.Text)
+				charsToShow := textSpace
+				if charsToShow > len(textRunes) {
+					charsToShow = len(textRunes)
+				}
+
+				// Draw partial text
+				for j := 0; j < charsToShow; j++ {
+					p.DrawCell(x, tabY, textRunes[j], s)
+					x += metrics.CellWidth
+				}
+			}
+			break
+		}
 
 		var s style.CellStyle
 		if !tab.Enabled {
-			s = theme.Disabled
+			s = theme.Disabled.Overline()
 		} else if isSelected {
 			if hasFocus {
 				s = focusedSelectedStyle
@@ -917,26 +1018,26 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 				s = selectedStyle
 			}
 		} else {
-			s = tabBarStyle
+			s = tabBarOverlined
 		}
 
-		// Draw prefix if first tab (inverted for bottom: " \_" or " \<" when focused)
-		// Note: 3 chars for selected (underscore replaces trailing space), 2 chars for unselected
+		// Draw prefix if first visible tab
 		if isFirstVisible {
 			if isSelected {
-				p.DrawCell(x, tabY, ' ', tabBarStyle)
+				// " \_" (3 chars) when first tab is selected
+				// Space before \ gets overline (outside active tab)
+				p.DrawCell(x, tabY, ' ', tabBarOverlined)
 				p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
 				if hasFocus {
-					// Use < instead of _ when focused, with focusedSelectedStyle
 					p.DrawCell(x+metrics.CellWidth*2, tabY, '<', focusedSelectedStyle)
 				} else {
 					p.DrawCell(x+metrics.CellWidth*2, tabY, '_', s)
 				}
 				x += metrics.CellWidth * 3
 			} else {
-				// "  " (2 chars)
-				p.DrawCell(x, tabY, ' ', tabBarStyle)
-				p.DrawCell(x+metrics.CellWidth, tabY, ' ', tabBarStyle)
+				// "  " (2 chars) - both get overline
+				p.DrawCell(x, tabY, ' ', tabBarOverlined)
+				p.DrawCell(x+metrics.CellWidth, tabY, ' ', tabBarOverlined)
 				x += metrics.CellWidth * 2
 			}
 		}
@@ -948,20 +1049,21 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 		}
 
 		// Draw separator after tab (inverted for bottom)
-		// Note: 3 chars for selected (underscore replaces leading space), 2 chars for regular
 		if isSelected {
-			// "_/ " after selected tab - use > instead of _ when focused
+			// "_/ " (3 chars) after selected tab
+			// Space after / gets overline (outside active tab)
 			if hasFocus {
 				p.DrawCell(x, tabY, '>', focusedSelectedStyle)
 			} else {
 				p.DrawCell(x, tabY, '_', s)
 			}
 			p.DrawCell(x+metrics.CellWidth, tabY, '/', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth*2, tabY, ' ', tabBarStyle)
+			p.DrawCell(x+metrics.CellWidth*2, tabY, ' ', tabBarOverlined)
 			x += metrics.CellWidth * 3
 		} else if nextIsSelected {
-			// " \_" (3 chars) before selected tab - use < instead of _ when focused
-			p.DrawCell(x, tabY, ' ', tabBarStyle)
+			// " \_" (3 chars) before selected tab
+			// Space before \ gets overline (outside active tab)
+			p.DrawCell(x, tabY, ' ', tabBarOverlined)
 			p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
 			if hasFocus {
 				p.DrawCell(x+metrics.CellWidth*2, tabY, '<', focusedSelectedStyle)
@@ -970,10 +1072,69 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 			}
 			x += metrics.CellWidth * 3
 		} else {
-			// "  " (2 chars) regular separator
-			p.DrawCell(x, tabY, ' ', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth, tabY, ' ', tabBarStyle)
+			// "  " (2 chars) regular separator - both get overline
+			p.DrawCell(x, tabY, ' ', tabBarOverlined)
+			p.DrawCell(x+metrics.CellWidth, tabY, ' ', tabBarOverlined)
 			x += metrics.CellWidth * 2
+		}
+	}
+
+	// Fill any gap between last tab and scroll buttons/edge with overlined spaces
+	endX := bounds.Width - scrollButtonsWidth
+	if needsScrolling && !t.isLastTabFullyVisible() {
+		// Reserve space for ellipsis
+		endX -= metrics.TextWidth(3)
+	}
+	for x < endX {
+		p.DrawCell(x, tabY, ' ', tabBarOverlined)
+		x += metrics.CellWidth
+	}
+
+	// Draw right ellipsis if tabs are truncated (right before scroll buttons)
+	if needsScrolling && !t.isLastTabFullyVisible() {
+		ellipsisX := bounds.Width - scrollButtonsWidth - metrics.TextWidth(3)
+		for i := 0; i < 3; i++ {
+			p.DrawCell(ellipsisX+core.Unit(i)*metrics.CellWidth, tabY, '.', tabBarOverlined)
+		}
+	}
+
+	// Draw scroll buttons if needed (all with overline since outside active tab)
+	if needsScrolling {
+		buttonX := bounds.Width - scrollButtonsWidth
+		disabledStyle := tabBarOverlined.WithFg(style.ColorBrightBlack)
+
+		// [<] button - disabled when can't scroll left
+		canLeft := t.canScrollLeft()
+		if canLeft {
+			leftStyle := tabBarOverlined
+			if t.scrollButtonPressed == -1 && t.scrollLeftHovered {
+				leftStyle = pressedStyle
+			}
+			p.DrawCell(buttonX, tabY, '[', leftStyle)
+			p.DrawCell(buttonX+metrics.CellWidth, tabY, '<', leftStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*2, tabY, ']', leftStyle)
+		} else {
+			// Disabled: " < " (no brackets, grayed out)
+			p.DrawCell(buttonX, tabY, ' ', disabledStyle)
+			p.DrawCell(buttonX+metrics.CellWidth, tabY, '<', disabledStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*2, tabY, ' ', disabledStyle)
+		}
+
+		// [>] button - disabled when can't scroll right
+		canRight := t.canScrollRight()
+		if canRight {
+			rightStyle := tabBarOverlined
+			if t.scrollButtonPressed == 1 && t.scrollRightHovered {
+				rightStyle = pressedStyle
+			}
+			p.DrawCell(buttonX+metrics.CellWidth*3, tabY, '[', rightStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*4, tabY, '>', rightStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*5, tabY, ']', rightStyle)
+		} else {
+			// Disabled: " > " (no brackets, grayed out)
+			p.DrawCell(buttonX+metrics.CellWidth*3, tabY, ' ', disabledStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*4, tabY, '>', disabledStyle)
+			p.DrawCell(buttonX+metrics.CellWidth*5, tabY, ' ', disabledStyle)
 		}
 	}
 }
