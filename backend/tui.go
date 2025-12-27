@@ -177,15 +177,10 @@ func (t *TUIBackend) Init() error {
 	t.write("\033[>1u")
 
 	// Enable mouse if requested
-	// NOTE: All mouse escape sequences must be sent in a single write
-	// for some terminals to properly enable drag/motion tracking
+	// NOTE: Must write directly to os.Stdout like direct-key-handler's test app
+	// Using fmt.Print ensures proper terminal handling
 	if t.hasMouse {
-		t.write("\033[?1000h\033[?1002h\033[?1006h")
-	}
-
-	// Ensure all escape sequences are flushed to terminal before starting keyboard
-	if f, ok := t.output.(*os.File); ok {
-		f.Sync()
+		fmt.Print("\033[?1000h\033[?1002h\033[?1006h")
 	}
 
 	// Now start the keyboard handler
