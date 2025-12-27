@@ -123,6 +123,11 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 		return ResizeEdgeNone
 	}
 
+	// Maximized windows don't have visible resize edges (only titlebar)
+	if win.IsMaximized() {
+		return ResizeEdgeNone
+	}
+
 	bounds := win.Bounds()
 	metrics := core.DefaultCellMetrics()
 
