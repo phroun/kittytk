@@ -1165,7 +1165,7 @@ func (m *MenuBar) isLastMenuFullyVisible() bool {
 	}
 	leftEllipseWidth := core.Unit(0)
 	if m.scrollOffset > 0 {
-		leftEllipseWidth = metrics.TextWidth(4) // "... "
+		leftEllipseWidth = metrics.TextWidth(3) // "..."
 	}
 
 	availableWidth := bounds.Width - m.dateTimeWidth() - scrollButtonsWidth
@@ -1200,7 +1200,7 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 	scrollButtonsWidth := m.scrollButtonWidth() * 2
 	leftEllipseWidth := core.Unit(0)
 	if m.scrollOffset > 0 {
-		leftEllipseWidth = metrics.TextWidth(4) // "... "
+		leftEllipseWidth = metrics.TextWidth(3) // "..."
 	}
 
 	availableWidth := bounds.Width - m.dateTimeWidth() - scrollButtonsWidth
@@ -1216,7 +1216,7 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 				for m.scrollOffset < index {
 					m.scrollOffset++
 					// Recalculate with new scroll offset
-					leftEllipseWidth = metrics.TextWidth(4) // "... " (always present when scrolled)
+					leftEllipseWidth = metrics.TextWidth(3) // "..." (always present when scrolled)
 					x = leftEllipseWidth
 					for j := m.scrollOffset; j <= index; j++ {
 						mw := core.Unit(len(m.menus[j].title)+2) * metrics.CellWidth
@@ -1400,7 +1400,7 @@ func (m *MenuBar) calculateMenuX(index int) core.Unit {
 	// Start after left ellipsis if scrolled
 	x := core.Unit(0)
 	if m.scrollOffset > 0 {
-		x = metrics.TextWidth(4) // "... "
+		x = metrics.TextWidth(3) // "..."
 	}
 
 	// Calculate position from scroll offset
@@ -1484,7 +1484,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// Draw left ellipsis if scrolled
 	x := core.Unit(0)
 	if m.scrollOffset > 0 {
-		ellipsisStr := "... "
+		ellipsisStr := "..."
 		for i, ch := range ellipsisStr {
 			p.DrawCell(core.Unit(i)*metrics.CellWidth, 0, ch, theme.MenuBar)
 		}
@@ -1492,46 +1492,25 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	}
 
 	// Draw visible menus
+	lastDrawnIndex := m.scrollOffset - 1
 	for i := m.scrollOffset; i < len(m.menus); i++ {
 		menu := m.menus[i]
 		menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
 
-		// Check if this menu fits
-		if x+menuWidth > availableWidth {
-			// Menu doesn't fit fully - check if we should show partial or ellipsis
-			remainingWidth := availableWidth - x
-			if remainingWidth >= 4*metrics.CellWidth {
-				// Show partial menu text with ellipsis
-				var s style.CellStyle
-				if i == m.currentIndex {
-					s = theme.MenuBarSelected
-				} else {
-					s = theme.MenuBar
-				}
+		// Reserve space for right ellipsis if there are more menus after this one
+		rightEllipsisWidth := core.Unit(0)
+		if i < len(m.menus)-1 {
+			rightEllipsisWidth = metrics.TextWidth(3) // "..."
+		}
 
-				// Draw space before text
-				p.DrawCell(x, 0, ' ', s)
-				textX := x + metrics.CellWidth
-
-				// Calculate how many chars we can show (leaving room for "...")
-				charsAvailable := int((remainingWidth - metrics.CellWidth) / metrics.CellWidth) - 3
-				if charsAvailable > 0 {
-					titleRunes := []rune(menu.title)
-					for idx := 0; idx < charsAvailable && idx < len(titleRunes); idx++ {
-						p.DrawCell(textX, 0, titleRunes[idx], s)
-						textX += metrics.CellWidth
-					}
-					// Draw ellipsis in the same style as the menu
-					for _, ch := range "..." {
-						p.DrawCell(textX, 0, ch, s)
-						textX += metrics.CellWidth
-					}
-				}
-			} else if remainingWidth > 0 {
-				// Just show " ..." to indicate more menus
-				ellipsisStr := " ..."
-				for j := 0; j < len(ellipsisStr) && x+core.Unit(j)*metrics.CellWidth < availableWidth; j++ {
-					p.DrawCell(x+core.Unit(j)*metrics.CellWidth, 0, rune(ellipsisStr[j]), theme.MenuBar)
+		// Check if this menu fits (with room for right ellipsis if needed)
+		if x+menuWidth+rightEllipsisWidth > availableWidth {
+			// Menu doesn't fit - draw right ellipsis and stop
+			ellipsisX := x
+			for _, ch := range "..." {
+				if ellipsisX < availableWidth {
+					p.DrawCell(ellipsisX, 0, ch, theme.MenuBar)
+					ellipsisX += metrics.CellWidth
 				}
 			}
 			break
@@ -1575,6 +1554,15 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		}
 
 		x += menuWidth
+		lastDrawnIndex = i
+	}
+
+	// Draw right ellipsis if there are more menus beyond what was drawn
+	if lastDrawnIndex < len(m.menus)-1 && x+metrics.TextWidth(3) <= availableWidth {
+		for _, ch := range "..." {
+			p.DrawCell(x, 0, ch, theme.MenuBar)
+			x += metrics.CellWidth
+		}
 	}
 
 	// Draw date/time background and text
@@ -1772,7 +1760,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 
 		// Check for click on left ellipsis ("... ") to scroll left
 		if m.scrollOffset > 0 {
-			ellipsisWidth := metrics.TextWidth(4) // "... "
+			ellipsisWidth := metrics.TextWidth(3) // "..."
 			if event.X >= 0 && event.X < ellipsisWidth {
 				m.scrollOffset--
 				m.Update()
@@ -1783,7 +1771,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 		// Find which menu was clicked (accounting for scroll offset)
 		x := core.Unit(0)
 		if m.scrollOffset > 0 {
-			x = metrics.TextWidth(4) // "... "
+			x = metrics.TextWidth(3) // "..."
 		}
 
 		for i := m.scrollOffset; i < len(m.menus); i++ {
@@ -1888,7 +1876,7 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// Find which menu the mouse is over (accounting for scroll offset)
 		x := core.Unit(0)
 		if m.scrollOffset > 0 {
-			x = metrics.TextWidth(4) // "... "
+			x = metrics.TextWidth(3) // "..."
 		}
 
 		for i := m.scrollOffset; i < len(m.menus); i++ {
