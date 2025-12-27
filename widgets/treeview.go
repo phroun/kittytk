@@ -542,10 +542,28 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
+	case "M-Up", "C-Up", "A-Up":
+		// Jump by 5 items
+		newIndex := t.currentIndex - 5
+		if newIndex < 0 {
+			newIndex = 0
+		}
+		t.SetCurrentIndex(newIndex)
+		return true
+
 	case "Down":
 		if t.currentIndex < len(t.flatList)-1 {
 			t.SetCurrentIndex(t.currentIndex + 1)
 		}
+		return true
+
+	case "M-Down", "C-Down", "A-Down":
+		// Jump by 5 items
+		newIndex := t.currentIndex + 5
+		if newIndex >= len(t.flatList) {
+			newIndex = len(t.flatList) - 1
+		}
+		t.SetCurrentIndex(newIndex)
 		return true
 
 	case "Left":
@@ -841,6 +859,10 @@ func (t *TreeView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 
 // HandleFocusIn is called when focus is gained.
 func (t *TreeView) HandleFocusIn() {
+	// Auto-select first item if nothing is selected
+	if t.currentIndex < 0 && len(t.flatList) > 0 {
+		t.SetCurrentIndex(0)
+	}
 	t.Update()
 }
 

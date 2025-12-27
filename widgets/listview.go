@@ -501,10 +501,28 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
+	case "M-Up", "C-Up", "A-Up":
+		// Jump by 5 items
+		newIndex := l.currentIndex - 5
+		if newIndex < 0 {
+			newIndex = 0
+		}
+		l.SetCurrentIndex(newIndex)
+		return true
+
 	case "Down":
 		if l.currentIndex < len(l.items)-1 {
 			l.SetCurrentIndex(l.currentIndex + 1)
 		}
+		return true
+
+	case "M-Down", "C-Down", "A-Down":
+		// Jump by 5 items
+		newIndex := l.currentIndex + 5
+		if newIndex >= len(l.items) {
+			newIndex = len(l.items) - 1
+		}
+		l.SetCurrentIndex(newIndex)
 		return true
 
 	case "Home":
@@ -736,6 +754,10 @@ func (l *ListView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 
 // HandleFocusIn is called when focus is gained.
 func (l *ListView) HandleFocusIn() {
+	// Auto-select first item if nothing is selected
+	if l.currentIndex < 0 && len(l.items) > 0 {
+		l.SetCurrentIndex(0)
+	}
 	l.Update()
 }
 
