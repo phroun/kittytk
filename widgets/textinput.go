@@ -345,8 +345,8 @@ func (t *TextInput) Paint(p *core.Painter) {
 		// Unfocused editbox text color depends on container background
 		inheritedBg := t.EffectiveBackgroundColor()
 		if inheritedBg == style.ColorBlack || inheritedBg == style.ColorDefault {
-			// White on dark dim blue for black/default backgrounds
-			s = style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlue).WithAttrs(style.StyleDim)
+			// White on dark blue for black/default backgrounds
+			s = style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlue)
 		} else {
 			// White on black for other backgrounds
 			s = style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlack)
