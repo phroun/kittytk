@@ -313,16 +313,26 @@ type FocusChainProvider interface {
 
 // collectFocusable recursively collects focusable widgets.
 func (fm *FocusManager) collectFocusable(widget Widget, chain *[]Widget) {
+	fm.collectFocusableWithSkip(widget, chain, nil)
+}
+
+// collectFocusableWithSkip recursively collects focusable widgets,
+// skipping the FocusChainProvider check for the skipProvider widget
+// to avoid infinite recursion when a provider includes itself in its chain.
+func (fm *FocusManager) collectFocusableWithSkip(widget Widget, chain *[]Widget, skipProvider Widget) {
 	if widget == nil {
 		return
 	}
 
 	// Check if widget provides custom focus chain ordering
-	if provider, ok := widget.(FocusChainProvider); ok {
-		provider.CollectFocusChain(func(w Widget) {
-			fm.collectFocusable(w, chain)
-		})
-		return
+	// Skip this check for the widget that initiated the FocusChainProvider call
+	if widget != skipProvider {
+		if provider, ok := widget.(FocusChainProvider); ok {
+			provider.CollectFocusChain(func(w Widget) {
+				fm.collectFocusableWithSkip(w, chain, widget)
+			})
+			return
+		}
 	}
 
 	// Default behavior: add self if focusable, then recurse into children
@@ -334,7 +344,7 @@ func (fm *FocusManager) collectFocusable(widget Widget, chain *[]Widget) {
 	// Recurse into children if container
 	if container, ok := widget.(Container); ok {
 		for _, child := range container.Children() {
-			fm.collectFocusable(child, chain)
+			fm.collectFocusableWithSkip(child, chain, nil)
 		}
 	}
 }
