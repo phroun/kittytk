@@ -1232,6 +1232,55 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 	}
 }
 
+// clampScrollOffset adjusts the scroll offset when the container is resized.
+// It ensures we don't have unnecessary empty space on the right when we could
+// show more menus, and resets to 0 when scrolling is no longer needed.
+func (m *MenuBar) clampScrollOffset() {
+	// If no menus or scrolling not needed, reset to 0
+	if len(m.menus) == 0 || !m.menusNeedScrolling() {
+		m.scrollOffset = 0
+		return
+	}
+
+	// Calculate how much space we have for menus
+	bounds := m.Bounds()
+	metrics := core.DefaultCellMetrics()
+	scrollButtonsWidth := m.scrollButtonWidth() * 2
+	availableWidth := bounds.Width - m.dateTimeWidth() - scrollButtonsWidth
+
+	// Try to reduce scroll offset while still fitting all visible menus
+	for m.scrollOffset > 0 {
+		// Calculate width needed if we show one more menu on the left
+		testOffset := m.scrollOffset - 1
+		leftEllipseWidth := core.Unit(0)
+		if testOffset > 0 {
+			leftEllipseWidth = metrics.TextWidth(3) // "..."
+		}
+
+		x := leftEllipseWidth
+		fitsWithMoreMenus := true
+		for i := testOffset; i < len(m.menus); i++ {
+			menuWidth := core.Unit(len(m.menus[i].title)+2) * metrics.CellWidth
+			// Reserve space for right ellipsis if not the last menu
+			rightEllipsisWidth := core.Unit(0)
+			if i < len(m.menus)-1 {
+				rightEllipsisWidth = metrics.TextWidth(3)
+			}
+			if x+menuWidth+rightEllipsisWidth > availableWidth {
+				fitsWithMoreMenus = false
+				break
+			}
+			x += menuWidth
+		}
+
+		if fitsWithMoreMenus {
+			m.scrollOffset = testOffset
+		} else {
+			break
+		}
+	}
+}
+
 // hasAcceleratorConflict checks if a menu accelerator key conflicts with any
 // registered keybinding (e.g., Alt+key is used for something else).
 func (m *MenuBar) hasAcceleratorConflict(accel rune) bool {
@@ -1430,6 +1479,9 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	bounds := m.Bounds()
 	theme := m.Theme()
 	metrics := p.Metrics()
+
+	// Clamp scroll offset if container was resized and more menus can now fit
+	m.clampScrollOffset()
 
 	// Draw background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.MenuBar)
