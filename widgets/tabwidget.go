@@ -781,13 +781,14 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 			x += metrics.CellWidth * 4
 		} else if nextIsSelected {
 			// " _/<" (4 chars) when focused, " _/ " when not focused
+			// The trailing space/bracket is part of the selected tab's text area
 			p.DrawCell(x, 0, ' ', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
 			if hasFocus {
 				p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
 			} else {
-				p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth*3, 0, ' ', selectedStyle)
 			}
 			x += metrics.CellWidth * 4
 		} else {
@@ -891,11 +892,11 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 		// Draw prefix if first tab (inverted for bottom: " \_ ")
 		if isFirstVisible {
 			if isSelected {
-				// " \_" + space (4 chars), trailing space uses selected style
+				// " \" + underscore (4 chars), underscore uses selected style (instead of space for bottom tabs)
 				p.DrawCell(x, tabY, ' ', tabBarStyle)
 				p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
-				p.DrawCell(x+metrics.CellWidth*2, tabY, '_', tabBarStyle)
-				p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', s)
+				p.DrawCell(x+metrics.CellWidth*2, tabY, '_', s)
+				p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', tabBarStyle)
 				x += metrics.CellWidth * 4
 			} else {
 				// "  " (2 chars)
@@ -913,17 +914,17 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 
 		// Draw separator after tab (inverted for bottom)
 		if isSelected {
-			// space + "_/ " (4 chars) after selected tab, leading space uses selected style
-			p.DrawCell(x, tabY, ' ', s)
-			p.DrawCell(x+metrics.CellWidth, tabY, '_', tabBarStyle)
+			// underscore + "_/ " (4 chars) after selected tab, underscore uses selected style (instead of space for bottom tabs)
+			p.DrawCell(x, tabY, ' ', tabBarStyle)
+			p.DrawCell(x+metrics.CellWidth, tabY, '_', s)
 			p.DrawCell(x+metrics.CellWidth*2, tabY, '/', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', tabBarStyle)
 			x += metrics.CellWidth * 4
 		} else if nextIsSelected {
-			// " \_ " (4 chars) before selected tab
+			// " \_ " (4 chars) before selected tab, underscore is part of selected tab's text area
 			p.DrawCell(x, tabY, ' ', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth*2, tabY, '_', tabBarStyle)
+			p.DrawCell(x+metrics.CellWidth*2, tabY, '_', selectedStyle)
 			p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', tabBarStyle)
 			x += metrics.CellWidth * 4
 		} else {
