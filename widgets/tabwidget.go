@@ -675,7 +675,11 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 				if !tab.Enabled {
 					s = theme.Disabled
 				} else if isSelected {
-					s = selectedStyle
+					if hasFocus {
+						s = focusedSelectedStyle
+					} else {
+						s = selectedStyle
+					}
 				} else {
 					s = tabBarStyle
 				}
