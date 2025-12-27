@@ -873,6 +873,32 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 		}
 	}
 
+	// Check if click is in the dock area (dock has higher z-order than windows)
+	if desktop != nil {
+		if dockBoundsGetter, ok := desktop.(interface {
+			DockBounds() core.UnitRect
+		}); ok {
+			dockBounds := dockBoundsGetter.DockBounds()
+			if !dockBounds.IsEmpty() && dockBounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+				// Click is on the dock - pass to desktop for dock handling
+				return desktop.HandleMousePress(event)
+			}
+		}
+	}
+
+	// Check if click is in the status bar area (status bar has higher z-order than windows)
+	if desktop != nil {
+		if statusBarBoundsGetter, ok := desktop.(interface {
+			StatusBarBounds() core.UnitRect
+		}); ok {
+			statusBarBounds := statusBarBoundsGetter.StatusBarBounds()
+			if !statusBarBounds.IsEmpty() && statusBarBounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+				// Click is on the status bar - pass to desktop for status bar handling
+				return desktop.HandleMousePress(event)
+			}
+		}
+	}
+
 	// Check windows from top to bottom
 	for i := len(windows) - 1; i >= 0; i-- {
 		win := windows[i]

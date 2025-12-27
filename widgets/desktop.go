@@ -319,6 +319,21 @@ func (d *Desktop) StatusBarHeight() core.Unit {
 	return core.DefaultCellMetrics().CellHeight
 }
 
+// StatusBarBounds returns the bounds of the status bar area (empty rect if no status bar).
+func (d *Desktop) StatusBarBounds() core.UnitRect {
+	if d.statusBar == nil {
+		return core.UnitRect{}
+	}
+	bounds := d.Bounds()
+	metrics := core.DefaultCellMetrics()
+	return core.UnitRect{
+		X:      0,
+		Y:      bounds.Height - metrics.CellHeight,
+		Width:  bounds.Width,
+		Height: metrics.CellHeight,
+	}
+}
+
 // DockRow returns the dock row widget.
 func (d *Desktop) DockRow() *DockRow {
 	return d.dockRow
@@ -330,6 +345,26 @@ func (d *Desktop) DockRowHeight() core.Unit {
 		return 0
 	}
 	return d.dockRow.RequiredHeight()
+}
+
+// DockBounds returns the bounds of the dock row area (empty rect if no dock or empty).
+func (d *Desktop) DockBounds() core.UnitRect {
+	if d.dockRow == nil || d.dockRow.IsEmpty() {
+		return core.UnitRect{}
+	}
+	bounds := d.Bounds()
+	metrics := core.DefaultCellMetrics()
+	dockHeight := d.dockRow.RequiredHeight()
+	dockY := bounds.Height - dockHeight
+	if d.statusBar != nil {
+		dockY = bounds.Height - metrics.CellHeight - dockHeight
+	}
+	return core.UnitRect{
+		X:      0,
+		Y:      dockY,
+		Width:  bounds.Width,
+		Height: dockHeight,
+	}
 }
 
 // DockEntryCount returns the number of entries in the dock.
