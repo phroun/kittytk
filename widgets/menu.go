@@ -1516,6 +1516,15 @@ func (m *MenuBar) Paint(p *core.Painter) {
 				s = theme.MenuBar
 			}
 
+			// Calculate accelerator style for this menu
+			var accelStyle style.CellStyle
+			if isSelected {
+				accelStyle = style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlue)
+			} else {
+				accelStyle = style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+			}
+			showAccel := m.ShouldShowAccelerator(menu)
+
 			// If this is the selected menu, try to show the full menu text
 			// with ellipsis OUTSIDE the selected area
 			if isSelected && remainingWidth >= menuWidth {
@@ -1529,8 +1538,12 @@ func (m *MenuBar) Paint(p *core.Painter) {
 				}, ' ', s)
 
 				textX := x + metrics.CellWidth
-				for _, ch := range menu.title {
-					p.DrawCell(textX, 0, ch, s)
+				for idx, ch := range menu.title {
+					charStyle := s
+					if showAccel && idx == menu.acceleratorPos {
+						charStyle = accelStyle
+					}
+					p.DrawCell(textX, 0, ch, charStyle)
 					textX += metrics.CellWidth
 				}
 
@@ -1557,10 +1570,14 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					charsAvailable := int((remainingWidth-metrics.CellWidth-ellipsisWidth) / metrics.CellWidth)
 					titleRunes := []rune(menu.title)
 					for idx := 0; idx < charsAvailable && idx < len(titleRunes); idx++ {
-						p.DrawCell(textX, 0, titleRunes[idx], s)
+						charStyle := s
+						if showAccel && idx == menu.acceleratorPos {
+							charStyle = accelStyle
+						}
+						p.DrawCell(textX, 0, titleRunes[idx], charStyle)
 						textX += metrics.CellWidth
 					}
-					// Draw ellipsis in the same style as the menu
+					// Draw ellipsis in the menu style (never accelerator color)
 					for _, ch := range "..." {
 						p.DrawCell(textX, 0, ch, s)
 						textX += metrics.CellWidth
