@@ -218,6 +218,10 @@ func (app *Application) SetDesktop(desktop core.Widget) {
 				menuBar.SetOnMenuOpen(func() {
 					wm.DeactivateActiveWindow()
 				})
+				// Wire up menu bar dismiss to restore previous window
+				menuBar.SetOnMenuDismiss(func() {
+					wm.RestorePreviousActiveWindow()
+				})
 			}
 		}
 	}

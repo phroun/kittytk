@@ -41,6 +41,9 @@ type WindowManager struct {
 	// Active/focused window
 	activeWindow *Window
 
+	// Previously active window (remembered when menu bar activates)
+	previousActiveWindow *Window
+
 	// Modal window stack
 	modalStack []*Window
 
@@ -401,7 +404,8 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 }
 
 // DeactivateActiveWindow removes focus from the active window without closing it.
-// This is used when the menu bar becomes active.
+// This is used when the menu bar becomes active. The deactivated window is remembered
+// so it can be restored when the menu bar is dismissed.
 func (m *WindowManager) DeactivateActiveWindow() {
 	m.mu.Lock()
 	oldActive := m.activeWindow
@@ -410,6 +414,7 @@ func (m *WindowManager) DeactivateActiveWindow() {
 		return
 	}
 
+	m.previousActiveWindow = oldActive
 	m.activeWindow = nil
 	handler := m.onActiveChanged
 	m.mu.Unlock()
@@ -421,6 +426,19 @@ func (m *WindowManager) DeactivateActiveWindow() {
 
 	if handler != nil {
 		handler(nil)
+	}
+}
+
+// RestorePreviousActiveWindow activates the previously active window if one was remembered.
+// This is used when the menu bar is dismissed via Escape.
+func (m *WindowManager) RestorePreviousActiveWindow() {
+	m.mu.Lock()
+	prev := m.previousActiveWindow
+	m.previousActiveWindow = nil
+	m.mu.Unlock()
+
+	if prev != nil {
+		m.ActivateWindow(prev)
 	}
 }
 

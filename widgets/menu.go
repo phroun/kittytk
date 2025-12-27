@@ -1067,6 +1067,9 @@ type MenuBar struct {
 	// Appearance
 	showShortcuts bool
 
+	// Scroll state for overflow handling
+	scrollOffset int // Index of first visible menu
+
 	// Accelerator display state
 	// Accelerators are shown when:
 	// - Menu bar has focus and no menu is down, OR
@@ -1081,6 +1084,9 @@ type MenuBar struct {
 
 	// Callback when a menu is opened
 	onMenuOpen func()
+
+	// Callback when menu bar is dismissed without action (e.g., Escape)
+	onMenuDismiss func()
 }
 
 // NewMenuBar creates a new menu bar.
@@ -1099,6 +1105,131 @@ func NewMenuBar() *MenuBar {
 // SetOnMenuOpen sets a callback that is called when a menu is opened.
 func (m *MenuBar) SetOnMenuOpen(callback func()) {
 	m.onMenuOpen = callback
+}
+
+// SetOnMenuDismiss sets a callback that is called when the menu bar is dismissed without action.
+func (m *MenuBar) SetOnMenuDismiss(callback func()) {
+	m.onMenuDismiss = callback
+}
+
+// calculateTotalMenusWidth returns the total width needed for all menus.
+func (m *MenuBar) calculateTotalMenusWidth() core.Unit {
+	metrics := core.DefaultCellMetrics()
+	total := core.Unit(0)
+	for _, menu := range m.menus {
+		total += core.Unit(len(menu.title)+2) * metrics.CellWidth
+	}
+	return total
+}
+
+// dateTimeWidth returns the width reserved for the date/time display.
+func (m *MenuBar) dateTimeWidth() core.Unit {
+	metrics := core.DefaultCellMetrics()
+	// " Mon Jan 02 15:04 " = 18 chars
+	return 18 * metrics.CellWidth
+}
+
+// scrollButtonWidth returns the width of each scroll button.
+func (m *MenuBar) scrollButtonWidth() core.Unit {
+	return core.DefaultCellMetrics().TextWidth(3) // [<] or [>]
+}
+
+// menusNeedScrolling returns true if menus don't fit and need scroll buttons.
+func (m *MenuBar) menusNeedScrolling() bool {
+	bounds := m.Bounds()
+	availableWidth := bounds.Width - m.dateTimeWidth()
+	return m.calculateTotalMenusWidth() > availableWidth
+}
+
+// canScrollLeft returns true if there are menus to the left.
+func (m *MenuBar) canScrollLeft() bool {
+	return m.scrollOffset > 0
+}
+
+// canScrollRight returns true if there are more menus to show on the right.
+func (m *MenuBar) canScrollRight() bool {
+	if m.scrollOffset >= len(m.menus)-1 {
+		return false
+	}
+	return !m.isLastMenuFullyVisible()
+}
+
+// isLastMenuFullyVisible returns true if the last menu is completely visible.
+func (m *MenuBar) isLastMenuFullyVisible() bool {
+	bounds := m.Bounds()
+	metrics := core.DefaultCellMetrics()
+
+	scrollButtonsWidth := core.Unit(0)
+	if m.menusNeedScrolling() {
+		scrollButtonsWidth = m.scrollButtonWidth() * 2 // [<][>]
+	}
+	leftEllipseWidth := core.Unit(0)
+	if m.scrollOffset > 0 {
+		leftEllipseWidth = metrics.TextWidth(4) // "... "
+	}
+
+	availableWidth := bounds.Width - m.dateTimeWidth() - scrollButtonsWidth
+
+	x := leftEllipseWidth
+	for i := m.scrollOffset; i < len(m.menus); i++ {
+		menuWidth := core.Unit(len(m.menus[i].title)+2) * metrics.CellWidth
+		x += menuWidth
+		if x > availableWidth {
+			return false
+		}
+	}
+	return true
+}
+
+// ensureMenuVisible adjusts scroll offset to make the given menu index visible.
+func (m *MenuBar) ensureMenuVisible(index int) {
+	if index < 0 || index >= len(m.menus) || !m.menusNeedScrolling() {
+		return
+	}
+
+	// If menu is to the left of visible area, scroll left
+	if index < m.scrollOffset {
+		m.scrollOffset = index
+		return
+	}
+
+	// Check if menu is visible from current scroll position
+	bounds := m.Bounds()
+	metrics := core.DefaultCellMetrics()
+
+	scrollButtonsWidth := m.scrollButtonWidth() * 2
+	leftEllipseWidth := core.Unit(0)
+	if m.scrollOffset > 0 {
+		leftEllipseWidth = metrics.TextWidth(4) // "... "
+	}
+
+	availableWidth := bounds.Width - m.dateTimeWidth() - scrollButtonsWidth
+
+	// Calculate position of the target menu
+	x := leftEllipseWidth
+	for i := m.scrollOffset; i <= index; i++ {
+		menuWidth := core.Unit(len(m.menus[i].title)+2) * metrics.CellWidth
+		if i == index {
+			// Check if this menu fits
+			if x+menuWidth > availableWidth {
+				// Need to scroll right - increment scroll offset until it fits
+				for m.scrollOffset < index {
+					m.scrollOffset++
+					// Recalculate with new scroll offset
+					leftEllipseWidth = metrics.TextWidth(4) // "... " (always present when scrolled)
+					x = leftEllipseWidth
+					for j := m.scrollOffset; j <= index; j++ {
+						mw := core.Unit(len(m.menus[j].title)+2) * metrics.CellWidth
+						if j == index && x+mw <= availableWidth {
+							return
+						}
+						x += mw
+					}
+				}
+			}
+		}
+		x += menuWidth
+	}
 }
 
 // hasAcceleratorConflict checks if a menu accelerator key conflicts with any
@@ -1208,12 +1339,15 @@ func (m *MenuBar) OpenMenu(index int) {
 	m.activeMenu = m.menus[index]
 	m.acceleratorsActive = false // Disable bar accelerators when menu is down
 
+	// Ensure the menu is visible before opening (scroll if needed)
+	m.ensureMenuVisible(index)
+
 	// Notify that a menu is opening
 	if m.onMenuOpen != nil {
 		m.onMenuOpen()
 	}
 
-	// Calculate position
+	// Calculate position (after scrolling so position is correct)
 	metrics := core.DefaultCellMetrics()
 	x := m.calculateMenuX(index)
 	y := metrics.CellHeight
@@ -1252,13 +1386,25 @@ func (m *MenuBar) CloseMenuAndUnfocus() {
 	m.acceleratorsActive = false
 	m.ClearFocus()
 	m.Update()
+
+	// Notify that the menu bar was dismissed
+	if m.onMenuDismiss != nil {
+		m.onMenuDismiss()
+	}
 }
 
-// calculateMenuX calculates the x position of a menu.
+// calculateMenuX calculates the x position of a menu (accounting for scroll offset).
 func (m *MenuBar) calculateMenuX(index int) core.Unit {
 	metrics := core.DefaultCellMetrics()
+
+	// Start after left ellipsis if scrolled
 	x := core.Unit(0)
-	for i := 0; i < index; i++ {
+	if m.scrollOffset > 0 {
+		x = metrics.TextWidth(4) // "... "
+	}
+
+	// Calculate position from scroll offset
+	for i := m.scrollOffset; i < index; i++ {
 		x += core.Unit(len(m.menus[i].title)+2) * metrics.CellWidth
 	}
 	return x
@@ -1288,10 +1434,104 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// Draw background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.MenuBar)
 
-	// Draw menus
+	// Calculate if we need scroll buttons
+	needsScrolling := m.menusNeedScrolling()
+
+	// Draw date/time on the far right edge first (to know where menus must stop)
+	now := time.Now()
+	dateTimeStr := now.Format(" Mon Jan 02 15:04 ")
+	dateTimeStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorYellow)
+	dateTimeWidth := core.Unit(len(dateTimeStr)) * metrics.CellWidth
+	dateTimeX := bounds.Width - dateTimeWidth
+
+	// Draw scroll buttons just left of date/time if needed
+	scrollButtonsWidth := core.Unit(0)
+	if needsScrolling {
+		scrollButtonsWidth = m.scrollButtonWidth() * 2 // [<][>]
+
+		// Button styles: blue on white for active, gray on white for inactive
+		activeButtonStyle := style.DefaultStyle().WithFg(style.ColorBlue).WithBg(style.ColorWhite)
+		inactiveButtonStyle := style.DefaultStyle().WithFg(style.ColorBrightBlack).WithBg(style.ColorWhite)
+
+		// Draw [<] button
+		leftButtonX := dateTimeX - scrollButtonsWidth
+		leftStyle := inactiveButtonStyle
+		if m.canScrollLeft() {
+			leftStyle = activeButtonStyle
+		}
+		p.DrawCell(leftButtonX, 0, '[', leftStyle)
+		p.DrawCell(leftButtonX+metrics.CellWidth, 0, '<', leftStyle)
+		p.DrawCell(leftButtonX+2*metrics.CellWidth, 0, ']', leftStyle)
+
+		// Draw [>] button
+		rightButtonX := leftButtonX + 3*metrics.CellWidth
+		rightStyle := inactiveButtonStyle
+		if m.canScrollRight() {
+			rightStyle = activeButtonStyle
+		}
+		p.DrawCell(rightButtonX, 0, '[', rightStyle)
+		p.DrawCell(rightButtonX+metrics.CellWidth, 0, '>', rightStyle)
+		p.DrawCell(rightButtonX+2*metrics.CellWidth, 0, ']', rightStyle)
+	}
+
+	// Available width for menus
+	availableWidth := dateTimeX - scrollButtonsWidth
+
+	// Draw left ellipsis if scrolled
 	x := core.Unit(0)
-	for i, menu := range m.menus {
+	if m.scrollOffset > 0 {
+		ellipsisStr := "... "
+		for i, ch := range ellipsisStr {
+			p.DrawCell(core.Unit(i)*metrics.CellWidth, 0, ch, theme.MenuBar)
+		}
+		x = core.Unit(len(ellipsisStr)) * metrics.CellWidth
+	}
+
+	// Draw visible menus
+	for i := m.scrollOffset; i < len(m.menus); i++ {
+		menu := m.menus[i]
 		menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
+
+		// Check if this menu fits
+		if x+menuWidth > availableWidth {
+			// Menu doesn't fit fully - check if we should show partial or ellipsis
+			remainingWidth := availableWidth - x
+			if remainingWidth >= 4*metrics.CellWidth {
+				// Show partial menu text with ellipsis
+				var s style.CellStyle
+				if i == m.currentIndex {
+					s = theme.MenuBarSelected
+				} else {
+					s = theme.MenuBar
+				}
+
+				// Draw space before text
+				p.DrawCell(x, 0, ' ', s)
+				textX := x + metrics.CellWidth
+
+				// Calculate how many chars we can show (leaving room for "...")
+				charsAvailable := int((remainingWidth - metrics.CellWidth) / metrics.CellWidth) - 3
+				if charsAvailable > 0 {
+					titleRunes := []rune(menu.title)
+					for idx := 0; idx < charsAvailable && idx < len(titleRunes); idx++ {
+						p.DrawCell(textX, 0, titleRunes[idx], s)
+						textX += metrics.CellWidth
+					}
+					// Draw ellipsis in the same style as the menu
+					for _, ch := range "..." {
+						p.DrawCell(textX, 0, ch, s)
+						textX += metrics.CellWidth
+					}
+				}
+			} else if remainingWidth > 0 {
+				// Just show " ..." to indicate more menus
+				ellipsisStr := " ..."
+				for j := 0; j < len(ellipsisStr) && x+core.Unit(j)*metrics.CellWidth < availableWidth; j++ {
+					p.DrawCell(x+core.Unit(j)*metrics.CellWidth, 0, rune(ellipsisStr[j]), theme.MenuBar)
+				}
+			}
+			break
+		}
 
 		// Determine style
 		var s style.CellStyle
@@ -1332,15 +1572,6 @@ func (m *MenuBar) Paint(p *core.Painter) {
 
 		x += menuWidth
 	}
-
-	// Draw date/time on the far right edge
-	now := time.Now()
-	dateTimeStr := now.Format(" Mon Jan 02 15:04 ")
-	dateTimeStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorYellow)
-
-	// Calculate position for right-aligned date/time
-	dateTimeWidth := core.Unit(len(dateTimeStr)) * metrics.CellWidth
-	dateTimeX := bounds.Width - dateTimeWidth
 
 	// Draw date/time background and text
 	p.FillRect(core.UnitRect{
@@ -1391,6 +1622,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 				m.OpenMenu(newIndex)
 			} else {
 				m.currentIndex = newIndex
+				m.ensureMenuVisible(newIndex)
 				m.Update()
 			}
 		}
@@ -1406,6 +1638,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 				m.OpenMenu(newIndex)
 			} else {
 				m.currentIndex = newIndex
+				m.ensureMenuVisible(newIndex)
 				m.Update()
 			}
 		}
@@ -1505,9 +1738,42 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 
 	// Check if click is in menu bar
 	if event.Y < metrics.CellHeight {
-		// Find which menu was clicked
+		// Check for scroll button clicks if scrolling is needed
+		needsScrolling := m.menusNeedScrolling()
+		if needsScrolling {
+			dateTimeWidth := m.dateTimeWidth()
+			scrollButtonsWidth := m.scrollButtonWidth() * 2
+			dateTimeX := bounds.Width - dateTimeWidth
+			leftButtonX := dateTimeX - scrollButtonsWidth
+
+			// Check [<] button
+			if event.X >= leftButtonX && event.X < leftButtonX+3*metrics.CellWidth {
+				if m.canScrollLeft() {
+					m.scrollOffset--
+					m.Update()
+				}
+				return true
+			}
+
+			// Check [>] button
+			rightButtonX := leftButtonX + 3*metrics.CellWidth
+			if event.X >= rightButtonX && event.X < rightButtonX+3*metrics.CellWidth {
+				if m.canScrollRight() {
+					m.scrollOffset++
+					m.Update()
+				}
+				return true
+			}
+		}
+
+		// Find which menu was clicked (accounting for scroll offset)
 		x := core.Unit(0)
-		for i, menu := range m.menus {
+		if m.scrollOffset > 0 {
+			x = metrics.TextWidth(4) // "... "
+		}
+
+		for i := m.scrollOffset; i < len(m.menus); i++ {
+			menu := m.menus[i]
 			menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
 			if event.X >= x && event.X < x+menuWidth {
 				// Track mouse down for potential drag
@@ -1605,8 +1871,14 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 			m.activeMenu.Update()
 		}
 
+		// Find which menu the mouse is over (accounting for scroll offset)
 		x := core.Unit(0)
-		for i, menu := range m.menus {
+		if m.scrollOffset > 0 {
+			x = metrics.TextWidth(4) // "... "
+		}
+
+		for i := m.scrollOffset; i < len(m.menus); i++ {
+			menu := m.menus[i]
 			menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
 			if event.X >= x && event.X < x+menuWidth {
 				if m.activeMenu != menu {
