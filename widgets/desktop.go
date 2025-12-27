@@ -159,6 +159,13 @@ func (d *Desktop) IsMenuBarActive() bool {
 	return d.menuBar.HasFocus() && d.menuBar.AcceleratorsActive()
 }
 
+// DeactivateMenuBar closes any open menu and unfocuses the menu bar.
+func (d *Desktop) DeactivateMenuBar() {
+	if d.menuBar != nil {
+		d.menuBar.CloseMenuAndUnfocus()
+	}
+}
+
 // SetStatusBar sets the status bar (displayed at the bottom).
 func (d *Desktop) SetStatusBar(statusBar *StatusBar) {
 	d.statusBar = statusBar

@@ -371,7 +371,15 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 	m.bringToFront(win)
 
 	handler := m.onActiveChanged
+	desktop := m.desktop
 	m.mu.Unlock()
+
+	// Deactivate menu bar when a window becomes active
+	if desktop != nil {
+		if deactivator, ok := desktop.(interface{ DeactivateMenuBar() }); ok {
+			deactivator.DeactivateMenuBar()
+		}
+	}
 
 	// Update focus states
 	if oldActive != nil {

@@ -1412,10 +1412,11 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		if m.activeMenu != nil {
 			// First escape: close menu but keep menu bar focused
 			m.CloseMenu()
-			return true
+		} else {
+			// Second escape: unfocus menu bar
+			m.CloseMenuAndUnfocus()
 		}
-		// Second escape: unfocus menu bar (return false to let parent handle)
-		return false
+		return true
 
 	case "F10":
 		// Toggle menu bar focus
