@@ -1193,6 +1193,9 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			bounds.Height = clientArea.Height
 		}
 
+		// Align position to cell boundaries (important after restore from maximized)
+		bounds = metrics.AlignRect(bounds)
+
 		dragging.SetBounds(bounds)
 
 		// Request repaint to show the window at its new position
