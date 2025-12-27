@@ -203,13 +203,22 @@ func (p *ProgressBar) Paint(painter *core.Painter) {
 }
 
 func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
-	// Draw background
-	painter.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Input)
+	// Progress bar styles
+	// Completed: 75% bright green speckles on dim green (ANSI 92;42m with dim)
+	completedStyle := style.DefaultStyle().WithFg(style.ColorBrightGreen).WithBg(style.ColorGreen).WithAttrs(style.StyleDim)
+	// Incomplete: 25% dark gray speckles on black
+	incompleteStyle := style.DefaultStyle().WithFg(style.ColorBrightBlack).WithBg(style.ColorBlack)
+
+	// Draw incomplete background first
+	for i := 0; i < metrics.CharsForWidth(bounds.Width); i++ {
+		x := core.Unit(i) * metrics.CellWidth
+		painter.DrawCell(x, 0, '░', incompleteStyle)
+	}
 
 	totalCells := metrics.CharsForWidth(bounds.Width)
 
 	if p.indeterminate {
-		// Animate indeterminate bar
+		// Animate indeterminate bar - moving part uses completed style
 		blockSize := 5
 		if p.indeterminatePos+blockSize >= totalCells {
 			p.indeterminateDir = -1
@@ -219,7 +228,7 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 
 		for i := 0; i < blockSize && p.indeterminatePos+i < totalCells; i++ {
 			x := core.Unit(p.indeterminatePos+i) * metrics.CellWidth
-			painter.DrawCell(x, 0, '█', theme.Selected)
+			painter.DrawCell(x, 0, '▓', completedStyle)
 		}
 		p.indeterminatePos += p.indeterminateDir
 	} else {
@@ -229,13 +238,7 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 		// Draw filled portion
 		for i := 0; i < filledCells; i++ {
 			x := core.Unit(i) * metrics.CellWidth
-			painter.DrawCell(x, 0, '█', theme.Selected)
-		}
-
-		// Draw empty portion
-		for i := filledCells; i < totalCells; i++ {
-			x := core.Unit(i) * metrics.CellWidth
-			painter.DrawCell(x, 0, '░', theme.Input)
+			painter.DrawCell(x, 0, '▓', completedStyle)
 		}
 	}
 
@@ -248,14 +251,15 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 			startX = 0
 		}
 
+		filledCells := totalCells * p.Percentage() / 100
 		for i, ch := range text {
 			x := core.Unit(startX+i) * metrics.CellWidth
-			// Use inverse color if in filled area
+			// Use appropriate style based on position
 			var s style.CellStyle
-			if startX+i < metrics.CharsForWidth(bounds.Width)*p.Percentage()/100 {
-				s = theme.Selected.Reverse()
+			if startX+i < filledCells {
+				s = completedStyle
 			} else {
-				s = theme.Input
+				s = incompleteStyle
 			}
 			painter.DrawCell(x, 0, ch, s)
 		}
@@ -263,10 +267,23 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 }
 
 func (p *ProgressBar) paintVertical(painter *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
-	// Draw background
-	painter.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Input)
+	// Progress bar styles
+	// Completed: 75% bright green speckles on dim green (ANSI 92;42m with dim)
+	completedStyle := style.DefaultStyle().WithFg(style.ColorBrightGreen).WithBg(style.ColorGreen).WithAttrs(style.StyleDim)
+	// Incomplete: 25% dark gray speckles on black
+	incompleteStyle := style.DefaultStyle().WithFg(style.ColorBrightBlack).WithBg(style.ColorBlack)
 
 	totalCells := int(bounds.Height / metrics.CellHeight)
+
+	// Draw incomplete background first (entire bar)
+	for i := 0; i < totalCells; i++ {
+		y := core.Unit(i) * metrics.CellHeight
+		painter.FillRect(core.UnitRect{
+			Y:      y,
+			Width:  bounds.Width,
+			Height: metrics.CellHeight,
+		}, '░', incompleteStyle)
+	}
 
 	// Calculate filled portion (from bottom)
 	filledCells := totalCells * p.Percentage() / 100
@@ -278,7 +295,7 @@ func (p *ProgressBar) paintVertical(painter *core.Painter, bounds core.UnitRect,
 			Y:      y,
 			Width:  bounds.Width,
 			Height: metrics.CellHeight,
-		}, '█', theme.Selected)
+		}, '▓', completedStyle)
 	}
 }
 
