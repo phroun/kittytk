@@ -334,16 +334,24 @@ func (t *TextInput) Paint(p *core.Painter) {
 
 	// Determine style
 	var s style.CellStyle
+	var fillChar rune = ' '
 	if !t.IsEnabled() {
 		s = theme.Disabled
 	} else if focused {
 		s = theme.InputFocused
+		// Use speckled fill character for focused state (black on cyan)
+		fillChar = '░'
 	} else {
 		s = theme.Input
 	}
 
-	// Draw background
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', s)
+	// Draw background - use fill style with speckled pattern for focused state
+	fillStyle := s
+	if focused && t.IsEnabled() {
+		// Focused fill uses black speckles on the cyan background
+		fillStyle = style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan)
+	}
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, fillChar, fillStyle)
 
 	// Calculate visible area
 	visibleChars := metrics.CharsForWidth(bounds.Width)

@@ -383,14 +383,14 @@ func DefaultTheme() *Theme {
 		ButtonFocused: DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
 		ButtonPressed: DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
 
-		Input:          DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
-		InputFocused:   DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite),
+		Input:          DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack),
+		InputFocused:   DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorCyan),
 		InputSelection: DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
 
 		MenuBar:           DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
 		MenuBarSelected:   DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
 		MenuItem:          DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
-		MenuItemSelected:  DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
+		MenuItemSelected:  DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
 		MenuItemDisabled:  DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite),
 		MenuSeparator:     DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite),
 

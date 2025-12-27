@@ -312,8 +312,8 @@ func (b *Button) Paint(p *core.Painter) {
 		}, ' ', s)
 	}
 
-	// Draw drop shadow (only when not pressed)
-	if !showPressed && b.IsEnabled() {
+	// Draw drop shadow (only when not pressed - both enabled and disabled buttons get shadow)
+	if !showPressed {
 		// Bottom half block on right edge of button (top row)
 		shadowX := xOffset + buttonWidth
 		p.DrawCell(shadowX, 0, '▄', shadowStyle)
