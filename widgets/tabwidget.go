@@ -597,8 +597,13 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 	// Tab bar style: silver on blue
 	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
-	// Selected tab style: bold yellow on blue
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorBlue).Bold()
+	// Selected tab style when unfocused: text color uses page control's background color
+	selectedStyle := style.DefaultStyle().WithBg(style.ColorBlue).Bold()
+	if bg := t.BackgroundColor(); bg != nil {
+		selectedStyle = selectedStyle.WithFg(*bg)
+	} else {
+		selectedStyle = selectedStyle.WithFg(style.ColorBrightYellow)
+	}
 	// Focused selected tab style: yellow on teal (for angle brackets and title)
 	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold()
 	// Pressed button style (inverted)
@@ -739,7 +744,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 				if hasFocus {
 					p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
 				} else {
-					p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+					p.DrawCell(x+metrics.CellWidth*3, 0, ' ', s)
 				}
 				x += metrics.CellWidth * 4
 			} else {
@@ -770,7 +775,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 			if hasFocus {
 				p.DrawCell(x, 0, '>', focusedSelectedStyle)
 			} else {
-				p.DrawCell(x, 0, ' ', tabBarStyle)
+				p.DrawCell(x, 0, ' ', s)
 			}
 			p.DrawCell(x+metrics.CellWidth, 0, '\\', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*2, 0, '_', tabBarStyle)
@@ -850,8 +855,13 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 
 	// Tab bar style: silver on blue
 	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
-	// Selected tab style: bold yellow on blue
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorBlue).Bold()
+	// Selected tab style when unfocused: text color uses page control's background color
+	selectedStyle := style.DefaultStyle().WithBg(style.ColorBlue).Bold()
+	if bg := t.BackgroundColor(); bg != nil {
+		selectedStyle = selectedStyle.WithFg(*bg)
+	} else {
+		selectedStyle = selectedStyle.WithFg(style.ColorBrightYellow)
+	}
 
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
@@ -883,11 +893,11 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 		// Draw prefix if first tab (inverted for bottom: " \_ ")
 		if isFirstVisible {
 			if isSelected {
-				// " \_ " (4 chars)
+				// " \_" + space (4 chars), trailing space uses selected style
 				p.DrawCell(x, tabY, ' ', tabBarStyle)
 				p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
 				p.DrawCell(x+metrics.CellWidth*2, tabY, '_', tabBarStyle)
-				p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', s)
 				x += metrics.CellWidth * 4
 			} else {
 				// "  " (2 chars)
@@ -905,8 +915,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 
 		// Draw separator after tab (inverted for bottom)
 		if isSelected {
-			// " _/ " (4 chars) after selected tab
-			p.DrawCell(x, tabY, ' ', tabBarStyle)
+			// space + "_/ " (4 chars) after selected tab, leading space uses selected style
+			p.DrawCell(x, tabY, ' ', s)
 			p.DrawCell(x+metrics.CellWidth, tabY, '_', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*2, tabY, '/', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', tabBarStyle)
