@@ -166,20 +166,21 @@ func (t *TUIBackend) Init() error {
 	t.keyboard = keyboard.New(kbOpts)
 	t.keyboard.OnKey = t.handleKey
 
+	// Enable Kitty keyboard protocol for better key detection
+	// Mode 1 = Report disambiguated keys
+	// Must be enabled BEFORE entering alternate screen
+	fmt.Print("\033[>1u")
+
+	// Enable mouse if requested - BEFORE entering alternate screen
+	if t.hasMouse {
+		fmt.Print("\033[?1000h\033[?1002h\033[?1006h")
+	}
+
 	// Enter alternate screen
 	fmt.Print("\033[?1049h")
 
 	// Hide cursor initially
 	fmt.Print("\033[?25l")
-
-	// Enable Kitty keyboard protocol for better key detection
-	// Mode 1 = Report disambiguated keys
-	fmt.Print("\033[>1u")
-
-	// Enable mouse if requested
-	if t.hasMouse {
-		fmt.Print("\033[?1000h\033[?1002h\033[?1006h")
-	}
 
 	// Now start the keyboard handler
 	if err := t.keyboard.Start(); err != nil {
