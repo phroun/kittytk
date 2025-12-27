@@ -1785,6 +1785,12 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 		if m.scrollOffset > 0 {
 			ellipsisWidth := metrics.TextWidth(3) // "..."
 			if event.X >= 0 && event.X < ellipsisWidth {
+				// Track mouse down for potential drag (same as clicking a menu)
+				m.mouseDown = true
+				m.mouseDownX = event.X
+				m.mouseDownY = event.Y
+				m.dragging = false
+
 				m.scrollOffset--
 				// Open the menu that was just scrolled into view
 				m.OpenMenu(m.scrollOffset)
