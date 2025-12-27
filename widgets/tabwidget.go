@@ -874,14 +874,14 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 
 	// Tab bar style: silver on blue
 	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
-	// Selected tab style when unfocused: uses page control's background color
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold()
+	// Selected tab style when unfocused: uses page control's background color, underlined
+	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold().Underline()
 	if bg := t.BackgroundColor(); bg != nil {
 		selectedStyle = selectedStyle.WithBg(*bg)
 	} else {
 		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
 	}
-	// Focused selected tab style: yellow on teal with underline (underline compensates for missing underscores)
+	// Focused selected tab style: yellow on teal with underline
 	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold().Underline()
 
 	// Draw tab bar background
