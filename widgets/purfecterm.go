@@ -264,6 +264,15 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	return true
 }
 
+// HandleMousePress handles mouse clicks to focus the terminal.
+func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
+	if event.Button == core.LeftButton {
+		t.SetFocus()
+		return true
+	}
+	return false
+}
+
 // HandleFocusIn is called when the widget gains focus.
 func (t *PurfecTerm) HandleFocusIn() {
 	t.WidgetBase.HandleFocusIn()
