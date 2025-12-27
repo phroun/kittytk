@@ -635,6 +635,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	state := w.state
 	pressedButton := w.pressedButton
 	buttonHovered := w.buttonHovered
+	titleFocus := w.titleFocus
 	w.mu.RUnlock()
 
 	// Fill title bar background
@@ -648,6 +649,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 
 	// Pressed button style (inverted colors)
 	pressedStyle := frameStyle.WithFg(frameStyle.Bg).WithBg(frameStyle.Fg)
+	// Keyboard focus style (also inverted to show selection)
+	focusStyle := pressedStyle
 
 	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
 	controlX := core.Unit(0)
@@ -655,6 +658,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		btnStyle := frameStyle
 		if pressedButton == TitleButtonClose && buttonHovered {
 			btnStyle = pressedStyle
+		} else if titleFocus == TitleFocusClose {
+			btnStyle = focusStyle
 		}
 		p.DrawText(controlX, 0, "[x]", btnStyle)
 		controlX += metrics.TextWidth(3)
@@ -663,6 +668,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		btnStyle := frameStyle
 		if pressedButton == TitleButtonMinimize && buttonHovered {
 			btnStyle = pressedStyle
+		} else if titleFocus == TitleFocusMinimize {
+			btnStyle = focusStyle
 		}
 		p.DrawText(controlX, 0, "[.]", btnStyle)
 		controlX += metrics.TextWidth(3)
@@ -671,6 +678,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		btnStyle := frameStyle
 		if pressedButton == TitleButtonMaximize && buttonHovered {
 			btnStyle = pressedStyle
+		} else if titleFocus == TitleFocusMaximize {
+			btnStyle = focusStyle
 		}
 		if state == WindowStateMaximized {
 			p.DrawText(controlX, 0, "[o]", btnStyle) // Restore icon
@@ -680,8 +689,12 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		controlX += metrics.TextWidth(3)
 	}
 
-	// Draw title text centered
-	p.DrawTextAligned(titleRect, title, core.AlignCenter, core.AlignMiddle, titleStyle)
+	// Draw title text centered, with angle brackets if title has keyboard focus
+	displayTitle := title
+	if titleFocus == TitleFocusTitle {
+		displayTitle = "< " + title + " >"
+	}
+	p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleStyle)
 }
 
 // paintNormalFrame draws the full window frame with borders.
@@ -692,6 +705,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	state := w.state
 	pressedButton := w.pressedButton
 	buttonHovered := w.buttonHovered
+	titleFocus := w.titleFocus
 	w.mu.RUnlock()
 
 	// Draw border at local (0,0) - painter is already offset to window position
@@ -700,6 +714,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 
 	// Pressed button style (inverted colors)
 	pressedStyle := frameStyle.WithFg(frameStyle.Bg).WithBg(frameStyle.Fg)
+	// Keyboard focus style (also inverted to show selection)
+	focusStyle := pressedStyle
 
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
@@ -709,6 +725,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			btnStyle := frameStyle
 			if pressedButton == TitleButtonClose && buttonHovered {
 				btnStyle = pressedStyle
+			} else if titleFocus == TitleFocusClose {
+				btnStyle = focusStyle
 			}
 			p.DrawText(controlX, 0, "[x]", btnStyle)
 			controlX += metrics.TextWidth(3)
@@ -717,6 +735,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			btnStyle := frameStyle
 			if pressedButton == TitleButtonMinimize && buttonHovered {
 				btnStyle = pressedStyle
+			} else if titleFocus == TitleFocusMinimize {
+				btnStyle = focusStyle
 			}
 			p.DrawText(controlX, 0, "[.]", btnStyle)
 			controlX += metrics.TextWidth(3)
@@ -725,6 +745,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			btnStyle := frameStyle
 			if pressedButton == TitleButtonMaximize && buttonHovered {
 				btnStyle = pressedStyle
+			} else if titleFocus == TitleFocusMaximize {
+				btnStyle = focusStyle
 			}
 			if state == WindowStateMaximized {
 				p.DrawText(controlX, 0, "[o]", btnStyle) // Restore icon
@@ -742,8 +764,11 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			Height: metrics.CellHeight,
 		}
 
-		// Draw title text centered
+		// Draw title text centered, with angle brackets if title has keyboard focus
 		displayTitle := title
+		if titleFocus == TitleFocusTitle {
+			displayTitle = "< " + title + " >"
+		}
 		maxTitleWidth := metrics.CharsForWidth(bounds.Width) - 12 // Leave room for controls on both sides
 		if len(displayTitle) > maxTitleWidth && maxTitleWidth > 0 {
 			displayTitle = displayTitle[:maxTitleWidth-1] + "…"
@@ -1092,13 +1117,8 @@ func (w *Window) nextTitleFocus(current TitleFocus) TitleFocus {
 	flags := w.flags
 	w.mu.RUnlock()
 
-	// Order: Title -> Close -> Minimize -> Maximize -> (exit to content)
+	// Order: Close -> Minimize -> Maximize -> Title -> (exit to content)
 	switch current {
-	case TitleFocusTitle:
-		if flags&WindowFlagNoClose == 0 {
-			return TitleFocusClose
-		}
-		fallthrough
 	case TitleFocusClose:
 		if flags&WindowFlagNoMinimize == 0 {
 			return TitleFocusMinimize
@@ -1110,6 +1130,8 @@ func (w *Window) nextTitleFocus(current TitleFocus) TitleFocus {
 		}
 		fallthrough
 	case TitleFocusMaximize:
+		return TitleFocusTitle
+	case TitleFocusTitle:
 		return TitleFocusNone // Exit to content
 	}
 	return TitleFocusNone
@@ -1121,8 +1143,13 @@ func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
 	flags := w.flags
 	w.mu.RUnlock()
 
-	// Reverse order: Maximize -> Minimize -> Close -> Title
+	// Reverse order: Title -> Maximize -> Minimize -> Close
 	switch current {
+	case TitleFocusTitle:
+		if flags&WindowFlagNoMaximize == 0 {
+			return TitleFocusMaximize
+		}
+		fallthrough
 	case TitleFocusMaximize:
 		if flags&WindowFlagNoMinimize == 0 {
 			return TitleFocusMinimize
@@ -1134,11 +1161,9 @@ func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
 		}
 		fallthrough
 	case TitleFocusClose:
-		return TitleFocusTitle
-	case TitleFocusTitle:
-		return TitleFocusTitle // Stay at title, can't go back further
+		return TitleFocusClose // Stay at close, can't go back further
 	}
-	return TitleFocusTitle
+	return TitleFocusClose
 }
 
 // HandleKeyPress handles keyboard input.
@@ -1166,22 +1191,9 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 			for _, widget := range chain {
 				if widget.IsVisible() && widget.IsEnabled() {
 					if widget == focused {
-						// At first widget, enter title bar
-						// Find last title bar element
-						w.mu.RLock()
-						flags := w.flags
-						w.mu.RUnlock()
-						var lastFocus TitleFocus
-						if flags&WindowFlagNoMaximize == 0 {
-							lastFocus = TitleFocusMaximize
-						} else if flags&WindowFlagNoMinimize == 0 {
-							lastFocus = TitleFocusMinimize
-						} else if flags&WindowFlagNoClose == 0 {
-							lastFocus = TitleFocusClose
-						} else {
-							lastFocus = TitleFocusTitle
-						}
-						w.SetTitleFocus(lastFocus)
+						// At first widget, enter title bar at Title (move/resize)
+						// Title is the last element before content in the tab order
+						w.SetTitleFocus(TitleFocusTitle)
 						fm.ClearFocus()
 						return true
 					}
