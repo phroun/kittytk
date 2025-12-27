@@ -109,6 +109,7 @@ const (
 	StyleBlink
 	StyleReverse
 	StyleStrikethrough
+	StyleOverline // Virtual attribute: overline below becomes underline above during render
 )
 
 // Code returns the ANSI codes for text style.
@@ -189,6 +190,14 @@ func (s CellStyle) Underline() CellStyle {
 // Reverse returns a copy with reverse attribute added.
 func (s CellStyle) Reverse() CellStyle {
 	s.Attrs |= StyleReverse
+	return s
+}
+
+// Overline returns a copy with overline attribute added.
+// Overline is a virtual attribute: cells with overlines cause the cell
+// directly above them to be rendered with an underline.
+func (s CellStyle) Overline() CellStyle {
+	s.Attrs |= StyleOverline
 	return s
 }
 

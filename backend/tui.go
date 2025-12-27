@@ -303,23 +303,37 @@ func (t *TUIBackend) EndFrame() {
 		}
 
 		for x := 0; x < t.cols; x++ {
-			if lineCleared || t.backBuffer[y][x] != t.frontBuffer[y][x] {
+			// Check if cell below has overline attribute - if so, we need to add underline
+			cellBelowHasOverline := false
+			if y+1 < t.rows {
+				belowStyle := t.backBuffer[y+1][x].Style
+				if belowStyle.Attrs&style.StyleOverline != 0 {
+					cellBelowHasOverline = true
+				}
+			}
+
+			// Determine the effective cell for comparison (with underline from overline below)
+			effectiveCell := t.backBuffer[y][x]
+			if cellBelowHasOverline {
+				effectiveCell.Style.Attrs |= style.StyleUnderline
+			}
+
+			if lineCleared || effectiveCell != t.frontBuffer[y][x] {
 				// Move cursor to position
 				sb.WriteString(fmt.Sprintf("\033[%d;%dH", y+1, x+1))
 
-				// Set style
-				cell := t.backBuffer[y][x]
-				sb.WriteString(cell.Style.Code())
+				// Set style (use effective style with underline from overline below)
+				sb.WriteString(effectiveCell.Style.Code())
 
 				// Write character
-				if cell.Char == 0 {
+				if effectiveCell.Char == 0 {
 					sb.WriteRune(' ')
 				} else {
-					sb.WriteRune(cell.Char)
+					sb.WriteRune(effectiveCell.Char)
 				}
 
-				// Update front buffer
-				t.frontBuffer[y][x] = t.backBuffer[y][x]
+				// Update front buffer with effective cell
+				t.frontBuffer[y][x] = effectiveCell
 			}
 		}
 	}

@@ -598,14 +598,16 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	// Underlined tab bar style for unselected tabs and connectors (except slashes)
 	tabBarUnderlined := tabBarStyle.Underline()
 	// Selected tab style when unfocused: uses page control's background color (not underlined)
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold()
+	// Overline is added so that the window frame above gets underlined
+	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold().Overline()
 	if bg := t.BackgroundColor(); bg != nil {
 		selectedStyle = selectedStyle.WithBg(*bg)
 	} else {
 		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
 	}
 	// Focused selected tab style: yellow on teal (for angle brackets and title, not underlined)
-	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold()
+	// Overline is added so that the window frame above gets underlined
+	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold().Overline()
 	// Pressed button style (inverted, underlined)
 	pressedStyle := tabBarStyle.WithFg(tabBarStyle.Bg).WithBg(tabBarStyle.Fg).Underline()
 
@@ -876,14 +878,16 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 	// Tab bar style: silver on blue
 	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
 	// Selected tab style when unfocused: uses page control's background color, underlined
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold().Underline()
+	// Overline is added so that the content above gets underlined
+	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold().Underline().Overline()
 	if bg := t.BackgroundColor(); bg != nil {
 		selectedStyle = selectedStyle.WithBg(*bg)
 	} else {
 		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
 	}
 	// Focused selected tab style: yellow on teal with underline
-	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold().Underline()
+	// Overline is added so that the content above gets underlined
+	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold().Underline().Overline()
 
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
