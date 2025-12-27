@@ -194,6 +194,24 @@ func (t *TabWidget) AllChildren() []core.Widget {
 	return children
 }
 
+// CollectFocusChain implements FocusChainProvider to customize tab order.
+// For bottom tabs, content comes before the tab bar in the focus sequence.
+func (t *TabWidget) CollectFocusChain(collector func(core.Widget)) {
+	if t.tabPosition == TabsBottom {
+		// Bottom tabs: content first, then tab bar
+		for _, child := range t.Children() {
+			collector(child)
+		}
+		collector(t)
+	} else {
+		// Top tabs: tab bar first, then content
+		collector(t)
+		for _, child := range t.Children() {
+			collector(child)
+		}
+	}
+}
+
 // AddChild adds a child widget as a new tab.
 func (t *TabWidget) AddChild(child core.Widget) {
 	t.AddTab("Tab", child)
