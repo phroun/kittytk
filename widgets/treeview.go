@@ -685,6 +685,10 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
+	// Clear any stale drag state from previous incomplete drags
+	t.isDragging = false
+	t.scrollbarDragging = false
+
 	// Check if click is within our bounds
 	bounds := t.Bounds()
 	if event.X < 0 || event.Y < 0 || event.X >= bounds.Width || event.Y >= bounds.Height {
@@ -789,6 +793,14 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse drag to sweep selection.
 func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// If we don't have focus, we shouldn't be processing drags
+	// (another widget got the click and we have stale drag state)
+	if !t.HasFocus() {
+		t.isDragging = false
+		t.scrollbarDragging = false
+		return false
+	}
+
 	metrics := core.DefaultCellMetrics()
 
 	// Handle scrollbar thumb drag
@@ -899,6 +911,9 @@ func (t *TreeView) HandleFocusIn() {
 
 // HandleFocusOut is called when focus is lost.
 func (t *TreeView) HandleFocusOut() {
+	// Clear any active drag state when focus is lost
+	t.isDragging = false
+	t.scrollbarDragging = false
 	t.Update()
 }
 

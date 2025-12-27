@@ -611,6 +611,10 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
+	// Clear any stale drag state from previous incomplete drags
+	l.isDragging = false
+	l.scrollbarDragging = false
+
 	bounds := l.Bounds()
 
 	// Check if click is within our bounds
@@ -681,6 +685,14 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse drag to sweep selection.
 func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// If we don't have focus, we shouldn't be processing drags
+	// (another widget got the click and we have stale drag state)
+	if !l.HasFocus() {
+		l.isDragging = false
+		l.scrollbarDragging = false
+		return false
+	}
+
 	metrics := core.DefaultCellMetrics()
 
 	// Handle scrollbar thumb drag
@@ -791,6 +803,9 @@ func (l *ListView) HandleFocusIn() {
 
 // HandleFocusOut is called when focus is lost.
 func (l *ListView) HandleFocusOut() {
+	// Clear any active drag state when focus is lost
+	l.isDragging = false
+	l.scrollbarDragging = false
 	l.Update()
 }
 
