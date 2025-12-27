@@ -288,16 +288,18 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	// Get screen bounds to check if we need to pop up instead of down
 	screenBounds := pc.ScreenBounds()
 
-	// Get the widget's top-left corner on screen
-	widgetScreenPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: 0})
+	// Get the widget's bottom-left corner on screen (where popup should start)
+	widgetBottomPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: metrics.CellHeight})
 
 	// Default: pop down (below the widget)
-	popupY := widgetScreenPos.Y + metrics.CellHeight
+	popupY := widgetBottomPos.Y
 
 	// Check if popup would go below screen - if so, pop up instead
 	if popupY+popupHeightUnits > screenBounds.Y+screenBounds.Height {
 		// Pop up: position popup above the widget
-		popupY = widgetScreenPos.Y - popupHeightUnits
+		// Get widget's top-left corner
+		widgetTopPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: 0})
+		popupY = widgetTopPos.Y - popupHeightUnits
 		// Make sure we don't go above the screen either
 		if popupY < screenBounds.Y {
 			popupY = screenBounds.Y
@@ -305,7 +307,7 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	}
 
 	popupBounds := core.UnitRect{
-		X:      widgetScreenPos.X,
+		X:      widgetBottomPos.X,
 		Y:      popupY,
 		Width:  bounds.Width,
 		Height: popupHeightUnits,
