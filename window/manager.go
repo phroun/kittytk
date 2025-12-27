@@ -1049,8 +1049,8 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		}
 	}
 
-	// Forward to active window (for splitter/widget dragging)
-	if active != nil {
+	// Forward to active window (for splitter/widget dragging, but not if minimized)
+	if active != nil && !active.IsMinimized() {
 		bounds := active.Bounds()
 		localEvent := event
 		localEvent.X -= bounds.X
@@ -1095,8 +1095,8 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		}
 	}
 
-	// Forward to active window (for splitter/widget release)
-	if active != nil {
+	// Forward to active window (for splitter/widget release, but not if minimized)
+	if active != nil && !active.IsMinimized() {
 		bounds := active.Bounds()
 		localEvent := event
 		localEvent.X -= bounds.X
@@ -1129,8 +1129,8 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 	}
 
-	// Pass to active window first
-	if active != nil {
+	// Pass to active window first (but not if minimized)
+	if active != nil && !active.IsMinimized() {
 		if active.HandleKeyPress(event) {
 			return true
 		}
