@@ -1123,6 +1123,10 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			justRestored = true
 			newBounds := dragging.Bounds()
 
+			// Force layout recalculation for the restored window state
+			// This ensures content bounds are recalculated for normal mode (with borders)
+			dragging.Layout()
+
 			// Recalculate offset so the cursor stays proportionally positioned
 			// on the titlebar (e.g., if you grabbed the middle, keep it middle)
 			proportion := float64(offsetX) / float64(oldBounds.Width)
