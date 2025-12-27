@@ -1113,29 +1113,43 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// Track if we just restored from maximized (to avoid immediate re-maximize)
 		justRestored := false
 
-		// If window is maximized, restore it first and adjust offset
+		// Constrain to client area (below menu bar, above status bar)
+		clientArea := m.ClientArea()
+		metrics := core.DefaultCellMetrics()
+
+		// If window is maximized, only restore if dragging DOWN (below menu bar)
+		// Dragging left/right while in menu bar area keeps window maximized
 		if dragging.IsMaximized() {
-			// Get the normalized bounds before restore
-			oldBounds := dragging.Bounds()
+			// Calculate where the window would be positioned
+			newY := event.Y - offsetY
 
-			// Restore the window
-			dragging.Restore()
-			justRestored = true
-			newBounds := dragging.Bounds()
+			// Only restore if dragging below the menu bar
+			if newY >= clientArea.Y {
+				// Get the normalized bounds before restore
+				oldBounds := dragging.Bounds()
 
-			// Force layout recalculation for the restored window state
-			// This ensures content bounds are recalculated for normal mode (with borders)
-			dragging.Layout()
+				// Restore the window
+				dragging.Restore()
+				justRestored = true
+				newBounds := dragging.Bounds()
 
-			// Recalculate offset so the cursor stays proportionally positioned
-			// on the titlebar (e.g., if you grabbed the middle, keep it middle)
-			proportion := float64(offsetX) / float64(oldBounds.Width)
-			offsetX = core.Unit(proportion * float64(newBounds.Width))
+				// Force layout recalculation for the restored window state
+				// This ensures content bounds are recalculated for normal mode (with borders)
+				dragging.Layout()
 
-			// Update stored offset
-			m.mu.Lock()
-			m.dragOffsetX = offsetX
-			m.mu.Unlock()
+				// Recalculate offset so the cursor stays proportionally positioned
+				// on the titlebar (e.g., if you grabbed the middle, keep it middle)
+				proportion := float64(offsetX) / float64(oldBounds.Width)
+				offsetX = core.Unit(proportion * float64(newBounds.Width))
+
+				// Update stored offset
+				m.mu.Lock()
+				m.dragOffsetX = offsetX
+				m.mu.Unlock()
+			} else {
+				// Still in menu bar area - keep maximized, don't process further
+				return true
+			}
 		}
 
 		// Move window
@@ -1145,10 +1159,6 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		bounds := dragging.Bounds()
 		bounds.X = newX
 		bounds.Y = newY
-
-		// Constrain to client area (below menu bar, above status bar)
-		clientArea := m.ClientArea()
-		metrics := core.DefaultCellMetrics()
 
 		// Dragging into menu bar area = maximize gesture
 		// But keep dragging so user can drag back down to restore
