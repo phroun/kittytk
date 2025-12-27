@@ -506,6 +506,8 @@ func (t *TabWidget) canScrollRight() bool {
 }
 
 // isLastTabFullyVisible returns true if the last tab is completely visible.
+// For top tabs, a 2-character grace margin is allowed for trailing underscores/spaces
+// after the last separator's backslash, as these are non-essential filler content.
 func (t *TabWidget) isLastTabFullyVisible() bool {
 	bounds := t.Bounds()
 	metrics := core.DefaultCellMetrics()
@@ -561,6 +563,15 @@ func (t *TabWidget) isLastTabFullyVisible() bool {
 		x += tabSlotWidth
 
 		if x > availableWidth {
+			// For top tabs, allow a 2-char grace margin for trailing non-essential content
+			// (the underscore and space after the last separator's backslash, or the
+			// 2 trailing spaces after an unselected last tab)
+			if !isBottomTabs && isLastVisible {
+				graceMargin := metrics.TextWidth(2)
+				if x <= availableWidth+graceMargin {
+					return true
+				}
+			}
 			return false
 		}
 	}
