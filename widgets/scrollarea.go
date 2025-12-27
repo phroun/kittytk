@@ -277,6 +277,72 @@ func (s *ScrollBar) HandleMousePress(event core.MousePressEvent) bool {
 	return true
 }
 
+// HandleMouseMove handles mouse move/drag events.
+func (s *ScrollBar) HandleMouseMove(event core.MouseMoveEvent) bool {
+	if !s.dragging {
+		return false
+	}
+
+	metrics := core.DefaultCellMetrics()
+	bounds := s.Bounds()
+
+	if s.orientation == core.Horizontal {
+		dragPos := metrics.UnitsToCellX(event.X)
+		trackCells := metrics.CharsForWidth(bounds.Width)
+		thumbSize := trackCells * s.pageStep / (s.maximum - s.minimum + s.pageStep)
+		if thumbSize < 1 {
+			thumbSize = 1
+		}
+
+		newThumbPos := dragPos - s.dragOffset
+		if newThumbPos < 0 {
+			newThumbPos = 0
+		}
+		if newThumbPos > trackCells-thumbSize {
+			newThumbPos = trackCells - thumbSize
+		}
+
+		newValue := s.minimum + newThumbPos*(s.maximum-s.minimum)/(trackCells-thumbSize)
+		if s.tracking {
+			s.SetValue(newValue)
+		}
+	} else {
+		dragPos := int(event.Y / metrics.CellHeight)
+		trackCells := int(bounds.Height / metrics.CellHeight)
+		thumbSize := trackCells * s.pageStep / (s.maximum - s.minimum + s.pageStep)
+		if thumbSize < 1 {
+			thumbSize = 1
+		}
+
+		newThumbPos := dragPos - s.dragOffset
+		if newThumbPos < 0 {
+			newThumbPos = 0
+		}
+		if newThumbPos > trackCells-thumbSize {
+			newThumbPos = trackCells - thumbSize
+		}
+
+		newValue := s.minimum
+		if trackCells > thumbSize {
+			newValue = s.minimum + newThumbPos*(s.maximum-s.minimum)/(trackCells-thumbSize)
+		}
+		if s.tracking {
+			s.SetValue(newValue)
+		}
+	}
+
+	return true
+}
+
+// HandleMouseRelease handles mouse release events.
+func (s *ScrollBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	if s.dragging {
+		s.dragging = false
+		return true
+	}
+	return false
+}
+
 // AccessibleInfo returns accessibility information.
 func (s *ScrollBar) AccessibleInfo() core.AccessibleInfo {
 	info := s.AccessibleWidget.AccessibleInfo()
@@ -608,8 +674,12 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 	theme := s.Theme()
 	metrics := p.Metrics()
 
-	// Draw background
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
+	// Draw background using inherited background color
+	bgStyle := theme.Normal
+	if bg := s.EffectiveBackgroundColor(); bg != style.ColorDefault {
+		bgStyle = bgStyle.WithBg(bg)
+	}
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
 	viewport := s.viewportBounds()
 
@@ -646,26 +716,26 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 		s.content.Paint(contentPainter)
 	}
 
-	// Draw vertical scrollbar
+	// Draw vertical scrollbar (use offset painter since scrollbar paints at 0,0)
 	if s.needsVScrollBar() {
 		s.vScrollBar.SetBounds(core.UnitRect{
-			X:      viewport.Width,
+			X:      0,
 			Y:      0,
 			Width:  metrics.CellWidth,
 			Height: viewport.Height,
 		})
-		s.vScrollBar.Paint(p)
+		s.vScrollBar.Paint(p.WithOffset(viewport.Width, 0))
 	}
 
-	// Draw horizontal scrollbar
+	// Draw horizontal scrollbar (use offset painter since scrollbar paints at 0,0)
 	if s.needsHScrollBar() {
 		s.hScrollBar.SetBounds(core.UnitRect{
 			X:      0,
-			Y:      viewport.Height,
+			Y:      0,
 			Width:  viewport.Width,
 			Height: metrics.CellHeight,
 		})
-		s.hScrollBar.Paint(p)
+		s.hScrollBar.Paint(p.WithOffset(0, viewport.Height))
 	}
 
 	// Draw corner if both scrollbars visible
@@ -741,6 +811,52 @@ func (s *ScrollArea) HandleMousePress(event core.MousePressEvent) bool {
 		return s.content.HandleMousePress(core.MousePressEvent{
 			X:      event.X + scrollOffsetX,
 			Y:      event.Y + scrollOffsetY,
+			Button: event.Button,
+		})
+	}
+
+	return false
+}
+
+// HandleMouseMove handles mouse move/drag events.
+func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
+	viewport := s.viewportBounds()
+
+	// Forward to scrollbars if dragging
+	if s.vScrollBar.dragging {
+		return s.vScrollBar.HandleMouseMove(core.MouseMoveEvent{
+			X: event.X - viewport.Width,
+			Y: event.Y,
+		})
+	}
+
+	if s.hScrollBar.dragging {
+		return s.hScrollBar.HandleMouseMove(core.MouseMoveEvent{
+			X: event.X,
+			Y: event.Y - viewport.Height,
+		})
+	}
+
+	return false
+}
+
+// HandleMouseRelease handles mouse release events.
+func (s *ScrollArea) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	viewport := s.viewportBounds()
+
+	// Forward to scrollbars
+	if s.vScrollBar.dragging {
+		return s.vScrollBar.HandleMouseRelease(core.MouseReleaseEvent{
+			X:      event.X - viewport.Width,
+			Y:      event.Y,
+			Button: event.Button,
+		})
+	}
+
+	if s.hScrollBar.dragging {
+		return s.hScrollBar.HandleMouseRelease(core.MouseReleaseEvent{
+			X:      event.X,
+			Y:      event.Y - viewport.Height,
 			Button: event.Button,
 		})
 	}
