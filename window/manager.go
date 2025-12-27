@@ -1151,11 +1151,29 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	}
 
 	// Check if we should raise the pressed window (focus-without-raise behavior)
-	// Only raise if release is within the window's bounds
+	// Only raise if release is over a non-occluded part of the window
 	if pressedWin != nil && !pressedWin.IsMinimized() {
 		bounds := pressedWin.Bounds()
-		if bounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
-			m.RaiseWindow(pressedWin)
+		releasePoint := core.UnitPoint{X: event.X, Y: event.Y}
+		if bounds.Contains(releasePoint) {
+			// Check that no other window is on top at this position
+			m.mu.RLock()
+			windows := m.windows
+			m.mu.RUnlock()
+
+			topmostAtPoint := (*Window)(nil)
+			for i := len(windows) - 1; i >= 0; i-- {
+				win := windows[i]
+				if win.IsVisible() && !win.IsMinimized() && win.Bounds().Contains(releasePoint) {
+					topmostAtPoint = win
+					break
+				}
+			}
+
+			// Only raise if the pressed window is the topmost at the release point
+			if topmostAtPoint == pressedWin {
+				m.RaiseWindow(pressedWin)
+			}
 		}
 	}
 
