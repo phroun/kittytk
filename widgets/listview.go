@@ -585,8 +585,9 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 
 		// Check if on thumb
 		if clickedRow >= thumbStart && clickedRow < thumbStart+thumbHeight {
-			// Start scrollbar drag
+			// Start scrollbar drag - clear content drag flag
 			l.scrollbarDragging = true
+			l.isDragging = false
 			l.scrollbarDragStart = clickedRow
 			l.scrollbarDragOffset = l.scrollOffset
 			return true
@@ -617,7 +618,9 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		return false // Click is past the content area
 	}
 
+	// Start content drag - clear scrollbar drag flag
 	l.isDragging = true
+	l.scrollbarDragging = false
 	clickedRow := int(event.Y / metrics.CellHeight)
 	clickedIndex := l.scrollOffset + clickedRow
 

@@ -658,8 +658,9 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 
 		// Check if on thumb
 		if clickedRow >= thumbStart && clickedRow < thumbStart+thumbHeight {
-			// Start scrollbar drag
+			// Start scrollbar drag - clear content drag flag
 			t.scrollbarDragging = true
+			t.isDragging = false
 			t.scrollbarDragStart = clickedRow
 			t.scrollbarDragOffset = t.scrollOffset
 			return true
@@ -690,7 +691,9 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		return false // Click is past the content area
 	}
 
+	// Start content drag - clear scrollbar drag flag
 	t.isDragging = true
+	t.scrollbarDragging = false
 	clickedRow := int(event.Y / metrics.CellHeight)
 	clickedIndex := t.scrollOffset + clickedRow
 
