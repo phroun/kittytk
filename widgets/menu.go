@@ -413,7 +413,7 @@ func (m *Menu) calculateSize() core.UnitSize {
 	for _, item := range m.items {
 		width := len(item.Text)
 		if item.Shortcut != "" {
-			width += 4 + len(item.Shortcut.DisplayString())
+			width += 3 + len(item.Shortcut.DisplayString())
 		}
 		if item.SubMenu != nil {
 			width += 3 // For submenu arrow
