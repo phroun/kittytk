@@ -636,15 +636,10 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 // HandleMouseMove handles mouse drag to sweep selection.
 func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	metrics := core.DefaultCellMetrics()
-	bounds := l.Bounds()
 
 	// Handle scrollbar thumb drag
+	// Note: Once drag is captured on press, we don't check horizontal bounds during drag
 	if l.scrollbarDragging {
-		// Check if mouse is within horizontal bounds
-		if event.X < 0 || event.X >= bounds.Width {
-			return true // Still consuming the event, but not updating scroll
-		}
-
 		currentRow := int(event.Y / metrics.CellHeight)
 		rowDelta := currentRow - l.scrollbarDragStart
 
@@ -678,13 +673,9 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 
 	// Handle list item drag
+	// Note: Once drag is captured on press, we don't check horizontal bounds during drag
 	if !l.isDragging {
 		return false
-	}
-
-	// Check if mouse is within horizontal bounds
-	if event.X < 0 || event.X >= bounds.Width {
-		return true // Still consuming the event, but not updating selection
 	}
 
 	row := int(event.Y / metrics.CellHeight)
