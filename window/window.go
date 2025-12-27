@@ -655,8 +655,9 @@ func (w *Window) Paint(p *core.Painter) {
 
 	// Adjust styles based on focus
 	if !focused {
-		// Dim the title when not focused
+		// Dim the title and use light blue on dark blue for inactive frame
 		titleStyle = titleStyle.WithAttrs(style.StyleDim)
+		frameStyle = style.DefaultStyle().WithFg(style.ColorBrightBlue).WithBg(style.ColorBlue)
 	}
 
 	// Draw frame based on state
@@ -707,10 +708,10 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	}
 	p.FillRect(titleRect, ' ', titleStyle)
 
-	// Pressed button style (inverted colors)
-	pressedStyle := frameStyle.WithFg(frameStyle.Bg).WithBg(frameStyle.Fg)
-	// Keyboard focus style (also inverted to show selection)
-	focusStyle := pressedStyle
+	// Pressed button style (black on silver)
+	pressedStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorWhite)
+	// Keyboard focus style (black on cyan)
+	focusStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan)
 
 	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
 	controlX := core.Unit(0)
@@ -749,12 +750,14 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		controlX += metrics.TextWidth(3)
 	}
 
-	// Draw title text centered, with angle brackets if title has keyboard focus
+	// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 	displayTitle := title
+	titleDisplayStyle := titleStyle
 	if titleFocus == TitleFocusTitle {
 		displayTitle = "< " + title + " >"
+		titleDisplayStyle = focusStyle
 	}
-	p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleStyle)
+	p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle)
 }
 
 // paintNormalFrame draws the full window frame with borders.
@@ -772,10 +775,10 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 	p.DrawRect(localBounds, border, frameStyle)
 
-	// Pressed button style (inverted colors)
-	pressedStyle := frameStyle.WithFg(frameStyle.Bg).WithBg(frameStyle.Fg)
-	// Keyboard focus style (also inverted to show selection)
-	focusStyle := pressedStyle
+	// Pressed button style (black on silver)
+	pressedStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorWhite)
+	// Keyboard focus style (black on cyan)
+	focusStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan)
 
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
@@ -824,16 +827,18 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			Height: metrics.CellHeight,
 		}
 
-		// Draw title text centered, with angle brackets if title has keyboard focus
+		// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 		displayTitle := title
+		titleDisplayStyle := titleStyle
 		if titleFocus == TitleFocusTitle {
 			displayTitle = "< " + title + " >"
+			titleDisplayStyle = focusStyle
 		}
 		maxTitleWidth := metrics.CharsForWidth(bounds.Width) - 12 // Leave room for controls on both sides
 		if len(displayTitle) > maxTitleWidth && maxTitleWidth > 0 {
 			displayTitle = displayTitle[:maxTitleWidth-1] + "…"
 		}
-		p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleStyle)
+		p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle)
 	}
 
 	// Fill content area with background
