@@ -157,22 +157,16 @@ func (c *Checkbox) Paint(p *core.Painter) {
 	focused := c.HasFocus()
 	metrics := p.Metrics()
 
-	// Determine style - use inherited background color
+	// Determine style - always use inherited background color (ColorDefault = terminal default)
 	inheritedBg := c.EffectiveBackgroundColor()
 	var s style.CellStyle
 	if !c.IsEnabled() {
-		s = theme.Disabled
+		s = theme.Disabled.WithBg(inheritedBg)
 	} else if focused {
 		// Focused: bright cyan foreground on inherited background
-		s = style.DefaultStyle().WithFg(style.ColorBrightCyan)
-		if inheritedBg != style.ColorDefault {
-			s = s.WithBg(inheritedBg)
-		}
+		s = style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(inheritedBg)
 	} else {
-		s = theme.Normal
-		if inheritedBg != style.ColorDefault {
-			s = s.WithBg(inheritedBg)
-		}
+		s = theme.Normal.WithBg(inheritedBg)
 	}
 
 	// Draw checkbox indicator

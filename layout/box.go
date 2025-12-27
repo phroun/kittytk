@@ -160,11 +160,26 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 	// Collect size hints and stretch factors
 	stretchItems := make([]stretchItem, len(l.items))
-	totalSpacing := spacing * core.Unit(len(l.items)-1)
+
+	// Calculate total spacing between items
+	// For horizontal layouts, inline spacing replaces base spacing (not adds to it)
+	var totalSpacing core.Unit
+	if l.orientation == core.Horizontal {
+		// For inline gaps, use inline spacing; for container gaps, use base spacing
+		totalSpacing = inlineSpacingTotal
+		for i := 0; i < len(l.items)-1; i++ {
+			if !isInlineWidget(l.items[i].Widget) && !isInlineWidget(l.items[i+1].Widget) {
+				// Both are containers, use base spacing
+				totalSpacing += spacing
+			}
+		}
+	} else {
+		totalSpacing = spacing * core.Unit(len(l.items)-1)
+	}
 
 	var availablePrimary core.Unit
 	if l.orientation == core.Horizontal {
-		availablePrimary = rect.Width - totalSpacing - inlineSpacingTotal
+		availablePrimary = rect.Width - totalSpacing
 	} else {
 		availablePrimary = rect.Height - totalSpacing
 	}
@@ -224,13 +239,15 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 				Width:  sizes[i],
 				Height: rect.Height,
 			}
-			pos += sizes[i] + spacing
+			pos += sizes[i]
 
-			// Add inline margin after this item if needed
-			// (between items where at least one is inline)
+			// Add spacing after this item (before the next one)
+			// For inline widgets, use inline spacing; for containers, use base spacing
 			if i < len(l.items)-1 {
 				if isInlineWidget(item.Widget) || isInlineWidget(l.items[i+1].Widget) {
-					pos += metrics.CellWidth
+					pos += metrics.CellWidth // Inline spacing
+				} else {
+					pos += spacing // Container-to-container spacing
 				}
 			}
 		} else {
