@@ -124,7 +124,7 @@ func NewWindow(title string) *Window {
 		state:       WindowStateNormal,
 		borderStyle: style.BorderDouble,
 		titleStyle:  style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlue).Bold(),
-		frameStyle:  style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlue),
+		frameStyle:  style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlue),
 		minWidth:    80,  // 10 characters minimum
 		minHeight:   48,  // 3 lines minimum
 		maxWidth:    1<<30 - 1,
