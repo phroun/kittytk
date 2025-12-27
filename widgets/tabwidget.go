@@ -1510,10 +1510,10 @@ func (t *TabWidget) paintContent(p *core.Painter) {
 		return
 	}
 
-	// Set content bounds without X,Y offset - painter handles positioning
+	// Set content bounds with actual position so MapToScreen works correctly
 	content.SetBounds(core.UnitRect{
-		X:      0,
-		Y:      0,
+		X:      contentBounds.X,
+		Y:      contentBounds.Y,
 		Width:  contentBounds.Width,
 		Height: contentBounds.Height,
 	})
@@ -2108,11 +2108,10 @@ func (t *TabWidget) HandleResize(oldSize, newSize core.UnitSize) {
 		content := t.tabs[t.currentIndex].Content
 		if content != nil {
 			contentBounds := t.contentBounds()
-			// Set bounds with 0,0 for content-relative coordinates
-			// (painter handles positioning with WithOffset)
+			// Set bounds with actual position so MapToScreen works correctly
 			content.SetBounds(core.UnitRect{
-				X:      0,
-				Y:      0,
+				X:      contentBounds.X,
+				Y:      contentBounds.Y,
 				Width:  contentBounds.Width,
 				Height: contentBounds.Height,
 			})

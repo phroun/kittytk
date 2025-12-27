@@ -15,9 +15,10 @@ type Panel struct {
 	layoutManager core.LayoutManager
 
 	// Appearance
-	background style.CellStyle
-	border     bool
-	borderStyle style.BorderStyle
+	background    style.CellStyle
+	backgroundSet bool // true if SetBackground was called
+	border        bool
+	borderStyle   style.BorderStyle
 }
 
 // NewPanel creates a new panel.
@@ -141,6 +142,7 @@ func (p *Panel) SetBorderStyle(s style.BorderStyle) {
 // SetBackground sets the background style.
 func (p *Panel) SetBackground(s style.CellStyle) {
 	p.background = s
+	p.backgroundSet = true
 	p.Update()
 }
 
@@ -168,12 +170,18 @@ func (p *Panel) MinimumSize() core.UnitSize {
 func (p *Panel) Paint(painter *core.Painter) {
 	bounds := p.Bounds()
 
-	// Draw background
-	painter.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', p.background)
+	// Only draw background if explicitly set (allows parent backgrounds to show through)
+	if p.backgroundSet {
+		painter.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', p.background)
+	}
 
 	// Draw border if enabled
 	if p.border {
-		painter.DrawRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, p.borderStyle, p.background)
+		bgStyle := p.background
+		if !p.backgroundSet {
+			bgStyle = style.DefaultStyle()
+		}
+		painter.DrawRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, p.borderStyle, bgStyle)
 	}
 
 	// Paint children

@@ -454,9 +454,25 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 	metrics := core.DefaultCellMetrics()
 	bounds := d.Bounds()
 
+	// Helper to cancel drag state on a widget
+	cancelDrag := func(w core.Widget) {
+		if w == nil {
+			return
+		}
+		if handler, ok := w.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			handler.HandleMouseRelease(core.MouseReleaseEvent{Button: event.Button})
+		}
+	}
+
 	// Check menu bar first - either in menu bar area or when menu is open
 	if d.menuBar != nil {
 		if event.Y < metrics.CellHeight || d.menuBar.ActiveMenu() != nil {
+			// Cancel drags on other children
+			cancelDrag(d.statusBar)
+			cancelDrag(d.dockRow)
+			cancelDrag(d.content)
 			return d.menuBar.HandleMousePress(event)
 		}
 	}
@@ -465,6 +481,10 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 	if d.statusBar != nil {
 		statusY := bounds.Height - metrics.CellHeight
 		if event.Y >= statusY {
+			// Cancel drags on other children
+			cancelDrag(d.menuBar)
+			cancelDrag(d.dockRow)
+			cancelDrag(d.content)
 			localEvent := event
 			localEvent.Y -= statusY
 			return d.statusBar.HandleMousePress(localEvent)
@@ -479,6 +499,10 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 			dockY = bounds.Height - dockHeight
 		}
 		if event.Y >= dockY && event.Y < dockY+dockHeight {
+			// Cancel drags on other children
+			cancelDrag(d.menuBar)
+			cancelDrag(d.statusBar)
+			cancelDrag(d.content)
 			localEvent := event
 			localEvent.Y -= dockY
 			return d.dockRow.HandleMousePress(localEvent)
@@ -489,6 +513,10 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 	if d.content != nil {
 		clientArea := d.ClientArea()
 		if event.Y >= clientArea.Y && event.Y < clientArea.Y+clientArea.Height {
+			// Cancel drags on other children
+			cancelDrag(d.menuBar)
+			cancelDrag(d.statusBar)
+			cancelDrag(d.dockRow)
 			localEvent := event
 			localEvent.X -= clientArea.X
 			localEvent.Y -= clientArea.Y
@@ -496,6 +524,11 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 		}
 	}
 
+	// Click was on blank desktop area - cancel all drags
+	cancelDrag(d.menuBar)
+	cancelDrag(d.statusBar)
+	cancelDrag(d.dockRow)
+	cancelDrag(d.content)
 	return false
 }
 
