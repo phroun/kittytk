@@ -660,6 +660,10 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	//   - "  " (2 chars) otherwise
 	x := leftEllipseWidth
 
+	// Track the style of the last tab being drawn (for ellipsis coloring)
+	var truncatedTabStyle style.CellStyle
+	tabWasTruncated := false
+
 	visibleTabs := t.tabs[t.tabScrollOffset:]
 	for i := 0; i < len(visibleTabs); i++ {
 		tabIndex := t.tabScrollOffset + i
@@ -741,6 +745,10 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 					p.DrawCell(x, 0, textRunes[j], s)
 					x += metrics.CellWidth
 				}
+
+				// Track that this tab was truncated and its style for ellipsis
+				truncatedTabStyle = s
+				tabWasTruncated = true
 			}
 			break
 		}
@@ -839,10 +847,15 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	}
 
 	// Draw right ellipsis if tabs are truncated (right before scroll buttons)
+	// Use the style of the truncated tab if one was cut off, otherwise use tabBarUnderlined
 	if needsScrolling && !t.isLastTabFullyVisible() {
 		ellipsisX := bounds.Width - scrollButtonsWidth - metrics.TextWidth(3)
+		ellipsisStyle := tabBarUnderlined
+		if tabWasTruncated {
+			ellipsisStyle = truncatedTabStyle
+		}
 		for i := 0; i < 3; i++ {
-			p.DrawCell(ellipsisX+core.Unit(i)*metrics.CellWidth, 0, '.', tabBarUnderlined)
+			p.DrawCell(ellipsisX+core.Unit(i)*metrics.CellWidth, 0, '.', ellipsisStyle)
 		}
 	}
 
@@ -940,6 +953,10 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 	//   - "  " (2 chars) otherwise
 	x := leftEllipseWidth
 
+	// Track the style of the last tab being drawn (for ellipsis coloring)
+	var truncatedTabStyle style.CellStyle
+	tabWasTruncated := false
+
 	visibleTabs := t.tabs[t.tabScrollOffset:]
 	for i := 0; i < len(visibleTabs); i++ {
 		tabIndex := t.tabScrollOffset + i
@@ -1020,6 +1037,10 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 					p.DrawCell(x, tabY, textRunes[j], s)
 					x += metrics.CellWidth
 				}
+
+				// Track that this tab was truncated and its style for ellipsis
+				truncatedTabStyle = s
+				tabWasTruncated = true
 			}
 			break
 		}
@@ -1107,10 +1128,15 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 	}
 
 	// Draw right ellipsis if tabs are truncated (right before scroll buttons)
+	// Use the style of the truncated tab if one was cut off, otherwise use tabBarOverlined
 	if needsScrolling && !t.isLastTabFullyVisible() {
 		ellipsisX := bounds.Width - scrollButtonsWidth - metrics.TextWidth(3)
+		ellipsisStyle := tabBarOverlined
+		if tabWasTruncated {
+			ellipsisStyle = truncatedTabStyle
+		}
 		for i := 0; i < 3; i++ {
-			p.DrawCell(ellipsisX+core.Unit(i)*metrics.CellWidth, tabY, '.', tabBarOverlined)
+			p.DrawCell(ellipsisX+core.Unit(i)*metrics.CellWidth, tabY, '.', ellipsisStyle)
 		}
 	}
 
