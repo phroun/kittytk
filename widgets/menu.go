@@ -1447,31 +1447,35 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// Draw scroll buttons just left of date/time if needed
 	scrollButtonsWidth := core.Unit(0)
 	if needsScrolling {
-		scrollButtonsWidth = m.scrollButtonWidth() * 2 // [<][>]
+		scrollButtonsWidth = m.scrollButtonWidth() * 2 // [<][>] or  <  >
 
-		// Button styles: blue on white for active, gray on white for inactive
+		// Button styles: blue on white for active, bright white on white for inactive
 		activeButtonStyle := style.DefaultStyle().WithFg(style.ColorBlue).WithBg(style.ColorWhite)
-		inactiveButtonStyle := style.DefaultStyle().WithFg(style.ColorBrightBlack).WithBg(style.ColorWhite)
+		inactiveButtonStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorWhite)
 
-		// Draw [<] button
+		// Draw left button: [<] when active, " < " when inactive
 		leftButtonX := dateTimeX - scrollButtonsWidth
-		leftStyle := inactiveButtonStyle
 		if m.canScrollLeft() {
-			leftStyle = activeButtonStyle
+			p.DrawCell(leftButtonX, 0, '[', activeButtonStyle)
+			p.DrawCell(leftButtonX+metrics.CellWidth, 0, '<', activeButtonStyle)
+			p.DrawCell(leftButtonX+2*metrics.CellWidth, 0, ']', activeButtonStyle)
+		} else {
+			p.DrawCell(leftButtonX, 0, ' ', inactiveButtonStyle)
+			p.DrawCell(leftButtonX+metrics.CellWidth, 0, '<', inactiveButtonStyle)
+			p.DrawCell(leftButtonX+2*metrics.CellWidth, 0, ' ', inactiveButtonStyle)
 		}
-		p.DrawCell(leftButtonX, 0, '[', leftStyle)
-		p.DrawCell(leftButtonX+metrics.CellWidth, 0, '<', leftStyle)
-		p.DrawCell(leftButtonX+2*metrics.CellWidth, 0, ']', leftStyle)
 
-		// Draw [>] button
+		// Draw right button: [>] when active, " > " when inactive
 		rightButtonX := leftButtonX + 3*metrics.CellWidth
-		rightStyle := inactiveButtonStyle
 		if m.canScrollRight() {
-			rightStyle = activeButtonStyle
+			p.DrawCell(rightButtonX, 0, '[', activeButtonStyle)
+			p.DrawCell(rightButtonX+metrics.CellWidth, 0, '>', activeButtonStyle)
+			p.DrawCell(rightButtonX+2*metrics.CellWidth, 0, ']', activeButtonStyle)
+		} else {
+			p.DrawCell(rightButtonX, 0, ' ', inactiveButtonStyle)
+			p.DrawCell(rightButtonX+metrics.CellWidth, 0, '>', inactiveButtonStyle)
+			p.DrawCell(rightButtonX+2*metrics.CellWidth, 0, ' ', inactiveButtonStyle)
 		}
-		p.DrawCell(rightButtonX, 0, '[', rightStyle)
-		p.DrawCell(rightButtonX+metrics.CellWidth, 0, '>', rightStyle)
-		p.DrawCell(rightButtonX+2*metrics.CellWidth, 0, ']', rightStyle)
 	}
 
 	// Available width for menus
