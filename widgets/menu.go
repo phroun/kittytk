@@ -1505,12 +1505,45 @@ func (m *MenuBar) Paint(p *core.Painter) {
 
 		// Check if this menu fits (with room for right ellipsis if needed)
 		if x+menuWidth+rightEllipsisWidth > availableWidth {
-			// Menu doesn't fit - draw right ellipsis and stop
-			ellipsisX := x
-			for _, ch := range "..." {
-				if ellipsisX < availableWidth {
-					p.DrawCell(ellipsisX, 0, ch, theme.MenuBar)
-					ellipsisX += metrics.CellWidth
+			// Menu doesn't fit fully - show as much as possible with ellipsis
+			remainingWidth := availableWidth - x
+			ellipsisWidth := metrics.TextWidth(3) // "..."
+
+			// Determine style for this menu
+			var s style.CellStyle
+			if i == m.currentIndex {
+				s = theme.MenuBarSelected
+			} else {
+				s = theme.MenuBar
+			}
+
+			// Calculate how many chars we can show: space + chars + "..."
+			// Need at least 4 chars width for " X..." (space, one char, ellipsis)
+			if remainingWidth >= 4*metrics.CellWidth {
+				// Draw space before text
+				p.DrawCell(x, 0, ' ', s)
+				textX := x + metrics.CellWidth
+
+				// Calculate how many title chars we can show
+				charsAvailable := int((remainingWidth-metrics.CellWidth-ellipsisWidth) / metrics.CellWidth)
+				titleRunes := []rune(menu.title)
+				for idx := 0; idx < charsAvailable && idx < len(titleRunes); idx++ {
+					p.DrawCell(textX, 0, titleRunes[idx], s)
+					textX += metrics.CellWidth
+				}
+				// Draw ellipsis in the same style as the menu
+				for _, ch := range "..." {
+					p.DrawCell(textX, 0, ch, s)
+					textX += metrics.CellWidth
+				}
+			} else if remainingWidth >= ellipsisWidth {
+				// Just show "..." to indicate more menus
+				ellipsisX := x
+				for _, ch := range "..." {
+					if ellipsisX < availableWidth {
+						p.DrawCell(ellipsisX, 0, ch, theme.MenuBar)
+						ellipsisX += metrics.CellWidth
+					}
 				}
 			}
 			break
