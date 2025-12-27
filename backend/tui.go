@@ -664,6 +664,9 @@ func (t *TUIBackend) Beep() {
 
 // handleKey processes key events from the keyboard handler.
 func (t *TUIBackend) handleKey(key string) {
+	// DEBUG: Print all received keys
+	fmt.Fprintf(os.Stderr, "DEBUG key: %q\n", key)
+
 	// Check for mouse events from direct-key-handler
 	// Mouse events come as two keys: "Mouse@x,y" (position) followed by action
 	if strings.HasPrefix(key, "Mouse@") {
