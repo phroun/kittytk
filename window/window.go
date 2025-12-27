@@ -2,6 +2,7 @@
 package window
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/phroun/tuitk/core"
@@ -938,24 +939,48 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		hasShift := event.Modifiers&core.ShiftModifier != 0
 		hasCtrl := event.Modifiers&core.ControlModifier != 0
 		hasMeta := event.Modifiers&core.MetaModifier != 0
-		moveToEdge := hasCtrl || hasMeta
+		hasAlt := event.Modifiers&core.AltModifier != 0
+		moveToEdge := hasCtrl
 
-		switch event.Key {
+		// Determine movement multiplier based on modifiers
+		// Alt/Meta increases horizontal by 10 chars, vertical by 4 lines
+		horizStep := metrics.CellWidth
+		vertStep := metrics.CellHeight
+		if hasMeta || hasAlt {
+			horizStep = metrics.CellWidth * 10
+			vertStep = metrics.CellHeight * 4
+		}
+
+		// Normalize key names - handle both "Left" and "S-Left" etc.
+		key := event.Key
+		if strings.HasPrefix(key, "S-") {
+			hasShift = true
+			key = key[2:]
+		}
+		if strings.HasPrefix(key, "M-") || strings.HasPrefix(key, "A-") {
+			hasMeta = true
+			hasAlt = true
+			key = key[2:]
+			horizStep = metrics.CellWidth * 10
+			vertStep = metrics.CellHeight * 4
+		}
+
+		switch key {
 		case "Left":
 			if hasShift {
 				// Start/continue resizing left edge
 				if resizeEdges&ResizeEdgeLeft != 0 {
 					// Continue: shrink from left
 					newBounds := bounds
-					newBounds.X += metrics.CellWidth
-					newBounds.Width -= metrics.CellWidth
+					newBounds.X += horizStep
+					newBounds.Width -= horizStep
 					if newBounds.Width >= w.minWidth {
 						w.SetBounds(newBounds)
 					}
 				} else if resizeEdges&ResizeEdgeRight != 0 {
 					// Continue right resize: shrink right edge
 					newBounds := bounds
-					newBounds.Width -= metrics.CellWidth
+					newBounds.Width -= horizStep
 					if newBounds.Width >= w.minWidth {
 						w.SetBounds(newBounds)
 					}
@@ -965,8 +990,8 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					w.resizeEdges = ResizeEdgeLeft
 					w.mu.Unlock()
 					newBounds := bounds
-					newBounds.X -= metrics.CellWidth
-					newBounds.Width += metrics.CellWidth
+					newBounds.X -= horizStep
+					newBounds.Width += horizStep
 					w.SetBounds(newBounds)
 				}
 			} else if moveToEdge {
@@ -977,7 +1002,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			} else {
 				// Move window left
 				newBounds := bounds
-				newBounds.X -= metrics.CellWidth
+				newBounds.X -= horizStep
 				w.SetBounds(newBounds)
 			}
 			return true
@@ -988,15 +1013,15 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				if resizeEdges&ResizeEdgeRight != 0 {
 					// Continue: shrink from right
 					newBounds := bounds
-					newBounds.Width -= metrics.CellWidth
+					newBounds.Width -= horizStep
 					if newBounds.Width >= w.minWidth {
 						w.SetBounds(newBounds)
 					}
 				} else if resizeEdges&ResizeEdgeLeft != 0 {
 					// Continue left resize: shrink left edge
 					newBounds := bounds
-					newBounds.X += metrics.CellWidth
-					newBounds.Width -= metrics.CellWidth
+					newBounds.X += horizStep
+					newBounds.Width -= horizStep
 					if newBounds.Width >= w.minWidth {
 						w.SetBounds(newBounds)
 					}
@@ -1006,7 +1031,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					w.resizeEdges = ResizeEdgeRight
 					w.mu.Unlock()
 					newBounds := bounds
-					newBounds.Width += metrics.CellWidth
+					newBounds.Width += horizStep
 					w.SetBounds(newBounds)
 				}
 			} else if moveToEdge {
@@ -1019,7 +1044,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			} else {
 				// Move window right
 				newBounds := bounds
-				newBounds.X += metrics.CellWidth
+				newBounds.X += horizStep
 				w.SetBounds(newBounds)
 			}
 			return true
@@ -1030,15 +1055,15 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				if resizeEdges&ResizeEdgeTop != 0 {
 					// Continue: shrink from top
 					newBounds := bounds
-					newBounds.Y += metrics.CellHeight
-					newBounds.Height -= metrics.CellHeight
+					newBounds.Y += vertStep
+					newBounds.Height -= vertStep
 					if newBounds.Height >= w.minHeight {
 						w.SetBounds(newBounds)
 					}
 				} else if resizeEdges&ResizeEdgeBottom != 0 {
 					// Continue bottom resize: shrink bottom edge
 					newBounds := bounds
-					newBounds.Height -= metrics.CellHeight
+					newBounds.Height -= vertStep
 					if newBounds.Height >= w.minHeight {
 						w.SetBounds(newBounds)
 					}
@@ -1048,8 +1073,8 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					w.resizeEdges |= ResizeEdgeTop
 					w.mu.Unlock()
 					newBounds := bounds
-					newBounds.Y -= metrics.CellHeight
-					newBounds.Height += metrics.CellHeight
+					newBounds.Y -= vertStep
+					newBounds.Height += vertStep
 					w.SetBounds(newBounds)
 				}
 			} else if moveToEdge {
@@ -1060,7 +1085,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			} else {
 				// Move window up
 				newBounds := bounds
-				newBounds.Y -= metrics.CellHeight
+				newBounds.Y -= vertStep
 				w.SetBounds(newBounds)
 			}
 			return true
@@ -1071,15 +1096,15 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				if resizeEdges&ResizeEdgeBottom != 0 {
 					// Continue: shrink from bottom
 					newBounds := bounds
-					newBounds.Height -= metrics.CellHeight
+					newBounds.Height -= vertStep
 					if newBounds.Height >= w.minHeight {
 						w.SetBounds(newBounds)
 					}
 				} else if resizeEdges&ResizeEdgeTop != 0 {
 					// Continue top resize: shrink top edge
 					newBounds := bounds
-					newBounds.Y += metrics.CellHeight
-					newBounds.Height -= metrics.CellHeight
+					newBounds.Y += vertStep
+					newBounds.Height -= vertStep
 					if newBounds.Height >= w.minHeight {
 						w.SetBounds(newBounds)
 					}
@@ -1089,7 +1114,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					w.resizeEdges |= ResizeEdgeBottom
 					w.mu.Unlock()
 					newBounds := bounds
-					newBounds.Height += metrics.CellHeight
+					newBounds.Height += vertStep
 					w.SetBounds(newBounds)
 				}
 			} else if moveToEdge {
@@ -1101,7 +1126,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			} else {
 				// Move window down
 				newBounds := bounds
-				newBounds.Y += metrics.CellHeight
+				newBounds.Y += vertStep
 				w.SetBounds(newBounds)
 			}
 			return true
