@@ -538,8 +538,13 @@ func (w *Window) contentBounds() core.UnitRect {
 	bounds := w.Bounds()
 	metrics := core.DefaultCellMetrics()
 
+	w.mu.RLock()
+	state := w.state
+	flags := w.flags
+	w.mu.RUnlock()
+
 	// In maximized mode, no side borders (full width)
-	if w.state == WindowStateMaximized && w.flags&WindowFlagNoTitle == 0 {
+	if state == WindowStateMaximized && flags&WindowFlagNoTitle == 0 {
 		// Only top title bar, no side borders
 		return core.UnitRect{
 			X:      0,
@@ -550,7 +555,7 @@ func (w *Window) contentBounds() core.UnitRect {
 	}
 
 	// Normal mode with full frame
-	if w.flags&WindowFlagFrameless != 0 {
+	if flags&WindowFlagFrameless != 0 {
 		return core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 	}
 
@@ -560,7 +565,7 @@ func (w *Window) contentBounds() core.UnitRect {
 	right := metrics.CellWidth
 	bottom := metrics.CellHeight
 
-	if w.flags&WindowFlagNoTitle != 0 {
+	if flags&WindowFlagNoTitle != 0 {
 		top = metrics.CellHeight // Just border, no extra title row
 	}
 
