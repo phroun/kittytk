@@ -460,11 +460,9 @@ func (t *TabWidget) calculateTotalTabsWidth() core.Unit {
 // tabsNeedScrolling returns true if tabs don't fit and need scroll buttons.
 func (t *TabWidget) tabsNeedScrolling() bool {
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
-	// Reserve space for scroll buttons [<][>] = 6 chars
-	scrollButtonsWidth := metrics.TextWidth(6)
-	availableWidth := bounds.Width - scrollButtonsWidth
-	return t.calculateTotalTabsWidth() > availableWidth
+	// Check if tabs fit the full width - don't pre-subtract scroll button space
+	// since scroll buttons only appear when scrolling is actually needed
+	return t.calculateTotalTabsWidth() > bounds.Width
 }
 
 // scrollButtonWidth returns the width of each scroll button.
