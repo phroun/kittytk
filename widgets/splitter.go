@@ -526,14 +526,11 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 		bounds := s.Bounds()
 		metrics := core.DefaultCellMetrics()
 
-		// Determine step size based on modifiers
+		// Calculate step sizes
 		// Normal: small step (1 cell equivalent in position terms)
-		// Ctrl/Alt/Meta: large step (10 cells horizontal, 4 cells vertical)
-		hasModifier := event.Modifiers&(core.ControlModifier|core.MetaModifier|core.AltModifier) != 0
-
+		// Large step (10 cells horizontal, 4 cells vertical) for modified keys
 		var smallStep, largeStep float64
 		if s.orientation == core.Horizontal {
-			// For horizontal splitter, calculate step based on width
 			totalWidth := float64(bounds.Width - metrics.CellWidth) // Subtract divider
 			if totalWidth > 0 {
 				smallStep = float64(metrics.CellWidth) / totalWidth
@@ -543,7 +540,6 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 				largeStep = 0.1
 			}
 		} else {
-			// For vertical splitter, calculate step based on height
 			totalHeight := float64(bounds.Height - metrics.CellHeight)
 			if totalHeight > 0 {
 				smallStep = float64(metrics.CellHeight) / totalHeight
@@ -554,30 +550,46 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 			}
 		}
 
-		step := smallStep
-		if hasModifier {
-			step = largeStep
-		}
-
+		// Handle arrow keys - plain keys use small step, prefixed keys use large step
 		switch event.Key {
 		case "Left":
 			if s.orientation == core.Horizontal {
-				s.adjustPosition(-step)
+				s.adjustPosition(-smallStep)
+				return true
+			}
+		case "M-Left", "C-Left", "A-Left":
+			if s.orientation == core.Horizontal {
+				s.adjustPosition(-largeStep)
 				return true
 			}
 		case "Right":
 			if s.orientation == core.Horizontal {
-				s.adjustPosition(step)
+				s.adjustPosition(smallStep)
+				return true
+			}
+		case "M-Right", "C-Right", "A-Right":
+			if s.orientation == core.Horizontal {
+				s.adjustPosition(largeStep)
 				return true
 			}
 		case "Up":
 			if s.orientation == core.Vertical {
-				s.adjustPosition(-step)
+				s.adjustPosition(-smallStep)
+				return true
+			}
+		case "M-Up", "C-Up", "A-Up":
+			if s.orientation == core.Vertical {
+				s.adjustPosition(-largeStep)
 				return true
 			}
 		case "Down":
 			if s.orientation == core.Vertical {
-				s.adjustPosition(step)
+				s.adjustPosition(smallStep)
+				return true
+			}
+		case "M-Down", "C-Down", "A-Down":
+			if s.orientation == core.Vertical {
+				s.adjustPosition(largeStep)
 				return true
 			}
 		}

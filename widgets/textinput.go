@@ -348,8 +348,10 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// Draw background - use fill style with speckled pattern for focused state
 	fillStyle := s
 	if focused && t.IsEnabled() {
-		// Focused fill uses black speckles on the cyan background
-		fillStyle = style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan)
+		// Focused fill uses bright white speckles on the cyan background
+		fillStyle = style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorCyan)
+		// Text uses black on cyan (swap from fill)
+		s = style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan)
 	}
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, fillChar, fillStyle)
 

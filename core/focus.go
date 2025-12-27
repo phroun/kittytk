@@ -341,6 +341,12 @@ func (fm *FocusManager) collectFocusableWithSkip(widget Widget, chain *[]Widget,
 		*chain = append(*chain, widget)
 	}
 
+	// If this widget was the skipProvider, CollectFocusChain already handled its children
+	// so don't recurse into them again
+	if widget == skipProvider {
+		return
+	}
+
 	// Recurse into children if container
 	if container, ok := widget.(Container); ok {
 		for _, child := range container.Children() {
