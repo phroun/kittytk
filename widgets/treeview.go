@@ -781,6 +781,12 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
+	// Check if mouse is within horizontal bounds
+	bounds := t.Bounds()
+	if event.X < 0 || event.X >= bounds.Width {
+		return true // Still consuming the event, but not updating selection
+	}
+
 	row := int(event.Y / metrics.CellHeight)
 	index := t.scrollOffset + row
 

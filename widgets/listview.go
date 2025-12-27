@@ -676,6 +676,12 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
+	// Check if mouse is within horizontal bounds
+	bounds := l.Bounds()
+	if event.X < 0 || event.X >= bounds.Width {
+		return true // Still consuming the event, but not updating selection
+	}
+
 	row := int(event.Y / metrics.CellHeight)
 	index := l.scrollOffset + row
 
