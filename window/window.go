@@ -1194,6 +1194,11 @@ func (w *Window) constrainBoundsForMovement(newBounds core.UnitRect) core.UnitRe
 		newBounds.X = maxX
 	}
 
+	// Limit height to client area height (windows can be wider but not taller)
+	if newBounds.Height > clientArea.Height {
+		newBounds.Height = clientArea.Height
+	}
+
 	return newBounds
 }
 

@@ -939,6 +939,11 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			newBounds.Y = clientArea.Y
 		}
 
+		// Limit height to client area height (windows can be wider but not taller)
+		if newBounds.Height > clientArea.Height {
+			newBounds.Height = clientArea.Height
+		}
+
 		resizing.SetBounds(newBounds)
 		m.RequestRepaint()
 		return true
@@ -1013,6 +1018,11 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		maxX := clientArea.X + clientArea.Width - minVisibleX
 		if bounds.X > maxX {
 			bounds.X = maxX
+		}
+
+		// Limit height to client area height (windows can be wider but not taller)
+		if bounds.Height > clientArea.Height {
+			bounds.Height = clientArea.Height
 		}
 
 		dragging.SetBounds(bounds)
