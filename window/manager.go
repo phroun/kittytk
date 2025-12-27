@@ -1110,6 +1110,9 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle drag
 	if dragging != nil {
+		// Track if we just restored from maximized (to avoid immediate re-maximize)
+		justRestored := false
+
 		// If window is maximized, restore it first and adjust offset
 		if dragging.IsMaximized() {
 			// Get the normalized bounds before restore
@@ -1117,6 +1120,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 			// Restore the window
 			dragging.Restore()
+			justRestored = true
 			newBounds := dragging.Bounds()
 
 			// Recalculate offset so the cursor stays proportionally positioned
@@ -1144,7 +1148,8 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 		// Dragging into menu bar area = maximize gesture
 		// But keep dragging so user can drag back down to restore
-		if bounds.Y < clientArea.Y && dragging.Flags()&WindowFlagNoMaximize == 0 {
+		// Don't re-maximize immediately after restoring (wait for next mouse move)
+		if bounds.Y < clientArea.Y && dragging.Flags()&WindowFlagNoMaximize == 0 && !justRestored {
 			if !dragging.IsMaximized() {
 				m.MaximizeWindow(dragging)
 				m.RequestRepaint()
