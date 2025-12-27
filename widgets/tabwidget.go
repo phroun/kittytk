@@ -710,9 +710,8 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 			// Check if we're in the "grace margin" - ONLY if all essential content fits.
 			// Essential = prefix + text + (space/bracket + backslash for selected)
 			// Non-essential = trailing underscore + space (or trailing spaces for unselected)
-			isLastTab := i == len(t.tabs)-1
 			inGraceMargin := false
-			if isLastTab {
+			if isLastVisible {
 				essentialSepWidth := 0
 				if isSelected {
 					essentialSepWidth = 2 // space/bracket + backslash are essential
