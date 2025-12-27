@@ -556,6 +556,7 @@ func (s *ScrollArea) EnsureVisible(x, y core.Unit) {
 }
 
 // EnsureRectVisible scrolls to make a rectangle visible within the viewport.
+// Prioritizes showing the left/top edge of the rectangle.
 func (s *ScrollArea) EnsureRectVisible(rect core.UnitRect) {
 	viewport := s.viewportBounds()
 	metrics := core.DefaultCellMetrics()
@@ -575,22 +576,34 @@ func (s *ScrollArea) EnsureRectVisible(rect core.UnitRect) {
 	viewCellWidth := metrics.CharsForWidth(viewport.Width)
 	viewCellHeight := int(viewport.Height / metrics.CellHeight)
 
-	// Adjust horizontal scroll if needed
+	// Adjust horizontal scroll if needed - prioritize showing left edge
 	if cellX < s.scrollX {
-		// Widget is to the left of viewport - scroll left
+		// Left edge is not visible - scroll left to show it
 		s.SetScrollX(cellX)
-	} else if cellX+cellWidth > s.scrollX+viewCellWidth {
-		// Widget extends past right edge - scroll right (show as much as possible)
-		s.SetScrollX(cellX + cellWidth - viewCellWidth)
+	} else if cellX+cellWidth > s.scrollX+viewCellWidth && cellX >= s.scrollX {
+		// Right edge extends past viewport but left edge is visible
+		// Scroll right, but never hide the left edge
+		newScrollX := cellX + cellWidth - viewCellWidth
+		if newScrollX > cellX {
+			// Would hide left edge - just show left edge instead
+			newScrollX = cellX
+		}
+		s.SetScrollX(newScrollX)
 	}
 
-	// Adjust vertical scroll if needed
+	// Adjust vertical scroll if needed - prioritize showing top edge
 	if cellY < s.scrollY {
-		// Widget is above viewport - scroll up
+		// Top edge is not visible - scroll up to show it
 		s.SetScrollY(cellY)
-	} else if cellY+cellHeight > s.scrollY+viewCellHeight {
-		// Widget extends past bottom - scroll down (show as much as possible)
-		s.SetScrollY(cellY + cellHeight - viewCellHeight)
+	} else if cellY+cellHeight > s.scrollY+viewCellHeight && cellY >= s.scrollY {
+		// Bottom edge extends past viewport but top edge is visible
+		// Scroll down, but never hide the top edge
+		newScrollY := cellY + cellHeight - viewCellHeight
+		if newScrollY > cellY {
+			// Would hide top edge - just show top edge instead
+			newScrollY = cellY
+		}
+		s.SetScrollY(newScrollY)
 	}
 }
 

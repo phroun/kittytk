@@ -181,12 +181,22 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	// Notify parent scroll containers to scroll this item into view
 	if index >= 0 {
 		metrics := core.DefaultCellMetrics()
+		item := t.flatList[index]
+		level := item.Level()
+
+		// Calculate the item's content start position (one space before the expand indicator)
+		// For root items (level 0), start at X=0
+		contentStartCells := level * t.indentWidth
+		if contentStartCells > 0 {
+			contentStartCells-- // Show one space of indent
+		}
+
 		// Calculate the item's position relative to the TreeView (in visible area)
 		visibleRow := index - t.scrollOffset
 		itemRect := core.UnitRect{
-			X:      0,
+			X:      core.Unit(contentStartCells) * metrics.CellWidth,
 			Y:      core.Unit(visibleRow) * metrics.CellHeight,
-			Width:  t.Bounds().Width,
+			Width:  t.Bounds().Width - core.Unit(contentStartCells)*metrics.CellWidth,
 			Height: metrics.CellHeight,
 		}
 		t.ScrollRectIntoView(itemRect)
