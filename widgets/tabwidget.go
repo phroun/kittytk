@@ -460,11 +460,9 @@ func (t *TabWidget) calculateTotalTabsWidth() core.Unit {
 // tabsNeedScrolling returns true if tabs don't fit and need scroll buttons.
 func (t *TabWidget) tabsNeedScrolling() bool {
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
-	// Reserve space for scroll buttons [<][>] = 6 chars
-	scrollButtonsWidth := metrics.TextWidth(6)
-	availableWidth := bounds.Width - scrollButtonsWidth
-	return t.calculateTotalTabsWidth() > availableWidth
+	// Check if tabs fit the full width - don't pre-subtract scroll button space
+	// since scroll buttons only appear when scrolling is actually needed
+	return t.calculateTotalTabsWidth() > bounds.Width
 }
 
 // scrollButtonWidth returns the width of each scroll button.
@@ -744,7 +742,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 				if hasFocus {
 					p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
 				} else {
-					p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+					p.DrawCell(x+metrics.CellWidth*3, 0, ' ', s)
 				}
 				x += metrics.CellWidth * 4
 			} else {
@@ -775,7 +773,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 			if hasFocus {
 				p.DrawCell(x, 0, '>', focusedSelectedStyle)
 			} else {
-				p.DrawCell(x, 0, ' ', tabBarStyle)
+				p.DrawCell(x, 0, ' ', s)
 			}
 			p.DrawCell(x+metrics.CellWidth, 0, '\\', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*2, 0, '_', tabBarStyle)
@@ -893,11 +891,11 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 		// Draw prefix if first tab (inverted for bottom: " \_ ")
 		if isFirstVisible {
 			if isSelected {
-				// " \_ " (4 chars)
+				// " \_" + space (4 chars), trailing space uses selected style
 				p.DrawCell(x, tabY, ' ', tabBarStyle)
 				p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
 				p.DrawCell(x+metrics.CellWidth*2, tabY, '_', tabBarStyle)
-				p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', tabBarStyle)
+				p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', s)
 				x += metrics.CellWidth * 4
 			} else {
 				// "  " (2 chars)
@@ -915,8 +913,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 
 		// Draw separator after tab (inverted for bottom)
 		if isSelected {
-			// " _/ " (4 chars) after selected tab
-			p.DrawCell(x, tabY, ' ', tabBarStyle)
+			// space + "_/ " (4 chars) after selected tab, leading space uses selected style
+			p.DrawCell(x, tabY, ' ', s)
 			p.DrawCell(x+metrics.CellWidth, tabY, '_', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*2, tabY, '/', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', tabBarStyle)

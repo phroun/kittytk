@@ -197,6 +197,7 @@ func createMainWindow(application *app.Application, statusBar *widgets.StatusBar
 	tabWidget.AddTab("Selection", createSelectionDemo(tabWidget))
 	tabWidget.AddTab("Lists", createListDemo())
 	tabWidget.AddTab("Progress", createProgressDemo())
+	tabWidget.AddTab("Bottom Tabs", createBottomTabsDemo())
 
 	mainWindow.SetContent(tabWidget)
 
@@ -508,6 +509,48 @@ func createProgressDemo() core.Widget {
 
 	panel.SetLayoutManager(boxLayout)
 	return panel
+}
+
+// createBottomTabsDemo creates a panel with a nested TabWidget using bottom tabs.
+func createBottomTabsDemo() core.Widget {
+	// Create a TabWidget with tabs at the bottom
+	bottomTabs := widgets.NewTabWidget()
+	bottomTabs.SetTabPosition(widgets.TabsBottom)
+
+	// Add some content tabs
+	tab1Panel := widgets.NewPanel()
+	tab1Layout := layout.NewBoxLayout(core.Vertical)
+	tab1Label := widgets.NewLabel("This TabWidget has tabs at the bottom.")
+	tab1Panel.AddChild(tab1Label)
+	tab1Desc := widgets.NewLabel("Notice how the tab connectors are inverted:")
+	tab1Panel.AddChild(tab1Desc)
+	tab1Example := widgets.NewLabel("  Top tabs use: _/ and \\_")
+	tab1Panel.AddChild(tab1Example)
+	tab1Example2 := widgets.NewLabel("  Bottom tabs use: \\_ and _/")
+	tab1Panel.AddChild(tab1Example2)
+	tab1Panel.SetLayoutManager(tab1Layout)
+	bottomTabs.AddTab("First", tab1Panel)
+
+	tab2Panel := widgets.NewPanel()
+	tab2Layout := layout.NewBoxLayout(core.Vertical)
+	tab2Label := widgets.NewLabel("Second tab content")
+	tab2Panel.AddChild(tab2Label)
+	tab2Button := widgets.NewButton("Click me")
+	tab2Panel.AddChild(tab2Button)
+	tab2Panel.SetLayoutManager(tab2Layout)
+	bottomTabs.AddTab("Second", tab2Panel)
+
+	tab3Panel := widgets.NewPanel()
+	tab3Layout := layout.NewBoxLayout(core.Vertical)
+	tab3Label := widgets.NewLabel("Third tab with an input field:")
+	tab3Panel.AddChild(tab3Label)
+	tab3Input := widgets.NewTextInput()
+	tab3Input.SetPlaceholder("Type here...")
+	tab3Panel.AddChild(tab3Input)
+	tab3Panel.SetLayoutManager(tab3Layout)
+	bottomTabs.AddTab("Third", tab3Panel)
+
+	return bottomTabs
 }
 
 // createDemoWindow creates a simple demo window with an embedded terminal.
