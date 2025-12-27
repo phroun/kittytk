@@ -535,19 +535,39 @@ func (t *TabWidget) isLastTabFullyVisible() bool {
 		isLastVisible := i == len(t.tabs)-1
 		nextIsSelected := !isLastVisible && i+1 == t.currentIndex
 
+		// When left ellipsis is showing, omit leading space from prefix
+		hasLeftEllipsis := t.tabScrollOffset > 0
 		prefixWidth := 0
 		if isFirstVisible {
 			if isBottomTabs {
-				if isSelected {
-					prefixWidth = 3
+				if hasLeftEllipsis {
+					// Tighter: "\_" (2) or nothing (0)
+					if isSelected {
+						prefixWidth = 2
+					} else {
+						prefixWidth = 0
+					}
 				} else {
-					prefixWidth = 2
+					if isSelected {
+						prefixWidth = 3
+					} else {
+						prefixWidth = 2
+					}
 				}
 			} else {
-				if isSelected {
-					prefixWidth = 4
+				if hasLeftEllipsis {
+					// Tighter: "_/<" (3) or nothing (0)
+					if isSelected {
+						prefixWidth = 3
+					} else {
+						prefixWidth = 0
+					}
 				} else {
-					prefixWidth = 2
+					if isSelected {
+						prefixWidth = 4
+					} else {
+						prefixWidth = 2
+					}
 				}
 			}
 		}
@@ -692,11 +712,21 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		nextIsSelected := !isLastVisible && tabIndex+1 == t.currentIndex
 
 		// Calculate this tab's width
+		// When left ellipsis is showing, omit leading spaces from prefix
+		hasLeftEllipsis := t.tabScrollOffset > 0
 		prefixWidth := 0
 		if isFirstVisible {
-			prefixWidth = 4 // " _/ " if selected
-			if !isSelected {
-				prefixWidth = 2 // "  " if not selected
+			if hasLeftEllipsis {
+				// Tighter prefix when ellipsis showing: "_/<" (3) or nothing (0)
+				prefixWidth = 3 // "_/<" if selected
+				if !isSelected {
+					prefixWidth = 0 // no prefix if not selected
+				}
+			} else {
+				prefixWidth = 4 // " _/<" if selected
+				if !isSelected {
+					prefixWidth = 2 // "  " if not selected
+				}
 			}
 		}
 		sepWidth := 2 // Default "  "
@@ -742,16 +772,28 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 				// Draw prefix if first visible
 				if isFirstVisible {
 					if isSelected {
-						p.DrawCell(x, 0, ' ', tabBarUnderlined)
-						p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
-						p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
-						if hasFocus {
-							p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
+						if hasLeftEllipsis {
+							// "_/<" (3 chars) - tighter when ellipsis showing
+							p.DrawCell(x, 0, '_', tabBarUnderlined)
+							p.DrawCell(x+metrics.CellWidth, 0, '/', tabBarStyle)
+							if hasFocus {
+								p.DrawCell(x+metrics.CellWidth*2, 0, '<', focusedSelectedStyle)
+							} else {
+								p.DrawCell(x+metrics.CellWidth*2, 0, ' ', s)
+							}
+							x += metrics.CellWidth * 3
 						} else {
-							p.DrawCell(x+metrics.CellWidth*3, 0, ' ', s)
+							p.DrawCell(x, 0, ' ', tabBarUnderlined)
+							p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
+							p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
+							if hasFocus {
+								p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
+							} else {
+								p.DrawCell(x+metrics.CellWidth*3, 0, ' ', s)
+							}
+							x += metrics.CellWidth * 4
 						}
-						x += metrics.CellWidth * 4
-					} else {
+					} else if !hasLeftEllipsis {
 						p.DrawCell(x, 0, ' ', tabBarUnderlined)
 						p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarUnderlined)
 						x += metrics.CellWidth * 2
@@ -809,16 +851,28 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 				// Draw prefix if first visible
 				if isFirstVisible {
 					if isSelected {
-						p.DrawCell(x, 0, ' ', tabBarUnderlined)
-						p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
-						p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle) // slash not underlined
-						if hasFocus {
-							p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
+						if hasLeftEllipsis {
+							// "_/<" (3 chars) - tighter when ellipsis showing
+							p.DrawCell(x, 0, '_', tabBarUnderlined)
+							p.DrawCell(x+metrics.CellWidth, 0, '/', tabBarStyle)
+							if hasFocus {
+								p.DrawCell(x+metrics.CellWidth*2, 0, '<', focusedSelectedStyle)
+							} else {
+								p.DrawCell(x+metrics.CellWidth*2, 0, ' ', s)
+							}
+							x += metrics.CellWidth * 3
 						} else {
-							p.DrawCell(x+metrics.CellWidth*3, 0, ' ', s)
+							p.DrawCell(x, 0, ' ', tabBarUnderlined)
+							p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
+							p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
+							if hasFocus {
+								p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
+							} else {
+								p.DrawCell(x+metrics.CellWidth*3, 0, ' ', s)
+							}
+							x += metrics.CellWidth * 4
 						}
-						x += metrics.CellWidth * 4
-					} else {
+					} else if !hasLeftEllipsis {
 						p.DrawCell(x, 0, ' ', tabBarUnderlined)
 						p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarUnderlined)
 						x += metrics.CellWidth * 2
@@ -869,23 +923,35 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		// Draw prefix if first visible tab
 		if isFirstVisible {
 			if isSelected {
-				// " _/<" (4 chars) when focused, " _/ " when not focused
-				// Underscore underlined, slash not underlined, space/bracket not underlined (adjacent to label)
-				p.DrawCell(x, 0, ' ', tabBarUnderlined)
-				p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
-				p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle) // slash not underlined
-				if hasFocus {
-					p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
+				if hasLeftEllipsis {
+					// "_/<" (3 chars) - tighter when ellipsis showing
+					p.DrawCell(x, 0, '_', tabBarUnderlined)
+					p.DrawCell(x+metrics.CellWidth, 0, '/', tabBarStyle) // slash not underlined
+					if hasFocus {
+						p.DrawCell(x+metrics.CellWidth*2, 0, '<', focusedSelectedStyle)
+					} else {
+						p.DrawCell(x+metrics.CellWidth*2, 0, ' ', s)
+					}
+					x += metrics.CellWidth * 3
 				} else {
-					p.DrawCell(x+metrics.CellWidth*3, 0, ' ', s)
+					// " _/<" (4 chars) when focused, " _/ " when not focused
+					p.DrawCell(x, 0, ' ', tabBarUnderlined)
+					p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
+					p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle) // slash not underlined
+					if hasFocus {
+						p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
+					} else {
+						p.DrawCell(x+metrics.CellWidth*3, 0, ' ', s)
+					}
+					x += metrics.CellWidth * 4
 				}
-				x += metrics.CellWidth * 4
-			} else {
-				// "  " (2 chars) - underlined
+			} else if !hasLeftEllipsis {
+				// "  " (2 chars) - only when no ellipsis
 				p.DrawCell(x, 0, ' ', tabBarUnderlined)
 				p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarUnderlined)
 				x += metrics.CellWidth * 2
 			}
+			// When hasLeftEllipsis && !isSelected: no prefix (0 chars)
 		}
 
 		// Draw tab text
@@ -1067,11 +1133,21 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 		nextIsSelected := !isLastVisible && tabIndex+1 == t.currentIndex
 
 		// Calculate this tab's width
+		// When left ellipsis is showing, omit leading space from prefix
+		hasLeftEllipsis := t.tabScrollOffset > 0
 		prefixWidth := 0
 		if isFirstVisible {
-			prefixWidth = 3 // " \_" if selected
-			if !isSelected {
-				prefixWidth = 2 // "  " if not selected
+			if hasLeftEllipsis {
+				// Tighter prefix when ellipsis showing: "\_" (2) or nothing (0)
+				prefixWidth = 2 // "\_" if selected
+				if !isSelected {
+					prefixWidth = 0 // no prefix if not selected
+				}
+			} else {
+				prefixWidth = 3 // " \_" if selected
+				if !isSelected {
+					prefixWidth = 2 // "  " if not selected
+				}
 			}
 		}
 		sepWidth := 2 // Default "  "
@@ -1102,15 +1178,26 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 				// Draw prefix if first visible
 				if isFirstVisible {
 					if isSelected {
-						p.DrawCell(x, tabY, ' ', tabBarOverlined)
-						p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
-						if hasFocus {
-							p.DrawCell(x+metrics.CellWidth*2, tabY, '<', focusedSelectedStyle)
+						if hasLeftEllipsis {
+							// "\_" or "<" (2 chars) - tighter when ellipsis showing
+							p.DrawCell(x, tabY, '\\', tabBarStyle)
+							if hasFocus {
+								p.DrawCell(x+metrics.CellWidth, tabY, '<', focusedSelectedStyle)
+							} else {
+								p.DrawCell(x+metrics.CellWidth, tabY, '_', s)
+							}
+							x += metrics.CellWidth * 2
 						} else {
-							p.DrawCell(x+metrics.CellWidth*2, tabY, '_', s)
+							p.DrawCell(x, tabY, ' ', tabBarOverlined)
+							p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
+							if hasFocus {
+								p.DrawCell(x+metrics.CellWidth*2, tabY, '<', focusedSelectedStyle)
+							} else {
+								p.DrawCell(x+metrics.CellWidth*2, tabY, '_', s)
+							}
+							x += metrics.CellWidth * 3
 						}
-						x += metrics.CellWidth * 3
-					} else {
+					} else if !hasLeftEllipsis {
 						p.DrawCell(x, tabY, ' ', tabBarOverlined)
 						p.DrawCell(x+metrics.CellWidth, tabY, ' ', tabBarOverlined)
 						x += metrics.CellWidth * 2
@@ -1161,22 +1248,34 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 		// Draw prefix if first visible tab
 		if isFirstVisible {
 			if isSelected {
-				// " \_" (3 chars) when first tab is selected
-				// Space before \ gets overline (outside active tab)
-				p.DrawCell(x, tabY, ' ', tabBarOverlined)
-				p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
-				if hasFocus {
-					p.DrawCell(x+metrics.CellWidth*2, tabY, '<', focusedSelectedStyle)
+				if hasLeftEllipsis {
+					// "\_" or "<" (2 chars) - tighter when ellipsis showing
+					p.DrawCell(x, tabY, '\\', tabBarStyle)
+					if hasFocus {
+						p.DrawCell(x+metrics.CellWidth, tabY, '<', focusedSelectedStyle)
+					} else {
+						p.DrawCell(x+metrics.CellWidth, tabY, '_', s)
+					}
+					x += metrics.CellWidth * 2
 				} else {
-					p.DrawCell(x+metrics.CellWidth*2, tabY, '_', s)
+					// " \_" (3 chars) when first tab is selected
+					// Space before \ gets overline (outside active tab)
+					p.DrawCell(x, tabY, ' ', tabBarOverlined)
+					p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
+					if hasFocus {
+						p.DrawCell(x+metrics.CellWidth*2, tabY, '<', focusedSelectedStyle)
+					} else {
+						p.DrawCell(x+metrics.CellWidth*2, tabY, '_', s)
+					}
+					x += metrics.CellWidth * 3
 				}
-				x += metrics.CellWidth * 3
-			} else {
-				// "  " (2 chars) - both get overline
+			} else if !hasLeftEllipsis {
+				// "  " (2 chars) - both get overline (only when no ellipsis)
 				p.DrawCell(x, tabY, ' ', tabBarOverlined)
 				p.DrawCell(x+metrics.CellWidth, tabY, ' ', tabBarOverlined)
 				x += metrics.CellWidth * 2
 			}
+			// When hasLeftEllipsis && !isSelected: no prefix (0 chars)
 		}
 
 		// Draw tab text
@@ -1665,17 +1764,37 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 		nextIsSelected := !isLastVisible && i+1 == t.currentIndex
 
 		// Calculate this tab's width based on tab position
+		// When left ellipsis is showing, omit leading space from prefix
+		hasLeftEllipsis := t.tabScrollOffset > 0
 		prefixWidth := 0
 		if isFirstVisible {
 			if isBottomTabs {
-				prefixWidth = 3 // " \_" if selected
-				if !isSelected {
-					prefixWidth = 2 // "  " if not selected
+				if hasLeftEllipsis {
+					if isSelected {
+						prefixWidth = 2 // "\_"
+					} else {
+						prefixWidth = 0 // no prefix
+					}
+				} else {
+					if isSelected {
+						prefixWidth = 3 // " \_"
+					} else {
+						prefixWidth = 2 // "  "
+					}
 				}
 			} else {
-				prefixWidth = 4 // " _/ " if selected
-				if !isSelected {
-					prefixWidth = 2 // "  " if not selected
+				if hasLeftEllipsis {
+					if isSelected {
+						prefixWidth = 3 // "_/<"
+					} else {
+						prefixWidth = 0 // no prefix
+					}
+				} else {
+					if isSelected {
+						prefixWidth = 4 // " _/<"
+					} else {
+						prefixWidth = 2 // "  "
+					}
 				}
 			}
 		}
@@ -1768,19 +1887,37 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 			isLastVisible := i == len(t.tabs)-1
 			nextIsSelected := !isLastVisible && i+1 == t.currentIndex
 
+			// When left ellipsis is showing, omit leading space from prefix
+			hasLeftEllipsis := t.tabScrollOffset > 0
 			prefixWidth := 0
 			if isFirstVisible {
 				if isBottomTabs {
-					if isSelected {
-						prefixWidth = 3
+					if hasLeftEllipsis {
+						if isSelected {
+							prefixWidth = 2
+						} else {
+							prefixWidth = 0
+						}
 					} else {
-						prefixWidth = 2
+						if isSelected {
+							prefixWidth = 3
+						} else {
+							prefixWidth = 2
+						}
 					}
 				} else {
-					if isSelected {
-						prefixWidth = 4
+					if hasLeftEllipsis {
+						if isSelected {
+							prefixWidth = 3
+						} else {
+							prefixWidth = 0
+						}
 					} else {
-						prefixWidth = 2
+						if isSelected {
+							prefixWidth = 4
+						} else {
+							prefixWidth = 2
+						}
 					}
 				}
 			}
