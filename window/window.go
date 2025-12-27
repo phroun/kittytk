@@ -1013,7 +1013,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		return true
 
 	case "Enter", " ", "Space":
-		// Activate focused button
+		// Activate focused button or confirm resize
 		switch titleFocus {
 		case TitleFocusClose:
 			if flags&WindowFlagNoClose == 0 {
@@ -1037,6 +1037,14 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					handler()
 				}
 			}
+		case TitleFocusTitle:
+			// Confirm resize - clear edges so next Shift+arrow starts fresh
+			w.mu.Lock()
+			if w.resizeEdges != ResizeEdgeNone {
+				w.resizeEdges = ResizeEdgeNone
+				w.resizeStartBounds = w.Bounds()
+			}
+			w.mu.Unlock()
 		}
 		return true
 	}

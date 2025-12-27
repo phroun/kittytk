@@ -1412,7 +1412,11 @@ func (m *MenuBar) CloseMenu() {
 		m.activeMenu.Hide()
 		m.activeMenu = nil
 	}
-	// Re-enable accelerators if still focused
+	// Restore focus to menu bar (dropdown menu takes focus when shown)
+	if wasOpen {
+		m.SetFocus()
+	}
+	// Re-enable accelerators if focused
 	if m.HasFocus() {
 		m.acceleratorsActive = true
 		// Keep currentIndex if we just closed a menu (for continued navigation)
