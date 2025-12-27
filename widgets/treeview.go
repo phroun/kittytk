@@ -178,10 +178,7 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	t.ensureVisible(index)
 	t.Update()
 
-	// Notify parent scroll containers to scroll this item into view (horizontal only)
-	// We don't request vertical scrolling because:
-	// 1. The TreeView handles its own vertical scrolling internally
-	// 2. We want to preserve context (labels above the TreeView should stay visible)
+	// Notify parent scroll containers to scroll this item into view
 	if index >= 0 {
 		metrics := core.DefaultCellMetrics()
 		item := t.flatList[index]
@@ -195,18 +192,20 @@ func (t *TreeView) SetCurrentIndex(index int) {
 		}
 
 		// Calculate actual content width: expand indicator (2 chars) + text
-		// Only scroll horizontally if this content would be cut off
 		expandIndicatorWidth := 2 // "▶ " or "▼ " or "  " (for leaves)
 		textWidth := len(item.Text)
 		actualContentCells := expandIndicatorWidth + textWidth
 
-		// Use Y=0 and full height to prevent vertical scrolling
-		// This tells parent ScrollAreas we only care about horizontal visibility
+		// Calculate the visual Y position of this item (after internal scrolling)
+		// This is where the item appears on screen, relative to the TreeView's bounds
+		visualRow := index - t.scrollOffset
+		itemY := core.Unit(visualRow) * metrics.CellHeight
+
 		itemRect := core.UnitRect{
 			X:      core.Unit(contentStartCells) * metrics.CellWidth,
-			Y:      0,
+			Y:      itemY,
 			Width:  core.Unit(actualContentCells) * metrics.CellWidth,
-			Height: t.Bounds().Height,
+			Height: metrics.CellHeight,
 		}
 		t.ScrollRectIntoView(itemRect)
 	}

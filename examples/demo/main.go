@@ -30,7 +30,15 @@ func main() {
 
 	// Create a status bar at the bottom
 	statusBar := widgets.NewStatusBar()
-	statusBar.SetText("Ready - Press F10 for menu, Tab to navigate, Ctrl+Q to quit")
+	// Use styled text to highlight keyboard shortcuts in red
+	redStyle := style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+	statusBar.SetStyledText([]widgets.StatusTextSpan{
+		{Text: "Ready - Press "},
+		{Text: "F10", Style: &redStyle},
+		{Text: " for menu, Tab to navigate, "},
+		{Text: "Ctrl+Q", Style: &redStyle},
+		{Text: " to quit"},
+	})
 	desktop.SetStatusBar(statusBar)
 
 	// Set desktop as the application's desktop widget

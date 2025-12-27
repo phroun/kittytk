@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/style"
 )
 
 // Desktop represents the application desktop (background behind windows).
@@ -586,11 +587,18 @@ type StatusBar struct {
 	sections []StatusSection
 }
 
+// StatusTextSpan represents a span of text with optional style override.
+type StatusTextSpan struct {
+	Text  string
+	Style *style.CellStyle // nil = use default status bar style
+}
+
 // StatusSection represents a section of the status bar.
 type StatusSection struct {
-	Text      string
-	Width     int  // 0 = auto, -1 = stretch
-	Alignment int  // 0 = left, 1 = center, 2 = right
+	Text      string            // Plain text (used if Spans is empty)
+	Spans     []StatusTextSpan  // Styled text spans (takes precedence over Text)
+	Width     int               // 0 = auto, -1 = stretch
+	Alignment int               // 0 = left, 1 = center, 2 = right
 }
 
 // NewStatusBar creates a new status bar.
@@ -608,6 +616,18 @@ func (s *StatusBar) SetText(text string) {
 		s.sections = []StatusSection{{Text: text, Width: -1}}
 	} else {
 		s.sections[0].Text = text
+		s.sections[0].Spans = nil // Clear any styled spans
+	}
+	s.Update()
+}
+
+// SetStyledText sets the main status text with styled spans.
+func (s *StatusBar) SetStyledText(spans []StatusTextSpan) {
+	if len(s.sections) == 0 {
+		s.sections = []StatusSection{{Spans: spans, Width: -1}}
+	} else {
+		s.sections[0].Spans = spans
+		s.sections[0].Text = "" // Clear plain text
 	}
 	s.Update()
 }
@@ -658,27 +678,56 @@ func (s *StatusBar) Paint(p *core.Painter) {
 	// Draw sections
 	x := core.Unit(0)
 	for _, section := range s.sections {
-		text := section.Text
-		width := core.Unit(section.Width) * metrics.CellWidth
+		// Calculate section width
+		var sectionWidth core.Unit
 		if section.Width == -1 {
 			// Stretch to remaining space
-			width = bounds.Width - x
+			sectionWidth = bounds.Width - x
 		} else if section.Width == 0 {
-			// Auto width
-			width = core.Unit(len(text)+2) * metrics.CellWidth
-		}
-
-		// Draw text
-		textX := x + metrics.CellWidth
-		for _, ch := range text {
-			if textX >= x+width {
-				break
+			// Auto width based on content
+			textLen := len(section.Text)
+			if len(section.Spans) > 0 {
+				textLen = 0
+				for _, span := range section.Spans {
+					textLen += len(span.Text)
+				}
 			}
-			p.DrawCell(textX, 0, ch, theme.StatusBar)
-			textX += metrics.CellWidth
+			sectionWidth = core.Unit(textLen+2) * metrics.CellWidth
+		} else {
+			sectionWidth = core.Unit(section.Width) * metrics.CellWidth
 		}
 
-		x += width
+		// Draw text - either from spans or plain text
+		textX := x + metrics.CellWidth
+		maxX := x + sectionWidth
+
+		if len(section.Spans) > 0 {
+			// Draw styled spans
+			for _, span := range section.Spans {
+				spanStyle := theme.StatusBar
+				if span.Style != nil {
+					spanStyle = *span.Style
+				}
+				for _, ch := range span.Text {
+					if textX >= maxX {
+						break
+					}
+					p.DrawCell(textX, 0, ch, spanStyle)
+					textX += metrics.CellWidth
+				}
+			}
+		} else {
+			// Draw plain text
+			for _, ch := range section.Text {
+				if textX >= maxX {
+					break
+				}
+				p.DrawCell(textX, 0, ch, theme.StatusBar)
+				textX += metrics.CellWidth
+			}
+		}
+
+		x += sectionWidth
 	}
 }
 
