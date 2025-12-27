@@ -242,12 +242,16 @@ func (b *Button) Paint(p *core.Painter) {
 	metrics := p.Metrics()
 
 	// Determine if showing pressed visual (pressed and hovering, space held, animating, or checked)
-	showPressed := (b.pressed && b.hovered) || b.spacePressed || b.animatingPress || b.checked
+	// Disabled buttons should never show pressed state
+	showPressed := b.IsEnabled() && ((b.pressed && b.hovered) || b.spacePressed || b.animatingPress || b.checked)
 
-	// Determine style
+	// Get inherited background color for all styles
+	inheritedBg := b.EffectiveBackgroundColor()
+
+	// Determine style - always apply inherited background
 	var s style.CellStyle
 	if !b.IsEnabled() {
-		s = theme.Disabled
+		s = theme.Disabled.WithBg(inheritedBg)
 	} else if showPressed {
 		s = theme.ButtonPressed
 	} else if focused {
@@ -264,18 +268,11 @@ func (b *Button) Paint(p *core.Painter) {
 		s = *customStyle
 	}
 
-	// Get inherited background color for shadow and clear areas
-	inheritedBg := b.EffectiveBackgroundColor()
-	clearStyle := theme.Normal
-	if inheritedBg != style.ColorDefault {
-		clearStyle = clearStyle.WithBg(inheritedBg)
-	}
+	// Clear style uses inherited background
+	clearStyle := style.DefaultStyle().WithBg(inheritedBg)
 
 	// Shadow style (black foreground on inherited background)
-	shadowStyle := style.DefaultStyle().WithFg(style.ColorBlack)
-	if inheritedBg != style.ColorDefault {
-		shadowStyle = shadowStyle.WithBg(inheritedBg)
-	}
+	shadowStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(inheritedBg)
 
 	// Calculate button content width (excluding shadow)
 	textLen := len([]rune(b.text))
@@ -377,6 +374,11 @@ func (b *Button) Paint(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (b *Button) HandleKeyPress(event core.KeyPressEvent) bool {
+	// Disabled buttons don't respond to keyboard input
+	if !b.IsEnabled() {
+		return false
+	}
+
 	switch event.Key {
 	case "Enter":
 		// Enter triggers with animation for visual feedback
@@ -422,6 +424,10 @@ func (b *Button) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 // HandleMousePress handles mouse clicks.
 func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.LeftButton {
+		// Disabled buttons don't respond to mouse input
+		if !b.IsEnabled() {
+			return true // Consume event but don't do anything
+		}
 		b.SetFocus() // Focus on mouse down
 		b.pressed = true
 		b.hovered = true
