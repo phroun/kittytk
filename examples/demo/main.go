@@ -431,33 +431,47 @@ func createProgressDemo() core.Widget {
 	return panel
 }
 
-// createDemoWindow creates a simple demo window.
+// createDemoWindow creates a simple demo window with an embedded terminal.
 func createDemoWindow(application *app.Application) *window.Window {
 	w := window.NewWindow("Demo Window")
 	w.SetSize(core.UnitSize{
-		Width:  core.Unit(40 * 8),
-		Height: core.Unit(12 * 16),
+		Width:  core.Unit(60 * 8),
+		Height: core.Unit(20 * 16),
 	})
 
-	panel := widgets.NewPanel()
+	// Create a vertical splitter to divide the window
+	splitter := widgets.NewVSplitter()
+	splitter.SetPosition(0.3) // Top panel gets 30% of space
+
+	// Top panel with controls
+	topPanel := widgets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	boxLayout.SetSpacing(8)
 
 	label := widgets.NewLabel("This is a child window.")
-	panel.AddChild(label)
+	topPanel.AddChild(label)
 
 	textInput := widgets.NewTextInput()
 	textInput.SetPlaceholder("Type something...")
-	panel.AddChild(textInput)
+	topPanel.AddChild(textInput)
 
 	closeButton := widgets.NewButton("Close")
 	closeButton.SetOnClick(func() {
 		w.Close()
 	})
-	panel.AddChild(closeButton)
+	topPanel.AddChild(closeButton)
 
-	panel.SetLayoutManager(boxLayout)
-	w.SetContent(panel)
+	topPanel.SetLayoutManager(boxLayout)
+	splitter.SetFirst(topPanel)
+
+	// Bottom panel with PurfecTerm terminal
+	terminal := widgets.NewPurfecTerm()
+	splitter.SetSecond(terminal)
+
+	// Start the terminal shell
+	terminal.Start()
+
+	w.SetContent(splitter)
 
 	return w
 }

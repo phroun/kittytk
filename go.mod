@@ -7,4 +7,7 @@ require (
 	golang.org/x/term v0.38.0
 )
 
-require golang.org/x/sys v0.39.0 // indirect
+require (
+	github.com/phroun/purfecterm v0.2.14 // indirect
+	golang.org/x/sys v0.39.0 // indirect
+)
