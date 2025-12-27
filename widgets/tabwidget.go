@@ -563,12 +563,19 @@ func (t *TabWidget) isLastTabFullyVisible() bool {
 		x += tabSlotWidth
 
 		if x > availableWidth {
-			// For top tabs, allow a 2-char grace margin for trailing non-essential content
-			// (the underscore and space after the last separator's backslash, or the
-			// 2 trailing spaces after an unselected last tab)
+			// For top tabs, allow a grace margin ONLY if all essential content fits.
+			// Essential = prefix + text + (space/bracket + backslash for selected)
+			// Non-essential = trailing underscore + space (or just trailing spaces for unselected)
 			if !isBottomTabs && isLastVisible {
-				graceMargin := metrics.TextWidth(2)
-				if x <= availableWidth+graceMargin {
+				essentialSepWidth := 0
+				if isSelected {
+					essentialSepWidth = 2 // space/bracket + backslash are essential
+				}
+				// nextIsSelected doesn't matter for last tab since there's no next tab
+				essentialWidth := core.Unit(prefixWidth+len(tab.Text)+essentialSepWidth) * metrics.CellWidth
+				essentialX := x - tabSlotWidth + essentialWidth
+				if essentialX <= availableWidth {
+					// Only non-essential trailing content cut off
 					return true
 				}
 			}
@@ -700,12 +707,21 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 		// Check if this tab fits
 		if x+tabSlotWidth > availableWidth {
-			// Check if we're in the "grace margin" - if only trailing non-essential
-			// content (underscore + space) would be cut off
-			overage := (x + tabSlotWidth) - availableWidth
+			// Check if we're in the "grace margin" - ONLY if all essential content fits.
+			// Essential = prefix + text + (space/bracket + backslash for selected)
+			// Non-essential = trailing underscore + space (or trailing spaces for unselected)
 			isLastTab := i == len(t.tabs)-1
-			graceMargin := metrics.TextWidth(2)
-			inGraceMargin := isLastTab && overage <= graceMargin
+			inGraceMargin := false
+			if isLastTab {
+				essentialSepWidth := 0
+				if isSelected {
+					essentialSepWidth = 2 // space/bracket + backslash are essential
+				}
+				essentialWidth := core.Unit(prefixWidth+len(tab.Text)+essentialSepWidth) * metrics.CellWidth
+				if x+essentialWidth <= availableWidth {
+					inGraceMargin = true
+				}
+			}
 
 			var s style.CellStyle
 			if !tab.Enabled {
