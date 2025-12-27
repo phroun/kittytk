@@ -595,17 +595,19 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 	// Tab bar style: silver on blue
 	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
-	// Selected tab style when unfocused: uses page control's background color
+	// Underlined tab bar style for unselected tabs and connectors (except slashes)
+	tabBarUnderlined := tabBarStyle.Underline()
+	// Selected tab style when unfocused: uses page control's background color (not underlined)
 	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold()
 	if bg := t.BackgroundColor(); bg != nil {
 		selectedStyle = selectedStyle.WithBg(*bg)
 	} else {
 		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
 	}
-	// Focused selected tab style: yellow on teal (for angle brackets and title)
+	// Focused selected tab style: yellow on teal (for angle brackets and title, not underlined)
 	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold()
-	// Pressed button style (inverted)
-	pressedStyle := tabBarStyle.WithFg(tabBarStyle.Bg).WithBg(tabBarStyle.Fg)
+	// Pressed button style (inverted, underlined)
+	pressedStyle := tabBarStyle.WithFg(tabBarStyle.Bg).WithBg(tabBarStyle.Fg).Underline()
 
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
@@ -621,9 +623,9 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	leftEllipseWidth := core.Unit(0)
 	if t.tabScrollOffset > 0 {
 		leftEllipseWidth = metrics.TextWidth(3) // "..."
-		// Draw the left ellipse
+		// Draw the left ellipse (underlined)
 		for i := 0; i < 3; i++ {
-			p.DrawCell(metrics.CellToUnitsX(i), 0, '.', tabBarStyle)
+			p.DrawCell(metrics.CellToUnitsX(i), 0, '.', tabBarUnderlined)
 		}
 	}
 
@@ -681,24 +683,24 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 						s = selectedStyle
 					}
 				} else {
-					s = tabBarStyle
+					s = tabBarUnderlined // Unselected tabs are underlined
 				}
 
 				// Draw prefix if first visible
 				if isFirstVisible {
 					if isSelected {
-						p.DrawCell(x, 0, ' ', tabBarStyle)
-						p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarStyle)
-						p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
+						p.DrawCell(x, 0, ' ', tabBarUnderlined)
+						p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
+						p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle) // slash not underlined
 						if hasFocus {
 							p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
 						} else {
-							p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+							p.DrawCell(x+metrics.CellWidth*3, 0, ' ', s)
 						}
 						x += metrics.CellWidth * 4
 					} else {
-						p.DrawCell(x, 0, ' ', tabBarStyle)
-						p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarStyle)
+						p.DrawCell(x, 0, ' ', tabBarUnderlined)
+						p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarUnderlined)
 						x += metrics.CellWidth * 2
 					}
 				}
@@ -733,16 +735,17 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 				s = selectedStyle
 			}
 		} else {
-			s = tabBarStyle
+			s = tabBarUnderlined // Unselected tabs are underlined
 		}
 
 		// Draw prefix if first visible tab
 		if isFirstVisible {
 			if isSelected {
 				// " _/<" (4 chars) when focused, " _/ " when not focused
-				p.DrawCell(x, 0, ' ', tabBarStyle)
-				p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarStyle)
-				p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
+				// Underscore underlined, slash not underlined, space/bracket not underlined (adjacent to label)
+				p.DrawCell(x, 0, ' ', tabBarUnderlined)
+				p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
+				p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle) // slash not underlined
 				if hasFocus {
 					p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
 				} else {
@@ -750,9 +753,9 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 				}
 				x += metrics.CellWidth * 4
 			} else {
-				// "  " (2 chars)
-				p.DrawCell(x, 0, ' ', tabBarStyle)
-				p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarStyle)
+				// "  " (2 chars) - underlined
+				p.DrawCell(x, 0, ' ', tabBarUnderlined)
+				p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarUnderlined)
 				x += metrics.CellWidth * 2
 			}
 		}
@@ -774,21 +777,22 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		// Draw separator after tab
 		if isSelected {
 			// ">\_ " (4 chars) when focused, " \_ " when not focused
+			// Space/bracket adjacent to label not underlined, rest underlined except slash (none here)
 			if hasFocus {
 				p.DrawCell(x, 0, '>', focusedSelectedStyle)
 			} else {
 				p.DrawCell(x, 0, ' ', s)
 			}
-			p.DrawCell(x+metrics.CellWidth, 0, '\\', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth*2, 0, '_', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarStyle)
+			p.DrawCell(x+metrics.CellWidth, 0, '\\', tabBarStyle) // backslash not underlined (like slash)
+			p.DrawCell(x+metrics.CellWidth*2, 0, '_', tabBarUnderlined)
+			p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarUnderlined)
 			x += metrics.CellWidth * 4
 		} else if nextIsSelected {
 			// " _/<" (4 chars) when focused, " _/ " when not focused
-			// The trailing space/bracket is part of the selected tab's text area
-			p.DrawCell(x, 0, ' ', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle)
+			// Underlined except slash and space/bracket adjacent to selected label
+			p.DrawCell(x, 0, ' ', tabBarUnderlined)
+			p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
+			p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle) // slash not underlined
 			if hasFocus {
 				p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
 			} else {
@@ -796,30 +800,41 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 			}
 			x += metrics.CellWidth * 4
 		} else {
-			// "  " (2 chars) regular separator
-			p.DrawCell(x, 0, ' ', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarStyle)
+			// "  " (2 chars) regular separator - underlined
+			p.DrawCell(x, 0, ' ', tabBarUnderlined)
+			p.DrawCell(x+metrics.CellWidth, 0, ' ', tabBarUnderlined)
 			x += metrics.CellWidth * 2
 		}
+	}
+
+	// Fill any gap between last tab and scroll buttons/edge with underlined spaces
+	endX := bounds.Width - scrollButtonsWidth
+	if needsScrolling && !t.isLastTabFullyVisible() {
+		// Reserve space for ellipsis
+		endX -= metrics.TextWidth(3)
+	}
+	for x < endX {
+		p.DrawCell(x, 0, ' ', tabBarUnderlined)
+		x += metrics.CellWidth
 	}
 
 	// Draw right ellipsis if tabs are truncated (right before scroll buttons)
 	if needsScrolling && !t.isLastTabFullyVisible() {
 		ellipsisX := bounds.Width - scrollButtonsWidth - metrics.TextWidth(3)
 		for i := 0; i < 3; i++ {
-			p.DrawCell(ellipsisX+core.Unit(i)*metrics.CellWidth, 0, '.', tabBarStyle)
+			p.DrawCell(ellipsisX+core.Unit(i)*metrics.CellWidth, 0, '.', tabBarUnderlined)
 		}
 	}
 
-	// Draw scroll buttons if needed
+	// Draw scroll buttons if needed (all underlined)
 	if needsScrolling {
 		buttonX := bounds.Width - scrollButtonsWidth
-		disabledStyle := tabBarStyle.WithFg(style.ColorBrightBlack)
+		disabledStyle := tabBarUnderlined.WithFg(style.ColorBrightBlack)
 
 		// [<] button - disabled when can't scroll left
 		canLeft := t.canScrollLeft()
 		if canLeft {
-			leftStyle := tabBarStyle
+			leftStyle := tabBarUnderlined
 			if t.scrollButtonPressed == -1 && t.scrollLeftHovered {
 				leftStyle = pressedStyle
 			}
@@ -836,7 +851,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 		// [>] button - disabled when can't scroll right
 		canRight := t.canScrollRight()
 		if canRight {
-			rightStyle := tabBarStyle
+			rightStyle := tabBarUnderlined
 			if t.scrollButtonPressed == 1 && t.scrollRightHovered {
 				rightStyle = pressedStyle
 			}
