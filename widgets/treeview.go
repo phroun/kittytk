@@ -410,7 +410,8 @@ func (t *TreeView) Paint(p *core.Painter) {
 				s = style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
 			}
 		} else {
-			s = theme.Normal
+			// Unselected items: dim cyan
+			s = style.DefaultStyle().WithFg(style.ColorCyan).WithAttrs(style.StyleDim)
 		}
 
 		// Draw row background

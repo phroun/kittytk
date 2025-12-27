@@ -672,9 +672,9 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	} else {
 		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
 	}
-	// Focused selected tab style: yellow on teal (for angle brackets and title, not underlined)
+	// Focused selected tab style: black on cyan (for angle brackets and title, not underlined)
 	// Overline is added so that the window frame above gets underlined
-	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold().Overline()
+	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan).Bold().Overline()
 	// Pressed button style (inverted, underlined)
 	pressedStyle := tabBarStyle.WithFg(tabBarStyle.Bg).WithBg(tabBarStyle.Fg).Underline()
 
@@ -1110,8 +1110,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 	} else {
 		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
 	}
-	// Focused selected tab style: yellow on teal with underline (no overline)
-	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold().Underline()
+	// Focused selected tab style: black on cyan with underline (no overline)
+	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan).Bold().Underline()
 	// Pressed button style (inverted, with overline)
 	pressedStyle := tabBarStyle.WithFg(tabBarStyle.Bg).WithBg(tabBarStyle.Fg).Overline()
 

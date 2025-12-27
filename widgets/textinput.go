@@ -342,7 +342,15 @@ func (t *TextInput) Paint(p *core.Painter) {
 		// Use speckled fill character for focused state (black on cyan)
 		fillChar = '░'
 	} else {
-		s = theme.Input
+		// Unfocused editbox text color depends on container background
+		inheritedBg := t.EffectiveBackgroundColor()
+		if inheritedBg == style.ColorBlack || inheritedBg == style.ColorDefault {
+			// Silver on dark dim blue for black/default backgrounds
+			s = style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlue).WithAttrs(style.StyleDim)
+		} else {
+			// Dim cyan on black for other backgrounds
+			s = style.DefaultStyle().WithFg(style.ColorCyan).WithBg(style.ColorBlack).WithAttrs(style.StyleDim)
+		}
 	}
 
 	// Draw background - use fill style with speckled pattern for focused state

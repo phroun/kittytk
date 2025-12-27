@@ -381,9 +381,11 @@ func (l *ListView) Paint(p *core.Painter) {
 				s = style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
 			}
 		} else if l.alternateRowColors && itemIndex%2 == 1 {
-			s = theme.Normal.WithAttrs(style.StyleDim)
+			// Alternate rows: slightly dimmer cyan
+			s = style.DefaultStyle().WithFg(style.ColorCyan).WithAttrs(style.StyleDim)
 		} else {
-			s = theme.Normal
+			// Unselected items: dim cyan
+			s = style.DefaultStyle().WithFg(style.ColorCyan).WithAttrs(style.StyleDim)
 		}
 
 		// Draw row background

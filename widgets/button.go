@@ -271,8 +271,12 @@ func (b *Button) Paint(p *core.Painter) {
 	// Clear style uses inherited background
 	clearStyle := style.DefaultStyle().WithBg(inheritedBg)
 
-	// Shadow style (black foreground on inherited background)
-	shadowStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(inheritedBg)
+	// Shadow style - use dim blue if background is black or terminal default, otherwise black
+	shadowFg := style.ColorBlack
+	if inheritedBg == style.ColorBlack || inheritedBg == style.ColorDefault {
+		shadowFg = style.ColorBlue
+	}
+	shadowStyle := style.DefaultStyle().WithFg(shadowFg).WithBg(inheritedBg).WithAttrs(style.StyleDim)
 
 	// Calculate button content width (excluding shadow)
 	textLen := len([]rune(b.text))
