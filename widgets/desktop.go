@@ -143,13 +143,19 @@ func (d *Desktop) ActiveMenuBounds() core.UnitRect {
 	return d.menuBar.ActiveMenuBounds()
 }
 
-// IsMenuBarActive returns true if the menu bar has focus or has a menu open,
-// indicating that keyboard events should be routed to the desktop before windows.
+// IsMenuBarActive returns true if the menu bar should capture keyboard events.
+// This is true when a menu is open, or when the menu bar is focused AND
+// actively showing accelerators (not just technically holding focus).
 func (d *Desktop) IsMenuBarActive() bool {
 	if d.menuBar == nil {
 		return false
 	}
-	return d.menuBar.HasFocus() || d.menuBar.ActiveMenu() != nil
+	// Menu open always captures
+	if d.menuBar.ActiveMenu() != nil {
+		return true
+	}
+	// Menu bar focused with accelerators active (F10 pressed, awaiting key)
+	return d.menuBar.HasFocus() && d.menuBar.AcceleratorsActive()
 }
 
 // SetStatusBar sets the status bar (displayed at the bottom).
@@ -434,8 +440,8 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 				return true
 			}
 		}
-		// If menu bar is active (has focus or menu open), forward all keys to it
-		if d.menuBar.ActiveMenu() != nil || d.menuBar.HasFocus() {
+		// If menu bar is active (menu open, or focused with accelerators showing), forward keys
+		if d.menuBar.ActiveMenu() != nil || (d.menuBar.HasFocus() && d.menuBar.AcceleratorsActive()) {
 			handled := d.menuBar.HandleKeyPress(event)
 			// If menu bar didn't handle Escape and has focus (no menu open),
 			// unfocus the menu bar

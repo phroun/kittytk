@@ -1399,9 +1399,9 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
-	// Check accessibility keys: when menu bar is focused with no menu down,
+	// Check accessibility keys: when menu bar is focused with accelerators active,
 	// single letter keys (no modifiers) activate menus
-	if m.HasFocus() && m.activeMenu == nil && len(event.Key) == 1 {
+	if m.HasFocus() && m.activeMenu == nil && m.acceleratorsActive && len(event.Key) == 1 {
 		letter := event.Key[0]
 		// Accept both uppercase and lowercase single letters (no modifier prefix)
 		if (letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z') {
