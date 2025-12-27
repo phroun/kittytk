@@ -199,6 +199,16 @@ type FocusableWidget interface {
 	SetPrevFocusWidget(w Widget)
 }
 
+// InlineWidget is an optional interface for text-style/inline widgets.
+// Widgets implementing this interface will receive horizontal margins
+// when placed in a vertical box layout. Block-style widgets (like
+// ListView, TreeView, TabWidget) should NOT implement this interface.
+type InlineWidget interface {
+	// IsInlineWidget returns true for text-style controls that should
+	// receive horizontal margins in vertical layouts.
+	IsInlineWidget() bool
+}
+
 // PopupRequest contains information about a popup to be shown.
 type PopupRequest struct {
 	// Unique identifier for the popup

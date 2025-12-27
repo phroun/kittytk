@@ -224,6 +224,12 @@ func (b *Button) SizeHint() core.UnitSize {
 	}
 }
 
+// IsInlineWidget returns true to indicate this is a text-style widget
+// that should receive horizontal margins when in a vertical box layout.
+func (b *Button) IsInlineWidget() bool {
+	return true
+}
+
 // Paint renders the button.
 // TUI button rendering with drop shadow:
 //   - Normal:  " OK ▄" on top row, " ▀▀▀" on bottom row (shifted right)

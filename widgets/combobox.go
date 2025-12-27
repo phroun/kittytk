@@ -341,6 +341,12 @@ func (c *ComboBox) SizeHint() core.UnitSize {
 	}
 }
 
+// IsInlineWidget returns true to indicate this is a text-style widget
+// that should receive horizontal margins when in a vertical box layout.
+func (c *ComboBox) IsInlineWidget() bool {
+	return true
+}
+
 // Paint renders the combo box.
 func (c *ComboBox) Paint(p *core.Painter) {
 	bounds := c.Bounds()

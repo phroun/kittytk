@@ -319,6 +319,12 @@ func (t *TextInput) SizeHint() core.UnitSize {
 	}
 }
 
+// IsInlineWidget returns true to indicate this is a text-style widget
+// that should receive horizontal margins when in a vertical box layout.
+func (t *TextInput) IsInlineWidget() bool {
+	return true
+}
+
 // Paint renders the text input.
 func (t *TextInput) Paint(p *core.Painter) {
 	bounds := t.Bounds()

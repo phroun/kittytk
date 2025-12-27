@@ -189,10 +189,23 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 			}
 			pos += sizes[i] + spacing
 		} else {
+			// In vertical layout, apply horizontal margin to inline widgets
+			itemX := rect.X
+			itemWidth := rect.Width
+
+			if inlineWidget, ok := item.Widget.(core.InlineWidget); ok && inlineWidget.IsInlineWidget() {
+				// Add 1-cell horizontal margin on each side
+				itemX += metrics.CellWidth
+				itemWidth -= metrics.CellWidth * 2
+				if itemWidth < 0 {
+					itemWidth = 0
+				}
+			}
+
 			itemBounds = core.UnitRect{
-				X:      rect.X,
+				X:      itemX,
 				Y:      pos,
-				Width:  rect.Width,
+				Width:  itemWidth,
 				Height: sizes[i],
 			}
 			pos += sizes[i] + spacing

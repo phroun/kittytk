@@ -183,6 +183,12 @@ func (p *ProgressBar) SizeHint() core.UnitSize {
 	}
 }
 
+// IsInlineWidget returns true to indicate this is a text-style widget
+// that should receive horizontal margins when in a vertical box layout.
+func (p *ProgressBar) IsInlineWidget() bool {
+	return true
+}
+
 // Paint renders the progress bar.
 func (p *ProgressBar) Paint(painter *core.Painter) {
 	bounds := p.Bounds()

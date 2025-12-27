@@ -225,6 +225,10 @@ func createBasicWidgetsDemo(statusBar *widgets.StatusBar) core.Widget {
 	})
 	panel.AddChild(textInput)
 
+	// Add a spacer before buttons
+	spacer := widgets.NewSpacer()
+	panel.AddChild(spacer)
+
 	// Buttons in a horizontal layout
 	buttonPanel := widgets.NewPanel()
 	hLayout := layout.NewBoxLayout(core.Horizontal)

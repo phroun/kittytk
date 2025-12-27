@@ -741,9 +741,15 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 // HandleMouseMove handles mouse drag to sweep selection.
 func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	metrics := core.DefaultCellMetrics()
+	bounds := t.Bounds()
 
 	// Handle scrollbar thumb drag
 	if t.scrollbarDragging {
+		// Check if mouse is within horizontal bounds
+		if event.X < 0 || event.X >= bounds.Width {
+			return true // Still consuming the event, but not updating scroll
+		}
+
 		currentRow := int(event.Y / metrics.CellHeight)
 		rowDelta := currentRow - t.scrollbarDragStart
 
@@ -782,7 +788,6 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 
 	// Check if mouse is within horizontal bounds
-	bounds := t.Bounds()
 	if event.X < 0 || event.X >= bounds.Width {
 		return true // Still consuming the event, but not updating selection
 	}
