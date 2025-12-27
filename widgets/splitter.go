@@ -6,9 +6,9 @@ import (
 )
 
 // Splitter is a container widget that divides space between two children
-// with a draggable divider. The divider displays middots as a drag handle:
-// For vertical splitters: ────·· Title ··────
-// For horizontal splitters: vertical line with stacked middots
+// with a draggable divider.
+// For vertical splitters (horizontal divider): ────·· Title ··────
+// For horizontal splitters (vertical divider): │ with : handle
 type Splitter struct {
 	core.WidgetBase
 	core.AccessibleWidget
@@ -295,48 +295,17 @@ func (s *Splitter) Paint(p *core.Painter) {
 	}
 
 	if s.orientation == core.Horizontal {
-		// Vertical divider bar with stacked middots
-		height := int(bounds.Height / metrics.CellHeight)
-		titleRunes := []rune(s.title)
-		titleLen := len(titleRunes)
-
-		if titleLen == 0 {
-			// No title: draw line with 4 middots centered
-			center := height / 2
-			for yi := 0; yi < height; yi++ {
-				y := metrics.CellToUnitsY(yi)
-				ch := '│'
-				// Draw ·· ·· (4 dots with space) at center
-				if yi == center-1 || yi == center || yi == center+1 || yi == center+2 {
-					ch = '·'
-				}
-				p.DrawCell(divider.X, y, ch, dividerStyle)
+		// Vertical divider bar with ':' handle
+		midY := bounds.Height / 2
+		// Round to cell boundary
+		midY = (midY / metrics.CellHeight) * metrics.CellHeight
+		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
+			ch := '│'
+			// Draw drag handle indicator in the middle
+			if y == midY {
+				ch = ':'
 			}
-		} else {
-			// With title: vertical title with middots above and below
-			middleLen := titleLen + 4 // 2 dots above, title, 2 dots below
-			startMiddle := (height - middleLen) / 2
-			if startMiddle < 0 {
-				startMiddle = 0
-			}
-
-			for yi := 0; yi < height; yi++ {
-				y := metrics.CellToUnitsY(yi)
-				var ch rune
-				relY := yi - startMiddle
-				if yi < startMiddle || relY >= middleLen {
-					ch = '│'
-				} else if relY == 0 || relY == 1 {
-					ch = '·'
-				} else if relY >= 2 && relY < 2+titleLen {
-					ch = titleRunes[relY-2]
-				} else if relY == 2+titleLen || relY == 3+titleLen {
-					ch = '·'
-				} else {
-					ch = '│'
-				}
-				p.DrawCell(divider.X, y, ch, dividerStyle)
-			}
+			p.DrawCell(divider.X, y, ch, dividerStyle)
 		}
 	} else {
 		// Horizontal divider bar: ────·· Title ··────
