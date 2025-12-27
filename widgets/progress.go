@@ -251,15 +251,21 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 			startX = 0
 		}
 
+		// Text styles
+		// Active/completed part: black text on green background
+		activeTextStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorGreen)
+		// Inactive/incomplete part: bright yellow text on black background
+		inactiveTextStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorBlack)
+
 		filledCells := totalCells * p.Percentage() / 100
 		for i, ch := range text {
 			x := core.Unit(startX+i) * metrics.CellWidth
 			// Use appropriate style based on position
 			var s style.CellStyle
 			if startX+i < filledCells {
-				s = completedStyle
+				s = activeTextStyle
 			} else {
-				s = incompleteStyle
+				s = inactiveTextStyle
 			}
 			painter.DrawCell(x, 0, ch, s)
 		}
@@ -300,9 +306,15 @@ func (p *ProgressBar) paintVertical(painter *core.Painter, bounds core.UnitRect,
 }
 
 func (p *ProgressBar) formatText() string {
-	// Simple format: just show percentage
+	// Format percentage properly (handles 0-100)
 	pct := p.Percentage()
-	return string(rune('0'+pct/10)) + string(rune('0'+pct%10)) + "%"
+	if pct >= 100 {
+		return "100%"
+	} else if pct >= 10 {
+		return string(rune('0'+pct/10)) + string(rune('0'+pct%10)) + "%"
+	} else {
+		return string(rune('0'+pct)) + "%"
+	}
 }
 
 // AnimateIndeterminate advances the indeterminate animation.
