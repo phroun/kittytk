@@ -195,16 +195,18 @@ func (l *ListView) SetCurrentIndex(index int) {
 	l.ensureVisible(index)
 	l.Update()
 
-	// Notify parent scroll containers to scroll this item into view
+	// Notify parent scroll containers to scroll this item into view (horizontal only)
+	// We don't request vertical scrolling because:
+	// 1. The ListView handles its own vertical scrolling internally
+	// 2. We want to preserve context (labels above the ListView should stay visible)
 	if index >= 0 {
-		metrics := core.DefaultCellMetrics()
-		// Calculate the item's position relative to the ListView (in visible area)
-		visibleRow := index - l.scrollOffset
+		// Use Y=0 and full height to prevent vertical scrolling
+		// ListView items start at X=0, so horizontal scrolling is rarely needed
 		itemRect := core.UnitRect{
 			X:      0,
-			Y:      core.Unit(visibleRow) * metrics.CellHeight,
+			Y:      0,
 			Width:  l.Bounds().Width,
-			Height: metrics.CellHeight,
+			Height: l.Bounds().Height,
 		}
 		l.ScrollRectIntoView(itemRect)
 	}

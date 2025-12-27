@@ -423,8 +423,8 @@ func (m *Menu) calculateSize() core.UnitSize {
 		}
 	}
 
-	// Add padding (gutter: 3 cells, right border: 1 cell)
-	maxWidth += 4
+	// Add padding (gutter: 3 cells, content space: 1 cell, right border: 1 cell)
+	maxWidth += 5
 
 	// Calculate visible item count
 	visibleItems := len(m.items)
@@ -651,7 +651,11 @@ func (m *Menu) Paint(p *core.Painter) {
 		}
 		x += metrics.CellWidth * 2 // Move past checkmark + 1 gutter space
 
-		// Now in content area - draw text with accelerator highlighting
+		// Draw a space in content area before text
+		p.DrawCell(x, itemY, ' ', contentStyle)
+		x += metrics.CellWidth
+
+		// Now draw text with accelerator highlighting
 		var accelStyle style.CellStyle
 		if itemIndex == m.currentIndex {
 			// Selected item: dark magenta on cyan

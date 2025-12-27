@@ -178,7 +178,10 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	t.ensureVisible(index)
 	t.Update()
 
-	// Notify parent scroll containers to scroll this item into view
+	// Notify parent scroll containers to scroll this item into view (horizontal only)
+	// We don't request vertical scrolling because:
+	// 1. The TreeView handles its own vertical scrolling internally
+	// 2. We want to preserve context (labels above the TreeView should stay visible)
 	if index >= 0 {
 		metrics := core.DefaultCellMetrics()
 		item := t.flatList[index]
@@ -192,18 +195,18 @@ func (t *TreeView) SetCurrentIndex(index int) {
 		}
 
 		// Calculate actual content width: expand indicator (2 chars) + text
-		// Only scroll if this content would be cut off
+		// Only scroll horizontally if this content would be cut off
 		expandIndicatorWidth := 2 // "▶ " or "▼ " or "  " (for leaves)
 		textWidth := len(item.Text)
 		actualContentCells := expandIndicatorWidth + textWidth
 
-		// Calculate the item's position relative to the TreeView (in visible area)
-		visibleRow := index - t.scrollOffset
+		// Use Y=0 and full height to prevent vertical scrolling
+		// This tells parent ScrollAreas we only care about horizontal visibility
 		itemRect := core.UnitRect{
 			X:      core.Unit(contentStartCells) * metrics.CellWidth,
-			Y:      core.Unit(visibleRow) * metrics.CellHeight,
+			Y:      0,
 			Width:  core.Unit(actualContentCells) * metrics.CellWidth,
-			Height: metrics.CellHeight,
+			Height: t.Bounds().Height,
 		}
 		t.ScrollRectIntoView(itemRect)
 	}
@@ -368,6 +371,32 @@ func (t *TreeView) SetOnItemCollapsed(handler func(item *TreeItem)) {
 func (t *TreeView) rebuildFlatList() {
 	t.flatList = nil
 	t.flattenItems(t.rootItems)
+
+	// Clamp scroll offset to valid range after list size changes
+	t.clampScrollOffset()
+}
+
+// clampScrollOffset ensures scrollOffset is within valid bounds.
+func (t *TreeView) clampScrollOffset() {
+	if len(t.flatList) == 0 {
+		t.scrollOffset = 0
+		return
+	}
+
+	bounds := t.Bounds()
+	metrics := core.DefaultCellMetrics()
+	visibleCount := int(bounds.Height / metrics.CellHeight)
+
+	maxScroll := len(t.flatList) - visibleCount
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if t.scrollOffset > maxScroll {
+		t.scrollOffset = maxScroll
+	}
+	if t.scrollOffset < 0 {
+		t.scrollOffset = 0
+	}
 }
 
 func (t *TreeView) flattenItems(items []*TreeItem) {
