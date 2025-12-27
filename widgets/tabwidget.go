@@ -900,7 +900,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 			s = tabBarStyle
 		}
 
-		// Draw prefix if first tab (inverted for bottom: " \_ " or " \<" when focused)
+		// Draw prefix if first tab (inverted for bottom: " \_" or " \<" when focused)
+		// Note: 3 chars for selected (underscore replaces trailing space), 2 chars for unselected
 		if isFirstVisible {
 			if isSelected {
 				p.DrawCell(x, tabY, ' ', tabBarStyle)
@@ -911,8 +912,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 				} else {
 					p.DrawCell(x+metrics.CellWidth*2, tabY, '_', s)
 				}
-				p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', tabBarStyle)
-				x += metrics.CellWidth * 4
+				x += metrics.CellWidth * 3
 			} else {
 				// "  " (2 chars)
 				p.DrawCell(x, tabY, ' ', tabBarStyle)
@@ -928,19 +928,19 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 		}
 
 		// Draw separator after tab (inverted for bottom)
+		// Note: 3 chars for selected (underscore replaces leading space), 2 chars for regular
 		if isSelected {
 			// "_/ " after selected tab - use > instead of _ when focused
-			p.DrawCell(x, tabY, ' ', tabBarStyle)
 			if hasFocus {
-				p.DrawCell(x+metrics.CellWidth, tabY, '>', focusedSelectedStyle)
+				p.DrawCell(x, tabY, '>', focusedSelectedStyle)
 			} else {
-				p.DrawCell(x+metrics.CellWidth, tabY, '_', s)
+				p.DrawCell(x, tabY, '_', s)
 			}
-			p.DrawCell(x+metrics.CellWidth*2, tabY, '/', tabBarStyle)
-			p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', tabBarStyle)
-			x += metrics.CellWidth * 4
+			p.DrawCell(x+metrics.CellWidth, tabY, '/', tabBarStyle)
+			p.DrawCell(x+metrics.CellWidth*2, tabY, ' ', tabBarStyle)
+			x += metrics.CellWidth * 3
 		} else if nextIsSelected {
-			// " \_ " (4 chars) before selected tab - use < instead of _ when focused
+			// " \_" (3 chars) before selected tab - use < instead of _ when focused
 			p.DrawCell(x, tabY, ' ', tabBarStyle)
 			p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
 			if hasFocus {
@@ -948,8 +948,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 			} else {
 				p.DrawCell(x+metrics.CellWidth*2, tabY, '_', selectedStyle)
 			}
-			p.DrawCell(x+metrics.CellWidth*3, tabY, ' ', tabBarStyle)
-			x += metrics.CellWidth * 4
+			x += metrics.CellWidth * 3
 		} else {
 			// "  " (2 chars) regular separator
 			p.DrawCell(x, tabY, ' ', tabBarStyle)
