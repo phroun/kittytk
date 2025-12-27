@@ -158,29 +158,39 @@ func (t *TUIBackend) Init() error {
 	// Allocate buffers
 	t.allocateBuffers()
 
-	// Set up keyboard handler FIRST, before any terminal mode changes
-	// This matches the pattern used in direct-key-handler's test program
+	// Open /dev/tty directly to ensure escape sequences reach the terminal
+	// This bypasses any stdout redirection
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		// Fall back to stdout if /dev/tty not available
+		tty = os.Stdout
+	}
+
+	// Enable Kitty keyboard protocol for better key detection
+	fmt.Fprint(tty, "\033[>1u")
+
+	// Enable mouse if requested
+	if t.hasMouse {
+		fmt.Fprint(tty, "\033[?1000h\033[?1002h\033[?1006h")
+	}
+
+	// Enter alternate screen
+	fmt.Fprint(tty, "\033[?1049h")
+
+	// Hide cursor initially
+	fmt.Fprint(tty, "\033[?25l")
+
+	// Close tty if we opened it separately
+	if tty != os.Stdout {
+		tty.Close()
+	}
+
+	// Set up keyboard handler AFTER terminal modes are configured
 	kbOpts := keyboard.Options{
 		InputReader: os.Stdin,
 	}
 	t.keyboard = keyboard.New(kbOpts)
 	t.keyboard.OnKey = t.handleKey
-
-	// Enable Kitty keyboard protocol for better key detection
-	// Mode 1 = Report disambiguated keys
-	// Must be enabled BEFORE entering alternate screen
-	fmt.Print("\033[>1u")
-
-	// Enable mouse if requested - BEFORE entering alternate screen
-	if t.hasMouse {
-		fmt.Print("\033[?1000h\033[?1002h\033[?1006h")
-	}
-
-	// Enter alternate screen
-	fmt.Print("\033[?1049h")
-
-	// Hide cursor initially
-	fmt.Print("\033[?25l")
 
 	// Now start the keyboard handler
 	if err := t.keyboard.Start(); err != nil {
