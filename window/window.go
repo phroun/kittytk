@@ -597,10 +597,19 @@ func (w *Window) layoutContent() {
 
 	contentRect := w.contentBounds()
 
+	// Content bounds should be relative to the content area (0,0), not the window.
+	// The window's Paint method handles the offset translation.
+	localContentRect := core.UnitRect{
+		X:      0,
+		Y:      0,
+		Width:  contentRect.Width,
+		Height: contentRect.Height,
+	}
+
 	if layout != nil {
-		layout.Layout(w, contentRect)
+		layout.Layout(w, localContentRect)
 	} else {
-		content.SetBounds(contentRect)
+		content.SetBounds(localContentRect)
 	}
 }
 
