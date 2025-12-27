@@ -1118,7 +1118,7 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	desktop := m.desktop
 	m.mu.RUnlock()
 
-	// Window switching shortcuts
+	// Global shortcuts
 	// Uses direct-key-handler naming: M- = Alt, C- = Ctrl, S- = Shift
 	switch event.Key {
 	case "M-Tab", "C-Tab":
@@ -1127,6 +1127,11 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	case "M-S-Tab", "C-S-Tab":
 		m.CycleWindows(false)
 		return true
+	case "F10":
+		// F10 always goes to desktop for menu bar toggle
+		if desktop != nil {
+			return desktop.HandleKeyPress(event)
+		}
 	}
 
 	// Pass to active window first (but not if minimized)
