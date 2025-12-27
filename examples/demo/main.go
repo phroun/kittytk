@@ -50,6 +50,7 @@ func main() {
 			// Show key and current focus info
 			wm := application.WindowManager()
 			focusInfo := "no window"
+			winInfo := ""
 			if wm != nil {
 				if activeWin := wm.ActiveWindow(); activeWin != nil {
 					fm := activeWin.FocusManager()
@@ -71,9 +72,22 @@ func main() {
 							focusInfo = fmt.Sprintf("nil chain:%d ok:%d", len(chain), focusable)
 						}
 					}
+
+					// Show window dimensions and client offset on Tab key
+					if keyEvent.Key == "Tab" || keyEvent.Key == "Shift+Tab" {
+						bounds := activeWin.Bounds()
+						offset := activeWin.ClientAreaOffset()
+						state := "normal"
+						if activeWin.IsMaximized() {
+							state = "MAX"
+						}
+						winInfo = fmt.Sprintf(" | win:%dx%d@%d,%d content:@%d,%d %s",
+							bounds.Width, bounds.Height, bounds.X, bounds.Y,
+							offset.X, offset.Y, state)
+					}
 				}
 			}
-			statusBar.SetText(fmt.Sprintf("Key: %q  %s", keyEvent.Key, focusInfo))
+			statusBar.SetText(fmt.Sprintf("Key: %q  %s%s", keyEvent.Key, focusInfo, winInfo))
 		}
 		return false // Don't consume the event
 	})
