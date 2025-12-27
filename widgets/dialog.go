@@ -238,9 +238,43 @@ func (c *messageBoxContent) Paint(p *core.Painter) {
 			Width:  btnWidth,
 			Height: metrics.CellHeight,
 		})
-		btn.Paint(p)
+		// Use a translated painter for the button at its position
+		btnPainter := p.WithOffset(buttonX, buttonY)
+		btn.Paint(btnPainter)
 		buttonX += btnWidth + metrics.CellWidth
 	}
+}
+
+// HandleMousePress handles mouse clicks on buttons.
+func (c *messageBoxContent) HandleMousePress(event core.MousePressEvent) bool {
+	// Check if click is on any button
+	for _, btn := range c.buttonWidgets {
+		btnBounds := btn.Bounds()
+		if event.X >= btnBounds.X && event.X < btnBounds.X+btnBounds.Width &&
+			event.Y >= btnBounds.Y && event.Y < btnBounds.Y+btnBounds.Height {
+			// Translate event to button's local coordinates
+			localEvent := event
+			localEvent.X -= btnBounds.X
+			localEvent.Y -= btnBounds.Y
+			return btn.HandleMousePress(localEvent)
+		}
+	}
+	return false
+}
+
+// HandleMouseRelease handles mouse release on buttons.
+func (c *messageBoxContent) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	// Forward to all buttons (the pressed one will handle it)
+	for _, btn := range c.buttonWidgets {
+		btnBounds := btn.Bounds()
+		localEvent := event
+		localEvent.X -= btnBounds.X
+		localEvent.Y -= btnBounds.Y
+		if btn.HandleMouseRelease(localEvent) {
+			return true
+		}
+	}
+	return false
 }
 
 // HandleKeyPress handles keyboard input.

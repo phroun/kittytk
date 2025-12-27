@@ -335,7 +335,9 @@ func (m *Menu) Show(x, y core.Unit) {
 	m.scrollOffset = 0
 	m.scrollHoverZone = 0
 	m.scrollHoverTime = time.Time{}
-	m.SetFocus()
+	// Note: Don't call SetFocus() here - the MenuBar retains focus and forwards
+	// key events to the active menu. Taking focus would trigger HandleFocusOut
+	// on the MenuBar which would close the menu we just opened.
 	m.Update()
 }
 
@@ -1412,11 +1414,7 @@ func (m *MenuBar) CloseMenu() {
 		m.activeMenu.Hide()
 		m.activeMenu = nil
 	}
-	// Restore focus to menu bar (dropdown menu takes focus when shown)
-	if wasOpen {
-		m.SetFocus()
-	}
-	// Re-enable accelerators if focused
+	// Re-enable accelerators if focused (menu bar retains focus while menu is open)
 	if m.HasFocus() {
 		m.acceleratorsActive = true
 		// Keep currentIndex if we just closed a menu (for continued navigation)
