@@ -381,11 +381,11 @@ func (l *ListView) Paint(p *core.Painter) {
 				s = style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
 			}
 		} else if l.alternateRowColors && itemIndex%2 == 1 {
-			// Alternate rows: light cyan on black
-			s = style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlack)
+			// Alternate rows: white on black
+			s = style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlack)
 		} else {
-			// Unselected items: light cyan on black
-			s = style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlack)
+			// Unselected items: white on black
+			s = style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlack)
 		}
 
 		// Draw row background
