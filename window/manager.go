@@ -641,11 +641,7 @@ func (m *WindowManager) HasPopups() bool {
 // It converts local widget coordinates to screen coordinates.
 func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
 	// Traverse up the widget hierarchy to accumulate offsets
-	// This works because:
-	// - Each widget's Bounds().X/Y is its position within its parent
-	// - Content widget's bounds include the client area offset (title bar, frame)
-	// - Window's bounds are its screen position
-	// - Window is part of the widget hierarchy (content.SetParent(window))
+	// Each widget's Bounds().X/Y is its position within its parent
 	result := local
 	metrics := core.DefaultCellMetrics()
 
@@ -665,6 +661,15 @@ func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) co
 			scrollX, scrollY := scroller.ScrollOffset()
 			result.X -= core.Unit(scrollX) * metrics.CellWidth
 			result.Y -= core.Unit(scrollY) * metrics.CellHeight
+		}
+
+		// Check if parent is a Window - if so, add the content area offset
+		// The content widget's bounds are (0,0) but it's painted at an offset
+		// to account for the window's title bar and frame
+		if win, ok := parent.(*Window); ok {
+			offset := win.ClientAreaOffset()
+			result.X += offset.X
+			result.Y += offset.Y
 		}
 
 		if pw, ok := parent.(core.Widget); ok {
