@@ -416,8 +416,8 @@ func (c *ComboBox) Paint(p *core.Painter) {
 	p.DrawCell(arrowX, 0, ' ', s)
 	p.DrawCell(arrowX+metrics.CellWidth, 0, '▼', s)
 
-	// Draw popup if open - only use fallback if no popup controller
-	if c.isOpen && c.PopupController() == nil {
+	// Draw popup if open - only use fallback if no popup controller found
+	if c.isOpen && c.findPopupController() == nil {
 		c.paintPopup(p)
 	}
 }

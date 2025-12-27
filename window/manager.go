@@ -551,16 +551,16 @@ func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) co
 		}
 	}
 
-	// If the widget is in a window, we need to find that window's position
+	// If the widget is in a window, add the client area offset (title bar etc)
+	// Note: Window bounds are already added during parent traversal since
+	// content.SetParent(window) makes Window part of the widget hierarchy
 	m.mu.RLock()
 	for _, win := range m.windows {
 		// Check if this widget is a descendant of this window
 		if m.widgetIsInWindow(widget, win) {
-			winBounds := win.Bounds()
-			// Adjust for window client area (title bar etc)
 			clientOffset := win.ClientAreaOffset()
-			result.X += winBounds.X + clientOffset.X
-			result.Y += winBounds.Y + clientOffset.Y
+			result.X += clientOffset.X
+			result.Y += clientOffset.Y
 			break
 		}
 	}
