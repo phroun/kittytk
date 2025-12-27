@@ -212,11 +212,11 @@ func (m *WindowManager) ClientArea() core.UnitRect {
 	return screen
 }
 
-// ScreenBounds returns the screen bounds.
+// ScreenBounds returns the available screen area for popups.
+// This returns the ClientArea (excluding desktop chrome like menu bars and dock)
+// so popups are positioned within the visible window area.
 func (m *WindowManager) ScreenBounds() core.UnitRect {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.screenBounds
+	return m.ClientArea()
 }
 
 // AddWindow adds a window to the manager.
@@ -530,9 +530,13 @@ func (m *WindowManager) HasPopups() bool {
 // It converts local widget coordinates to screen coordinates.
 func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
 	// Traverse up the widget hierarchy to accumulate offsets
+	// This works because:
+	// - Each widget's Bounds().X/Y is its position within its parent
+	// - Content widget's bounds include the client area offset (title bar, frame)
+	// - Window's bounds are its screen position
+	// - Window is part of the widget hierarchy (content.SetParent(window))
 	result := local
 
-	// Find the widget's position by traversing up through parents
 	current := widget
 	for current != nil {
 		bounds := current.Bounds()
@@ -543,28 +547,12 @@ func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) co
 		if parent == nil {
 			break
 		}
-		// Type assert to Widget to continue traversal
 		if pw, ok := parent.(core.Widget); ok {
 			current = pw
 		} else {
 			break
 		}
 	}
-
-	// If the widget is in a window, add the client area offset (title bar etc)
-	// Note: Window bounds are already added during parent traversal since
-	// content.SetParent(window) makes Window part of the widget hierarchy
-	m.mu.RLock()
-	for _, win := range m.windows {
-		// Check if this widget is a descendant of this window
-		if m.widgetIsInWindow(widget, win) {
-			clientOffset := win.ClientAreaOffset()
-			result.X += clientOffset.X
-			result.Y += clientOffset.Y
-			break
-		}
-	}
-	m.mu.RUnlock()
 
 	return result
 }

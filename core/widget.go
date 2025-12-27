@@ -231,6 +231,8 @@ type PopupController interface {
 	UnregisterPopup(id string)
 	// MapToScreen converts local widget coordinates to screen coordinates.
 	MapToScreen(widget Widget, local UnitPoint) UnitPoint
+	// ScreenBounds returns the available screen area for popups.
+	ScreenBounds() UnitRect
 }
 
 // Application is a forward declaration (defined in app package).

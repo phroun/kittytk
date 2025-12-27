@@ -283,18 +283,32 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	if popupHeight > c.maxVisible {
 		popupHeight = c.maxVisible
 	}
+	popupHeightUnits := core.Unit(popupHeight) * metrics.CellHeight
 
-	// Get popup position in local coordinates (below the widget)
-	localPopupPos := core.UnitPoint{X: 0, Y: metrics.CellHeight}
+	// Get screen bounds to check if we need to pop up instead of down
+	screenBounds := pc.ScreenBounds()
 
-	// Convert to screen coordinates
-	screenPos := pc.MapToScreen(c, localPopupPos)
+	// Get the widget's top-left corner on screen
+	widgetScreenPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: 0})
+
+	// Default: pop down (below the widget)
+	popupY := widgetScreenPos.Y + metrics.CellHeight
+
+	// Check if popup would go below screen - if so, pop up instead
+	if popupY+popupHeightUnits > screenBounds.Y+screenBounds.Height {
+		// Pop up: position popup above the widget
+		popupY = widgetScreenPos.Y - popupHeightUnits
+		// Make sure we don't go above the screen either
+		if popupY < screenBounds.Y {
+			popupY = screenBounds.Y
+		}
+	}
 
 	popupBounds := core.UnitRect{
-		X:      screenPos.X,
-		Y:      screenPos.Y,
+		X:      widgetScreenPos.X,
+		Y:      popupY,
 		Width:  bounds.Width,
-		Height: core.Unit(popupHeight) * metrics.CellHeight,
+		Height: popupHeightUnits,
 	}
 
 	// Create popup request
@@ -382,6 +396,9 @@ func (c *ComboBox) Paint(p *core.Painter) {
 	var s style.CellStyle
 	if !c.IsEnabled() {
 		s = theme.Disabled
+	} else if c.isOpen {
+		// When popup is open, style like an open menu
+		s = theme.MenuBarSelected
 	} else if focused {
 		s = theme.InputFocused
 	} else {
