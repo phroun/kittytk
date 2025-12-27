@@ -502,12 +502,22 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case "M-Up", "C-Up", "A-Up":
-		// Jump by 5 items
-		newIndex := l.currentIndex - 5
-		if newIndex < 0 {
-			newIndex = 0
+		// Jump by 5 items, scrolling to maintain relative position
+		if l.currentIndex > 0 {
+			delta := 5
+			newIndex := l.currentIndex - delta
+			if newIndex < 0 {
+				newIndex = 0
+			}
+			actualDelta := l.currentIndex - newIndex
+			// Scroll by same amount to maintain relative position
+			newScroll := l.scrollOffset - actualDelta
+			if newScroll < 0 {
+				newScroll = 0
+			}
+			l.scrollOffset = newScroll
+			l.SetCurrentIndex(newIndex)
 		}
-		l.SetCurrentIndex(newIndex)
 		return true
 
 	case "Down":
@@ -517,12 +527,27 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case "M-Down", "C-Down", "A-Down":
-		// Jump by 5 items
-		newIndex := l.currentIndex + 5
-		if newIndex >= len(l.items) {
-			newIndex = len(l.items) - 1
+		// Jump by 5 items, scrolling to maintain relative position
+		if l.currentIndex < len(l.items)-1 {
+			delta := 5
+			newIndex := l.currentIndex + delta
+			if newIndex >= len(l.items) {
+				newIndex = len(l.items) - 1
+			}
+			actualDelta := newIndex - l.currentIndex
+			// Scroll by same amount to maintain relative position
+			visibleCount := l.visibleCount()
+			maxScroll := len(l.items) - visibleCount
+			if maxScroll < 0 {
+				maxScroll = 0
+			}
+			newScroll := l.scrollOffset + actualDelta
+			if newScroll > maxScroll {
+				newScroll = maxScroll
+			}
+			l.scrollOffset = newScroll
+			l.SetCurrentIndex(newIndex)
 		}
-		l.SetCurrentIndex(newIndex)
 		return true
 
 	case "Home":

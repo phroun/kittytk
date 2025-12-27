@@ -543,12 +543,22 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case "M-Up", "C-Up", "A-Up":
-		// Jump by 5 items
-		newIndex := t.currentIndex - 5
-		if newIndex < 0 {
-			newIndex = 0
+		// Jump by 5 items, scrolling to maintain relative position
+		if t.currentIndex > 0 {
+			delta := 5
+			newIndex := t.currentIndex - delta
+			if newIndex < 0 {
+				newIndex = 0
+			}
+			actualDelta := t.currentIndex - newIndex
+			// Scroll by same amount to maintain relative position
+			newScroll := t.scrollOffset - actualDelta
+			if newScroll < 0 {
+				newScroll = 0
+			}
+			t.scrollOffset = newScroll
+			t.SetCurrentIndex(newIndex)
 		}
-		t.SetCurrentIndex(newIndex)
 		return true
 
 	case "Down":
@@ -558,12 +568,27 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case "M-Down", "C-Down", "A-Down":
-		// Jump by 5 items
-		newIndex := t.currentIndex + 5
-		if newIndex >= len(t.flatList) {
-			newIndex = len(t.flatList) - 1
+		// Jump by 5 items, scrolling to maintain relative position
+		if t.currentIndex < len(t.flatList)-1 {
+			delta := 5
+			newIndex := t.currentIndex + delta
+			if newIndex >= len(t.flatList) {
+				newIndex = len(t.flatList) - 1
+			}
+			actualDelta := newIndex - t.currentIndex
+			// Scroll by same amount to maintain relative position
+			visibleCount := t.visibleCount()
+			maxScroll := len(t.flatList) - visibleCount
+			if maxScroll < 0 {
+				maxScroll = 0
+			}
+			newScroll := t.scrollOffset + actualDelta
+			if newScroll > maxScroll {
+				newScroll = maxScroll
+			}
+			t.scrollOffset = newScroll
+			t.SetCurrentIndex(newIndex)
 		}
-		t.SetCurrentIndex(newIndex)
 		return true
 
 	case "Left":
