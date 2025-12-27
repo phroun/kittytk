@@ -423,8 +423,8 @@ func (m *Menu) calculateSize() core.UnitSize {
 		}
 	}
 
-	// Add padding (gutter: 4 cells, right border: 1 cell)
-	maxWidth += 5
+	// Add padding (gutter: 3 cells, right border: 1 cell)
+	maxWidth += 4
 
 	// Calculate visible item count
 	visibleItems := len(m.items)
@@ -593,12 +593,12 @@ func (m *Menu) Paint(p *core.Painter) {
 			s = theme.MenuItem
 		}
 
-		// Gutter area: 4 cells (border + checkmark + 2 spaces) in regular white
+		// Gutter area: 3 cells (border + checkmark + 1 space) in regular white
 		// Content area: rest of the item in bright white (for non-selected items)
-		gutterWidth := metrics.CellWidth * 4
+		gutterWidth := metrics.CellWidth * 3
 		gutterStyle := s
 		contentStyle := s
-		if item.Enabled && itemIndex != m.currentIndex {
+		if !item.Separator && item.Enabled && itemIndex != m.currentIndex {
 			// Use bright white background for content area of enabled, non-selected items
 			contentStyle = s.WithBg(style.ColorBrightWhite)
 		}
@@ -612,17 +612,27 @@ func (m *Menu) Paint(p *core.Painter) {
 		}, ' ', gutterStyle)
 
 		// Draw content background (bright white for enabled items)
+		contentBgStyle := contentStyle
+		if item.Separator {
+			// Separators use bright white for content area too
+			contentBgStyle = s.WithBg(style.ColorBrightWhite)
+		}
 		p.FillRect(core.UnitRect{
 			X:      m.popupX + gutterWidth,
 			Y:      itemY,
 			Width:  size.Width - gutterWidth,
 			Height: metrics.CellHeight,
-		}, ' ', contentStyle)
+		}, ' ', contentBgStyle)
 
 		if item.Separator {
-			// Draw separator line
+			// Draw separator line - gutter portion in regular style, content in bright white
+			separatorContentStyle := s.WithBg(style.ColorBrightWhite)
 			for x := m.popupX + metrics.CellWidth; x < m.popupX+size.Width-metrics.CellWidth; x += metrics.CellWidth {
-				p.DrawCell(x, itemY, '─', s)
+				if x < m.popupX+gutterWidth {
+					p.DrawCell(x, itemY, '─', gutterStyle)
+				} else {
+					p.DrawCell(x, itemY, '─', separatorContentStyle)
+				}
 			}
 			currentY += metrics.CellHeight
 			continue
@@ -639,7 +649,7 @@ func (m *Menu) Paint(p *core.Painter) {
 			cell := item.Icon.Cells[0]
 			p.DrawCell(x, itemY, cell.Char, cell.Style)
 		}
-		x += metrics.CellWidth * 3 // Move past checkmark + 2 gutter spaces
+		x += metrics.CellWidth * 2 // Move past checkmark + 1 gutter space
 
 		// Now in content area - draw text with accelerator highlighting
 		var accelStyle style.CellStyle
