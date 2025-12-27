@@ -189,8 +189,17 @@ func (t *TreeView) ExpandItem(item *TreeItem) {
 		return
 	}
 
+	// Save currently selected item
+	var selectedItem *TreeItem
+	if t.currentIndex >= 0 && t.currentIndex < len(t.flatList) {
+		selectedItem = t.flatList[t.currentIndex]
+	}
+
 	item.Expanded = true
 	t.rebuildFlatList()
+
+	// Restore selection by finding the same item in new flat list
+	t.restoreSelectionByItem(selectedItem)
 	t.Update()
 
 	if t.onItemExpanded != nil {
@@ -204,18 +213,42 @@ func (t *TreeView) CollapseItem(item *TreeItem) {
 		return
 	}
 
+	// Save currently selected item
+	var selectedItem *TreeItem
+	if t.currentIndex >= 0 && t.currentIndex < len(t.flatList) {
+		selectedItem = t.flatList[t.currentIndex]
+	}
+
 	item.Expanded = false
 	t.rebuildFlatList()
 
-	// Adjust current index if it was in a collapsed subtree
-	if t.currentIndex >= len(t.flatList) {
-		t.currentIndex = len(t.flatList) - 1
+	// Restore selection by finding the same item in new flat list
+	// If selected item is no longer visible (was in collapsed subtree),
+	// select the item that was collapsed
+	if !t.restoreSelectionByItem(selectedItem) {
+		// Selected item no longer visible, select the collapsed item
+		t.restoreSelectionByItem(item)
 	}
 	t.Update()
 
 	if t.onItemCollapsed != nil {
 		t.onItemCollapsed(item)
 	}
+}
+
+// restoreSelectionByItem finds the given item in the flat list and selects it.
+// Returns true if the item was found and selected, false otherwise.
+func (t *TreeView) restoreSelectionByItem(item *TreeItem) bool {
+	if item == nil {
+		return false
+	}
+	for i, flatItem := range t.flatList {
+		if flatItem == item {
+			t.currentIndex = i
+			return true
+		}
+	}
+	return false
 }
 
 // ToggleItem toggles the expanded state of an item.
@@ -229,8 +262,17 @@ func (t *TreeView) ToggleItem(item *TreeItem) {
 
 // ExpandAll expands all items.
 func (t *TreeView) ExpandAll() {
+	// Save currently selected item
+	var selectedItem *TreeItem
+	if t.currentIndex >= 0 && t.currentIndex < len(t.flatList) {
+		selectedItem = t.flatList[t.currentIndex]
+	}
+
 	t.expandRecursive(t.rootItems)
 	t.rebuildFlatList()
+
+	// Restore selection by finding the same item
+	t.restoreSelectionByItem(selectedItem)
 	t.Update()
 }
 
@@ -243,8 +285,19 @@ func (t *TreeView) expandRecursive(items []*TreeItem) {
 
 // CollapseAll collapses all items.
 func (t *TreeView) CollapseAll() {
+	// Save currently selected item
+	var selectedItem *TreeItem
+	if t.currentIndex >= 0 && t.currentIndex < len(t.flatList) {
+		selectedItem = t.flatList[t.currentIndex]
+	}
+
 	t.collapseRecursive(t.rootItems)
 	t.rebuildFlatList()
+
+	// Restore selection - if item is no longer visible, select first root
+	if !t.restoreSelectionByItem(selectedItem) && len(t.flatList) > 0 {
+		t.currentIndex = 0
+	}
 	t.Update()
 }
 

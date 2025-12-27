@@ -1154,7 +1154,9 @@ func (t *TabWidget) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
-	t.SetFocus()
+	// Note: We intentionally don't call SetFocus() here.
+	// TabWidget focus is for keyboard tab order navigation only,
+	// not for mouse interaction.
 
 	metrics := core.DefaultCellMetrics()
 	tabHeight := t.tabBarHeight()
