@@ -519,6 +519,20 @@ func (w *Window) SetFrameStyle(s style.CellStyle) {
 	w.Update()
 }
 
+// BackgroundColor returns the window's background color.
+// If no explicit background is set, returns the theme's WindowBackground color
+// so that child widgets can inherit the correct color.
+func (w *Window) BackgroundColor() *style.Color {
+	// First check if an explicit background color was set
+	if bg := w.WidgetBase.BackgroundColor(); bg != nil {
+		return bg
+	}
+	// Fall back to theme's window background color
+	theme := w.Theme()
+	bgColor := theme.WindowBackground.Bg
+	return &bgColor
+}
+
 // contentBounds returns the bounds for the content area.
 func (w *Window) contentBounds() core.UnitRect {
 	bounds := w.Bounds()
