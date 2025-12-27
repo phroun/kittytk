@@ -255,6 +255,9 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 		return false
 	}
 
+	// Ensure terminal knows it's focused before handling input
+	t.terminal.SetFocused(true)
+
 	// Forward the key to the terminal
 	t.terminal.HandleKeyString(event.Key)
 	t.Update()

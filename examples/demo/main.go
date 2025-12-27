@@ -441,6 +441,7 @@ func createDemoWindow(application *app.Application) *window.Window {
 
 	// Create a vertical splitter to divide the window
 	splitter := widgets.NewVSplitter()
+	splitter.SetTitle("Terminal")
 	splitter.SetPosition(0.3) // Top panel gets 30% of space
 
 	// Top panel with controls
