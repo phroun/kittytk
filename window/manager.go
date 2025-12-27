@@ -1237,6 +1237,18 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
+	// Alt+letter (M-<letter>) always goes to desktop first for menu accelerators
+	if len(event.Key) == 3 && event.Key[0] == 'M' && event.Key[1] == '-' {
+		letter := event.Key[2]
+		if letter >= 'a' && letter <= 'z' {
+			if desktop != nil {
+				if desktop.HandleKeyPress(event) {
+					return true
+				}
+			}
+		}
+	}
+
 	// Check if desktop's menu bar is active (has focus or has open menu)
 	// If so, send keys to desktop first to prevent window from intercepting
 	if desktop != nil {

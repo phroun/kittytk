@@ -624,7 +624,14 @@ func (m *Menu) Paint(p *core.Painter) {
 		x += metrics.CellWidth * 2
 
 		// Draw text with accelerator highlighting
-		accelStyle := style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+		var accelStyle style.CellStyle
+		if itemIndex == m.currentIndex {
+			// Selected item: dark magenta on cyan
+			accelStyle = style.DefaultStyle().WithFg(style.ColorMagenta).WithBg(style.ColorCyan)
+		} else {
+			// Normal item: red on white
+			accelStyle = style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+		}
 		for idx, ch := range item.Text {
 			charStyle := s
 			// Highlight accelerator for enabled items
@@ -1198,6 +1205,7 @@ func (m *MenuBar) CloseMenuAndUnfocus() {
 	}
 	m.currentIndex = -1
 	m.acceleratorsActive = false
+	m.ClearFocus()
 	m.Update()
 }
 
@@ -1258,7 +1266,15 @@ func (m *MenuBar) Paint(p *core.Painter) {
 
 		// Draw title with accelerator highlighting
 		textX := x + metrics.CellWidth
-		accelStyle := style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+		// Accelerator style depends on whether menu is selected
+		var accelStyle style.CellStyle
+		if i == m.currentIndex {
+			// Selected menu: bright cyan on blue
+			accelStyle = style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlue)
+		} else {
+			// Normal menu: red on white
+			accelStyle = style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+		}
 		showAccel := m.ShouldShowAccelerator(menu)
 		for idx, ch := range menu.title {
 			charStyle := s
@@ -1477,9 +1493,9 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 		return true
 	}
 
-	// Click outside - if menu was open, consume the event to dismiss without activating anything
+	// Click outside - if menu was open, dismiss and unfocus completely
 	if m.activeMenu != nil {
-		m.CloseMenu()
+		m.CloseMenuAndUnfocus()
 		m.mouseDown = false
 		m.dragging = false
 		return true
