@@ -18,6 +18,18 @@ const (
 	ResizeEdgeBottom = 1 << 3
 )
 
+// DockProvider is implemented by desktops that have a dock for minimized windows.
+type DockProvider interface {
+	// DockEntryCount returns the number of entries in the dock.
+	DockEntryCount() int
+	// IsDockFocused returns true if the dock currently has focus.
+	IsDockFocused() bool
+	// FocusDock sets focus to the dock.
+	FocusDock()
+	// UnfocusDock removes focus from the dock.
+	UnfocusDock()
+}
+
 // WindowManager manages all windows in the application.
 // It handles z-ordering, focus, modal windows, and window positioning.
 type WindowManager struct {
@@ -1149,49 +1161,95 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	return false
 }
 
-// CycleWindows cycles through windows.
+// CycleWindows cycles through windows and the dock (if it has entries).
 func (m *WindowManager) CycleWindows(forward bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	desktop := m.desktop
+	windows := m.windows
+	activeWindow := m.activeWindow
+	m.mu.Unlock()
 
-	if len(m.windows) <= 1 {
+	// Check if dock is available and has entries
+	var dockProvider DockProvider
+	hasDock := false
+	isDockFocused := false
+	if desktop != nil {
+		if dp, ok := desktop.(DockProvider); ok {
+			dockProvider = dp
+			hasDock = dp.DockEntryCount() > 0
+			isDockFocused = dp.IsDockFocused()
+		}
+	}
+
+	// Collect non-minimized windows
+	var nonMinimized []*Window
+	for _, w := range windows {
+		if !w.IsMinimized() {
+			nonMinimized = append(nonMinimized, w)
+		}
+	}
+
+	// If dock is currently focused
+	if isDockFocused && dockProvider != nil {
+		dockProvider.UnfocusDock()
+		if len(nonMinimized) > 0 {
+			if forward {
+				// Move to first non-minimized window
+				m.ActivateWindow(nonMinimized[0])
+			} else {
+				// Move to last non-minimized window
+				m.ActivateWindow(nonMinimized[len(nonMinimized)-1])
+			}
+		}
 		return
 	}
 
-	// Find current window index
+	// If no non-minimized windows, focus dock if available
+	if len(nonMinimized) == 0 {
+		if hasDock && dockProvider != nil {
+			dockProvider.FocusDock()
+			m.RequestRepaint()
+		}
+		return
+	}
+
+	// Find current window index in non-minimized list
 	currentIdx := -1
-	for i, w := range m.windows {
-		if w == m.activeWindow {
+	for i, w := range nonMinimized {
+		if w == activeWindow {
 			currentIdx = i
 			break
 		}
 	}
 
 	// Calculate next index
-	var nextIdx int
 	if forward {
-		nextIdx = (currentIdx + 1) % len(m.windows)
-	} else {
-		nextIdx = (currentIdx - 1 + len(m.windows)) % len(m.windows)
-	}
-
-	// Skip minimized windows
-	startIdx := nextIdx
-	for m.windows[nextIdx].IsMinimized() {
-		if forward {
-			nextIdx = (nextIdx + 1) % len(m.windows)
+		if currentIdx == len(nonMinimized)-1 {
+			// At last window - go to dock if available
+			if hasDock && dockProvider != nil {
+				dockProvider.FocusDock()
+				m.RequestRepaint()
+				return
+			}
+			// Otherwise wrap to first window
+			m.ActivateWindow(nonMinimized[0])
 		} else {
-			nextIdx = (nextIdx - 1 + len(m.windows)) % len(m.windows)
+			m.ActivateWindow(nonMinimized[currentIdx+1])
 		}
-		if nextIdx == startIdx {
-			return // All windows minimized
+	} else {
+		if currentIdx <= 0 {
+			// At first window (or no active window) - go to dock if available
+			if hasDock && dockProvider != nil {
+				dockProvider.FocusDock()
+				m.RequestRepaint()
+				return
+			}
+			// Otherwise wrap to last window
+			m.ActivateWindow(nonMinimized[len(nonMinimized)-1])
+		} else {
+			m.ActivateWindow(nonMinimized[currentIdx-1])
 		}
 	}
-
-	// Activate (will also bring to front)
-	m.mu.Unlock()
-	m.ActivateWindow(m.windows[nextIdx])
-	m.mu.Lock()
 }
 
 // Paint renders all windows.

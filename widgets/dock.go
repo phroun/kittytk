@@ -22,16 +22,20 @@ type DockRow struct {
 
 	// Layout configuration
 	entryWidth int // Width in characters per entry
+
+	// Keyboard navigation
+	selectedIndex int // Currently selected entry when focused (-1 = none)
 }
 
 // NewDockRow creates a new dock row.
 func NewDockRow() *DockRow {
 	d := &DockRow{
-		entryWidth: 16, // Default 16 chars per entry
+		entryWidth:    16, // Default 16 chars per entry
+		selectedIndex: -1,
 	}
 	d.WidgetBase = *core.NewWidgetBase()
 	d.Init(d)
-	d.SetFocusPolicy(core.NoFocus)
+	d.SetFocusPolicy(core.StrongFocus)
 	return d
 }
 
@@ -131,9 +135,11 @@ func (d *DockRow) Paint(p *core.Painter) {
 
 	bounds := d.Bounds()
 	metrics := p.Metrics()
+	focused := d.HasFocus()
 
-	// Dock style: cyan on blue
+	// Dock styles
 	dockStyle := style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlue)
+	selectedStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorBrightCyan)
 
 	// Draw background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', dockStyle)
@@ -153,6 +159,12 @@ func (d *DockRow) Paint(p *core.Painter) {
 		x := core.Unit(col) * entryWidthUnits
 		y := core.Unit(row) * metrics.CellHeight
 
+		// Choose style based on selection
+		entryStyle := dockStyle
+		if focused && i == d.selectedIndex {
+			entryStyle = selectedStyle
+		}
+
 		// Draw entry background (button-like)
 		entryRect := core.UnitRect{
 			X:      x,
@@ -160,11 +172,11 @@ func (d *DockRow) Paint(p *core.Painter) {
 			Width:  entryWidthUnits,
 			Height: metrics.CellHeight,
 		}
-		p.FillRect(entryRect, ' ', dockStyle)
+		p.FillRect(entryRect, ' ', entryStyle)
 
 		// Draw border characters
-		p.DrawCell(x, y, '[', dockStyle)
-		p.DrawCell(x+entryWidthUnits-metrics.CellWidth, y, ']', dockStyle)
+		p.DrawCell(x, y, '[', entryStyle)
+		p.DrawCell(x+entryWidthUnits-metrics.CellWidth, y, ']', entryStyle)
 
 		// Draw title (truncated if needed)
 		title := entry.Title
@@ -175,10 +187,87 @@ func (d *DockRow) Paint(p *core.Painter) {
 
 		textX := x + metrics.CellWidth
 		for _, ch := range title {
-			p.DrawCell(textX, y, ch, dockStyle)
+			p.DrawCell(textX, y, ch, entryStyle)
 			textX += metrics.CellWidth
 		}
 	}
+}
+
+// SelectedIndex returns the currently selected entry index (-1 if none).
+func (d *DockRow) SelectedIndex() int {
+	return d.selectedIndex
+}
+
+// SetSelectedIndex sets the selected entry index.
+func (d *DockRow) SetSelectedIndex(index int) {
+	if index < -1 {
+		index = -1
+	}
+	if index >= len(d.entries) {
+		index = len(d.entries) - 1
+	}
+	d.selectedIndex = index
+	d.Update()
+}
+
+// HandleFocusIn is called when focus is gained.
+func (d *DockRow) HandleFocusIn() {
+	// Select first entry when gaining focus
+	if len(d.entries) > 0 && d.selectedIndex < 0 {
+		d.selectedIndex = 0
+	}
+	d.Update()
+}
+
+// HandleFocusOut is called when focus is lost.
+func (d *DockRow) HandleFocusOut() {
+	d.selectedIndex = -1
+	d.Update()
+}
+
+// HandleKeyPress handles keyboard input.
+func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
+	if len(d.entries) == 0 {
+		return false
+	}
+
+	switch event.Key {
+	case "Left":
+		if d.selectedIndex > 0 {
+			d.selectedIndex--
+			d.Update()
+		}
+		return true
+
+	case "Right":
+		if d.selectedIndex < len(d.entries)-1 {
+			d.selectedIndex++
+			d.Update()
+		}
+		return true
+
+	case "Home":
+		d.selectedIndex = 0
+		d.Update()
+		return true
+
+	case "End":
+		d.selectedIndex = len(d.entries) - 1
+		d.Update()
+		return true
+
+	case "Enter", " ", "Space":
+		// Activate selected entry
+		if d.selectedIndex >= 0 && d.selectedIndex < len(d.entries) {
+			entry := d.entries[d.selectedIndex]
+			if entry.OnClick != nil {
+				entry.OnClick()
+			}
+		}
+		return true
+	}
+
+	return false
 }
 
 // HandleMousePress handles mouse clicks.

@@ -307,6 +307,36 @@ func (d *Desktop) DockRowHeight() core.Unit {
 	return d.dockRow.RequiredHeight()
 }
 
+// DockEntryCount returns the number of entries in the dock.
+func (d *Desktop) DockEntryCount() int {
+	if d.dockRow == nil {
+		return 0
+	}
+	return d.dockRow.EntryCount()
+}
+
+// IsDockFocused returns true if the dock currently has focus.
+func (d *Desktop) IsDockFocused() bool {
+	if d.dockRow == nil {
+		return false
+	}
+	return d.dockRow.HasFocus()
+}
+
+// FocusDock sets focus to the dock.
+func (d *Desktop) FocusDock() {
+	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+		d.dockRow.SetFocus()
+	}
+}
+
+// UnfocusDock removes focus from the dock.
+func (d *Desktop) UnfocusDock() {
+	if d.dockRow != nil {
+		d.dockRow.ClearFocus()
+	}
+}
+
 // SizeHint returns the preferred size.
 func (d *Desktop) SizeHint() core.UnitSize {
 	// Desktop fills available space
@@ -397,6 +427,11 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 		if d.menuBar.ActiveMenu() != nil || d.menuBar.HasFocus() {
 			return d.menuBar.HandleKeyPress(event)
 		}
+	}
+
+	// If dock has focus, forward keys to it
+	if d.dockRow != nil && d.dockRow.HasFocus() {
+		return d.dockRow.HandleKeyPress(event)
 	}
 
 	// Forward to content
