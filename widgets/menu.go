@@ -1096,6 +1096,27 @@ func (m *MenuBar) Paint(p *core.Painter) {
 
 		x += menuWidth
 	}
+
+	// Draw date/time on the far right edge
+	now := time.Now()
+	dateTimeStr := now.Format(" Mon Jan 02 15:04 ")
+	dateTimeStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorYellow)
+
+	// Calculate position for right-aligned date/time
+	dateTimeWidth := core.Unit(len(dateTimeStr)) * metrics.CellWidth
+	dateTimeX := bounds.Width - dateTimeWidth
+
+	// Draw date/time background and text
+	p.FillRect(core.UnitRect{
+		X:      dateTimeX,
+		Y:      0,
+		Width:  dateTimeWidth,
+		Height: metrics.CellHeight,
+	}, ' ', dateTimeStyle)
+
+	for i, ch := range dateTimeStr {
+		p.DrawCell(dateTimeX+core.Unit(i)*metrics.CellWidth, 0, ch, dateTimeStyle)
+	}
 }
 
 // PaintDropdown renders the active menu dropdown (call after windows for correct z-order).
