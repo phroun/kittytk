@@ -11,13 +11,16 @@ import (
 
 // MenuItem represents an item in a menu.
 type MenuItem struct {
-	Text      string
-	Shortcut  core.Shortcut
-	Icon      *style.TextIcon
-	Enabled   bool
-	Checkable bool
-	Checked   bool
-	Separator bool // If true, this is a separator line
+	Text            string          // Display text (with & removed, && converted to &)
+	rawText         string          // Original text with & markup
+	acceleratorChar rune            // The accelerator character (lowercase), 0 if none
+	acceleratorPos  int             // Position in display text where accelerator appears, -1 if none
+	Shortcut        core.Shortcut
+	Icon            *style.TextIcon
+	Enabled         bool
+	Checkable       bool
+	Checked         bool
+	Separator       bool // If true, this is a separator line
 
 	// Submenu
 	SubMenu *Menu
@@ -28,10 +31,34 @@ type MenuItem struct {
 
 // NewMenuItem creates a new menu item.
 func NewMenuItem(text string) *MenuItem {
+	displayText, accel, pos := parseAcceleratorTitle(text)
 	return &MenuItem{
-		Text:    text,
-		Enabled: true,
+		Text:            displayText,
+		rawText:         text,
+		acceleratorChar: accel,
+		acceleratorPos:  pos,
+		Enabled:         true,
 	}
+}
+
+// SetText sets the menu item text with accelerator parsing.
+func (m *MenuItem) SetText(text string) {
+	displayText, accel, pos := parseAcceleratorTitle(text)
+	m.rawText = text
+	m.Text = displayText
+	m.acceleratorChar = accel
+	m.acceleratorPos = pos
+}
+
+// AcceleratorChar returns the accelerator character (lowercase) or 0 if none.
+func (m *MenuItem) AcceleratorChar() rune {
+	return m.acceleratorChar
+}
+
+// AcceleratorPos returns the position in the display text where the accelerator
+// character appears, or -1 if none.
+func (m *MenuItem) AcceleratorPos() int {
+	return m.acceleratorPos
 }
 
 // NewSeparator creates a separator menu item.
@@ -98,10 +125,13 @@ type Menu struct {
 	core.WidgetBase
 	core.AccessibleWidget
 
-	title        string
-	items        []*MenuItem
-	currentIndex int
-	visible      bool
+	title           string // Display title (with & removed, && converted to &)
+	rawTitle        string // Original title with & markup
+	acceleratorChar rune   // The accelerator character (lowercase), 0 if none
+	acceleratorPos  int    // Position in display title where accelerator appears, -1 if none
+	items           []*MenuItem
+	currentIndex    int
+	visible         bool
 
 	// Position when shown as popup
 	popupX, popupY core.Unit
@@ -125,19 +155,59 @@ type Menu struct {
 	onAboutToHide func()
 }
 
+// parseAcceleratorTitle parses a title with & markup.
+// Returns: display title, accelerator character (lowercase), position in display title
+// Examples: "&File" -> "File", 'f', 0
+//
+//	"E&xit" -> "Exit", 'x', 1
+//	"Save && Exit" -> "Save & Exit", 0, -1
+func parseAcceleratorTitle(raw string) (display string, accel rune, pos int) {
+	pos = -1
+	runes := []rune(raw)
+	var result []rune
+
+	for i := 0; i < len(runes); i++ {
+		if runes[i] == '&' {
+			if i+1 < len(runes) && runes[i+1] == '&' {
+				// Escaped ampersand
+				result = append(result, '&')
+				i++ // Skip next &
+			} else if i+1 < len(runes) {
+				// Accelerator - next char is the accelerator
+				if pos < 0 { // Only use first accelerator
+					pos = len(result)
+					accel = rune(strings.ToLower(string(runes[i+1]))[0])
+				}
+				result = append(result, runes[i+1])
+				i++ // Skip the accelerator char (we already added it)
+			}
+			// else: trailing & is just dropped
+		} else {
+			result = append(result, runes[i])
+		}
+	}
+
+	display = string(result)
+	return
+}
+
 // NewMenu creates a new menu.
 func NewMenu(title string) *Menu {
+	displayTitle, accel, pos := parseAcceleratorTitle(title)
 	m := &Menu{
-		title:        title,
-		currentIndex: -1,
-		maxVisible:   12, // Default max visible items
+		rawTitle:        title,
+		title:           displayTitle,
+		acceleratorChar: accel,
+		acceleratorPos:  pos,
+		currentIndex:    -1,
+		maxVisible:      12, // Default max visible items
 	}
 	m.WidgetBase = *core.NewWidgetBase()
 	// Note: Menu doesn't call Init because it has a Show(x,y) method
 	// with different signature than Widget.Show()
 	m.SetFocusPolicy(core.StrongFocus)
 	m.SetAccessibleRole(core.RoleMenu)
-	m.SetAccessibleName(title)
+	m.SetAccessibleName(displayTitle)
 	return m
 }
 
@@ -153,8 +223,23 @@ func (m *Menu) Title() string {
 
 // SetTitle sets the menu title.
 func (m *Menu) SetTitle(title string) {
-	m.title = title
-	m.SetAccessibleName(title)
+	displayTitle, accel, pos := parseAcceleratorTitle(title)
+	m.rawTitle = title
+	m.title = displayTitle
+	m.acceleratorChar = accel
+	m.acceleratorPos = pos
+	m.SetAccessibleName(displayTitle)
+}
+
+// AcceleratorChar returns the accelerator character (lowercase) or 0 if none.
+func (m *Menu) AcceleratorChar() rune {
+	return m.acceleratorChar
+}
+
+// AcceleratorPos returns the position in the display title where the accelerator
+// character appears, or -1 if none.
+func (m *Menu) AcceleratorPos() int {
+	return m.acceleratorPos
 }
 
 // AddItem adds an item to the menu.
@@ -538,9 +623,15 @@ func (m *Menu) Paint(p *core.Painter) {
 		}
 		x += metrics.CellWidth * 2
 
-		// Draw text
-		for _, ch := range item.Text {
-			p.DrawCell(x, itemY, ch, s)
+		// Draw text with accelerator highlighting
+		accelStyle := style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+		for idx, ch := range item.Text {
+			charStyle := s
+			// Highlight accelerator for enabled items
+			if item.Enabled && idx == item.acceleratorPos {
+				charStyle = accelStyle
+			}
+			p.DrawCell(x, itemY, ch, charStyle)
 			x += metrics.CellWidth
 		}
 
@@ -680,13 +771,22 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 	}
 
-	// Check for mnemonics (first letter)
+	// Check for accelerator keys (single character, case insensitive, no modifiers)
+	// These work when a menu is dropped down
 	if len(event.Key) == 1 {
-		key := strings.ToLower(event.Key)
-		for i, item := range m.items {
-			if item.Enabled && !item.Separator && len(item.Text) > 0 {
-				if strings.ToLower(string(item.Text[0])) == key {
+		letter := event.Key[0]
+		// Match letters and digits without any modifier prefix
+		if (letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z') ||
+			(letter >= '0' && letter <= '9') {
+			key := rune(strings.ToLower(string(letter))[0])
+			for i, item := range m.items {
+				if !item.Separator && item.acceleratorChar == key {
 					m.currentIndex = i
+					if !item.Enabled {
+						// Disabled items with matching accelerator: do nothing but consume the key
+						m.Update()
+						return true
+					}
 					if item.SubMenu != nil {
 						m.openSubMenu(item)
 					} else {
@@ -928,11 +1028,17 @@ type MenuBar struct {
 	// Appearance
 	showShortcuts bool
 
+	// Accelerator display state
+	// Accelerators are shown when:
+	// - Menu bar has focus and no menu is down, OR
+	// - No keybinding conflict exists for the accelerator key
+	acceleratorsActive bool // True when menu bar focused with no menu down
+
 	// Drag tracking for click-and-drag menu navigation
-	mouseDown      bool  // Mouse button is held down
-	dragging       bool  // Actually dragging (mouse moved while down)
-	mouseDownX     core.Unit
-	mouseDownY     core.Unit
+	mouseDown  bool // Mouse button is held down
+	dragging   bool // Actually dragging (mouse moved while down)
+	mouseDownX core.Unit
+	mouseDownY core.Unit
 }
 
 // NewMenuBar creates a new menu bar.
@@ -946,6 +1052,47 @@ func NewMenuBar() *MenuBar {
 	m.SetFocusPolicy(core.StrongFocus)
 	m.SetAccessibleRole(core.RoleMenuBar)
 	return m
+}
+
+// hasAcceleratorConflict checks if a menu accelerator key conflicts with any
+// registered keybinding (e.g., Alt+key is used for something else).
+func (m *MenuBar) hasAcceleratorConflict(accel rune) bool {
+	if accel == 0 {
+		return false
+	}
+	// Check if M-<letter> is bound to any action
+	key := "M-" + string(accel)
+	action := core.DefaultKeyBindings.FindAction(key)
+	return action != ""
+}
+
+// ShouldShowAccelerator returns whether the accelerator for a menu should be
+// highlighted in red. Returns true if:
+// - The menu bar has focus and no menu is dropped down, OR
+// - There is no keybinding conflict for this accelerator
+func (m *MenuBar) ShouldShowAccelerator(menu *Menu) bool {
+	if menu.acceleratorChar == 0 {
+		return false
+	}
+	// Always show when menu bar is focused with no menu down
+	if m.acceleratorsActive {
+		return true
+	}
+	// Otherwise, only show if there's no keybinding conflict
+	return !m.hasAcceleratorConflict(menu.acceleratorChar)
+}
+
+// AcceleratorsActive returns whether accelerator highlighting is currently active.
+func (m *MenuBar) AcceleratorsActive() bool {
+	return m.acceleratorsActive
+}
+
+// setAcceleratorsActive updates the accelerators active state.
+func (m *MenuBar) setAcceleratorsActive(active bool) {
+	if m.acceleratorsActive != active {
+		m.acceleratorsActive = active
+		m.Update()
+	}
 }
 
 // AddMenu adds a menu to the bar.
@@ -1012,6 +1159,7 @@ func (m *MenuBar) OpenMenu(index int) {
 	m.CloseMenu()
 	m.currentIndex = index
 	m.activeMenu = m.menus[index]
+	m.acceleratorsActive = false // Disable bar accelerators when menu is down
 
 	// Calculate position
 	metrics := core.DefaultCellMetrics()
@@ -1022,13 +1170,34 @@ func (m *MenuBar) OpenMenu(index int) {
 	m.Update()
 }
 
-// CloseMenu closes the active menu.
+// CloseMenu closes the active menu but keeps the menu bar focused.
 func (m *MenuBar) CloseMenu() {
+	wasOpen := m.activeMenu != nil
+	if m.activeMenu != nil {
+		m.activeMenu.Hide()
+		m.activeMenu = nil
+	}
+	// Re-enable accelerators if still focused
+	if m.HasFocus() {
+		m.acceleratorsActive = true
+		// Keep currentIndex if we just closed a menu (for continued navigation)
+		if !wasOpen {
+			m.currentIndex = -1
+		}
+	} else {
+		m.currentIndex = -1
+	}
+	m.Update()
+}
+
+// CloseMenuAndUnfocus closes the active menu and unfocuses the menu bar.
+func (m *MenuBar) CloseMenuAndUnfocus() {
 	if m.activeMenu != nil {
 		m.activeMenu.Hide()
 		m.activeMenu = nil
 	}
 	m.currentIndex = -1
+	m.acceleratorsActive = false
 	m.Update()
 }
 
@@ -1087,10 +1256,16 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			Height: metrics.CellHeight,
 		}, ' ', s)
 
-		// Draw title
+		// Draw title with accelerator highlighting
 		textX := x + metrics.CellWidth
-		for _, ch := range menu.title {
-			p.DrawCell(textX, 0, ch, s)
+		accelStyle := style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+		showAccel := m.ShouldShowAccelerator(menu)
+		for idx, ch := range menu.title {
+			charStyle := s
+			if showAccel && idx == menu.acceleratorPos {
+				charStyle = accelStyle
+			}
+			p.DrawCell(textX, 0, ch, charStyle)
 			textX += metrics.CellWidth
 		}
 
@@ -1187,36 +1362,71 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	case "Escape":
 		if m.activeMenu != nil {
+			// First escape: close menu but keep menu bar focused
 			m.CloseMenu()
 			return true
 		}
+		// Second escape: unfocus menu bar (return false to let parent handle)
 		return false
 
 	case "F10":
 		// Toggle menu bar focus
 		if m.HasFocus() {
-			m.CloseMenu()
-			m.currentIndex = -1
+			m.CloseMenuAndUnfocus()
 		} else {
 			m.SetFocus()
-			m.currentIndex = 0
+			if m.currentIndex < 0 && len(m.menus) > 0 {
+				m.currentIndex = 0
+			}
 		}
 		m.Update()
 		return true
 	}
 
-	// Check Alt+key shortcuts
-	if event.Modifiers&core.AltModifier != 0 && len(event.Key) == 1 {
-		key := strings.ToLower(event.Key)
-		for i, menu := range m.menus {
-			if len(menu.title) > 0 && strings.ToLower(string(menu.title[0])) == key {
-				m.OpenMenu(i)
-				return true
+	// Check Alt+key shortcuts (M-<letter> format, lowercase only - no shift)
+	if strings.HasPrefix(event.Key, "M-") && len(event.Key) == 3 {
+		letter := event.Key[2]
+		// Only match lowercase (M-f not M-F) to avoid shift combinations
+		if letter >= 'a' && letter <= 'z' {
+			key := rune(letter)
+			for i, menu := range m.menus {
+				if menu.acceleratorChar == key {
+					m.SetFocus()
+					m.OpenMenu(i)
+					return true
+				}
+			}
+		}
+	}
+
+	// Check accessibility keys: when menu bar is focused with no menu down,
+	// single letter keys (no modifiers) activate menus
+	if m.HasFocus() && m.activeMenu == nil && len(event.Key) == 1 {
+		letter := event.Key[0]
+		// Accept both uppercase and lowercase single letters (no modifier prefix)
+		if (letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z') {
+			key := rune(strings.ToLower(event.Key)[0])
+			for i, menu := range m.menus {
+				if menu.acceleratorChar == key {
+					m.OpenMenu(i)
+					return true
+				}
 			}
 		}
 	}
 
 	return false
+}
+
+// findMenuByAccelerator finds a menu by its accelerator character.
+func (m *MenuBar) findMenuByAccelerator(key rune) int {
+	key = rune(strings.ToLower(string(key))[0])
+	for i, menu := range m.menus {
+		if menu.acceleratorChar == key {
+			return i
+		}
+	}
+	return -1
 }
 
 // HandleMousePress handles mouse clicks.
@@ -1283,6 +1493,10 @@ func (m *MenuBar) HandleFocusIn() {
 	if m.currentIndex < 0 && len(m.menus) > 0 {
 		m.currentIndex = 0
 	}
+	// Enable accelerator display when focused with no menu down
+	if m.activeMenu == nil {
+		m.acceleratorsActive = true
+	}
 	m.Update()
 }
 
@@ -1291,6 +1505,7 @@ func (m *MenuBar) HandleFocusOut() {
 	m.CloseMenu()
 	m.dragging = false
 	m.currentIndex = -1
+	m.acceleratorsActive = false
 	m.Update()
 }
 

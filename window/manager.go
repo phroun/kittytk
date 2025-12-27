@@ -1237,6 +1237,16 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
+	// Check if desktop's menu bar is active (has focus or has open menu)
+	// If so, send keys to desktop first to prevent window from intercepting
+	if desktop != nil {
+		if menuActive, ok := desktop.(interface{ IsMenuBarActive() bool }); ok && menuActive.IsMenuBarActive() {
+			if desktop.HandleKeyPress(event) {
+				return true
+			}
+		}
+	}
+
 	// Pass to active window first (but not if minimized)
 	if active != nil && !active.IsMinimized() {
 		if active.HandleKeyPress(event) {

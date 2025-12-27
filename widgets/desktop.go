@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"strings"
+
 	"github.com/phroun/tuitk/core"
 )
 
@@ -139,6 +141,15 @@ func (d *Desktop) ActiveMenuBounds() core.UnitRect {
 		return core.UnitRect{}
 	}
 	return d.menuBar.ActiveMenuBounds()
+}
+
+// IsMenuBarActive returns true if the menu bar has focus or has a menu open,
+// indicating that keyboard events should be routed to the desktop before windows.
+func (d *Desktop) IsMenuBarActive() bool {
+	if d.menuBar == nil {
+		return false
+	}
+	return d.menuBar.HasFocus() || d.menuBar.ActiveMenu() != nil
 }
 
 // SetStatusBar sets the status bar (displayed at the bottom).
@@ -410,22 +421,29 @@ func (d *Desktop) Paint(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
-	// Check if menu bar wants to handle Alt+key
+	// Check if menu bar wants to handle keys
 	if d.menuBar != nil {
-		// F10 or Alt key activates menu bar
+		// F10 toggles menu bar focus
 		if event.Key == "F10" {
 			d.menuBar.HandleKeyPress(event)
 			return true
 		}
-		// Alt+letter for menu shortcuts
-		if event.Modifiers&core.AltModifier != 0 && len(event.Key) == 1 {
+		// Alt+letter (M-<letter>) for menu shortcuts
+		if strings.HasPrefix(event.Key, "M-") && len(event.Key) == 3 {
 			if d.menuBar.HandleKeyPress(event) {
 				return true
 			}
 		}
-		// If menu bar is active, forward all keys to it
+		// If menu bar is active (has focus or menu open), forward all keys to it
 		if d.menuBar.ActiveMenu() != nil || d.menuBar.HasFocus() {
-			return d.menuBar.HandleKeyPress(event)
+			handled := d.menuBar.HandleKeyPress(event)
+			// If menu bar didn't handle Escape and has focus (no menu open),
+			// unfocus the menu bar
+			if !handled && event.Key == "Escape" && d.menuBar.HasFocus() {
+				d.menuBar.CloseMenuAndUnfocus()
+				return true
+			}
+			return handled
 		}
 	}
 
