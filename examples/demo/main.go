@@ -3,7 +3,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/phroun/tuitk/app"
 	"github.com/phroun/tuitk/backend"
@@ -16,10 +15,8 @@ import (
 
 func main() {
 	// Create the TUI backend with default options
-	tuiBackend := backend.NewTUIBackend(backend.TUIOptions{
-		Output: os.Stdout,
-		Input:  os.Stdin,
-	})
+	opts := backend.DefaultTUIOptions()
+	tuiBackend := backend.NewTUIBackend(opts)
 
 	// Create the application
 	application := app.New(tuiBackend)
