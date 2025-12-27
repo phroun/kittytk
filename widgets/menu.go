@@ -1770,6 +1770,16 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 			}
 		}
 
+		// Check for click on left ellipsis ("... ") to scroll left
+		if m.scrollOffset > 0 {
+			ellipsisWidth := metrics.TextWidth(4) // "... "
+			if event.X >= 0 && event.X < ellipsisWidth {
+				m.scrollOffset--
+				m.Update()
+				return true
+			}
+		}
+
 		// Find which menu was clicked (accounting for scroll offset)
 		x := core.Unit(0)
 		if m.scrollOffset > 0 {
