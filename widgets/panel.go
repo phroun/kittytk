@@ -195,10 +195,24 @@ func (p *Panel) HandleKeyPress(event core.KeyPressEvent) bool {
 // HandleMousePress handles mouse clicks.
 func (p *Panel) HandleMousePress(event core.MousePressEvent) bool {
 	// Find child under mouse and forward event
-	child := p.ChildAt(core.UnitPoint{X: event.X, Y: event.Y})
-	if child != nil {
-		if handler, ok := child.(interface{ HandleMousePress(core.MousePressEvent) bool }); ok {
-			childBounds := child.Bounds()
+	targetChild := p.ChildAt(core.UnitPoint{X: event.X, Y: event.Y})
+
+	// Cancel drags on all OTHER children since a new press is happening
+	for _, child := range p.children {
+		if child == targetChild {
+			continue // Don't cancel the child that will receive the press
+		}
+		if handler, ok := child.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			handler.HandleMouseRelease(core.MouseReleaseEvent{Button: event.Button})
+		}
+	}
+
+	// Forward press to the target child
+	if targetChild != nil {
+		if handler, ok := targetChild.(interface{ HandleMousePress(core.MousePressEvent) bool }); ok {
+			childBounds := targetChild.Bounds()
 			childEvent := event
 			childEvent.X -= childBounds.X
 			childEvent.Y -= childBounds.Y

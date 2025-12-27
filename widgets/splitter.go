@@ -389,6 +389,14 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 	pos := core.UnitPoint{X: event.X, Y: event.Y}
 
 	if firstBounds.Contains(pos) && s.first != nil {
+		// Cancel any drag on the other child since a new press is happening elsewhere
+		if s.second != nil {
+			if handler, ok := s.second.(interface {
+				HandleMouseRelease(core.MouseReleaseEvent) bool
+			}); ok {
+				handler.HandleMouseRelease(core.MouseReleaseEvent{Button: event.Button})
+			}
+		}
 		localEvent := event
 		localEvent.X -= firstBounds.X
 		localEvent.Y -= firstBounds.Y
@@ -396,10 +404,35 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	if secondBounds.Contains(pos) && s.second != nil {
+		// Cancel any drag on the other child since a new press is happening elsewhere
+		if s.first != nil {
+			if handler, ok := s.first.(interface {
+				HandleMouseRelease(core.MouseReleaseEvent) bool
+			}); ok {
+				handler.HandleMouseRelease(core.MouseReleaseEvent{Button: event.Button})
+			}
+		}
 		localEvent := event
 		localEvent.X -= secondBounds.X
 		localEvent.Y -= secondBounds.Y
 		return s.second.HandleMousePress(localEvent)
+	}
+
+	// Click is not on either child (maybe on divider that wasn't handled, or outside)
+	// Cancel drags on both children
+	if s.first != nil {
+		if handler, ok := s.first.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			handler.HandleMouseRelease(core.MouseReleaseEvent{Button: event.Button})
+		}
+	}
+	if s.second != nil {
+		if handler, ok := s.second.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			handler.HandleMouseRelease(core.MouseReleaseEvent{Button: event.Button})
+		}
 	}
 
 	return false
