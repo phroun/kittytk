@@ -1501,10 +1501,12 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 	metrics := core.DefaultCellMetrics()
 	bounds := t.Bounds()
 
-	// Check if clicking on left ellipse (scroll left by one)
+	// Check if clicking on left ellipse (scroll left by one and select that tab)
 	if t.tabScrollOffset > 0 {
 		leftEllipseWidth := metrics.TextWidth(3)
 		if x < leftEllipseWidth {
+			// Select the tab that was just out of view (the one the ellipse replaced)
+			t.SetCurrentIndex(t.tabScrollOffset - 1)
 			t.tabScrollOffset--
 			t.Update()
 			return
