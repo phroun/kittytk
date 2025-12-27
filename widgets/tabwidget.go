@@ -369,6 +369,19 @@ func (t *TabWidget) SetOnTabCloseRequested(handler func(index int)) {
 	t.onTabCloseRequested = handler
 }
 
+// BackgroundColor returns the TabWidget's background color.
+// If no explicit background is set, returns ColorDefault (ANSI 49)
+// so that child widgets inherit the correct color.
+func (t *TabWidget) BackgroundColor() *style.Color {
+	// First check if an explicit background color was set
+	if bg := t.WidgetBase.BackgroundColor(); bg != nil {
+		return bg
+	}
+	// Fall back to terminal default (ANSI 49)
+	defaultColor := style.ColorDefault
+	return &defaultColor
+}
+
 // tabBarHeight returns the height of the tab bar.
 func (t *TabWidget) tabBarHeight() core.Unit {
 	metrics := core.DefaultCellMetrics()
