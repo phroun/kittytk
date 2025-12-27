@@ -675,10 +675,7 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 	metrics := p.Metrics()
 
 	// Draw background using inherited background color
-	bgStyle := theme.Normal
-	if bg := s.EffectiveBackgroundColor(); bg != style.ColorDefault {
-		bgStyle = bgStyle.WithBg(bg)
-	}
+	bgStyle := theme.Normal.WithBg(s.EffectiveBackgroundColor())
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
 	viewport := s.viewportBounds()
