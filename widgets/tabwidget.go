@@ -597,8 +597,13 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 	// Tab bar style: silver on blue
 	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
-	// Selected tab style: bold yellow on blue
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorBlue).Bold()
+	// Selected tab style when unfocused: uses page control's background color
+	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold()
+	if bg := t.BackgroundColor(); bg != nil {
+		selectedStyle = selectedStyle.WithBg(*bg)
+	} else {
+		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
+	}
 	// Focused selected tab style: yellow on teal (for angle brackets and title)
 	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorCyan).Bold()
 	// Pressed button style (inverted)
@@ -850,8 +855,13 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 
 	// Tab bar style: silver on blue
 	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
-	// Selected tab style: bold yellow on blue
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorBlue).Bold()
+	// Selected tab style when unfocused: uses page control's background color
+	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold()
+	if bg := t.BackgroundColor(); bg != nil {
+		selectedStyle = selectedStyle.WithBg(*bg)
+	} else {
+		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
+	}
 
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
