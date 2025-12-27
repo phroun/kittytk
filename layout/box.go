@@ -105,6 +105,20 @@ func (l *BoxLayout) ItemAt(index int) *LayoutItem {
 	return l.items[index]
 }
 
+// isInlineWidget returns true if the widget is an inline (non-container) widget.
+func isInlineWidget(w core.Widget) bool {
+	// If it implements InlineWidget interface and returns true, it's inline
+	if inline, ok := w.(core.InlineWidget); ok && inline.IsInlineWidget() {
+		return true
+	}
+	// If it's a Container, it's not inline
+	if _, ok := w.(core.Container); ok {
+		return false
+	}
+	// Default: treat as inline if not a container
+	return true
+}
+
 // Layout arranges children within the given bounds.
 func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	if len(l.items) == 0 {
@@ -125,13 +139,32 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 		spacing = core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.CellHeight
 	}
 
+	// For horizontal layout, calculate additional spacing for inline widgets
+	var inlineSpacingTotal core.Unit
+	if l.orientation == core.Horizontal && len(l.items) > 0 {
+		// Space before first inline widget
+		if isInlineWidget(l.items[0].Widget) {
+			inlineSpacingTotal += metrics.CellWidth
+		}
+		// Space between items where at least one is inline
+		for i := 0; i < len(l.items)-1; i++ {
+			if isInlineWidget(l.items[i].Widget) || isInlineWidget(l.items[i+1].Widget) {
+				inlineSpacingTotal += metrics.CellWidth
+			}
+		}
+		// Space after last inline widget
+		if isInlineWidget(l.items[len(l.items)-1].Widget) {
+			inlineSpacingTotal += metrics.CellWidth
+		}
+	}
+
 	// Collect size hints and stretch factors
 	stretchItems := make([]stretchItem, len(l.items))
 	totalSpacing := spacing * core.Unit(len(l.items)-1)
 
 	var availablePrimary core.Unit
 	if l.orientation == core.Horizontal {
-		availablePrimary = rect.Width - totalSpacing
+		availablePrimary = rect.Width - totalSpacing - inlineSpacingTotal
 	} else {
 		availablePrimary = rect.Height - totalSpacing
 	}
@@ -173,6 +206,10 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	var pos core.Unit
 	if l.orientation == core.Horizontal {
 		pos = rect.X
+		// Add margin before first inline widget
+		if len(l.items) > 0 && isInlineWidget(l.items[0].Widget) {
+			pos += metrics.CellWidth
+		}
 	} else {
 		pos = rect.Y
 	}
@@ -188,6 +225,14 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 				Height: rect.Height,
 			}
 			pos += sizes[i] + spacing
+
+			// Add inline margin after this item if needed
+			// (between items where at least one is inline)
+			if i < len(l.items)-1 {
+				if isInlineWidget(item.Widget) || isInlineWidget(l.items[i+1].Widget) {
+					pos += metrics.CellWidth
+				}
+			}
 		} else {
 			// In vertical layout, apply horizontal margin to inline widgets
 			itemX := rect.X
