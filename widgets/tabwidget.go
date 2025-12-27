@@ -990,19 +990,27 @@ func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, theme 
 
 func (t *TabWidget) paintContent(p *core.Painter) {
 	contentBounds := t.contentBounds()
-	theme := t.Theme()
 
 	// Fill content area with TabWidget's background color if set
-	contentStyle := theme.Normal
+	// Use ColorDefault (ANSI 49) when no explicit background is set
 	if bg := t.BackgroundColor(); bg != nil {
-		contentStyle = contentStyle.WithBg(*bg)
+		contentStyle := style.DefaultStyle().WithBg(*bg)
+		p.FillRect(core.UnitRect{
+			X:      contentBounds.X,
+			Y:      contentBounds.Y,
+			Width:  contentBounds.Width,
+			Height: contentBounds.Height,
+		}, ' ', contentStyle)
+	} else {
+		// Use terminal default background (ANSI 49)
+		contentStyle := style.DefaultStyle()
+		p.FillRect(core.UnitRect{
+			X:      contentBounds.X,
+			Y:      contentBounds.Y,
+			Width:  contentBounds.Width,
+			Height: contentBounds.Height,
+		}, ' ', contentStyle)
 	}
-	p.FillRect(core.UnitRect{
-		X:      contentBounds.X,
-		Y:      contentBounds.Y,
-		Width:  contentBounds.Width,
-		Height: contentBounds.Height,
-	}, ' ', contentStyle)
 
 	if t.currentIndex < 0 || t.currentIndex >= len(t.tabs) {
 		return
