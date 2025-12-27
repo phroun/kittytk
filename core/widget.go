@@ -235,6 +235,13 @@ type PopupController interface {
 	ScreenBounds() UnitRect
 }
 
+// ScrollOffsetProvider is implemented by widgets that scroll their content
+// (like ScrollArea). Used by MapToScreen to adjust for scroll position.
+type ScrollOffsetProvider interface {
+	// ScrollOffset returns the current scroll offset in cell units.
+	ScrollOffset() (x, y int)
+}
+
 // Application is a forward declaration (defined in app package).
 // This interface allows widgets to access application-level services.
 type Application struct {

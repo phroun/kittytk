@@ -966,9 +966,17 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		return true
 
 	case "S-Tab", "Shift-Tab":
-		// Move to previous title element
+		// Move to previous title element, or loop to content's last widget
 		prev := w.prevTitleFocus(titleFocus)
-		w.SetTitleFocus(prev)
+		if prev == titleFocus {
+			// At first title element, loop to content's last widget
+			w.SetTitleFocus(TitleFocusNone)
+			if fm := w.FocusManager(); fm != nil {
+				fm.FocusLast()
+			}
+		} else {
+			w.SetTitleFocus(prev)
+		}
 		return true
 
 	case "Escape":

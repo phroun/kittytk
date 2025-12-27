@@ -597,6 +597,7 @@ func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) co
 	// - Window's bounds are its screen position
 	// - Window is part of the widget hierarchy (content.SetParent(window))
 	result := local
+	metrics := core.DefaultCellMetrics()
 
 	current := widget
 	for current != nil {
@@ -608,6 +609,14 @@ func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) co
 		if parent == nil {
 			break
 		}
+
+		// Check if parent is a scroll container and adjust for scroll offset
+		if scroller, ok := parent.(core.ScrollOffsetProvider); ok {
+			scrollX, scrollY := scroller.ScrollOffset()
+			result.X -= core.Unit(scrollX) * metrics.CellWidth
+			result.Y -= core.Unit(scrollY) * metrics.CellHeight
+		}
+
 		if pw, ok := parent.(core.Widget); ok {
 			current = pw
 		} else {

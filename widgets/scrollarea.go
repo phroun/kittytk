@@ -555,6 +555,12 @@ func (s *ScrollArea) ScrollTo(x, y int) {
 	s.SetScrollY(y)
 }
 
+// ScrollOffset returns the current scroll offset in cell units.
+// Implements core.ScrollOffsetProvider.
+func (s *ScrollArea) ScrollOffset() (x, y int) {
+	return s.scrollX, s.scrollY
+}
+
 // EnsureVisible scrolls to make a point visible.
 func (s *ScrollArea) EnsureVisible(x, y core.Unit) {
 	s.EnsureRectVisible(core.UnitRect{X: x, Y: y, Width: 1, Height: 1})

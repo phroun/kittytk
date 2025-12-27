@@ -191,12 +191,18 @@ func (t *TreeView) SetCurrentIndex(index int) {
 			contentStartCells-- // Show one space of indent
 		}
 
+		// Calculate actual content width: expand indicator (2 chars) + text
+		// Only scroll if this content would be cut off
+		expandIndicatorWidth := 2 // "▶ " or "▼ " or "  " (for leaves)
+		textWidth := len(item.Text)
+		actualContentCells := expandIndicatorWidth + textWidth
+
 		// Calculate the item's position relative to the TreeView (in visible area)
 		visibleRow := index - t.scrollOffset
 		itemRect := core.UnitRect{
 			X:      core.Unit(contentStartCells) * metrics.CellWidth,
 			Y:      core.Unit(visibleRow) * metrics.CellHeight,
-			Width:  t.Bounds().Width - core.Unit(contentStartCells)*metrics.CellWidth,
+			Width:  core.Unit(actualContentCells) * metrics.CellWidth,
 			Height: metrics.CellHeight,
 		}
 		t.ScrollRectIntoView(itemRect)
