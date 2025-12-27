@@ -28,6 +28,9 @@ type Splitter struct {
 
 	// Optional title displayed in the divider
 	title string
+
+	// Background - only fills if explicitly set
+	backgroundSet bool
 }
 
 // NewSplitter creates a new splitter with the given orientation.
@@ -273,8 +276,10 @@ func (s *Splitter) Paint(p *core.Painter) {
 	theme := s.Theme()
 	metrics := p.Metrics()
 
-	// Draw background
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
+	// Only draw background if explicitly set (allows parent backgrounds to show through)
+	if s.backgroundSet {
+		p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
+	}
 
 	// Update child bounds
 	s.Layout()

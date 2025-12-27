@@ -1860,6 +1860,74 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 				return
 			}
 
+			// Check if click is in separator area and there's a next tab
+			separatorStartX := textEndX
+			hasNextTab := i < len(t.tabs)-1
+
+			if x >= separatorStartX && hasNextTab {
+				// Click is in separator area - determine which tab to select
+				// based on which half of the separator was clicked
+				separatorWidth := core.Unit(sepWidth) * metrics.CellWidth
+				clickOffsetInSep := x - separatorStartX
+
+				// For even separators (2 or 4 chars): first half → this tab, second half → next tab
+				// For odd separators (3 chars, bottom tabs): middle char → active tab
+				if sepWidth == 3 {
+					// 3-char separator: divide into thirds
+					thirdWidth := separatorWidth / 3
+					if clickOffsetInSep < thirdWidth {
+						// First third → this tab
+						if tab.Enabled {
+							t.SetCurrentIndex(i)
+						}
+					} else if clickOffsetInSep < thirdWidth*2 {
+						// Middle third (the slash) → go to active tab (tie-breaker)
+						// If this tab is active, stay. If next tab is active, go there.
+						// Otherwise, stay on current selection.
+						nextTab := t.tabs[i+1]
+						if i == t.currentIndex {
+							// This tab is already active, keep it
+							if tab.Enabled {
+								t.SetCurrentIndex(i)
+							}
+						} else if i+1 == t.currentIndex {
+							// Next tab is active, select it
+							if nextTab.Enabled {
+								t.SetCurrentIndex(i + 1)
+							}
+						} else {
+							// Neither is active - stay on this tab
+							if tab.Enabled {
+								t.SetCurrentIndex(i)
+							}
+						}
+					} else {
+						// Last third → next tab
+						nextTab := t.tabs[i+1]
+						if nextTab.Enabled {
+							t.SetCurrentIndex(i + 1)
+						}
+					}
+				} else {
+					// 2 or 4-char separator: split in half
+					halfWidth := separatorWidth / 2
+					if clickOffsetInSep < halfWidth {
+						// First half → this tab
+						if tab.Enabled {
+							t.SetCurrentIndex(i)
+						}
+					} else {
+						// Second half → next tab
+						nextTab := t.tabs[i+1]
+						if nextTab.Enabled {
+							t.SetCurrentIndex(i + 1)
+						}
+					}
+				}
+				return
+			}
+
+			// Click is on prefix or text area, or separator with no next tab
 			if tab.Enabled {
 				t.SetCurrentIndex(i)
 			}
