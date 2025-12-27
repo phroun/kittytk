@@ -162,10 +162,7 @@ func (t *TUIBackend) Init() error {
 	// This bypasses any stdout redirection
 	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "DEBUG: Failed to open /dev/tty: %v, using stdout\n", err)
 		tty = os.Stdout
-	} else {
-		fmt.Fprintf(os.Stderr, "DEBUG: Opened /dev/tty successfully\n")
 	}
 
 	// Enable Kitty keyboard protocol for better key detection
@@ -173,11 +170,7 @@ func (t *TUIBackend) Init() error {
 
 	// Enable mouse if requested
 	if t.hasMouse {
-		fmt.Fprintf(os.Stderr, "DEBUG: Enabling mouse mode, hasMouse=%v\n", t.hasMouse)
-		n, werr := fmt.Fprint(tty, "\033[?1000h\033[?1002h\033[?1006h")
-		fmt.Fprintf(os.Stderr, "DEBUG: Mouse enable wrote %d bytes, err=%v\n", n, werr)
-	} else {
-		fmt.Fprintf(os.Stderr, "DEBUG: Mouse disabled, hasMouse=%v\n", t.hasMouse)
+		fmt.Fprint(tty, "\033[?1000h\033[?1002h\033[?1006h")
 	}
 
 	// Enter alternate screen
@@ -680,9 +673,6 @@ func (t *TUIBackend) Beep() {
 
 // handleKey processes key events from the keyboard handler.
 func (t *TUIBackend) handleKey(key string) {
-	// DEBUG: Print all received keys
-	fmt.Fprintf(os.Stderr, "DEBUG key: %q\n", key)
-
 	// Check for mouse events from direct-key-handler
 	// Mouse events come as two keys: "Mouse@x,y" (position) followed by action
 	if strings.HasPrefix(key, "Mouse@") {
