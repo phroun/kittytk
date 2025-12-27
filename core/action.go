@@ -423,7 +423,7 @@ func DefaultShortcuts() *ShortcutMap {
 	m.Set(StandardActions.Copy, "^C")
 	m.Set(StandardActions.Paste, "^V")
 	m.Set(StandardActions.Delete, "Delete")
-	m.Set(StandardActions.SelectAll, "^A")
+	m.Set(StandardActions.SelectAll, "M-a")
 	m.Set(StandardActions.Find, "^F")
 	m.Set(StandardActions.Replace, "^H")
 

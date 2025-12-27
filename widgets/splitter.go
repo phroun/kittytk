@@ -38,7 +38,7 @@ func NewSplitter(orientation core.Orientation) *Splitter {
 	}
 	s.WidgetBase = *core.NewWidgetBase()
 	s.Init(s)
-	s.SetFocusPolicy(core.NoFocus)
+	s.SetFocusPolicy(core.StrongFocus) // Focusable for keyboard navigation
 	s.SetAccessibleRole(core.RoleSplitter)
 	return s
 }
@@ -289,9 +289,13 @@ func (s *Splitter) Paint(p *core.Painter) {
 
 	// Draw divider with middot drag handle styling
 	divider := s.dividerBounds()
+	focused := s.HasFocus()
 	dividerStyle := theme.ScrollTrack // Use scrollbar track color for divider
 	if s.dragging {
 		dividerStyle = theme.Selected
+	} else if focused {
+		// Focused splitter uses bright cyan (like focused checkbox/radio)
+		dividerStyle = theme.ListItemFocused
 	}
 
 	if s.orientation == core.Horizontal {
@@ -517,6 +521,68 @@ func (s *Splitter) IsDragging() bool {
 
 // HandleKeyPress handles keyboard input.
 func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
+	// If the splitter itself has focus, handle arrow keys for divider adjustment
+	if s.HasFocus() {
+		bounds := s.Bounds()
+		metrics := core.DefaultCellMetrics()
+
+		// Determine step size based on modifiers
+		// Normal: small step (1 cell equivalent in position terms)
+		// Ctrl/Alt/Meta: large step (10 cells horizontal, 4 cells vertical)
+		hasModifier := event.Modifiers&(core.ControlModifier|core.MetaModifier|core.AltModifier) != 0
+
+		var smallStep, largeStep float64
+		if s.orientation == core.Horizontal {
+			// For horizontal splitter, calculate step based on width
+			totalWidth := float64(bounds.Width - metrics.CellWidth) // Subtract divider
+			if totalWidth > 0 {
+				smallStep = float64(metrics.CellWidth) / totalWidth
+				largeStep = float64(metrics.CellWidth*10) / totalWidth
+			} else {
+				smallStep = 0.02
+				largeStep = 0.1
+			}
+		} else {
+			// For vertical splitter, calculate step based on height
+			totalHeight := float64(bounds.Height - metrics.CellHeight)
+			if totalHeight > 0 {
+				smallStep = float64(metrics.CellHeight) / totalHeight
+				largeStep = float64(metrics.CellHeight*4) / totalHeight
+			} else {
+				smallStep = 0.02
+				largeStep = 0.1
+			}
+		}
+
+		step := smallStep
+		if hasModifier {
+			step = largeStep
+		}
+
+		switch event.Key {
+		case "Left":
+			if s.orientation == core.Horizontal {
+				s.adjustPosition(-step)
+				return true
+			}
+		case "Right":
+			if s.orientation == core.Horizontal {
+				s.adjustPosition(step)
+				return true
+			}
+		case "Up":
+			if s.orientation == core.Vertical {
+				s.adjustPosition(-step)
+				return true
+			}
+		case "Down":
+			if s.orientation == core.Vertical {
+				s.adjustPosition(step)
+				return true
+			}
+		}
+	}
+
 	// Forward to focused child
 	if s.first != nil && s.first.HasFocus() {
 		return s.first.HandleKeyPress(event)
@@ -525,6 +591,45 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 		return s.second.HandleKeyPress(event)
 	}
 	return false
+}
+
+// adjustPosition adjusts the split position by the given delta.
+func (s *Splitter) adjustPosition(delta float64) {
+	newPos := s.position + delta
+	if newPos < 0.1 {
+		newPos = 0.1
+	} else if newPos > 0.9 {
+		newPos = 0.9
+	}
+	s.position = newPos
+	s.Update()
+}
+
+// HandleFocusIn is called when focus is gained.
+func (s *Splitter) HandleFocusIn() {
+	s.Update()
+}
+
+// HandleFocusOut is called when focus is lost.
+func (s *Splitter) HandleFocusOut() {
+	s.Update()
+}
+
+// CollectFocusChain implements core.FocusChainProvider to ensure the splitter
+// appears between its first and second children in the focus order.
+func (s *Splitter) CollectFocusChain(collector func(core.Widget)) {
+	// First child and its descendants
+	if s.first != nil {
+		collector(s.first)
+	}
+
+	// Splitter itself (between children)
+	collector(s)
+
+	// Second child and its descendants
+	if s.second != nil {
+		collector(s.second)
+	}
 }
 
 // AccessibleInfo returns accessibility information.

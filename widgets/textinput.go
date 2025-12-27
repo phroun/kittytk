@@ -512,8 +512,8 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.textChanged()
 		return true
 
-	case "^A":
-		// Select all
+	case "M-a":
+		// Select all (Meta+A)
 		t.SelectAll()
 		return true
 

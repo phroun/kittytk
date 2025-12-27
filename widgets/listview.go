@@ -547,7 +547,7 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "^A":
+	case "M-a":
 		l.SelectAll()
 		return true
 	}

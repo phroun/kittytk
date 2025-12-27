@@ -109,7 +109,7 @@ func (kb *KeyBindings) SetDefaults() {
 	kb.bindings[ActionSelectDown] = []string{"S-Down"}
 	kb.bindings[ActionSelectHome] = []string{"S-Home"}
 	kb.bindings[ActionSelectEnd] = []string{"S-End"}
-	kb.bindings[ActionSelectAll] = []string{"^A"} // Note: conflicts with Emacs home
+	kb.bindings[ActionSelectAll] = []string{"M-a"} // Meta+A (not ^A which is Emacs home)
 
 	// Editing
 	kb.bindings[ActionBackspace] = []string{"Backspace", "^H"}

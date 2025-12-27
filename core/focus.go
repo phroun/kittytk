@@ -303,13 +303,29 @@ func (fm *FocusManager) buildFocusChain(root Widget) []Widget {
 	return chain
 }
 
+// FocusChainProvider is implemented by containers that need custom focus ordering.
+// This allows containers like Splitter to insert themselves between their children.
+type FocusChainProvider interface {
+	// CollectFocusChain adds the widget and its children to the chain in the desired order.
+	// Return true if the provider handled focus chain collection, false to use default behavior.
+	CollectFocusChain(collector func(Widget))
+}
+
 // collectFocusable recursively collects focusable widgets.
 func (fm *FocusManager) collectFocusable(widget Widget, chain *[]Widget) {
 	if widget == nil {
 		return
 	}
 
-	// Check if this widget can be in focus chain
+	// Check if widget provides custom focus chain ordering
+	if provider, ok := widget.(FocusChainProvider); ok {
+		provider.CollectFocusChain(func(w Widget) {
+			fm.collectFocusable(w, chain)
+		})
+		return
+	}
+
+	// Default behavior: add self if focusable, then recurse into children
 	policy := widget.FocusPolicy()
 	if policy == StrongFocus || policy == TabFocus {
 		*chain = append(*chain, widget)
