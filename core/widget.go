@@ -544,6 +544,18 @@ func (w *WidgetBase) HasFocus() bool {
 
 // SetFocus attempts to give focus to this widget.
 func (w *WidgetBase) SetFocus() {
+	w.setFocusInternal(true)
+}
+
+// SetFocusWithoutScroll sets focus without scrolling parent containers.
+// Use this for mouse-initiated focus changes where the widget is already
+// visible (you can't click on something that isn't visible).
+func (w *WidgetBase) SetFocusWithoutScroll() {
+	w.setFocusInternal(false)
+}
+
+// setFocusInternal is the common implementation for SetFocus variants.
+func (w *WidgetBase) setFocusInternal(scrollIntoView bool) {
 	w.mu.Lock()
 	if w.focusPolicy == NoFocus {
 		w.mu.Unlock()
@@ -573,7 +585,10 @@ func (w *WidgetBase) SetFocus() {
 	w.notifyFocusManager(parent, focusWidget)
 
 	// Notify scroll containers to scroll this widget into view
-	w.notifyScrollIntoView(parent, focusWidget)
+	// Skip this for mouse clicks where the widget is already visible
+	if scrollIntoView {
+		w.notifyScrollIntoView(parent, focusWidget)
+	}
 
 	// Notify application of focus change
 	if app != nil {

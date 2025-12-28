@@ -648,7 +648,7 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
-	l.SetFocus()
+	l.SetFocusWithoutScroll() // Use without-scroll variant since click proves visibility
 	metrics := core.DefaultCellMetrics()
 
 	// Check if click is on scrollbar

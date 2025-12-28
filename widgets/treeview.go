@@ -760,7 +760,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
-	t.SetFocus()
+	t.SetFocusWithoutScroll() // Use without-scroll variant since click proves visibility
 	metrics := core.DefaultCellMetrics()
 
 	// Check if click is on scrollbar
