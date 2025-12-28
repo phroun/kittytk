@@ -834,9 +834,11 @@ func (d *Desktop) IsMenuBarActive() bool {
 }
 
 // DeactivateMenuBar closes any open menu and unfocuses the menu bar.
+// Uses CloseMenuWithoutRestore because when a window becomes active,
+// we want that window to stay in front, not restore the previous window.
 func (d *Desktop) DeactivateMenuBar() {
 	if d.menuBar != nil {
-		d.menuBar.CloseMenuAndUnfocus()
+		d.menuBar.CloseMenuWithoutRestore()
 	}
 }
 
