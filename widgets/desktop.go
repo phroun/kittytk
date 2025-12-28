@@ -406,11 +406,11 @@ func (d *Desktop) SizeHint() core.UnitSize {
 // Paint renders the desktop.
 func (d *Desktop) Paint(p *core.Painter) {
 	bounds := d.Bounds()
-	theme := d.Theme()
+	scheme := d.GetScheme()
 	metrics := p.Metrics()
 
 	// Draw background pattern
-	bgStyle := theme.Desktop
+	bgStyle := scheme.GetDesktopFill()
 	for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
 		for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
 			p.DrawCell(x, y, d.bgChar, bgStyle)
@@ -711,11 +711,13 @@ func (s *StatusBar) SizeHint() core.UnitSize {
 // Paint renders the status bar.
 func (s *StatusBar) Paint(p *core.Painter) {
 	bounds := s.Bounds()
-	theme := s.Theme()
+	scheme := s.GetScheme()
 	metrics := p.Metrics()
 
+	statusBarStyle := scheme.GetStatusBar()
+
 	// Draw background
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.StatusBar)
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', statusBarStyle)
 
 	// Draw sections
 	x := core.Unit(0)
@@ -746,7 +748,7 @@ func (s *StatusBar) Paint(p *core.Painter) {
 		if len(section.Spans) > 0 {
 			// Draw styled spans
 			for _, span := range section.Spans {
-				spanStyle := theme.StatusBar
+				spanStyle := statusBarStyle
 				if span.Style != nil {
 					spanStyle = *span.Style
 				}
@@ -764,7 +766,7 @@ func (s *StatusBar) Paint(p *core.Painter) {
 				if textX >= maxX {
 					break
 				}
-				p.DrawCell(textX, 0, ch, theme.StatusBar)
+				p.DrawCell(textX, 0, ch, statusBarStyle)
 				textX += metrics.CellWidth
 			}
 		}

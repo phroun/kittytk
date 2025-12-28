@@ -672,21 +672,17 @@ func (w *Window) Paint(p *core.Painter) {
 	state := w.state
 	title := w.title
 	border := w.borderStyle
-	titleStyle := w.titleStyle
-	frameStyle := w.frameStyle
 	content := w.content
 	focused := w.HasFocus()
 	w.mu.RUnlock()
 
 	bounds := w.Bounds()
 	metrics := p.Metrics()
+	scheme := w.GetScheme()
 
-	// Adjust styles based on focus
-	if !focused {
-		// Dim the title and use light blue on dark blue for inactive frame
-		titleStyle = titleStyle.WithAttrs(style.StyleDim)
-		frameStyle = style.DefaultStyle().WithFg(style.ColorBrightBlue).WithBg(style.ColorBlue)
-	}
+	// Get styles from scheme based on focus state
+	titleStyle := scheme.GetWindowTitle(focused)
+	frameStyle := scheme.GetWindowBorder(focused)
 
 	// Draw frame based on state
 	if state == WindowStateMaximized && flags&WindowFlagNoTitle == 0 {
@@ -736,40 +732,29 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	}
 	p.FillRect(titleRect, ' ', titleStyle)
 
-	// Pressed button style (black on silver)
-	pressedStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorWhite)
-	// Keyboard focus style (black on cyan)
-	focusStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan)
+	scheme := w.GetScheme()
+	focused := w.HasFocus()
 
 	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
 	controlX := core.Unit(0)
 	if flags&WindowFlagNoClose == 0 {
-		btnStyle := frameStyle
-		if pressedButton == TitleButtonClose && buttonHovered {
-			btnStyle = pressedStyle
-		} else if titleFocus == TitleFocusClose {
-			btnStyle = focusStyle
-		}
+		isFocused := titleFocus == TitleFocusClose
+		isPressed := pressedButton == TitleButtonClose && buttonHovered
+		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
 		p.DrawText(controlX, 0, "[x]", btnStyle)
 		controlX += metrics.TextWidth(3)
 	}
 	if flags&WindowFlagNoMinimize == 0 {
-		btnStyle := frameStyle
-		if pressedButton == TitleButtonMinimize && buttonHovered {
-			btnStyle = pressedStyle
-		} else if titleFocus == TitleFocusMinimize {
-			btnStyle = focusStyle
-		}
+		isFocused := titleFocus == TitleFocusMinimize
+		isPressed := pressedButton == TitleButtonMinimize && buttonHovered
+		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
 		p.DrawText(controlX, 0, "[.]", btnStyle)
 		controlX += metrics.TextWidth(3)
 	}
 	if flags&WindowFlagNoMaximize == 0 {
-		btnStyle := frameStyle
-		if pressedButton == TitleButtonMaximize && buttonHovered {
-			btnStyle = pressedStyle
-		} else if titleFocus == TitleFocusMaximize {
-			btnStyle = focusStyle
-		}
+		isFocused := titleFocus == TitleFocusMaximize
+		isPressed := pressedButton == TitleButtonMaximize && buttonHovered
+		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
 		if state == WindowStateMaximized {
 			p.DrawText(controlX, 0, "[o]", btnStyle) // Restore icon
 		} else {
@@ -783,7 +768,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	titleDisplayStyle := titleStyle
 	if titleFocus == TitleFocusTitle {
 		displayTitle = "< " + title + " >"
-		titleDisplayStyle = focusStyle
+		titleDisplayStyle = scheme.GetTitleBarButton(focused, true, false)
 	}
 	p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle)
 }
@@ -803,42 +788,31 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 	p.DrawRect(localBounds, border, frameStyle)
 
-	// Pressed button style (black on silver)
-	pressedStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorWhite)
-	// Keyboard focus style (black on cyan)
-	focusStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan)
+	scheme := w.GetScheme()
+	focused := w.HasFocus()
 
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
 		// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
 		controlX := metrics.CellWidth // Start after left border
 		if flags&WindowFlagNoClose == 0 {
-			btnStyle := frameStyle
-			if pressedButton == TitleButtonClose && buttonHovered {
-				btnStyle = pressedStyle
-			} else if titleFocus == TitleFocusClose {
-				btnStyle = focusStyle
-			}
+			isFocused := titleFocus == TitleFocusClose
+			isPressed := pressedButton == TitleButtonClose && buttonHovered
+			btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
 			p.DrawText(controlX, 0, "[x]", btnStyle)
 			controlX += metrics.TextWidth(3)
 		}
 		if flags&WindowFlagNoMinimize == 0 {
-			btnStyle := frameStyle
-			if pressedButton == TitleButtonMinimize && buttonHovered {
-				btnStyle = pressedStyle
-			} else if titleFocus == TitleFocusMinimize {
-				btnStyle = focusStyle
-			}
+			isFocused := titleFocus == TitleFocusMinimize
+			isPressed := pressedButton == TitleButtonMinimize && buttonHovered
+			btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
 			p.DrawText(controlX, 0, "[.]", btnStyle)
 			controlX += metrics.TextWidth(3)
 		}
 		if flags&WindowFlagNoMaximize == 0 {
-			btnStyle := frameStyle
-			if pressedButton == TitleButtonMaximize && buttonHovered {
-				btnStyle = pressedStyle
-			} else if titleFocus == TitleFocusMaximize {
-				btnStyle = focusStyle
-			}
+			isFocused := titleFocus == TitleFocusMaximize
+			isPressed := pressedButton == TitleButtonMaximize && buttonHovered
+			btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
 			if state == WindowStateMaximized {
 				p.DrawText(controlX, 0, "[o]", btnStyle) // Restore icon
 			} else {
@@ -860,7 +834,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		titleDisplayStyle := titleStyle
 		if titleFocus == TitleFocusTitle {
 			displayTitle = "< " + title + " >"
-			titleDisplayStyle = focusStyle
+			titleDisplayStyle = scheme.GetTitleBarButton(focused, true, false)
 		}
 		maxTitleWidth := metrics.CharsForWidth(bounds.Width) - 12 // Leave room for controls on both sides
 		if len(displayTitle) > maxTitleWidth && maxTitleWidth > 0 {

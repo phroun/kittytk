@@ -3,7 +3,6 @@ package widgets
 
 import (
 	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
 )
 
 // DockEntry represents a minimized window in the dock.
@@ -136,10 +135,11 @@ func (d *DockRow) Paint(p *core.Painter) {
 	bounds := d.Bounds()
 	metrics := p.Metrics()
 	focused := d.HasFocus()
+	scheme := d.GetScheme()
 
 	// Dock styles
-	dockStyle := style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlue)
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorBrightCyan)
+	dockStyle := scheme.GetDockItem()
+	selectedStyle := scheme.GetFocusedDockItem()
 
 	// Draw background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', dockStyle)

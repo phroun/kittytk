@@ -542,7 +542,8 @@ func (m *Menu) Paint(p *core.Painter) {
 		return
 	}
 
-	theme := m.Theme()
+	scheme := m.GetScheme()
+	theme := m.Theme() // Still needed for DefaultBorder
 	metrics := p.Metrics()
 	size := m.calculateSize()
 	needsScroll := m.needsScrolling()
@@ -554,15 +555,16 @@ func (m *Menu) Paint(p *core.Painter) {
 		Width:  size.Width,
 		Height: size.Height,
 	}
-	p.FillRect(menuBounds, ' ', theme.MenuItem)
-	p.DrawRect(menuBounds, theme.DefaultBorder, theme.MenuItem)
+	menuItemStyle := scheme.GetMenuItemText()
+	p.FillRect(menuBounds, ' ', menuItemStyle)
+	p.DrawRect(menuBounds, theme.DefaultBorder, menuItemStyle)
 
 	// Track Y offset for drawing
 	currentY := m.popupY
 
 	// Draw top scroll indicator if needed
 	if needsScroll {
-		indicatorStyle := theme.MenuItem
+		indicatorStyle := menuItemStyle
 		if m.canScrollUp() {
 			// Draw "^ ^ ^" centered
 			centerX := m.popupX + size.Width/2
@@ -583,29 +585,26 @@ func (m *Menu) Paint(p *core.Painter) {
 		item := m.items[itemIndex]
 		itemY := currentY
 
-		// Determine style
-		var s style.CellStyle
+		// Determine style using scheme
+		var gutterStyle, contentStyle style.CellStyle
 		if item.Separator {
-			s = theme.MenuSeparator
+			gutterStyle = scheme.GetMenuSeparatorGutter()
+			contentStyle = scheme.GetMenuSeparator()
 		} else if !item.Enabled {
-			s = theme.MenuItemDisabled
+			gutterStyle = scheme.GetDisabledMenuGutter()
+			contentStyle = scheme.GetDisabledMenuItem()
 		} else if itemIndex == m.currentIndex {
-			s = theme.MenuItemSelected
+			gutterStyle = scheme.GetFocusedMenuItemText()
+			contentStyle = scheme.GetFocusedMenuItemText()
 		} else {
-			s = theme.MenuItem
+			gutterStyle = scheme.GetMenuGutter()
+			contentStyle = scheme.GetMenuItemText()
 		}
 
-		// Gutter area: 3 cells (border + checkmark + 1 space) in regular white
-		// Content area: rest of the item in bright white (for non-selected items)
+		// Gutter area: 3 cells (border + checkmark + 1 space)
 		gutterWidth := metrics.CellWidth * 3
-		gutterStyle := s
-		contentStyle := s
-		if !item.Separator && item.Enabled && itemIndex != m.currentIndex {
-			// Use bright white background for content area of enabled, non-selected items
-			contentStyle = s.WithBg(style.ColorBrightWhite)
-		}
 
-		// Draw gutter background (regular white)
+		// Draw gutter background
 		p.FillRect(core.UnitRect{
 			X:      m.popupX,
 			Y:      itemY,
@@ -613,27 +612,21 @@ func (m *Menu) Paint(p *core.Painter) {
 			Height: metrics.CellHeight,
 		}, ' ', gutterStyle)
 
-		// Draw content background (bright white for enabled items)
-		contentBgStyle := contentStyle
-		if item.Separator {
-			// Separators use bright white for content area too
-			contentBgStyle = s.WithBg(style.ColorBrightWhite)
-		}
+		// Draw content background
 		p.FillRect(core.UnitRect{
 			X:      m.popupX + gutterWidth,
 			Y:      itemY,
 			Width:  size.Width - gutterWidth,
 			Height: metrics.CellHeight,
-		}, ' ', contentBgStyle)
+		}, ' ', contentStyle)
 
 		if item.Separator {
-			// Draw separator line - gutter portion in regular style, content in bright white
-			separatorContentStyle := s.WithBg(style.ColorBrightWhite)
+			// Draw separator line - gutter portion and content portion
 			for x := m.popupX + metrics.CellWidth; x < m.popupX+size.Width-metrics.CellWidth; x += metrics.CellWidth {
 				if x < m.popupX+gutterWidth {
 					p.DrawCell(x, itemY, '─', gutterStyle)
 				} else {
-					p.DrawCell(x, itemY, '─', separatorContentStyle)
+					p.DrawCell(x, itemY, '─', contentStyle)
 				}
 			}
 			currentY += metrics.CellHeight
@@ -660,11 +653,9 @@ func (m *Menu) Paint(p *core.Painter) {
 		// Now draw text with accelerator highlighting
 		var accelStyle style.CellStyle
 		if itemIndex == m.currentIndex {
-			// Selected item: dark magenta on cyan
-			accelStyle = style.DefaultStyle().WithFg(style.ColorMagenta).WithBg(style.ColorCyan)
+			accelStyle = scheme.GetFocusedMenuAccelerator()
 		} else {
-			// Normal item: red on bright white
-			accelStyle = style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorBrightWhite)
+			accelStyle = scheme.GetMenuAccelerator()
 		}
 		for idx, ch := range item.Text {
 			charStyle := contentStyle
@@ -698,7 +689,7 @@ func (m *Menu) Paint(p *core.Painter) {
 
 	// Draw bottom scroll indicator if needed
 	if needsScroll {
-		indicatorStyle := theme.MenuItem
+		indicatorStyle := menuItemStyle
 		if m.canScrollDown() {
 			// Draw "v v v" centered
 			centerX := m.popupX + size.Width/2
@@ -1485,14 +1476,16 @@ func (m *MenuBar) SizeHint() core.UnitSize {
 // Paint renders the menu bar (without dropdown - use PaintDropdown for that).
 func (m *MenuBar) Paint(p *core.Painter) {
 	bounds := m.Bounds()
-	theme := m.Theme()
+	scheme := m.GetScheme()
 	metrics := p.Metrics()
 
 	// Clamp scroll offset if container was resized and more menus can now fit
 	m.clampScrollOffset()
 
+	menuBarStyle := scheme.GetMenuBar()
+
 	// Draw background
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.MenuBar)
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', menuBarStyle)
 
 	// Calculate if we need scroll buttons
 	needsScrolling := m.menusNeedScrolling()
@@ -1500,7 +1493,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// Draw date/time on the far right edge first (to know where menus must stop)
 	now := time.Now()
 	dateTimeStr := now.Format(" Mon Jan 02 15:04 ")
-	dateTimeStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorYellow)
+	dateTimeStyle := scheme.GetMenuBarInfo()
 	dateTimeWidth := core.Unit(len(dateTimeStr)) * metrics.CellWidth
 	dateTimeX := bounds.Width - dateTimeWidth
 
@@ -1509,9 +1502,9 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	if needsScrolling {
 		scrollButtonsWidth = m.scrollButtonWidth() * 2 // [<][>] or  <  >
 
-		// Button styles: blue on white for active, bright white on white for inactive
-		activeButtonStyle := style.DefaultStyle().WithFg(style.ColorBlue).WithBg(style.ColorWhite)
-		inactiveButtonStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorWhite)
+		// Button styles: active vs disabled scroll buttons
+		activeButtonStyle := scheme.GetMenuBarButton()
+		inactiveButtonStyle := scheme.GetDisabledMenuBarButton()
 
 		// Draw left button: [<] when active, " < " when inactive
 		leftButtonX := dateTimeX - scrollButtonsWidth
@@ -1546,7 +1539,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	if m.scrollOffset > 0 {
 		ellipsisStr := "..."
 		for i, ch := range ellipsisStr {
-			p.DrawCell(core.Unit(i)*metrics.CellWidth, 0, ch, theme.MenuBar)
+			p.DrawCell(core.Unit(i)*metrics.CellWidth, 0, ch, menuBarStyle)
 		}
 		x = core.Unit(len(ellipsisStr)) * metrics.CellWidth
 	}
@@ -1571,17 +1564,17 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			var s style.CellStyle
 			isSelected := i == m.currentIndex
 			if isSelected {
-				s = theme.MenuBarSelected
+				s = scheme.GetActiveMenuBarItem()
 			} else {
-				s = theme.MenuBar
+				s = menuBarStyle
 			}
 
 			// Calculate accelerator style for this menu
 			var accelStyle style.CellStyle
 			if isSelected {
-				accelStyle = style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlue)
+				accelStyle = scheme.GetActiveMenuBarMeta()
 			} else {
-				accelStyle = style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+				accelStyle = scheme.GetMenuBarMeta()
 			}
 			showAccel := m.ShouldShowAccelerator(menu)
 
@@ -1611,7 +1604,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 				ellipsisX := x + menuWidth
 				for _, ch := range "..." {
 					if ellipsisX < availableWidth {
-						p.DrawCell(ellipsisX, 0, ch, theme.MenuBar)
+						p.DrawCell(ellipsisX, 0, ch, menuBarStyle)
 						ellipsisX += metrics.CellWidth
 					}
 				}
@@ -1647,7 +1640,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					ellipsisX := x
 					for _, ch := range "..." {
 						if ellipsisX < availableWidth {
-							p.DrawCell(ellipsisX, 0, ch, theme.MenuBar)
+							p.DrawCell(ellipsisX, 0, ch, menuBarStyle)
 							ellipsisX += metrics.CellWidth
 						}
 					}
@@ -1659,9 +1652,9 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		// Determine style
 		var s style.CellStyle
 		if i == m.currentIndex {
-			s = theme.MenuBarSelected
+			s = scheme.GetActiveMenuBarItem()
 		} else {
-			s = theme.MenuBar
+			s = menuBarStyle
 		}
 
 		// Draw background
@@ -1677,11 +1670,9 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		// Accelerator style depends on whether menu is selected
 		var accelStyle style.CellStyle
 		if i == m.currentIndex {
-			// Selected menu: bright cyan on blue
-			accelStyle = style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlue)
+			accelStyle = scheme.GetActiveMenuBarMeta()
 		} else {
-			// Normal menu: red on white
-			accelStyle = style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
+			accelStyle = scheme.GetMenuBarMeta()
 		}
 		showAccel := m.ShouldShowAccelerator(menu)
 		for idx, ch := range menu.title {
