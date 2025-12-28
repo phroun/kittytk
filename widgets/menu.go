@@ -154,6 +154,7 @@ type Menu struct {
 	// Timer for continuous scroll while hovering over scroll indicators
 	scrollTimer        interface{ Stop() }
 	scrollTimerStarter func(interval time.Duration, callback func()) interface{ Stop() }
+	requestUpdate      func() // Called to request a screen update after timer scroll
 
 	// Callbacks
 	onAboutToShow func()
@@ -387,6 +388,11 @@ func (m *Menu) SetScrollTimerStarter(starter func(interval time.Duration, callba
 	m.scrollTimerStarter = starter
 }
 
+// SetRequestUpdate sets the function to call for screen updates from timer callbacks.
+func (m *Menu) SetRequestUpdate(fn func()) {
+	m.requestUpdate = fn
+}
+
 // stopScrollTimer stops any active scroll timer.
 func (m *Menu) stopScrollTimer() {
 	if m.scrollTimer != nil {
@@ -406,6 +412,10 @@ func (m *Menu) startScrollTimer(direction int) {
 			m.scrollUp(1)
 		} else if direction > 0 && m.canScrollDown() {
 			m.scrollDown(1)
+		}
+		// Request screen update since timer runs outside normal event loop
+		if m.requestUpdate != nil {
+			m.requestUpdate()
 		}
 	})
 }
@@ -1512,13 +1522,15 @@ func (m *MenuBar) OpenMenu(index int) {
 			m.activeMenu.SetAvailableHeight(availableHeight)
 			m.activeMenu.SetScreenBottom(screenBottom)
 		}
-		// Set up scroll timer starter if desktop supports timers
+		// Set up scroll timer starter and update requester if desktop supports them
 		if timerProvider, ok := parent.(interface {
 			StartRepeatingTimer(interval time.Duration, callback func()) *DesktopTimer
+			RequestUpdate()
 		}); ok {
 			m.activeMenu.SetScrollTimerStarter(func(interval time.Duration, callback func()) interface{ Stop() } {
 				return timerProvider.StartRepeatingTimer(interval, callback)
 			})
+			m.activeMenu.SetRequestUpdate(timerProvider.RequestUpdate)
 		}
 	}
 
