@@ -1425,6 +1425,7 @@ func (m *MenuBar) CloseMenu() {
 }
 
 // CloseMenuAndUnfocus closes the active menu and unfocuses the menu bar.
+// This also calls onMenuDismiss which may restore the previous active window.
 func (m *MenuBar) CloseMenuAndUnfocus() {
 	if m.activeMenu != nil {
 		m.activeMenu.Hide()
@@ -1439,6 +1440,21 @@ func (m *MenuBar) CloseMenuAndUnfocus() {
 	if m.onMenuDismiss != nil {
 		m.onMenuDismiss()
 	}
+}
+
+// closeMenuWithoutRestore closes the active menu and unfocuses the menu bar
+// WITHOUT calling onMenuDismiss. This is used when a menu action was triggered
+// that may have created a new window - we don't want to restore the old window.
+func (m *MenuBar) closeMenuWithoutRestore() {
+	if m.activeMenu != nil {
+		m.activeMenu.Hide()
+		m.activeMenu = nil
+	}
+	m.currentIndex = -1
+	m.acceleratorsActive = false
+	m.ClearFocus()
+	m.Update()
+	// Note: intentionally not calling onMenuDismiss
 }
 
 // calculateMenuX calculates the x position of a menu (accounting for scroll offset).
@@ -1721,6 +1737,10 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Handle active menu first
 	if m.activeMenu != nil {
 		if m.activeMenu.HandleKeyPress(event) {
+			// If the menu was hidden (item triggered), clean up without restoring previous window
+			if !m.activeMenu.IsVisible() {
+				m.closeMenuWithoutRestore()
+			}
 			return true
 		}
 	}
@@ -2083,7 +2103,9 @@ func (m *MenuBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 					} else {
 						m.activeMenu.triggerItem(item)
 						// Clean up menu bar state after triggering
-						m.CloseMenuAndUnfocus()
+						// Use closeMenuWithoutRestore to avoid restoring previous window
+						// (the action may have created a new window that should stay on top)
+						m.closeMenuWithoutRestore()
 					}
 					return true
 				}
