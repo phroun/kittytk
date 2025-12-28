@@ -78,6 +78,42 @@ type messageBoxContent struct {
 	onDone        func(result DialogResult)
 }
 
+// Children returns the button widgets as children.
+func (c *messageBoxContent) Children() []core.Widget {
+	children := make([]core.Widget, len(c.buttonWidgets))
+	for i, btn := range c.buttonWidgets {
+		children[i] = btn
+	}
+	return children
+}
+
+// AddChild is not used for messageBoxContent.
+func (c *messageBoxContent) AddChild(child core.Widget) {}
+
+// RemoveChild is not used for messageBoxContent.
+func (c *messageBoxContent) RemoveChild(child core.Widget) {}
+
+// ChildAt returns the child widget at the given position.
+func (c *messageBoxContent) ChildAt(pos core.UnitPoint) core.Widget {
+	for _, btn := range c.buttonWidgets {
+		bounds := btn.Bounds()
+		if pos.X >= bounds.X && pos.X < bounds.X+bounds.Width &&
+			pos.Y >= bounds.Y && pos.Y < bounds.Y+bounds.Height {
+			return btn
+		}
+	}
+	return nil
+}
+
+// Layout arranges children (buttons are laid out in Paint).
+func (c *messageBoxContent) Layout() {}
+
+// LayoutManager returns nil (custom layout).
+func (c *messageBoxContent) LayoutManager() core.LayoutManager { return nil }
+
+// SetLayoutManager does nothing (custom layout).
+func (c *messageBoxContent) SetLayoutManager(lm core.LayoutManager) {}
+
 // NewMessageBox creates a new message box.
 func NewMessageBox(title, text string, buttons DialogButton) *MessageBox {
 	m := &MessageBox{
@@ -126,6 +162,7 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 	for _, def := range buttonDefs {
 		if buttons&def.flag != 0 {
 			btn := NewButton(def.text)
+			btn.SetParent(c) // Set parent so button can inherit background color
 			result := def.result // Capture for closure
 			btn.SetOnClick(func() {
 				if c.onDone != nil {
