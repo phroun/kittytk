@@ -115,6 +115,13 @@ type DesktopTimer struct {
 	stopped  bool
 }
 
+// Stop stops the timer.
+func (t *DesktopTimer) Stop() {
+	if t != nil {
+		t.stopped = true
+	}
+}
+
 // NewDesktop creates a new desktop widget.
 func NewDesktop() *Desktop {
 	d := &Desktop{

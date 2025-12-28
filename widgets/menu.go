@@ -151,6 +151,10 @@ type Menu struct {
 	clickedMode     bool      // If true, was opened via click (not drag), release won't dismiss
 	screenBottom    core.Unit // Bottom of available screen area (for submenu height calculation)
 
+	// Timer for continuous scroll while hovering over scroll indicators
+	scrollTimer        interface{ Stop() }
+	scrollTimerStarter func(interval time.Duration, callback func()) interface{ Stop() }
+
 	// Callbacks
 	onAboutToShow func()
 	onAboutToHide func()
@@ -377,8 +381,39 @@ func (m *Menu) IsClickedMode() bool {
 	return m.clickedMode
 }
 
+// SetScrollTimerStarter sets the function used to start scroll timers.
+// This should be called before showing the menu.
+func (m *Menu) SetScrollTimerStarter(starter func(interval time.Duration, callback func()) interface{ Stop() }) {
+	m.scrollTimerStarter = starter
+}
+
+// stopScrollTimer stops any active scroll timer.
+func (m *Menu) stopScrollTimer() {
+	if m.scrollTimer != nil {
+		m.scrollTimer.Stop()
+		m.scrollTimer = nil
+	}
+}
+
+// startScrollTimer starts a repeating timer for continuous scrolling.
+func (m *Menu) startScrollTimer(direction int) {
+	m.stopScrollTimer()
+	if m.scrollTimerStarter == nil {
+		return
+	}
+	m.scrollTimer = m.scrollTimerStarter(50*time.Millisecond, func() {
+		if direction < 0 && m.canScrollUp() {
+			m.scrollUp(1)
+		} else if direction > 0 && m.canScrollDown() {
+			m.scrollDown(1)
+		}
+	})
+}
+
 // Hide hides the menu.
 func (m *Menu) Hide() {
+	m.stopScrollTimer()
+
 	if m.activeSubMenu != nil {
 		m.activeSubMenu.Hide()
 		m.activeSubMenu = nil
@@ -1017,7 +1052,10 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Check if mouse is in menu bounds
 	if event.X < m.popupX || event.X >= m.popupX+size.Width ||
 		event.Y < m.popupY || event.Y >= m.popupY+size.Height {
-		m.scrollHoverZone = 0
+		if m.scrollHoverZone != 0 {
+			m.scrollHoverZone = 0
+			m.stopScrollTimer()
+		}
 		// Mouse outside menu - clear selection
 		if m.currentIndex != -1 {
 			m.currentIndex = -1
@@ -1038,13 +1076,9 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if rowIndex == 0 && m.canScrollUp() {
 			if m.scrollHoverZone != -1 {
 				m.scrollHoverZone = -1
-				m.scrollHoverTime = time.Now()
-			} else {
-				// Scroll one row at a time with fast rate limiting (50ms between scrolls)
-				if time.Since(m.scrollHoverTime) >= 50*time.Millisecond {
-					m.scrollUp(1)
-					m.scrollHoverTime = time.Now()
-				}
+				// Do initial scroll immediately, then start timer for continuous scrolling
+				m.scrollUp(1)
+				m.startScrollTimer(-1)
 			}
 			return true
 		}
@@ -1053,19 +1087,18 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if rowIndex == lastRow && m.canScrollDown() {
 			if m.scrollHoverZone != 1 {
 				m.scrollHoverZone = 1
-				m.scrollHoverTime = time.Now()
-			} else {
-				// Scroll one row at a time with fast rate limiting (50ms between scrolls)
-				if time.Since(m.scrollHoverTime) >= 50*time.Millisecond {
-					m.scrollDown(1)
-					m.scrollHoverTime = time.Now()
-				}
+				// Do initial scroll immediately, then start timer for continuous scrolling
+				m.scrollDown(1)
+				m.startScrollTimer(1)
 			}
 			return true
 		}
 
-		// Not on a scroll indicator - clear scroll state
-		m.scrollHoverZone = 0
+		// Not on a scroll indicator - clear scroll state and stop timer
+		if m.scrollHoverZone != 0 {
+			m.scrollHoverZone = 0
+			m.stopScrollTimer()
+		}
 
 		// Update highlighted item (accounting for scroll indicator)
 		adjustedRow := rowIndex - 1 // Subtract 1 for top indicator
@@ -1469,7 +1502,7 @@ func (m *MenuBar) OpenMenu(index int) {
 	x := m.calculateMenuX(index)
 	y := metrics.CellHeight
 
-	// Calculate available height from desktop client area
+	// Calculate available height from desktop client area and set up timer
 	if parent := m.Parent(); parent != nil {
 		if desktop, ok := parent.(interface{ ClientArea() core.UnitRect }); ok {
 			clientArea := desktop.ClientArea()
@@ -1478,6 +1511,14 @@ func (m *MenuBar) OpenMenu(index int) {
 			availableHeight := screenBottom - y
 			m.activeMenu.SetAvailableHeight(availableHeight)
 			m.activeMenu.SetScreenBottom(screenBottom)
+		}
+		// Set up scroll timer starter if desktop supports timers
+		if timerProvider, ok := parent.(interface {
+			StartRepeatingTimer(interval time.Duration, callback func()) *DesktopTimer
+		}); ok {
+			m.activeMenu.SetScrollTimerStarter(func(interval time.Duration, callback func()) interface{ Stop() } {
+				return timerProvider.StartRepeatingTimer(interval, callback)
+			})
 		}
 	}
 
