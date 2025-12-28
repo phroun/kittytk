@@ -191,7 +191,14 @@ func (c *ComboBox) scrollUp(amount int) {
 
 // scrollDown scrolls the list down by the given amount.
 func (c *ComboBox) scrollDown(amount int) {
-	maxOffset := len(c.items) - c.maxVisible
+	// Calculate effective visible count
+	visibleCount := c.maxVisible
+	// In drag mode with scrolling, up indicator takes a row when scrollOffset > 0
+	// After scrolling down, scrollOffset will definitely be > 0
+	if !c.clickMode && len(c.items) > c.maxVisible {
+		visibleCount-- // up indicator will take a row
+	}
+	maxOffset := len(c.items) - visibleCount
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
