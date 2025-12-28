@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"time"
+
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
 )
@@ -25,6 +27,25 @@ type ComboBox struct {
 	scrollOffset int
 	maxVisible   int
 
+	// Mouse interaction state
+	mouseDown     bool       // Mouse button is held down
+	dragging      bool       // Actually dragging (mouse moved while down)
+	clickMode     bool       // True = click-to-open mode (popup stays open), False = hold-and-drag mode
+	mouseDownX    core.Unit  // Initial mouse X position
+	mouseDownY    core.Unit  // Initial mouse Y position
+	originalIndex int        // Index before popup opened (for cancel on release outside)
+	scrollHoverZone int      // -1 = hovering top scroll, 1 = bottom scroll, 0 = none
+
+	// Scrollbar interaction state (click mode only)
+	scrollbarDragging   bool  // Whether scrollbar thumb is being dragged
+	scrollbarDragStartY int   // Row where drag started
+	scrollbarDragOffset int   // Scroll offset when drag started
+
+	// Timer for scroll repeating
+	scrollTimer        *DesktopTimer
+	scrollTimerStarter func(interval time.Duration, callback func()) *DesktopTimer
+	requestUpdate      func()
+
 	// Callbacks
 	onCurrentIndexChanged func(index int)
 	onCurrentTextChanged  func(text string)
@@ -34,15 +55,123 @@ type ComboBox struct {
 // NewComboBox creates a new combo box.
 func NewComboBox() *ComboBox {
 	c := &ComboBox{
-		currentIndex: -1,
-		hoverIndex:   -1,
-		maxVisible:   8,
+		currentIndex:    -1,
+		hoverIndex:      -1,
+		maxVisible:      8,
+		originalIndex:   -1,
+		scrollHoverZone: 0,
 	}
 	c.WidgetBase = *core.NewWidgetBase()
 	c.Init(c) // Enable polymorphic focus handling
 	c.SetFocusPolicy(core.StrongFocus)
 	c.SetAccessibleRole(core.RoleComboBox)
 	return c
+}
+
+// SetScrollTimerStarter sets the function used to create scroll timers.
+// This should be called by the parent widget (e.g., Desktop) to enable
+// timer-based scrolling.
+func (c *ComboBox) SetScrollTimerStarter(starter func(interval time.Duration, callback func()) *DesktopTimer) {
+	c.scrollTimerStarter = starter
+}
+
+// SetRequestUpdate sets the function to call when the widget needs redrawing.
+func (c *ComboBox) SetRequestUpdate(fn func()) {
+	c.requestUpdate = fn
+}
+
+// findTimerProvider walks up the parent chain to find a timer provider.
+func (c *ComboBox) findTimerProvider() interface {
+	StartRepeatingTimer(interval time.Duration, callback func()) *DesktopTimer
+} {
+	// Walk up parent chain looking for a widget with StartRepeatingTimer
+	current := c.Parent()
+	for current != nil {
+		if widget, ok := current.(core.Widget); ok {
+			if provider, ok := widget.(interface {
+				StartRepeatingTimer(interval time.Duration, callback func()) *DesktopTimer
+			}); ok {
+				return provider
+			}
+			current = widget.Parent()
+		} else {
+			break
+		}
+	}
+	return nil
+}
+
+// startScrollTimer starts a repeating timer for scrolling.
+func (c *ComboBox) startScrollTimer(direction int) {
+	c.stopScrollTimer()
+
+	// Find timer provider through parent chain
+	timerProvider := c.findTimerProvider()
+	if timerProvider == nil && c.scrollTimerStarter == nil {
+		return
+	}
+
+	callback := func() {
+		// Check if we're still hovering the same scroll zone
+		if (direction < 0 && c.scrollHoverZone != -1) ||
+			(direction > 0 && c.scrollHoverZone != 1) {
+			return
+		}
+		if direction < 0 && c.canScrollUp() {
+			c.scrollUp(1)
+		} else if direction > 0 && c.canScrollDown() {
+			c.scrollDown(1)
+		}
+		if c.requestUpdate != nil {
+			c.requestUpdate()
+		}
+	}
+
+	if timerProvider != nil {
+		c.scrollTimer = timerProvider.StartRepeatingTimer(50*time.Millisecond, callback)
+	} else if c.scrollTimerStarter != nil {
+		c.scrollTimer = c.scrollTimerStarter(50*time.Millisecond, callback)
+	}
+}
+
+// stopScrollTimer stops the scroll timer.
+func (c *ComboBox) stopScrollTimer() {
+	if c.scrollTimer != nil {
+		c.scrollTimer.Stop()
+		c.scrollTimer = nil
+	}
+}
+
+// canScrollUp returns true if there are items above the visible area.
+func (c *ComboBox) canScrollUp() bool {
+	return c.scrollOffset > 0
+}
+
+// canScrollDown returns true if there are items below the visible area.
+func (c *ComboBox) canScrollDown() bool {
+	return c.scrollOffset+c.maxVisible < len(c.items)
+}
+
+// scrollUp scrolls the list up by the given amount.
+func (c *ComboBox) scrollUp(amount int) {
+	c.scrollOffset -= amount
+	if c.scrollOffset < 0 {
+		c.scrollOffset = 0
+	}
+	c.Update()
+}
+
+// scrollDown scrolls the list down by the given amount.
+func (c *ComboBox) scrollDown(amount int) {
+	maxOffset := len(c.items) - c.maxVisible
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	c.scrollOffset += amount
+	if c.scrollOffset > maxOffset {
+		c.scrollOffset = maxOffset
+	}
+	c.Update()
 }
 
 // AddItem adds an item to the combo box.
@@ -216,8 +345,10 @@ func (c *ComboBox) ShowPopup() {
 		return
 	}
 	c.isOpen = true
-	c.scrollOffset = 0
-	c.hoverIndex = c.currentIndex // Start with current selection highlighted
+	c.originalIndex = c.currentIndex // Save for cancel on release outside
+	c.hoverIndex = c.currentIndex    // Start with current selection highlighted
+	c.scrollHoverZone = 0
+
 	// Ensure current item is visible
 	if c.currentIndex >= 0 {
 		if c.currentIndex < c.scrollOffset {
@@ -262,6 +393,12 @@ func (c *ComboBox) findPopupController() core.PopupController {
 // HidePopup closes the drop-down.
 func (c *ComboBox) HidePopup() {
 	c.isOpen = false
+	c.stopScrollTimer()
+	c.mouseDown = false
+	c.dragging = false
+	c.clickMode = false
+	c.scrollHoverZone = 0
+	c.scrollbarDragging = false
 
 	// Unregister popup overlay - find popup controller by walking parent chain
 	if pc := c.findPopupController(); pc != nil {
@@ -593,70 +730,319 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 		}
 	}
 
-	// Draw scroll indicators if needed
-	if c.scrollOffset > 0 {
-		popupPainter.DrawCell(popupBounds.Width-metrics.CellWidth*2, 0, '▲', itemStyle)
+	// Draw scroll indicators or scrollbar depending on mode
+	needsScroll := len(c.items) > c.maxVisible
+	if needsScroll {
+		if c.clickMode {
+			// In click mode, show a proper scrollbar
+			c.paintScrollbar(popupPainter, popupBounds.Width, popupHeight)
+		} else {
+			// In drag mode, show simple scroll indicators
+			if c.scrollOffset > 0 {
+				popupPainter.DrawCell(popupBounds.Width-metrics.CellWidth*2, 0, '▲', itemStyle)
+			}
+			if c.scrollOffset+popupHeight < len(c.items) {
+				endY := core.Unit(popupHeight-1) * metrics.CellHeight
+				popupPainter.DrawCell(popupBounds.Width-metrics.CellWidth*2, endY, '▼', itemStyle)
+			}
+		}
 	}
-	if c.scrollOffset+popupHeight < len(c.items) {
-		endY := core.Unit(popupHeight-1) * metrics.CellHeight
-		popupPainter.DrawCell(popupBounds.Width-metrics.CellWidth*2, endY, '▼', itemStyle)
+}
+
+// scrollbarGeometry returns scrollbar dimensions and thumb position.
+// Returns: scrollbarX, thumbStart, thumbHeight, trackHeight (all in rows)
+func (c *ComboBox) scrollbarGeometry(popupWidth core.Unit, visibleCount int) (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
+	metrics := core.DefaultCellMetrics()
+	totalItems := len(c.items)
+
+	scrollbarX = popupWidth - metrics.CellWidth
+	trackHeight = visibleCount
+
+	if totalItems <= visibleCount {
+		// No scrolling needed - thumb fills track
+		thumbStart = 0
+		thumbHeight = trackHeight
+		return
+	}
+
+	// Calculate thumb size proportional to visible/total ratio
+	thumbHeight = visibleCount * visibleCount / totalItems
+	if thumbHeight < 1 {
+		thumbHeight = 1
+	}
+
+	// Calculate thumb position based on scroll offset
+	maxScroll := totalItems - visibleCount
+	if maxScroll > 0 {
+		scrollableTrack := trackHeight - thumbHeight
+		thumbStart = c.scrollOffset * scrollableTrack / maxScroll
+		if thumbStart+thumbHeight > trackHeight {
+			thumbStart = trackHeight - thumbHeight
+		}
+	}
+
+	return
+}
+
+// paintScrollbar draws a vertical scrollbar for the popup.
+func (c *ComboBox) paintScrollbar(p *core.Painter, popupWidth core.Unit, visibleCount int) {
+	scheme := c.GetScheme()
+	metrics := core.DefaultCellMetrics()
+
+	scrollbarX, thumbStart, thumbHeight, trackHeight := c.scrollbarGeometry(popupWidth, visibleCount)
+
+	// Draw scrollbar track
+	trackStyle := scheme.GetScrollbar()
+	for i := 0; i < trackHeight; i++ {
+		y := core.Unit(i) * metrics.CellHeight
+		p.DrawCell(scrollbarX, y, '│', trackStyle)
+	}
+
+	// Draw scrollbar thumb
+	thumbStyle := scheme.GetScrollbarThumb()
+	for i := 0; i < thumbHeight; i++ {
+		y := core.Unit(thumbStart+i) * metrics.CellHeight
+		p.DrawCell(scrollbarX, y, '█', thumbStyle)
 	}
 }
 
 // handlePopupMousePress handles mouse clicks on the popup overlay.
-// Just updates hover state - selection happens on release.
+// This is called when clicking within an already-open popup (click mode).
 func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds core.UnitRect) bool {
 	if event.Button != core.LeftButton {
 		return false
 	}
 
+	metrics := core.DefaultCellMetrics()
+
 	// Check if the click is within the popup bounds
 	if event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
 		event.Y >= popupBounds.Y && event.Y < popupBounds.Y+popupBounds.Height {
+
+		// Check for scrollbar clicks in click mode
+		if c.clickMode && len(c.items) > c.maxVisible {
+			popupHeight := c.maxVisible
+			if popupHeight > len(c.items) {
+				popupHeight = len(c.items)
+			}
+
+			scrollbarX, thumbStart, thumbHeight, _ := c.scrollbarGeometry(popupBounds.Width, popupHeight)
+			if event.X >= popupBounds.X+scrollbarX {
+				// Click on scrollbar area
+				relY := event.Y - popupBounds.Y
+				clickedRow := int(relY / metrics.CellHeight)
+
+				// Check if click is on thumb - start drag
+				if clickedRow >= thumbStart && clickedRow < thumbStart+thumbHeight {
+					c.scrollbarDragging = true
+					c.scrollbarDragStartY = clickedRow
+					c.scrollbarDragOffset = c.scrollOffset
+					c.mouseDown = true
+					return true
+				}
+
+				// Click on track - page up or down
+				visibleCount := popupHeight
+				if clickedRow < thumbStart && c.canScrollUp() {
+					// Page up
+					newOffset := c.scrollOffset - visibleCount
+					if newOffset < 0 {
+						newOffset = 0
+					}
+					c.scrollOffset = newOffset
+					c.Update()
+				} else if clickedRow >= thumbStart+thumbHeight && c.canScrollDown() {
+					// Page down
+					maxScroll := len(c.items) - visibleCount
+					newOffset := c.scrollOffset + visibleCount
+					if newOffset > maxScroll {
+						newOffset = maxScroll
+					}
+					c.scrollOffset = newOffset
+					c.Update()
+				}
+				return true
+			}
+		}
+
 		// Calculate which item was pressed
-		metrics := core.DefaultCellMetrics()
 		relY := event.Y - popupBounds.Y
 		itemIndex := int(relY / metrics.CellHeight)
 		actualIndex := c.scrollOffset + itemIndex
 
 		if actualIndex >= 0 && actualIndex < len(c.items) {
 			c.hoverIndex = actualIndex
+			c.mouseDown = true
+			c.mouseDownX = event.X
+			c.mouseDownY = event.Y
+			c.dragging = false
 			c.Update()
 		}
 		return true
 	}
 
-	// Click was outside popup - close it
+	// Click was outside popup - close it and cancel
+	if !c.clickMode {
+		// Drag mode - restore original
+		c.SetCurrentIndex(c.originalIndex)
+	}
 	c.HidePopup()
 	return true
 }
 
 // handlePopupMouseMove handles mouse movement on the popup overlay.
 func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds core.UnitRect) bool {
-	// Check if mouse is within the popup bounds
-	if event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
-		event.Y >= popupBounds.Y && event.Y < popupBounds.Y+popupBounds.Height {
-		// Calculate which item is under the mouse
-		metrics := core.DefaultCellMetrics()
-		relY := event.Y - popupBounds.Y
-		itemIndex := int(relY / metrics.CellHeight)
-		actualIndex := c.scrollOffset + itemIndex
+	metrics := core.DefaultCellMetrics()
+	popupHeight := c.maxVisible
+	if popupHeight > len(c.items) {
+		popupHeight = len(c.items)
+	}
 
-		if actualIndex >= 0 && actualIndex < len(c.items) {
-			if c.hoverIndex != actualIndex {
-				c.hoverIndex = actualIndex
-				c.Update()
+	// Handle scrollbar thumb dragging first
+	if c.scrollbarDragging {
+		relY := event.Y - popupBounds.Y
+		currentRow := int(relY / metrics.CellHeight)
+		rowDelta := currentRow - c.scrollbarDragStartY
+
+		visibleCount := popupHeight
+		totalItems := len(c.items)
+		maxScroll := totalItems - visibleCount
+
+		if maxScroll > 0 {
+			_, _, thumbHeight, trackHeight := c.scrollbarGeometry(popupBounds.Width, visibleCount)
+			scrollableTrack := trackHeight - thumbHeight
+
+			if scrollableTrack > 0 {
+				// Convert row delta to scroll offset delta
+				scrollDelta := rowDelta * maxScroll / scrollableTrack
+				newOffset := c.scrollbarDragOffset + scrollDelta
+
+				// Clamp
+				if newOffset < 0 {
+					newOffset = 0
+				} else if newOffset > maxScroll {
+					newOffset = maxScroll
+				}
+
+				if c.scrollOffset != newOffset {
+					c.scrollOffset = newOffset
+					c.Update()
+				}
 			}
 		}
 		return true
 	}
 
-	// Mouse is outside popup - clear hover
-	if c.hoverIndex != -1 {
-		c.hoverIndex = -1
-		c.Update()
+	// Calculate relative position to popup
+	relX := event.X - popupBounds.X
+	relY := event.Y - popupBounds.Y
+
+	// Check if we need to start dragging (for click mode)
+	if c.mouseDown && !c.dragging && c.clickMode {
+		dx := event.X - c.mouseDownX
+		dy := event.Y - c.mouseDownY
+		if dx < 0 {
+			dx = -dx
+		}
+		if dy < 0 {
+			dy = -dy
+		}
+		threshold := metrics.CellWidth / 2
+		if dx > threshold || dy > threshold {
+			c.dragging = true
+		}
 	}
-	return false
+
+	// Check if mouse is within the popup X bounds (for scroll handling)
+	inXBounds := relX >= 0 && relX < popupBounds.Width
+
+	// Handle mouse above popup - scroll up
+	if relY < 0 && inXBounds {
+		if c.scrollHoverZone != -1 {
+			c.scrollHoverZone = -1
+			if c.canScrollUp() {
+				c.scrollUp(1)
+				c.startScrollTimer(-1)
+			}
+		}
+		// Keep the topmost visible item highlighted
+		if c.hoverIndex != c.scrollOffset {
+			c.hoverIndex = c.scrollOffset
+			c.Update()
+		}
+		return true
+	}
+
+	// Handle mouse below popup - scroll down
+	if relY >= popupBounds.Height && inXBounds {
+		if c.scrollHoverZone != 1 {
+			c.scrollHoverZone = 1
+			if c.canScrollDown() {
+				c.scrollDown(1)
+				c.startScrollTimer(1)
+			}
+		}
+		// Keep the bottommost visible item highlighted
+		lastVisible := c.scrollOffset + popupHeight - 1
+		if lastVisible >= len(c.items) {
+			lastVisible = len(c.items) - 1
+		}
+		if c.hoverIndex != lastVisible {
+			c.hoverIndex = lastVisible
+			c.Update()
+		}
+		return true
+	}
+
+	// Mouse left or right of popup - keep nearest item selected
+	if !inXBounds {
+		c.scrollHoverZone = 0
+		c.stopScrollTimer()
+		// Don't change hoverIndex - keep current selection visible
+		return c.mouseDown // Consume if dragging
+	}
+
+	// Mouse is within the popup bounds
+	c.scrollHoverZone = 0
+	c.stopScrollTimer()
+
+	// Check for scroll indicator hover (top/bottom rows when scrollable)
+	if len(c.items) > c.maxVisible {
+		// Top scroll indicator
+		if relY < metrics.CellHeight && c.canScrollUp() {
+			if c.scrollHoverZone != -1 {
+				c.scrollHoverZone = -1
+				c.scrollUp(1)
+				c.startScrollTimer(-1)
+			}
+			c.hoverIndex = c.scrollOffset
+			c.Update()
+			return true
+		}
+		// Bottom scroll indicator
+		if relY >= core.Unit(popupHeight-1)*metrics.CellHeight && c.canScrollDown() {
+			if c.scrollHoverZone != 1 {
+				c.scrollHoverZone = 1
+				c.scrollDown(1)
+				c.startScrollTimer(1)
+			}
+			c.hoverIndex = c.scrollOffset + popupHeight - 1
+			c.Update()
+			return true
+		}
+	}
+
+	// Normal item hover
+	itemIndex := int(relY / metrics.CellHeight)
+	actualIndex := c.scrollOffset + itemIndex
+
+	if actualIndex >= 0 && actualIndex < len(c.items) {
+		if c.hoverIndex != actualIndex {
+			c.hoverIndex = actualIndex
+			c.Update()
+		}
+	}
+	return true
 }
 
 // handlePopupMouseRelease handles mouse release on the popup overlay.
@@ -665,27 +1051,74 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 		return false
 	}
 
+	c.stopScrollTimer()
+	wasMouseDown := c.mouseDown
+	wasDragging := c.dragging
+	wasClickMode := c.clickMode
+	wasScrollbarDragging := c.scrollbarDragging
+
+	c.mouseDown = false
+	c.dragging = false
+	c.scrollbarDragging = false
+
+	// If we were dragging the scrollbar, just stop - don't process as item selection
+	if wasScrollbarDragging {
+		return true
+	}
+
+	metrics := core.DefaultCellMetrics()
+
 	// Check if the release is within the popup bounds
-	if event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
-		event.Y >= popupBounds.Y && event.Y < popupBounds.Y+popupBounds.Height {
+	inPopup := event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
+		event.Y >= popupBounds.Y && event.Y < popupBounds.Y+popupBounds.Height
+
+	if inPopup {
 		// Calculate which item was released on
-		metrics := core.DefaultCellMetrics()
 		relY := event.Y - popupBounds.Y
 		itemIndex := int(relY / metrics.CellHeight)
 		actualIndex := c.scrollOffset + itemIndex
 
 		if actualIndex >= 0 && actualIndex < len(c.items) {
-			c.SetCurrentIndex(actualIndex)
-			if c.onActivated != nil {
-				c.onActivated(actualIndex)
+			// In click mode with no drag, this confirms selection
+			// In drag mode, this also confirms selection
+			if wasClickMode && !wasDragging && wasMouseDown {
+				// Click mode: second click confirms
+				c.SetCurrentIndex(actualIndex)
+				if c.onActivated != nil {
+					c.onActivated(actualIndex)
+				}
+				c.HidePopup()
+				return true
+			} else if !wasClickMode {
+				// Drag mode: release inside confirms
+				c.SetCurrentIndex(actualIndex)
+				if c.onActivated != nil {
+					c.onActivated(actualIndex)
+				}
+				c.HidePopup()
+				return true
 			}
-			c.HidePopup()
-			return true
 		}
+		// Click mode but didn't click an item - stay open
+		return true
 	}
 
-	// Release was outside popup - close it
-	c.HidePopup()
+	// Release was outside popup
+	if !wasClickMode {
+		// Drag mode - cancel selection, restore original
+		c.SetCurrentIndex(c.originalIndex)
+		c.HidePopup()
+	} else if wasDragging {
+		// Click mode but was dragging - cancel
+		c.SetCurrentIndex(c.originalIndex)
+		c.HidePopup()
+	}
+	// Click mode without drag - just close, keep whatever was last set
+	// Actually for better UX, just close without changing
+	if wasClickMode && !wasDragging {
+		c.HidePopup()
+	}
+
 	return true
 }
 
@@ -804,46 +1237,236 @@ func (c *ComboBox) ensureVisible(index int) {
 	c.Update()
 }
 
-// HandleMousePress handles mouse clicks.
+// HandleMousePress handles mouse clicks on the combobox widget itself.
 func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button != core.LeftButton {
 		return false
 	}
 
 	c.SetFocus()
+	metrics := core.DefaultCellMetrics()
+	bounds := c.Bounds()
 
+	// Check if click is on the main combobox area (first row)
+	if event.Y < metrics.CellHeight && event.X >= 0 && event.X < bounds.Width {
+		if c.isOpen {
+			// Already open - this becomes a drag from the combobox button
+			// The popup overlay will handle subsequent events
+			c.mouseDown = true
+			c.mouseDownX = event.X
+			c.mouseDownY = event.Y
+			c.dragging = false
+			return true
+		}
+
+		// Not open - open popup and start drag mode
+		c.mouseDown = true
+		c.mouseDownX = event.X
+		c.mouseDownY = event.Y
+		c.dragging = false
+		c.clickMode = false // Will switch to click mode on release without drag
+		c.ShowPopup()
+		return true
+	}
+
+	// If popup is open and click is in popup area, let popup handler deal with it
 	if c.isOpen {
-		// Check if clicked on an item
-		metrics := core.DefaultCellMetrics()
-		_ = c.Bounds() // unused but kept for consistency
 		popupY := metrics.CellHeight
+		popupHeight := c.maxVisible
+		if popupHeight > len(c.items) {
+			popupHeight = len(c.items)
+		}
 
-		if event.Y >= popupY && event.Y < popupY+core.Unit(c.maxVisible)*metrics.CellHeight {
-			// Clicked in popup area
+		if event.Y >= popupY && event.Y < popupY+core.Unit(popupHeight)*metrics.CellHeight {
+			// Clicked in popup area (fallback for non-overlay mode)
 			itemIndex := int((event.Y - popupY) / metrics.CellHeight)
 			actualIndex := c.scrollOffset + itemIndex
 
+			if actualIndex >= 0 && actualIndex < len(c.items) {
+				c.hoverIndex = actualIndex
+				c.mouseDown = true
+				c.mouseDownX = event.X
+				c.mouseDownY = event.Y
+				c.dragging = false
+				c.Update()
+			}
+			return true
+		}
+
+		// Clicked outside popup - cancel
+		if !c.clickMode {
+			c.SetCurrentIndex(c.originalIndex)
+		}
+		c.HidePopup()
+		return true
+	}
+
+	return true
+}
+
+// HandleMouseMove handles mouse movement while button may be held.
+func (c *ComboBox) HandleMouseMove(event core.MouseMoveEvent) bool {
+	if !c.mouseDown || !c.isOpen {
+		return false
+	}
+
+	metrics := core.DefaultCellMetrics()
+	bounds := c.Bounds()
+
+	// Detect if we've started dragging
+	if !c.dragging {
+		dx := event.X - c.mouseDownX
+		dy := event.Y - c.mouseDownY
+		if dx < 0 {
+			dx = -dx
+		}
+		if dy < 0 {
+			dy = -dy
+		}
+		threshold := metrics.CellWidth / 2
+		if dx > threshold || dy > threshold {
+			c.dragging = true
+		} else {
+			return true // Not dragging yet
+		}
+	}
+
+	// Calculate popup bounds for hit testing
+	popupY := metrics.CellHeight
+	popupHeight := c.maxVisible
+	if popupHeight > len(c.items) {
+		popupHeight = len(c.items)
+	}
+	popupEndY := popupY + core.Unit(popupHeight)*metrics.CellHeight
+
+	// Handle scrolling when dragging above/below popup
+	if event.Y < popupY && event.X >= 0 && event.X < bounds.Width {
+		// Above popup - scroll up
+		if c.scrollHoverZone != -1 {
+			c.scrollHoverZone = -1
+			if c.canScrollUp() {
+				c.scrollUp(1)
+				c.startScrollTimer(-1)
+			}
+		}
+		c.hoverIndex = c.scrollOffset
+		c.Update()
+		return true
+	}
+
+	if event.Y >= popupEndY && event.X >= 0 && event.X < bounds.Width {
+		// Below popup - scroll down
+		if c.scrollHoverZone != 1 {
+			c.scrollHoverZone = 1
+			if c.canScrollDown() {
+				c.scrollDown(1)
+				c.startScrollTimer(1)
+			}
+		}
+		lastVisible := c.scrollOffset + popupHeight - 1
+		if lastVisible >= len(c.items) {
+			lastVisible = len(c.items) - 1
+		}
+		c.hoverIndex = lastVisible
+		c.Update()
+		return true
+	}
+
+	// Within popup area
+	if event.Y >= popupY && event.Y < popupEndY && event.X >= 0 && event.X < bounds.Width {
+		c.scrollHoverZone = 0
+		c.stopScrollTimer()
+
+		itemIndex := int((event.Y - popupY) / metrics.CellHeight)
+		actualIndex := c.scrollOffset + itemIndex
+
+		if actualIndex >= 0 && actualIndex < len(c.items) {
+			if c.hoverIndex != actualIndex {
+				c.hoverIndex = actualIndex
+				c.Update()
+			}
+		}
+		return true
+	}
+
+	// Off to the side - stop scrolling but keep selection
+	c.scrollHoverZone = 0
+	c.stopScrollTimer()
+	return true
+}
+
+// HandleMouseRelease handles mouse button release.
+func (c *ComboBox) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	if event.Button != core.LeftButton {
+		return false
+	}
+
+	if !c.isOpen {
+		c.mouseDown = false
+		c.dragging = false
+		return false
+	}
+
+	c.stopScrollTimer()
+	wasMouseDown := c.mouseDown
+	wasDragging := c.dragging
+
+	c.mouseDown = false
+	c.dragging = false
+
+	metrics := core.DefaultCellMetrics()
+	bounds := c.Bounds()
+
+	// Calculate popup bounds
+	popupY := metrics.CellHeight
+	popupHeight := c.maxVisible
+	if popupHeight > len(c.items) {
+		popupHeight = len(c.items)
+	}
+	popupEndY := popupY + core.Unit(popupHeight)*metrics.CellHeight
+
+	// Check if release is within popup
+	inPopup := event.Y >= popupY && event.Y < popupEndY &&
+		event.X >= 0 && event.X < bounds.Width
+
+	if inPopup && wasMouseDown {
+		if wasDragging {
+			// Drag mode - release inside confirms
+			itemIndex := int((event.Y - popupY) / metrics.CellHeight)
+			actualIndex := c.scrollOffset + itemIndex
 			if actualIndex >= 0 && actualIndex < len(c.items) {
 				c.SetCurrentIndex(actualIndex)
 				if c.onActivated != nil {
 					c.onActivated(actualIndex)
 				}
-				c.HidePopup()
-				return true
 			}
+			c.HidePopup()
+			return true
+		} else {
+			// Click without drag on combobox - switch to click mode
+			// User clicked and released on combobox without moving
+			// Popup should stay open for click-to-select
+			c.clickMode = true
+			return true
 		}
+	}
 
-		// Clicked outside popup
-		c.HidePopup()
+	// Release on the combobox button itself (not popup)
+	if event.Y < popupY && event.X >= 0 && event.X < bounds.Width && wasMouseDown && !wasDragging {
+		// Quick click on combobox - switch to click mode
+		c.clickMode = true
 		return true
 	}
 
-	// Toggle popup
-	if c.isOpen {
+	// Release outside - cancel if dragging, otherwise switch to click mode
+	if wasDragging {
+		c.SetCurrentIndex(c.originalIndex)
 		c.HidePopup()
-	} else {
-		c.ShowPopup()
+	} else if wasMouseDown {
+		// Released outside without dragging - just switch to click mode
+		c.clickMode = true
 	}
+
 	return true
 }
 
