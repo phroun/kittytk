@@ -153,6 +153,7 @@ type Menu struct {
 	// Callbacks
 	onAboutToShow func()
 	onAboutToHide func()
+	onItemPressed func() // Called when an item is pressed, signals MenuBar to enter drag mode
 }
 
 // parseAcceleratorTitle parses a title with & markup.
@@ -870,6 +871,8 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 	subX := m.popupX + size.Width
 
 	m.activeSubMenu = item.SubMenu
+	// Propagate the onItemPressed callback to submenu
+	item.SubMenu.onItemPressed = m.onItemPressed
 	item.SubMenu.Show(subX, subY)
 }
 
@@ -944,11 +947,15 @@ func (m *Menu) HandleMousePress(event core.MousePressEvent) bool {
 		if itemIndex >= 0 && itemIndex < len(m.items) {
 			item := m.items[itemIndex]
 			if !item.Separator && item.Enabled {
+				m.currentIndex = itemIndex
 				if item.SubMenu != nil {
-					m.currentIndex = itemIndex
 					m.openSubMenu(item)
 				} else {
-					m.triggerItem(item)
+					// Signal MenuBar to enter drag mode so release will trigger
+					if m.onItemPressed != nil {
+						m.onItemPressed()
+					}
+					m.Update()
 				}
 			}
 		}
@@ -1386,6 +1393,13 @@ func (m *MenuBar) OpenMenu(index int) {
 	m.currentIndex = index
 	m.activeMenu = m.menus[index]
 	m.acceleratorsActive = false // Disable bar accelerators when menu is down
+
+	// Set up callback so when user presses on a menu item, we enter drag mode
+	// This allows click-to-open then drag-to-select behavior
+	m.activeMenu.onItemPressed = func() {
+		m.mouseDown = true
+		m.dragging = true
+	}
 
 	// Ensure the menu is visible before opening (scroll if needed)
 	m.ensureMenuVisible(index)
@@ -2084,7 +2098,7 @@ func (m *MenuBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		return false
 	}
 
-	// If not dragging (just a click), leave menu open for further clicks
+	// If not dragging (just a click), leave menu open for further interaction
 	if !wasDragging {
 		return true // Consume the release event but don't dismiss
 	}
