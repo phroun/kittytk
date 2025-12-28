@@ -1104,19 +1104,17 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 	}
 
 	// Release was outside popup
-	if !wasClickMode {
-		// Drag mode - cancel selection, restore original
+	if wasDragging {
+		// Was dragging (in either mode) and released outside - cancel
 		c.SetCurrentIndex(c.originalIndex)
 		c.HidePopup()
-	} else if wasDragging {
-		// Click mode but was dragging - cancel
-		c.SetCurrentIndex(c.originalIndex)
+	} else if wasClickMode {
+		// In click mode, released outside without drag - dismiss
 		c.HidePopup()
-	}
-	// Click mode without drag - just close, keep whatever was last set
-	// Actually for better UX, just close without changing
-	if wasClickMode && !wasDragging {
-		c.HidePopup()
+	} else {
+		// Not in click mode, released outside without drag - enter click mode
+		// This is the "click to open" case - popup should stay open
+		c.clickMode = true
 	}
 
 	return true
