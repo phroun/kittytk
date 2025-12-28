@@ -2082,6 +2082,8 @@ func (m *MenuBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 						m.activeMenu.openSubMenu(item)
 					} else {
 						m.activeMenu.triggerItem(item)
+						// Clean up menu bar state after triggering
+						m.CloseMenuAndUnfocus()
 					}
 					return true
 				}

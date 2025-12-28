@@ -141,17 +141,30 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 func (m *MessageBox) calculateSize() {
 	metrics := core.DefaultCellMetrics()
 
-	textWidth := len(m.content.text)
+	// Calculate width and height based on text content
+	lines := strings.Split(m.content.text, "\n")
+	maxLineWidth := 0
+	for _, line := range lines {
+		if len(line) > maxLineWidth {
+			maxLineWidth = len(line)
+		}
+	}
+
+	// Add padding for icon and margins
+	textWidth := maxLineWidth + 6 // 4 for icon area, 2 for margins
 	if textWidth > 60 {
 		textWidth = 60
 	}
-	if textWidth < 20 {
-		textWidth = 20
+	if textWidth < 24 {
+		textWidth = 24
 	}
 
+	// Height: 1 top margin + text lines + 1 gap + 1 button row + 1 bottom margin
+	textHeight := len(lines) + 4
+
 	m.SetBounds(core.UnitRect{
-		Width:  core.Unit(textWidth+8) * metrics.CellWidth,
-		Height: metrics.CellHeight * 8,
+		Width:  core.Unit(textWidth) * metrics.CellWidth,
+		Height: core.Unit(textHeight) * metrics.CellHeight,
 	})
 }
 
@@ -198,17 +211,21 @@ func (m *MessageBox) done(result DialogResult) {
 // Paint renders the message box content.
 func (c *messageBoxContent) Paint(p *core.Painter) {
 	bounds := c.Bounds()
-	theme := c.Theme()
+	scheme := c.GetScheme()
 	metrics := p.Metrics()
+	inheritedBG := c.EffectiveBackgroundColor()
+
+	// Build style from scheme with inherited background
+	contentStyle := scheme.GetNormal(true).WithBg(inheritedBG)
 
 	// Draw background
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', contentStyle)
 
 	// Draw icon
 	iconText := c.getIconText()
 	textY := metrics.CellHeight
 	if iconText != "" {
-		p.DrawCell(metrics.CellWidth, textY, []rune(iconText)[0], theme.Normal)
+		p.DrawCell(metrics.CellWidth, textY, []rune(iconText)[0], contentStyle)
 	}
 
 	// Draw message text
@@ -222,7 +239,7 @@ func (c *messageBoxContent) Paint(p *core.Painter) {
 		if textX >= bounds.Width-metrics.CellWidth {
 			break
 		}
-		p.DrawCell(textX, textY, ch, theme.Normal)
+		p.DrawCell(textX, textY, ch, contentStyle)
 		textX += metrics.CellWidth
 	}
 
