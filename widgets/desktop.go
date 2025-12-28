@@ -40,6 +40,10 @@ type ApplicationProvider interface {
 
 	// OnDeactivate is called when this application is no longer active.
 	OnDeactivate()
+
+	// SetDesktop sets the desktop that owns this application.
+	// Called by Desktop.AddApplication().
+	SetDesktop(desktop core.Widget)
 }
 
 // Desktop represents the application desktop (background behind windows).
@@ -258,6 +262,9 @@ func (d *Desktop) AddApplication(app ApplicationProvider) {
 		d.activeApp = app
 	}
 	d.mu.Unlock()
+
+	// Set this desktop as the application's desktop
+	app.SetDesktop(d)
 
 	if shouldActivate {
 		app.OnActivate()

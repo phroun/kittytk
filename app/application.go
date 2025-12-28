@@ -722,18 +722,38 @@ func (app *Application) Windows() []*window.Window {
 // AddWindow adds a window to this application.
 func (app *Application) AddWindow(w *window.Window) {
 	app.mu.Lock()
-	defer app.mu.Unlock()
 	app.windows = append(app.windows, w)
+	desktop := app.desktop
+	app.mu.Unlock()
+
+	// Also add to Desktop's WindowManager if we have one
+	if desktop != nil {
+		if d, ok := desktop.(*widgets.Desktop); ok {
+			if wm := d.WindowManager(); wm != nil {
+				wm.AddWindow(w)
+			}
+		}
+	}
 }
 
 // RemoveWindow removes a window from this application.
 func (app *Application) RemoveWindow(w *window.Window) {
 	app.mu.Lock()
-	defer app.mu.Unlock()
 	for i, win := range app.windows {
 		if win == w {
 			app.windows = append(app.windows[:i], app.windows[i+1:]...)
 			break
+		}
+	}
+	desktop := app.desktop
+	app.mu.Unlock()
+
+	// Also remove from Desktop's WindowManager if we have one
+	if desktop != nil {
+		if d, ok := desktop.(*widgets.Desktop); ok {
+			if wm := d.WindowManager(); wm != nil {
+				wm.RemoveWindow(w)
+			}
 		}
 	}
 }
