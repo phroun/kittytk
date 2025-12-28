@@ -137,7 +137,7 @@ func NewDesktop() *Desktop {
 
 // createSystemMenu creates the always-present system menu (ψ).
 func (d *Desktop) createSystemMenu() *Menu {
-	menu := NewMenu("ψ")
+	menu := NewMenu("Ψ")
 	menu.AddItem(NewMenuItem("&About Desktop").SetOnTriggered(func() {
 		// Show about dialog
 		// TODO: Implement about dialog

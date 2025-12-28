@@ -22,7 +22,7 @@ Restructure the toolkit so Desktop is the top-level object, with multiple Applic
 - Provides Actions for menus and context menus
 - Receives menu/action dispatch when active
 
-### System Menu (ψ)
+### System Menu (Ψ)
 - Always visible in upper-left of menu bar
 - Contains desktop-level items (not app-specific)
 - "Desktop accessories" - small utilities common to all apps
@@ -115,13 +115,13 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 }
 ```
 
-### Phase 3: System Menu (ψ)
+### Phase 3: System Menu (Ψ)
 
 **Goal**: Add always-present system menu in upper-left.
 
 **Menu bar layout**:
 ```
-[ψ][File][Edit][View][Window][Help]  Mon Dec 28 15:04
+[Ψ][File][Edit][View][Window][Help]  Mon Dec 28 15:04
  ^                    ^
  |                    |
  System menu          Active app's menus
