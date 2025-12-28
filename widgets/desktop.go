@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +13,16 @@ import (
 	"github.com/phroun/tuitk/style"
 	"github.com/phroun/tuitk/window"
 )
+
+// debugLogDesktop writes debug messages to /tmp/menu_debug.log
+func debugLogDesktop(format string, args ...interface{}) {
+	f, err := os.OpenFile("/tmp/menu_debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "[%s] DESKTOP: %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, args...))
+}
 
 // ApplicationProvider is the interface that applications must implement
 // to integrate with Desktop. This allows multiple applications to run
@@ -586,16 +598,21 @@ func (d *Desktop) processTimers() {
 	var toFire []*DesktopTimer
 	var remaining []*DesktopTimer
 
+	timerCount := len(d.timers)
 	for _, timer := range d.timers {
 		if timer.stopped {
+			debugLogDesktop("processTimers: timer %d is stopped, skipping", timer.ID)
 			continue
 		}
 
 		if now.After(timer.nextFire) || now.Equal(timer.nextFire) {
+			debugLogDesktop("processTimers: timer %d is due (nextFire=%v, now=%v), will fire",
+				timer.ID, timer.nextFire.Format("15:04:05.000"), now.Format("15:04:05.000"))
 			toFire = append(toFire, timer)
 			if timer.Repeat {
 				timer.nextFire = now.Add(timer.Interval)
 				remaining = append(remaining, timer)
+				debugLogDesktop("processTimers: timer %d rescheduled for %v", timer.ID, timer.nextFire.Format("15:04:05.000"))
 			}
 		} else {
 			remaining = append(remaining, timer)
@@ -605,9 +622,14 @@ func (d *Desktop) processTimers() {
 	d.timers = remaining
 	d.timerMutex.Unlock()
 
+	if timerCount > 0 || len(toFire) > 0 {
+		debugLogDesktop("processTimers: had %d timers, firing %d", timerCount, len(toFire))
+	}
+
 	// Fire timers outside lock
 	for _, timer := range toFire {
 		if timer.Callback != nil {
+			debugLogDesktop("processTimers: firing timer %d callback", timer.ID)
 			timer.Callback()
 		}
 	}
