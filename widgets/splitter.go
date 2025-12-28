@@ -297,7 +297,7 @@ func (sp *Splitter) Paint(p *core.Painter) {
 	focused := sp.HasFocus()
 	dividerStyle := scheme.GetSplitter()
 	if sp.dragging {
-		dividerStyle = scheme.GetSelection()
+		dividerStyle = scheme.GetPressedSplitter()
 	} else if focused {
 		dividerStyle = scheme.GetFocusedSplitter()
 	}

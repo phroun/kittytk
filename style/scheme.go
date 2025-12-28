@@ -155,6 +155,9 @@ type Scheme struct {
 	FocusedSplitter       *CellStyle // nil = FocusBG + FocusFG
 	FocusedSplitterHandle *CellStyle // nil = FocusedSplitter
 	FocusedSplitterTitle  *CellStyle // nil = FocusedSplitter
+	PressedSplitter       *CellStyle // nil = WindowBG + WindowFG (black on white)
+	PressedSplitterHandle *CellStyle // nil = PressedSplitter
+	PressedSplitterTitle  *CellStyle // nil = PressedSplitter
 
 	// =========================================================================
 	// Tab Widget (Page Control) Related Colors
@@ -405,6 +408,9 @@ func DefaultScheme() *Scheme {
 		FocusedSplitter:       ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
 		FocusedSplitterHandle: nil, // FocusedSplitter
 		FocusedSplitterTitle:  nil, // FocusedSplitter
+		PressedSplitter:       nil, // WindowBG + WindowFG (black on white)
+		PressedSplitterHandle: nil, // PressedSplitter
+		PressedSplitterTitle:  nil, // PressedSplitter
 
 		// Tab Widget
 		TabsFG:                ptr(DefaultStyle().WithFg(ColorBrightWhite)),
@@ -812,6 +818,28 @@ func (s *Scheme) GetFocusedSplitterHandle() CellStyle {
 
 func (s *Scheme) GetFocusedSplitterTitle() CellStyle {
 	return or(s.FocusedSplitterTitle, s.FocusedSplitter)
+}
+
+func (s *Scheme) GetPressedSplitter() CellStyle {
+	if s.PressedSplitter != nil {
+		return *s.PressedSplitter
+	}
+	// Default to WindowFG on WindowBG (black on white, like pressed buttons)
+	return DefaultStyle().WithFg(s.GetWindowFG(true)).WithBg(s.GetWindowBG(true))
+}
+
+func (s *Scheme) GetPressedSplitterHandle() CellStyle {
+	if s.PressedSplitterHandle != nil {
+		return *s.PressedSplitterHandle
+	}
+	return s.GetPressedSplitter()
+}
+
+func (s *Scheme) GetPressedSplitterTitle() CellStyle {
+	if s.PressedSplitterTitle != nil {
+		return *s.PressedSplitterTitle
+	}
+	return s.GetPressedSplitter()
 }
 
 // --- Tab Widget Colors ---
