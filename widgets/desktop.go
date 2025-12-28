@@ -789,10 +789,15 @@ func (d *Desktop) SetLayoutManager(lm core.LayoutManager) {
 }
 
 // SetMenuBar sets the menu bar (displayed at the top of the screen).
+// The system menu (ψ) is automatically prepended to the menu bar.
 func (d *Desktop) SetMenuBar(menuBar *MenuBar) {
 	d.menuBar = menuBar
 	if menuBar != nil {
 		menuBar.SetParent(d)
+		// Prepend system menu if we have one
+		if d.systemMenu != nil {
+			menuBar.InsertMenu(0, d.systemMenu)
+		}
 	}
 	d.Update()
 }
