@@ -142,6 +142,15 @@ func NewDesktop() *Desktop {
 	// Create system menu
 	d.systemMenu = d.createSystemMenu()
 
+	// Create menu bar (always present in Desktop)
+	d.menuBar = NewMenuBar()
+	d.menuBar.SetParent(d)
+	d.menuBar.AddMenu(d.systemMenu)
+
+	// Create status bar (always present in Desktop)
+	d.statusBar = NewStatusBar()
+	d.statusBar.SetParent(d)
+
 	return d
 }
 
