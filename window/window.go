@@ -191,10 +191,10 @@ func (w *Window) SetContent(widget core.Widget) {
 	}
 	w.mu.Unlock()
 
-	// Update focus manager root and focus first widget
+	// Update focus manager root and focus first non-furtive widget
 	if fm != nil {
 		fm.SetRoot(widget)
-		fm.FocusFirst()
+		fm.FocusFirstNonFurtive()
 	}
 
 	w.layoutContent()

@@ -62,6 +62,7 @@ func NewTabWidget() *TabWidget {
 	t.Init(t)
 	// TabWidget can receive focus for tab bar keyboard navigation
 	t.SetFocusPolicy(core.TabFocus)
+	t.SetFurtive(true) // Furtive: no focus on click, skip for initial focus
 	t.SetAccessibleRole(core.RoleTabList)
 	return t
 }

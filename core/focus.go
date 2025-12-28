@@ -277,6 +277,29 @@ func (fm *FocusManager) FocusFirst() bool {
 	return false
 }
 
+// FocusFirstNonFurtive moves focus to the first non-furtive focusable widget.
+// This should be used for initial focus selection when opening a window or dialog,
+// as furtive widgets (splitters, tab bars, etc.) should be skipped for initial focus.
+func (fm *FocusManager) FocusFirstNonFurtive() bool {
+	fm.mu.RLock()
+	root := fm.root
+	fm.mu.RUnlock()
+
+	chain := fm.buildFocusChain(root)
+	for _, w := range chain {
+		if fm.canFocus(w) && !w.Furtive() {
+			return fm.SetFocusedWidget(w)
+		}
+	}
+	// Fall back to any focusable widget if all are furtive
+	for _, w := range chain {
+		if fm.canFocus(w) {
+			return fm.SetFocusedWidget(w)
+		}
+	}
+	return false
+}
+
 // FocusLast moves focus to the last focusable widget.
 func (fm *FocusManager) FocusLast() bool {
 	fm.mu.RLock()
@@ -488,8 +511,8 @@ func (fs *FocusScope) Activate() {
 		parent.mu.Unlock()
 	}
 
-	// Restore focus within this scope
-	fs.manager.FocusFirst()
+	// Restore focus within this scope, skipping furtive widgets
+	fs.manager.FocusFirstNonFurtive()
 }
 
 // Deactivate deactivates this focus scope and restores parent focus.

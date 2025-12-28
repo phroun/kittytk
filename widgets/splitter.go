@@ -42,6 +42,7 @@ func NewSplitter(orientation core.Orientation) *Splitter {
 	s.WidgetBase = *core.NewWidgetBase()
 	s.Init(s)
 	s.SetFocusPolicy(core.StrongFocus) // Focusable for keyboard navigation
+	s.SetFurtive(true)                 // Furtive: no focus on click, skip for initial focus
 	s.SetAccessibleRole(core.RoleSplitter)
 	return s
 }

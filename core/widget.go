@@ -80,6 +80,12 @@ type Widget interface {
 	// ClearFocus removes focus from this widget.
 	ClearFocus()
 
+	// Furtive returns whether this widget is "furtive" - meaning it can be
+	// tabbed to but does not gain focus from mouse clicks, and is skipped
+	// when auto-selecting the initial focus item in a container.
+	Furtive() bool
+	SetFurtive(furtive bool)
+
 	// Styling
 
 	// Style returns the widget's style (may be nil to use parent/theme).
@@ -292,6 +298,7 @@ type WidgetBase struct {
 	visible bool
 	enabled bool
 	focused bool
+	furtive bool
 
 	focusPolicy     FocusPolicy
 	scheme          style.SchemeID // -1 = inherit from container
@@ -550,6 +557,22 @@ func (w *WidgetBase) SetFocusPolicy(policy FocusPolicy) {
 	w.focusPolicy = policy
 }
 
+// Furtive returns whether the widget is "furtive".
+// Furtive widgets can be tabbed to, but do not gain focus from mouse clicks,
+// and are skipped when auto-selecting the initial focus item in a container.
+func (w *WidgetBase) Furtive() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.furtive
+}
+
+// SetFurtive sets whether the widget is "furtive".
+func (w *WidgetBase) SetFurtive(furtive bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.furtive = furtive
+}
+
 // HasFocus returns whether the widget has focus.
 func (w *WidgetBase) HasFocus() bool {
 	w.mu.RLock()
@@ -567,6 +590,16 @@ func (w *WidgetBase) SetFocus() {
 // visible (you can't click on something that isn't visible).
 func (w *WidgetBase) SetFocusWithoutScroll() {
 	w.setFocusInternal(false)
+}
+
+// SetFocusFromMouse attempts to give focus from a mouse click.
+// This respects the furtive flag - furtive widgets do not gain focus from mouse clicks.
+// Use this in HandleMousePress for widgets that may be furtive.
+func (w *WidgetBase) SetFocusFromMouse() {
+	if w.Furtive() {
+		return
+	}
+	w.setFocusInternal(false) // No scroll needed for mouse clicks
 }
 
 // setFocusInternal is the common implementation for SetFocus variants.
@@ -735,6 +768,8 @@ func (p *scrollRectProxy) SetFocusPolicy(FocusPolicy)             {}
 func (p *scrollRectProxy) HasFocus() bool                         { return false }
 func (p *scrollRectProxy) SetFocus()                              {}
 func (p *scrollRectProxy) ClearFocus()                            {}
+func (p *scrollRectProxy) Furtive() bool                          { return false }
+func (p *scrollRectProxy) SetFurtive(bool)                        {}
 func (p *scrollRectProxy) Style() *style.CellStyle                { return nil }
 func (p *scrollRectProxy) SetStyle(*style.CellStyle)              {}
 func (p *scrollRectProxy) Theme() *style.Theme                    { return nil }
