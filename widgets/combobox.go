@@ -112,18 +112,17 @@ func (c *ComboBox) startScrollTimer(direction int) {
 	}
 
 	callback := func() {
-		// Check if we're still hovering the same scroll zone
-		if (direction < 0 && c.scrollHoverZone != -1) ||
-			(direction > 0 && c.scrollHoverZone != 1) {
-			return
-		}
+		// Timer is stopped when leaving the scroll zone, so just scroll if we can
 		if direction < 0 && c.canScrollUp() {
 			c.scrollUp(1)
+			if c.requestUpdate != nil {
+				c.requestUpdate()
+			}
 		} else if direction > 0 && c.canScrollDown() {
 			c.scrollDown(1)
-		}
-		if c.requestUpdate != nil {
-			c.requestUpdate()
+			if c.requestUpdate != nil {
+				c.requestUpdate()
+			}
 		}
 	}
 
@@ -840,6 +839,21 @@ func (c *ComboBox) scrollbarGeometry(popupWidth core.Unit, visibleCount int) (sc
 	if maxScroll > 0 {
 		scrollableTrack := trackHeight - thumbHeight
 		thumbStart = c.scrollOffset * scrollableTrack / maxScroll
+
+		// Ensure thumb doesn't show at top unless actually at top (no content above)
+		if c.scrollOffset > 0 && thumbStart == 0 {
+			thumbStart = 1
+		}
+
+		// Ensure thumb doesn't show at bottom unless actually at bottom (no content below)
+		maxThumbStart := trackHeight - thumbHeight
+		if c.scrollOffset < maxScroll && thumbStart >= maxThumbStart {
+			thumbStart = maxThumbStart - 1
+			if thumbStart < 1 && c.scrollOffset > 0 {
+				thumbStart = 1 // Don't push to top if there's content above
+			}
+		}
+
 		if thumbStart+thumbHeight > trackHeight {
 			thumbStart = trackHeight - thumbHeight
 		}
@@ -1008,8 +1022,8 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 	relX := event.X - popupBounds.X
 	relY := event.Y - popupBounds.Y
 
-	// Check if we need to start dragging (for click mode)
-	if c.mouseDown && !c.dragging && c.clickMode {
+	// Check if we need to start dragging (detects movement beyond threshold)
+	if c.mouseDown && !c.dragging {
 		dx := event.X - c.mouseDownX
 		dy := event.Y - c.mouseDownY
 		if dx < 0 {
@@ -1028,13 +1042,11 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 	inXBounds := relX >= 0 && relX < popupBounds.Width
 
 	// Handle mouse above popup - scroll up
-	if relY < 0 && inXBounds {
+	if relY < 0 && inXBounds && c.canScrollUp() {
 		if c.scrollHoverZone != -1 {
 			c.scrollHoverZone = -1
-			if c.canScrollUp() {
-				c.scrollUp(1)
-				c.startScrollTimer(-1)
-			}
+			c.scrollUp(1)
+			c.startScrollTimer(-1)
 		}
 		// Keep the topmost visible item highlighted
 		if c.hoverIndex != c.scrollOffset {
@@ -1045,13 +1057,11 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 	}
 
 	// Handle mouse below popup - scroll down
-	if relY >= popupBounds.Height && inXBounds {
+	if relY >= popupBounds.Height && inXBounds && c.canScrollDown() {
 		if c.scrollHoverZone != 1 {
 			c.scrollHoverZone = 1
-			if c.canScrollDown() {
-				c.scrollDown(1)
-				c.startScrollTimer(1)
-			}
+			c.scrollDown(1)
+			c.startScrollTimer(1)
 		}
 		// Keep the bottommost visible item highlighted
 		lastVisible := c.scrollOffset + popupHeight - 1
@@ -1475,28 +1485,24 @@ func (c *ComboBox) HandleMouseMove(event core.MouseMoveEvent) bool {
 	popupEndY := popupY + core.Unit(popupHeight)*metrics.CellHeight
 
 	// Handle scrolling when dragging above/below popup
-	if event.Y < popupY && event.X >= 0 && event.X < bounds.Width {
+	if event.Y < popupY && event.X >= 0 && event.X < bounds.Width && c.canScrollUp() {
 		// Above popup - scroll up
 		if c.scrollHoverZone != -1 {
 			c.scrollHoverZone = -1
-			if c.canScrollUp() {
-				c.scrollUp(1)
-				c.startScrollTimer(-1)
-			}
+			c.scrollUp(1)
+			c.startScrollTimer(-1)
 		}
 		c.hoverIndex = c.scrollOffset
 		c.Update()
 		return true
 	}
 
-	if event.Y >= popupEndY && event.X >= 0 && event.X < bounds.Width {
+	if event.Y >= popupEndY && event.X >= 0 && event.X < bounds.Width && c.canScrollDown() {
 		// Below popup - scroll down
 		if c.scrollHoverZone != 1 {
 			c.scrollHoverZone = 1
-			if c.canScrollDown() {
-				c.scrollDown(1)
-				c.startScrollTimer(1)
-			}
+			c.scrollDown(1)
+			c.startScrollTimer(1)
 		}
 		lastVisible := c.scrollOffset + popupHeight - 1
 		if lastVisible >= len(c.items) {
