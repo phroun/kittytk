@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"strings"
+
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
 )
@@ -67,10 +69,20 @@ func (l *Label) SetWordWrap(wrap bool) {
 // SizeHint returns the preferred size.
 func (l *Label) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
-	textLen := len([]rune(l.text))
+
+	// Split text by newlines to calculate proper dimensions
+	lines := strings.Split(l.text, "\n")
+	maxWidth := 0
+	for _, line := range lines {
+		lineLen := len([]rune(line))
+		if lineLen > maxWidth {
+			maxWidth = lineLen
+		}
+	}
+
 	return core.UnitSize{
-		Width:  metrics.TextWidth(textLen),
-		Height: metrics.TextHeight(1),
+		Width:  metrics.TextWidth(maxWidth),
+		Height: metrics.TextHeight(len(lines)),
 	}
 }
 
@@ -108,13 +120,42 @@ func (l *Label) Paint(p *core.Painter) {
 	if l.wordWrap {
 		l.paintWrapped(p, bounds, s)
 	} else {
+		l.paintLines(p, bounds, s)
+	}
+}
+
+// paintLines renders text with newline support (no word wrapping).
+func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellStyle) {
+	metrics := p.Metrics()
+	lines := strings.Split(l.text, "\n")
+	maxLines := metrics.LinesForHeight(bounds.Height)
+
+	if maxLines <= 0 {
+		return
+	}
+
+	// Calculate starting Y position based on vertical alignment
+	totalTextHeight := core.Unit(len(lines)) * metrics.CellHeight
+	var startY core.Unit
+	if totalTextHeight < bounds.Height {
+		// Center vertically if text is shorter than bounds
+		startY = (bounds.Height - totalTextHeight) / 2
+	}
+
+	y := startY
+	for i, line := range lines {
+		if i >= maxLines {
+			break
+		}
+
 		p.DrawTextAligned(
-			core.UnitRect{Width: bounds.Width, Height: bounds.Height},
-			l.text,
+			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.CellHeight},
+			line,
 			l.alignment,
-			core.AlignMiddle,
+			core.AlignTop,
 			s,
 		)
+		y += metrics.CellHeight
 	}
 }
 
