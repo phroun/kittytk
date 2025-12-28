@@ -824,8 +824,8 @@ func (s *Scheme) GetPressedSplitter() CellStyle {
 	if s.PressedSplitter != nil {
 		return *s.PressedSplitter
 	}
-	// Default to WindowFG on WindowBG (black on white, like pressed buttons)
-	return DefaultStyle().WithFg(s.GetWindowFG(true)).WithBg(s.GetWindowBG(true))
+	// Default to black on white (like pressed window frame buttons)
+	return DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)
 }
 
 func (s *Scheme) GetPressedSplitterHandle() CellStyle {
