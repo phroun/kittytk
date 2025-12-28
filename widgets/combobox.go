@@ -168,7 +168,16 @@ func (c *ComboBox) canScrollUp() bool {
 
 // canScrollDown returns true if there are items below the visible area.
 func (c *ComboBox) canScrollDown() bool {
-	return c.scrollOffset+c.maxVisible < len(c.items)
+	if c.clickMode {
+		// In click mode, all maxVisible rows are item rows
+		return c.scrollOffset+c.maxVisible < len(c.items)
+	}
+	// In drag mode, account for scroll up indicator if present
+	effectiveVisible := c.maxVisible
+	if c.scrollOffset > 0 {
+		effectiveVisible-- // up indicator takes a row
+	}
+	return c.scrollOffset+effectiveVisible < len(c.items)
 }
 
 // scrollUp scrolls the list up by the given amount.
@@ -908,8 +917,15 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 
 		// Calculate which item was pressed
 		relY := event.Y - popupBounds.Y
-		itemIndex := int(relY / metrics.CellHeight)
-		actualIndex := c.scrollOffset + itemIndex
+		rowIndex := int(relY / metrics.CellHeight)
+
+		// In drag mode with scrolling, adjust for scroll up indicator
+		needsScroll := len(c.items) > c.maxVisible
+		if !c.clickMode && needsScroll && c.scrollOffset > 0 {
+			rowIndex-- // First row is scroll up indicator
+		}
+
+		actualIndex := c.scrollOffset + rowIndex
 
 		if actualIndex >= 0 && actualIndex < len(c.items) {
 			c.hoverIndex = actualIndex
@@ -1134,8 +1150,15 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 	if inPopup {
 		// Calculate which item was released on
 		relY := event.Y - popupBounds.Y
-		itemIndex := int(relY / metrics.CellHeight)
-		actualIndex := c.scrollOffset + itemIndex
+		rowIndex := int(relY / metrics.CellHeight)
+
+		// In drag mode with scrolling, adjust for scroll up indicator
+		needsScroll := len(c.items) > c.maxVisible
+		if !wasClickMode && needsScroll && c.scrollOffset > 0 {
+			rowIndex-- // First row is scroll up indicator
+		}
+
+		actualIndex := c.scrollOffset + rowIndex
 
 		if actualIndex >= 0 && actualIndex < len(c.items) {
 			// In click mode with no drag, this confirms selection
@@ -1311,8 +1334,22 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 func (c *ComboBox) ensureVisible(index int) {
 	if index < c.scrollOffset {
 		c.scrollOffset = index
-	} else if index >= c.scrollOffset+c.maxVisible {
-		c.scrollOffset = index - c.maxVisible + 1
+	} else {
+		// Calculate effective visible count accounting for scroll indicators in drag mode
+		effectiveVisible := c.maxVisible
+		if !c.clickMode && len(c.items) > c.maxVisible {
+			// In drag mode with scrolling, indicators take rows
+			if c.scrollOffset > 0 {
+				effectiveVisible-- // up indicator takes a row
+			}
+			// If scrolling down would show more items, down indicator also takes a row
+			if c.scrollOffset+effectiveVisible < len(c.items) {
+				effectiveVisible--
+			}
+		}
+		if index >= c.scrollOffset+effectiveVisible {
+			c.scrollOffset = index - effectiveVisible + 1
+		}
 	}
 	c.Update()
 }
