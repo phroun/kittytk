@@ -386,6 +386,13 @@ func (c *ComboBox) ShowPopup() {
 		}
 	}
 
+	// Set up timer provider and request update for scroll timer
+	if timerProvider := c.findTimerProvider(); timerProvider != nil {
+		if provider, ok := timerProvider.(interface{ RequestUpdate() }); ok {
+			c.requestUpdate = provider.RequestUpdate
+		}
+	}
+
 	// Register popup overlay - find popup controller by walking parent chain
 	if pc := c.findPopupController(); pc != nil {
 		c.registerPopupOverlay(pc)
