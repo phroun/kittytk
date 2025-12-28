@@ -856,14 +856,14 @@ func (c *ComboBox) paintScrollbar(p *core.Painter, popupWidth core.Unit, visible
 	scrollbarX, thumbStart, thumbHeight, trackHeight := c.scrollbarGeometry(popupWidth, visibleCount)
 
 	// Draw scrollbar track
-	trackStyle := scheme.GetScrollbar()
+	trackStyle := scheme.GetDropdownScrollbar()
 	for i := 0; i < trackHeight; i++ {
 		y := core.Unit(i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '│', trackStyle)
 	}
 
 	// Draw scrollbar thumb
-	thumbStyle := scheme.GetScrollbarThumb()
+	thumbStyle := scheme.GetDropdownScrollbarThumb()
 	for i := 0; i < thumbHeight; i++ {
 		y := core.Unit(thumbStart+i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)

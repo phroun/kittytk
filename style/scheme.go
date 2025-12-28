@@ -128,6 +128,8 @@ type Scheme struct {
 	FocusedDropdownItemText  *CellStyle // nil = FocusedMenuItemText
 	DropdownSeparator        *CellStyle // nil = MenuSeparator
 	DisabledDropdownItem     *CellStyle // nil = DisabledMenuItem
+	DropdownScrollbar        *CellStyle // nil = DropdownItemText
+	DropdownScrollbarThumb   *CellStyle // nil = black on white (like PressedSplitter)
 
 	// CheckBox
 	CheckBoxFG            *CellStyle // nil = same as LabelFG
@@ -384,6 +386,8 @@ func DefaultScheme() *Scheme {
 		FocusedDropdownItemText: nil, // FocusedMenuItemText
 		DropdownSeparator:       nil, // MenuSeparator
 		DisabledDropdownItem:    nil, // DisabledMenuItem
+		DropdownScrollbar:       nil, // DropdownItemText
+		DropdownScrollbarThumb:  nil, // black on white (like PressedSplitter)
 
 		// CheckBox
 		CheckBoxFG:             nil, // LabelFG
@@ -743,6 +747,21 @@ func (s *Scheme) GetDropdownSeparator() CellStyle {
 
 func (s *Scheme) GetDisabledDropdownItem() CellStyle {
 	return or(s.DisabledDropdownItem, s.DisabledMenuItem)
+}
+
+func (s *Scheme) GetDropdownScrollbar() CellStyle {
+	if s.DropdownScrollbar != nil {
+		return *s.DropdownScrollbar
+	}
+	return s.GetDropdownItemText()
+}
+
+func (s *Scheme) GetDropdownScrollbarThumb() CellStyle {
+	if s.DropdownScrollbarThumb != nil {
+		return *s.DropdownScrollbarThumb
+	}
+	// Default to black on white (like PressedSplitter)
+	return DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)
 }
 
 // --- CheckBox Colors ---
