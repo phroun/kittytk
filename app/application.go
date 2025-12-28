@@ -14,6 +14,8 @@ import (
 
 // Application is the main entry point for a TUI application.
 // It manages the event loop, windows, and global state.
+// Application implements the widgets.ApplicationProvider interface
+// for integration with multi-application Desktop environments.
 type Application struct {
 	mu sync.RWMutex
 
@@ -52,9 +54,11 @@ type Application struct {
 	timerMutex sync.Mutex
 
 	// Callbacks
-	onStartup  func()
-	onShutdown func()
-	onIdle     func()
+	onStartup    func()
+	onShutdown   func()
+	onIdle       func()
+	onActivate   func()
+	onDeactivate func()
 
 	// Event filters (processed before widgets)
 	eventFilters []EventFilter
@@ -64,6 +68,15 @@ type Application struct {
 
 	// Exit code
 	exitCode int
+
+	// Windows owned by this application (for ApplicationProvider interface)
+	windows []*window.Window
+
+	// Menu bar content for this application
+	menuBarContent []*widgets.Menu
+
+	// Status bar content for this application
+	statusBarContent []widgets.StatusSection
 }
 
 // EventFilter is a function that can intercept events before they reach widgets.
@@ -648,4 +661,99 @@ func (app *Application) ScreenSize() core.UnitSize {
 		return backend.Size()
 	}
 	return core.UnitSize{}
+}
+
+// Compile-time check that Application implements widgets.ApplicationProvider
+var _ widgets.ApplicationProvider = (*Application)(nil)
+
+// --- ApplicationProvider interface implementation ---
+
+// Windows returns all windows owned by this application.
+func (app *Application) Windows() []*window.Window {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	result := make([]*window.Window, len(app.windows))
+	copy(result, app.windows)
+	return result
+}
+
+// AddWindow adds a window to this application.
+func (app *Application) AddWindow(w *window.Window) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.windows = append(app.windows, w)
+}
+
+// RemoveWindow removes a window from this application.
+func (app *Application) RemoveWindow(w *window.Window) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	for i, win := range app.windows {
+		if win == w {
+			app.windows = append(app.windows[:i], app.windows[i+1:]...)
+			break
+		}
+	}
+}
+
+// MenuBarContent returns the menu bar content for this application.
+func (app *Application) MenuBarContent() []*widgets.Menu {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.menuBarContent
+}
+
+// SetMenuBarContent sets the menu bar content for this application.
+func (app *Application) SetMenuBarContent(menus []*widgets.Menu) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.menuBarContent = menus
+}
+
+// StatusBarContent returns the status bar content for this application.
+func (app *Application) StatusBarContent() []widgets.StatusSection {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.statusBarContent
+}
+
+// SetStatusBarContent sets the status bar content for this application.
+func (app *Application) SetStatusBarContent(sections []widgets.StatusSection) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.statusBarContent = sections
+}
+
+// OnActivate is called when this application becomes the active one.
+func (app *Application) OnActivate() {
+	app.mu.RLock()
+	handler := app.onActivate
+	app.mu.RUnlock()
+	if handler != nil {
+		handler()
+	}
+}
+
+// OnDeactivate is called when this application is no longer active.
+func (app *Application) OnDeactivate() {
+	app.mu.RLock()
+	handler := app.onDeactivate
+	app.mu.RUnlock()
+	if handler != nil {
+		handler()
+	}
+}
+
+// SetOnActivate sets the callback for when this application becomes active.
+func (app *Application) SetOnActivate(handler func()) {
+	app.mu.Lock()
+	app.onActivate = handler
+	app.mu.Unlock()
+}
+
+// SetOnDeactivate sets the callback for when this application becomes inactive.
+func (app *Application) SetOnDeactivate(handler func()) {
+	app.mu.Lock()
+	app.onDeactivate = handler
+	app.mu.Unlock()
 }

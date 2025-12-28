@@ -3,19 +3,57 @@ package widgets
 
 import (
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
+	"github.com/phroun/tuitk/window"
 )
+
+// ApplicationProvider is the interface that applications must implement
+// to integrate with Desktop. This allows multiple applications to run
+// in the same desktop environment.
+type ApplicationProvider interface {
+	// Name returns the application name.
+	Name() string
+
+	// Windows returns all windows owned by this application.
+	Windows() []*window.Window
+
+	// AddWindow adds a window to this application.
+	AddWindow(w *window.Window)
+
+	// RemoveWindow removes a window from this application.
+	RemoveWindow(w *window.Window)
+
+	// MenuBarContent returns the menu bar content for this application.
+	// Called when the application becomes active.
+	MenuBarContent() []*Menu
+
+	// StatusBarContent returns the status bar content for this application.
+	StatusBarContent() []StatusSection
+
+	// OnActivate is called when this application becomes the active one.
+	OnActivate()
+
+	// OnDeactivate is called when this application is no longer active.
+	OnDeactivate()
+}
 
 // Desktop represents the application desktop (background behind windows).
 // It can optionally display a menu bar at the top (Mac-style) and a
-// status bar at the bottom.
+// status bar at the bottom. Desktop can serve as the top-level object
+// managing multiple applications.
 type Desktop struct {
 	core.WidgetBase
 
 	// Menu bar at the top (Mac-style)
 	menuBar *MenuBar
+
+	// System menu (always present, upper-left)
+	systemMenu *Menu
 
 	// Status bar at the bottom
 	statusBar *StatusBar
@@ -28,19 +66,655 @@ type Desktop struct {
 
 	// Content area (shown behind windows but below menu/status)
 	content core.Widget
+
+	// Multi-application support
+	mu           sync.RWMutex
+	applications []ApplicationProvider
+	activeApp    ApplicationProvider
+
+	// Backend for rendering (optional - used when Desktop.Run() is called)
+	backend core.RenderBackend
+
+	// Window manager (optional - used when Desktop.Run() is called)
+	windowManager *window.WindowManager
+
+	// Focus manager
+	focusManager *core.GlobalFocusManager
+
+	// Theme
+	theme *style.Theme
+
+	// Running state
+	running atomic.Bool
+
+	// Quit channel
+	quitChan chan struct{}
+
+	// Update request channel
+	updateChan chan struct{}
+
+	// Timer events
+	timers     []*DesktopTimer
+	timerMutex sync.Mutex
+
+	// Callbacks
+	onStartup  func()
+	onShutdown func()
+
+	// Exit code
+	exitCode int
+}
+
+// DesktopTimer represents a scheduled timer callback.
+type DesktopTimer struct {
+	ID       int
+	Interval time.Duration
+	Repeat   bool
+	Callback func()
+	nextFire time.Time
+	stopped  bool
 }
 
 // NewDesktop creates a new desktop widget.
 func NewDesktop() *Desktop {
 	d := &Desktop{
-		bgChar:  '▓', // Default pattern (three-quarter shade block)
-		dockRow: NewDockRow(),
+		bgChar:     '▓', // Default pattern (three-quarter shade block)
+		dockRow:    NewDockRow(),
+		quitChan:   make(chan struct{}),
+		updateChan: make(chan struct{}, 100),
+		theme:      style.DefaultTheme(),
 	}
 	d.WidgetBase = *core.NewWidgetBase()
 	d.Init(d)
 	d.SetFocusPolicy(core.NoFocus)
 	d.dockRow.SetParent(d)
+
+	// Create system menu
+	d.systemMenu = d.createSystemMenu()
+
 	return d
+}
+
+// createSystemMenu creates the always-present system menu (ψ).
+func (d *Desktop) createSystemMenu() *Menu {
+	menu := NewMenu("ψ")
+	menu.AddItem(NewMenuItem("&About Desktop").SetOnTriggered(func() {
+		// Show about dialog
+		// TODO: Implement about dialog
+	}))
+	menu.AddItem(NewSeparator())
+	menu.AddItem(NewMenuItem("Desktop &Accessories").SetEnabled(false)) // Placeholder
+	menu.AddItem(NewSeparator())
+	menu.AddItem(NewMenuItem("&Quit").SetShortcut(core.Shortcut("^Q")).SetOnTriggered(func() {
+		d.Quit()
+	}))
+	return menu
+}
+
+// SetBackend sets the render backend and initializes related components.
+func (d *Desktop) SetBackend(backend core.RenderBackend) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.backend = backend
+	d.windowManager = window.NewWindowManager()
+	d.windowManager.SetOnRepaintNeeded(func() {
+		d.RequestUpdate()
+	})
+	d.focusManager = core.NewGlobalFocusManager()
+	d.windowManager.SetDesktop(d)
+
+	// Wire up dock row integration
+	if d.dockRow != nil {
+		d.windowManager.SetOnWindowMinimized(func(win *window.Window) {
+			entry := &DockEntry{
+				Title: win.Title(),
+				OnClick: func() {
+					d.windowManager.RestoreWindow(win)
+				},
+			}
+			d.dockRow.AddEntry(entry)
+		})
+
+		d.windowManager.SetOnWindowRestored(func(win *window.Window) {
+			d.dockRow.RemoveEntryByTitle(win.Title())
+		})
+	}
+
+	// Wire up menu bar integration
+	if d.menuBar != nil {
+		d.menuBar.SetOnMenuOpen(func() {
+			d.windowManager.DeactivateActiveWindow()
+		})
+		d.menuBar.SetOnMenuDismiss(func() {
+			d.windowManager.RestorePreviousActiveWindow()
+		})
+	}
+}
+
+// Backend returns the render backend.
+func (d *Desktop) Backend() core.RenderBackend {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.backend
+}
+
+// WindowManager returns the window manager.
+func (d *Desktop) WindowManager() *window.WindowManager {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.windowManager
+}
+
+// FocusManager returns the focus manager.
+func (d *Desktop) FocusManager() *core.GlobalFocusManager {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.focusManager
+}
+
+// Theme returns the current theme.
+func (d *Desktop) Theme() *style.Theme {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.theme
+}
+
+// SetTheme sets the current theme.
+func (d *Desktop) SetTheme(theme *style.Theme) {
+	d.mu.Lock()
+	d.theme = theme
+	d.mu.Unlock()
+	d.RequestUpdate()
+}
+
+// AddApplication registers an application with the desktop.
+func (d *Desktop) AddApplication(app ApplicationProvider) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.applications = append(d.applications, app)
+
+	// If this is the first app, make it active
+	if d.activeApp == nil {
+		d.activeApp = app
+		app.OnActivate()
+		d.updateMenuBarContent()
+		d.updateStatusBarContent()
+	}
+}
+
+// RemoveApplication unregisters an application from the desktop.
+func (d *Desktop) RemoveApplication(app ApplicationProvider) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	for i, a := range d.applications {
+		if a == app {
+			d.applications = append(d.applications[:i], d.applications[i+1:]...)
+			break
+		}
+	}
+
+	// If this was the active app, switch to another or none
+	if d.activeApp == app {
+		app.OnDeactivate()
+		if len(d.applications) > 0 {
+			d.activeApp = d.applications[0]
+			d.activeApp.OnActivate()
+		} else {
+			d.activeApp = nil
+		}
+		d.updateMenuBarContent()
+		d.updateStatusBarContent()
+	}
+}
+
+// SetApplication sets a single application (for backward compatibility).
+func (d *Desktop) SetApplication(app ApplicationProvider) {
+	d.mu.Lock()
+	// Clear existing applications
+	for _, a := range d.applications {
+		a.OnDeactivate()
+	}
+	d.applications = nil
+	d.activeApp = nil
+	d.mu.Unlock()
+
+	d.AddApplication(app)
+}
+
+// ActiveApplication returns the currently active application.
+func (d *Desktop) ActiveApplication() ApplicationProvider {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.activeApp
+}
+
+// Applications returns all registered applications.
+func (d *Desktop) Applications() []ApplicationProvider {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	result := make([]ApplicationProvider, len(d.applications))
+	copy(result, d.applications)
+	return result
+}
+
+// findApplicationForWindow finds which application owns a window.
+func (d *Desktop) findApplicationForWindow(w *window.Window) ApplicationProvider {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	for _, app := range d.applications {
+		for _, win := range app.Windows() {
+			if win == w {
+				return app
+			}
+		}
+	}
+	return nil
+}
+
+// windowFocusChanged is called when window focus changes.
+func (d *Desktop) windowFocusChanged(w *window.Window) {
+	owner := d.findApplicationForWindow(w)
+
+	d.mu.Lock()
+	if owner != d.activeApp {
+		if d.activeApp != nil {
+			d.activeApp.OnDeactivate()
+		}
+		d.activeApp = owner
+		if d.activeApp != nil {
+			d.activeApp.OnActivate()
+		}
+	}
+	d.mu.Unlock()
+
+	d.updateMenuBarContent()
+	d.updateStatusBarContent()
+}
+
+// updateMenuBarContent updates the menu bar with the active app's menus.
+func (d *Desktop) updateMenuBarContent() {
+	if d.menuBar == nil {
+		return
+	}
+
+	d.mu.RLock()
+	activeApp := d.activeApp
+	d.mu.RUnlock()
+
+	// Clear existing menus
+	d.menuBar.Clear()
+
+	// Add system menu first
+	if d.systemMenu != nil {
+		d.menuBar.AddMenu(d.systemMenu)
+	}
+
+	// Add active app's menus
+	if activeApp != nil {
+		for _, menu := range activeApp.MenuBarContent() {
+			d.menuBar.AddMenu(menu)
+		}
+	}
+}
+
+// updateStatusBarContent updates the status bar with the active app's content.
+func (d *Desktop) updateStatusBarContent() {
+	if d.statusBar == nil {
+		return
+	}
+
+	d.mu.RLock()
+	activeApp := d.activeApp
+	d.mu.RUnlock()
+
+	if activeApp != nil {
+		d.statusBar.SetSections(activeApp.StatusBarContent())
+	} else {
+		d.statusBar.SetSections(nil)
+	}
+}
+
+// SetOnStartup sets the startup callback.
+func (d *Desktop) SetOnStartup(handler func()) {
+	d.mu.Lock()
+	d.onStartup = handler
+	d.mu.Unlock()
+}
+
+// SetOnShutdown sets the shutdown callback.
+func (d *Desktop) SetOnShutdown(handler func()) {
+	d.mu.Lock()
+	d.onShutdown = handler
+	d.mu.Unlock()
+}
+
+// Run starts the desktop event loop.
+// Returns the exit code when the desktop quits.
+// This is an alternative to using app.Application.Run() - only use one.
+func (d *Desktop) Run() int {
+	d.mu.Lock()
+	backend := d.backend
+	onStartup := d.onStartup
+	d.mu.Unlock()
+
+	if backend == nil {
+		return 1
+	}
+
+	// Initialize backend
+	if err := backend.Init(); err != nil {
+		return 1
+	}
+	defer backend.Shutdown()
+
+	// Update screen bounds
+	d.mu.Lock()
+	wm := d.windowManager
+	d.mu.Unlock()
+
+	size := backend.Size()
+	wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+
+	// Mark as running
+	d.running.Store(true)
+	defer d.running.Store(false)
+
+	// Call startup handler
+	if onStartup != nil {
+		onStartup()
+	}
+
+	// Run event loop
+	d.eventLoop()
+
+	// Call shutdown handler
+	d.mu.RLock()
+	onShutdown := d.onShutdown
+	exitCode := d.exitCode
+	d.mu.RUnlock()
+
+	if onShutdown != nil {
+		onShutdown()
+	}
+
+	return exitCode
+}
+
+// eventLoop is the main event processing loop.
+func (d *Desktop) eventLoop() {
+	for d.running.Load() {
+		d.processTimers()
+		d.processEvents()
+		d.render()
+	}
+}
+
+// processEvents handles pending events.
+func (d *Desktop) processEvents() {
+	d.mu.RLock()
+	backend := d.backend
+	wm := d.windowManager
+	fm := d.focusManager
+	d.mu.RUnlock()
+
+	// Process all pending events
+	for {
+		event := backend.PollEvent()
+		if event == nil {
+			// No more events - wait for next event or update request
+			select {
+			case <-d.quitChan:
+				return
+			case <-d.updateChan:
+				return
+			default:
+				// Wait briefly for events
+				event = d.waitEventWithTimeout(50 * time.Millisecond)
+				if event == nil {
+					return
+				}
+			}
+		}
+
+		// Handle event based on type
+		switch e := event.(type) {
+		case core.ResizeEvent:
+			wm.SetScreenBounds(core.UnitRect{Width: e.Width, Height: e.Height})
+
+		case core.QuitEvent:
+			d.running.Store(false)
+			return
+
+		case core.KeyPressEvent:
+			// Check global shortcuts first
+			if d.handleShortcut(e) {
+				continue
+			}
+			// Try focus manager
+			if fm != nil && fm.HandleKeyPress(e) {
+				continue
+			}
+			// Pass to window manager
+			wm.HandleKeyPress(e)
+
+		case core.MousePressEvent:
+			wm.HandleMousePress(e)
+
+		case core.MouseMoveEvent:
+			wm.HandleMouseMove(e)
+
+		case core.MouseReleaseEvent:
+			wm.HandleMouseRelease(e)
+		}
+	}
+}
+
+// waitEventWithTimeout waits for an event with a timeout.
+func (d *Desktop) waitEventWithTimeout(timeout time.Duration) core.Event {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		event := backend.PollEvent()
+		if event != nil {
+			return event
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return nil
+}
+
+// handleShortcut checks if a key event matches a global shortcut.
+func (d *Desktop) handleShortcut(event core.KeyPressEvent) bool {
+	switch event.Key {
+	case "^Q": // Ctrl+Q - Quit
+		d.Quit()
+		return true
+	case "^W": // Ctrl+W - Close window
+		d.mu.RLock()
+		wm := d.windowManager
+		d.mu.RUnlock()
+		if wm != nil {
+			if active := wm.ActiveWindow(); active != nil {
+				active.Close()
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// render redraws the screen.
+func (d *Desktop) render() {
+	d.mu.RLock()
+	backend := d.backend
+	wm := d.windowManager
+	theme := d.theme
+	d.mu.RUnlock()
+
+	backend.BeginFrame()
+
+	// Clear with theme background
+	backend.Clear(theme.Normal)
+
+	// Create painter
+	painter := core.NewPainter(backend)
+
+	// Paint window manager (includes desktop and windows)
+	wm.Paint(painter)
+
+	backend.EndFrame()
+}
+
+// processTimers checks and fires due timers.
+func (d *Desktop) processTimers() {
+	d.timerMutex.Lock()
+	now := time.Now()
+	var toFire []*DesktopTimer
+	var remaining []*DesktopTimer
+
+	for _, timer := range d.timers {
+		if timer.stopped {
+			continue
+		}
+
+		if now.After(timer.nextFire) || now.Equal(timer.nextFire) {
+			toFire = append(toFire, timer)
+			if timer.Repeat {
+				timer.nextFire = now.Add(timer.Interval)
+				remaining = append(remaining, timer)
+			}
+		} else {
+			remaining = append(remaining, timer)
+		}
+	}
+
+	d.timers = remaining
+	d.timerMutex.Unlock()
+
+	// Fire timers outside lock
+	for _, timer := range toFire {
+		if timer.Callback != nil {
+			timer.Callback()
+		}
+	}
+}
+
+// RequestUpdate requests a screen update.
+func (d *Desktop) RequestUpdate() {
+	select {
+	case d.updateChan <- struct{}{}:
+	default:
+		// Channel full, update already pending
+	}
+}
+
+// Quit requests the desktop to quit.
+func (d *Desktop) Quit() {
+	d.QuitWithCode(0)
+}
+
+// QuitWithCode requests the desktop to quit with an exit code.
+func (d *Desktop) QuitWithCode(code int) {
+	d.mu.Lock()
+	d.exitCode = code
+	d.mu.Unlock()
+	d.running.Store(false)
+	select {
+	case <-d.quitChan:
+		// Already closed
+	default:
+		close(d.quitChan)
+	}
+}
+
+// IsRunning returns whether the desktop is running.
+func (d *Desktop) IsRunning() bool {
+	return d.running.Load()
+}
+
+// StartTimer starts a single-shot timer.
+func (d *Desktop) StartTimer(interval time.Duration, callback func()) *DesktopTimer {
+	return d.startTimerInternal(interval, false, callback)
+}
+
+// StartRepeatingTimer starts a repeating timer.
+func (d *Desktop) StartRepeatingTimer(interval time.Duration, callback func()) *DesktopTimer {
+	return d.startTimerInternal(interval, true, callback)
+}
+
+func (d *Desktop) startTimerInternal(interval time.Duration, repeat bool, callback func()) *DesktopTimer {
+	d.timerMutex.Lock()
+	defer d.timerMutex.Unlock()
+
+	timer := &DesktopTimer{
+		ID:       len(d.timers) + 1,
+		Interval: interval,
+		Repeat:   repeat,
+		Callback: callback,
+		nextFire: time.Now().Add(interval),
+	}
+	d.timers = append(d.timers, timer)
+	return timer
+}
+
+// StopTimer stops a timer.
+func (d *Desktop) StopTimer(timer *DesktopTimer) {
+	if timer != nil {
+		timer.stopped = true
+	}
+}
+
+// ScreenSize returns the current screen size in units.
+func (d *Desktop) ScreenSize() core.UnitSize {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+
+	if backend != nil {
+		return backend.Size()
+	}
+	return core.UnitSize{}
+}
+
+// Clipboard returns the clipboard contents.
+func (d *Desktop) Clipboard() string {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+
+	if backend != nil {
+		return backend.GetClipboard()
+	}
+	return ""
+}
+
+// SetClipboard sets the clipboard contents.
+func (d *Desktop) SetClipboard(text string) {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+
+	if backend != nil {
+		backend.SetClipboard(text)
+	}
+}
+
+// Beep produces an audible alert.
+func (d *Desktop) Beep() {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+
+	if backend != nil {
+		backend.Beep()
+	}
 }
 
 // Children returns all child widgets.
