@@ -2,8 +2,6 @@
 package widgets
 
 import (
-	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,16 +11,6 @@ import (
 	"github.com/phroun/tuitk/style"
 	"github.com/phroun/tuitk/window"
 )
-
-// debugLogDesktop writes debug messages to /tmp/menu_debug.log
-func debugLogDesktop(format string, args ...interface{}) {
-	f, err := os.OpenFile("/tmp/menu_debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	fmt.Fprintf(f, "[%s] DESKTOP: %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, args...))
-}
 
 // ApplicationProvider is the interface that applications must implement
 // to integrate with Desktop. This allows multiple applications to run
@@ -112,6 +100,9 @@ type Desktop struct {
 	// Callbacks
 	onStartup  func()
 	onShutdown func()
+
+	// Event filters
+	eventFilters []func(core.Event) bool
 
 	// Exit code
 	exitCode int
@@ -411,6 +402,30 @@ func (d *Desktop) SetOnShutdown(handler func()) {
 	d.mu.Unlock()
 }
 
+// AddEventFilter adds an event filter.
+// Filters are called before normal event handling and can consume events.
+// Return true to consume the event, false to let it propagate.
+func (d *Desktop) AddEventFilter(filter func(core.Event) bool) {
+	d.mu.Lock()
+	d.eventFilters = append(d.eventFilters, filter)
+	d.mu.Unlock()
+}
+
+// filterEvent runs the event through all filters.
+// Returns true if the event was consumed.
+func (d *Desktop) filterEvent(event core.Event) bool {
+	d.mu.RLock()
+	filters := d.eventFilters
+	d.mu.RUnlock()
+
+	for _, filter := range filters {
+		if filter(event) {
+			return true
+		}
+	}
+	return false
+}
+
 // Run starts the desktop event loop.
 // Returns the exit code when the desktop quits.
 // This is an alternative to using app.Application.Run() - only use one.
@@ -465,9 +480,8 @@ func (d *Desktop) Run() int {
 
 // eventLoop is the main event processing loop.
 func (d *Desktop) eventLoop() {
-	debugLogDesktop("eventLoop starting, desktop=%p", d)
 	for d.running.Load() {
-		d.processTimers()
+		d.ProcessTimers()
 		d.processEvents()
 		d.render()
 	}
@@ -498,6 +512,11 @@ func (d *Desktop) processEvents() {
 					return
 				}
 			}
+		}
+
+		// Run through event filters first
+		if d.filterEvent(event) {
+			continue
 		}
 
 		// Handle event based on type
@@ -592,38 +611,26 @@ func (d *Desktop) render() {
 	backend.EndFrame()
 }
 
-// processTimers checks and fires due timers.
-func (d *Desktop) processTimers() {
+// ProcessTimers checks and fires due timers.
+// This is called by the Application's event loop to process desktop timers.
+func (d *Desktop) ProcessTimers() {
 	d.timerMutex.Lock()
 	now := time.Now()
 	var toFire []*DesktopTimer
 	var remaining []*DesktopTimer
 
-	timerCount := len(d.timers)
-
-	// Log every time if we have timers
-	if timerCount > 0 {
-		debugLogDesktop("processTimers: checking %d timers", timerCount)
-	}
-
 	for _, timer := range d.timers {
 		if timer.stopped {
-			debugLogDesktop("processTimers: timer %d is stopped, skipping", timer.ID)
 			continue
 		}
 
 		if now.After(timer.nextFire) || now.Equal(timer.nextFire) {
-			debugLogDesktop("processTimers: timer %d is due (nextFire=%v, now=%v), will fire",
-				timer.ID, timer.nextFire.Format("15:04:05.000"), now.Format("15:04:05.000"))
 			toFire = append(toFire, timer)
 			if timer.Repeat {
 				timer.nextFire = now.Add(timer.Interval)
 				remaining = append(remaining, timer)
-				debugLogDesktop("processTimers: timer %d rescheduled for %v", timer.ID, timer.nextFire.Format("15:04:05.000"))
 			}
 		} else {
-			debugLogDesktop("processTimers: timer %d not due yet (nextFire=%v, now=%v)",
-				timer.ID, timer.nextFire.Format("15:04:05.000"), now.Format("15:04:05.000"))
 			remaining = append(remaining, timer)
 		}
 	}
@@ -634,7 +641,6 @@ func (d *Desktop) processTimers() {
 	// Fire timers outside lock
 	for _, timer := range toFire {
 		if timer.Callback != nil {
-			debugLogDesktop("processTimers: firing timer %d callback", timer.ID)
 			timer.Callback()
 		}
 	}
@@ -695,8 +701,6 @@ func (d *Desktop) startTimerInternal(interval time.Duration, repeat bool, callba
 		nextFire: time.Now().Add(interval),
 	}
 	d.timers = append(d.timers, timer)
-	debugLogDesktop("startTimerInternal: created timer %d, repeat=%v, interval=%v, nextFire=%v, desktop=%p, total timers=%d",
-		timer.ID, repeat, interval, timer.nextFire.Format("15:04:05.000"), d, len(d.timers))
 	return timer
 }
 

@@ -14,41 +14,40 @@ import (
 )
 
 func main() {
-	// Create the TUI backend with default options
+	// Create the TUI backend
 	opts := backend.DefaultTUIOptions()
 	tuiBackend := backend.NewTUIBackend(opts)
 
-	// Create the application
-	application := app.New(tuiBackend)
-
-	// Create desktop with Mac-style menu bar at top
+	// Create desktop - owns the backend and runs the event loop
 	desktop := widgets.NewDesktop()
+	desktop.SetBackend(tuiBackend)
 
-	// Create the application menu bar (at desktop level, not per-window)
-	menuBar := createMenuBar(application)
-	desktop.SetMenuBar(menuBar)
+	// Create the application - owns windows, provides menu/status content
+	application := app.New(nil) // nil backend - Desktop owns it now
+	application.SetName("TUI Demo")
 
-	// Create a status bar at the bottom
-	statusBar := widgets.NewStatusBar()
-	// Use styled text to highlight keyboard shortcuts in red
+	// Set up application's menu bar content
+	application.SetMenuBarContent(createMenus(desktop, application))
+
+	// Set up application's status bar content
 	redStyle := style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
-	statusBar.SetStyledText([]widgets.StatusTextSpan{
-		{Text: "Ready - Press "},
-		{Text: "F10", Style: &redStyle},
-		{Text: " for menu, Tab to navigate, "},
-		{Text: "Ctrl+Q", Style: &redStyle},
-		{Text: " to quit"},
+	application.SetStatusBarContent([]widgets.StatusSection{
+		{Spans: []widgets.StatusTextSpan{
+			{Text: "Ready - Press "},
+			{Text: "F10", Style: &redStyle},
+			{Text: " for menu, Tab to navigate, "},
+			{Text: "Ctrl+Q", Style: &redStyle},
+			{Text: " to quit"},
+		}},
 	})
-	desktop.SetStatusBar(statusBar)
 
-	// Set desktop as the application's desktop widget
-	application.SetDesktop(desktop)
+	// Register application with desktop
+	desktop.AddApplication(application)
 
-	// Add event filter to show key presses in status bar (for debugging)
-	application.AddEventFilter(func(event core.Event) bool {
+	// Add event filter for debugging (shows key presses in status bar)
+	desktop.AddEventFilter(func(event core.Event) bool {
 		if keyEvent, ok := event.(core.KeyPressEvent); ok {
-			// Show key and current focus info
-			wm := application.WindowManager()
+			wm := desktop.WindowManager()
 			focusInfo := "no window"
 			winInfo := ""
 			if wm != nil {
@@ -58,7 +57,6 @@ func main() {
 						chain := fm.FocusChain()
 						focused := fm.FocusedWidget()
 
-						// Count focusable widgets (visible + enabled)
 						focusable := 0
 						for _, w := range chain {
 							if w.IsVisible() && w.IsEnabled() {
@@ -73,7 +71,6 @@ func main() {
 						}
 					}
 
-					// Show window dimensions and client offset on Tab key
 					if keyEvent.Key == "Tab" || keyEvent.Key == "Shift+Tab" {
 						bounds := activeWin.Bounds()
 						offset := activeWin.ClientAreaOffset()
@@ -87,25 +84,27 @@ func main() {
 					}
 				}
 			}
-			statusBar.SetText(fmt.Sprintf("Key: %q  %s%s", keyEvent.Key, focusInfo, winInfo))
+			if statusBar := desktop.StatusBar(); statusBar != nil {
+				statusBar.SetText(fmt.Sprintf("Key: %q  %s%s", keyEvent.Key, focusInfo, winInfo))
+			}
 		}
 		return false // Don't consume the event
 	})
 
 	// Create windows in startup callback (after screen bounds are set)
-	application.SetOnStartup(func() {
-		// Create the main demo window (floats over the desktop)
-		mainWindow := createMainWindow(application, statusBar)
-		application.WindowManager().AddWindow(mainWindow)
+	desktop.SetOnStartup(func() {
+		// Create the main demo window - owned by the application
+		mainWindow := createMainWindow(desktop, application)
+		application.AddWindow(mainWindow)
 	})
 
-	// Run the application
-	application.Run()
+	// Run the desktop event loop
+	desktop.Run()
 }
 
-// createMenuBar creates the application menu bar (Mac-style, at desktop level).
-func createMenuBar(application *app.Application) *widgets.MenuBar {
-	menuBar := widgets.NewMenuBar()
+// createMenus creates the application's menu bar content.
+func createMenus(desktop *widgets.Desktop, application *app.Application) []*widgets.Menu {
+	var menus []*widgets.Menu
 
 	// File menu
 	fileMenu := widgets.NewMenu("&File")
@@ -126,11 +125,10 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 	exitItem := widgets.NewMenuItem("E&xit")
 	exitItem.SetShortcut(core.NewShortcut("^Q"))
 	exitItem.SetOnTriggered(func() {
-		application.Quit()
+		desktop.Quit()
 	})
 	fileMenu.AddItem(exitItem)
-
-	menuBar.AddMenu(fileMenu)
+	menus = append(menus, fileMenu)
 
 	// Edit menu
 	editMenu := widgets.NewMenu("&Edit")
@@ -145,12 +143,10 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 	pasteItem := widgets.NewMenuItem("&Paste")
 	pasteItem.SetShortcut(core.NewShortcut("^V"))
 	editMenu.AddItem(pasteItem)
-
-	menuBar.AddMenu(editMenu)
+	menus = append(menus, editMenu)
 
 	// View menu
 	viewMenu := widgets.NewMenu("&View")
-
 	toolbarItem := widgets.NewMenuItem("&Toolbar")
 	toolbarItem.SetCheckable(true)
 	toolbarItem.SetChecked(true)
@@ -160,16 +156,14 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 	statusBarItem.SetCheckable(true)
 	statusBarItem.SetChecked(true)
 	viewMenu.AddItem(statusBarItem)
-
-	menuBar.AddMenu(viewMenu)
+	menus = append(menus, viewMenu)
 
 	// Window menu
 	windowMenu := widgets.NewMenu("&Window")
-
 	newWindowItem := widgets.NewMenuItem("&New Window")
 	newWindowItem.SetOnTriggered(func() {
-		demoWindow := createDemoWindow(application)
-		application.WindowManager().AddWindow(demoWindow)
+		demoWindow := createDemoWindow(desktop, application)
+		application.AddWindow(demoWindow)
 	})
 	windowMenu.AddItem(newWindowItem)
 
@@ -177,17 +171,16 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 
 	tileItem := widgets.NewMenuItem("&Tile")
 	tileItem.SetOnTriggered(func() {
-		application.WindowManager().TileWindows()
+		desktop.WindowManager().TileWindows()
 	})
 	windowMenu.AddItem(tileItem)
 
 	cascadeItem := widgets.NewMenuItem("&Cascade")
 	cascadeItem.SetOnTriggered(func() {
-		application.WindowManager().CascadeWindows()
+		desktop.WindowManager().CascadeWindows()
 	})
 	windowMenu.AddItem(cascadeItem)
-
-	menuBar.AddMenu(windowMenu)
+	menus = append(menus, windowMenu)
 
 	// Alphabet menu (26 items for testing scrolling)
 	alphabetMenu := widgets.NewMenu("&Alphabet")
@@ -196,24 +189,22 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 		item := widgets.NewMenuItem("&" + letter + " - Letter " + letter)
 		alphabetMenu.AddItem(item)
 	}
-	menuBar.AddMenu(alphabetMenu)
+	menus = append(menus, alphabetMenu)
 
 	// Help menu
 	helpMenu := widgets.NewMenu("&Help")
-
 	aboutItem := widgets.NewMenuItem("&About")
 	aboutItem.SetOnTriggered(func() {
-		showAboutDialog(application)
+		showAboutDialog(desktop, application)
 	})
 	helpMenu.AddItem(aboutItem)
+	menus = append(menus, helpMenu)
 
-	menuBar.AddMenu(helpMenu)
-
-	return menuBar
+	return menus
 }
 
 // createMainWindow creates the main demo window.
-func createMainWindow(application *app.Application, statusBar *widgets.StatusBar) *window.Window {
+func createMainWindow(desktop *widgets.Desktop, application *app.Application) *window.Window {
 	mainWindow := window.NewWindow("TUI Toolkit Demo")
 	mainWindow.SetSize(core.UnitSize{
 		Width:  core.Unit(60 * 8), // 60 columns
@@ -224,7 +215,7 @@ func createMainWindow(application *app.Application, statusBar *widgets.StatusBar
 	tabWidget := widgets.NewTabWidget()
 
 	// Add demo tabs
-	tabWidget.AddTab("Basic Widgets", createBasicWidgetsDemo(statusBar))
+	tabWidget.AddTab("Basic Widgets", createBasicWidgetsDemo(desktop))
 	tabWidget.AddTab("Selection", createSelectionDemo(tabWidget))
 	tabWidget.AddTab("Lists", createListDemo())
 	tabWidget.AddTab("Scroll Selection", createScrollSelectionDemo(tabWidget))
@@ -232,7 +223,7 @@ func createMainWindow(application *app.Application, statusBar *widgets.StatusBar
 	tabWidget.AddTab("Progress", createProgressDemo())
 	tabWidget.AddTab("Bottom Tabs", createBottomTabsDemo())
 	tabWidget.AddTab("Vertical Tabs", createVerticalTabsDemo())
-	tabWidget.AddTab("MDI Demo", createMDIDemo(application, mainWindow))
+	tabWidget.AddTab("MDI Demo", createMDIDemo(desktop, application, mainWindow))
 
 	mainWindow.SetContent(tabWidget)
 
@@ -240,7 +231,7 @@ func createMainWindow(application *app.Application, statusBar *widgets.StatusBar
 }
 
 // createBasicWidgetsDemo creates a panel with basic widgets.
-func createBasicWidgetsDemo(statusBar *widgets.StatusBar) core.Widget {
+func createBasicWidgetsDemo(desktop *widgets.Desktop) core.Widget {
 	panel := widgets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	boxLayout.SetSpacing(0)
@@ -253,7 +244,7 @@ func createBasicWidgetsDemo(statusBar *widgets.StatusBar) core.Widget {
 	textInput := widgets.NewTextInput()
 	textInput.SetPlaceholder("Enter text here...")
 	textInput.SetOnTextChanged(func(text string) {
-		if statusBar != nil {
+		if statusBar := desktop.StatusBar(); statusBar != nil {
 			statusBar.SetText(fmt.Sprintf("Text: %s", text))
 		}
 	})
@@ -270,24 +261,24 @@ func createBasicWidgetsDemo(statusBar *widgets.StatusBar) core.Widget {
 
 	okButton := widgets.NewButton("OK")
 	okButton.SetOnClick(func() {
-		if statusBar != nil {
-			statusBar.SetText("OK button clicked!")
+		if sb := desktop.StatusBar(); sb != nil {
+			sb.SetText("OK button clicked!")
 		}
 	})
 	buttonPanel.AddChild(okButton)
 
 	cancelButton := widgets.NewButton("Cancel")
 	cancelButton.SetOnClick(func() {
-		if statusBar != nil {
-			statusBar.SetText("Cancel button clicked!")
+		if sb := desktop.StatusBar(); sb != nil {
+			sb.SetText("Cancel button clicked!")
 		}
 	})
 	buttonPanel.AddChild(cancelButton)
 
 	applyButton := widgets.NewButton("Apply")
 	applyButton.SetOnClick(func() {
-		if statusBar != nil {
-			statusBar.SetText("Apply button clicked!")
+		if sb := desktop.StatusBar(); sb != nil {
+			sb.SetText("Apply button clicked!")
 		}
 	})
 	buttonPanel.AddChild(applyButton)
@@ -838,7 +829,7 @@ func createBottomTabsDemo() core.Widget {
 }
 
 // createDemoWindow creates a simple demo window with an embedded terminal.
-func createDemoWindow(application *app.Application) *window.Window {
+func createDemoWindow(desktop *widgets.Desktop, application *app.Application) *window.Window {
 	w := window.NewWindow("Demo Window")
 	w.SetSize(core.UnitSize{
 		Width:  core.Unit(60 * 8),
@@ -959,7 +950,7 @@ func createVerticalTabsDemo() core.Widget {
 var mdiChildCount int
 
 // createMDIDemo creates a panel demonstrating MDI-style child windows.
-func createMDIDemo(application *app.Application, parentWindow *window.Window) core.Widget {
+func createMDIDemo(desktop *widgets.Desktop, application *app.Application, parentWindow *window.Window) core.Widget {
 	panel := widgets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	boxLayout.SetSpacing(8)
@@ -1060,7 +1051,7 @@ func createMDIChildWindow(parentWindow *window.Window, id int) *window.Window {
 }
 
 // showAboutDialog shows the about dialog.
-func showAboutDialog(application *app.Application) {
+func showAboutDialog(desktop *widgets.Desktop, application *app.Application) {
 	dialog := widgets.NewMessageBox(
 		"About TUI Toolkit",
 		"TUI Toolkit Demo\n\nA comprehensive terminal UI framework.\n\nVersion 0.1.0",
@@ -1071,6 +1062,6 @@ func showAboutDialog(application *app.Application) {
 		// Dialog closed
 	})
 
-	// MessageBox is itself a window, just add it directly
-	application.WindowManager().AddWindow(&dialog.Window)
+	// MessageBox is itself a window, add it to the application
+	application.AddWindow(&dialog.Window)
 }

@@ -280,20 +280,57 @@ func (app *Application) AddEventFilter(filter EventFilter) {
 func (app *Application) Run() int {
 	app.mu.Lock()
 	backend := app.backend
+	desktop := app.desktop
 	onStartup := app.onStartup
+	onShutdown := app.onShutdown
 	app.mu.Unlock()
 
 	if backend == nil {
 		return 1
 	}
 
-	// Initialize backend
+	// If we have a Desktop, delegate to it
+	if desktop != nil {
+		if d, ok := desktop.(*widgets.Desktop); ok {
+			// Pass backend to Desktop
+			d.SetBackend(backend)
+
+			// Wire up Application callbacks through Desktop
+			d.SetOnStartup(func() {
+				// Update screen bounds for window manager
+				app.mu.Lock()
+				wm := app.windowManager
+				app.mu.Unlock()
+				size := backend.Size()
+				wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+
+				// Mark Application as running
+				app.running.Store(true)
+
+				// Call Application's startup handler
+				if onStartup != nil {
+					onStartup()
+				}
+			})
+
+			d.SetOnShutdown(func() {
+				app.running.Store(false)
+				if onShutdown != nil {
+					onShutdown()
+				}
+			})
+
+			// Run via Desktop
+			return d.Run()
+		}
+	}
+
+	// Fallback: no Desktop, run directly (legacy mode)
 	if err := backend.Init(); err != nil {
 		return 1
 	}
 	defer backend.Shutdown()
 
-	// Update screen bounds
 	app.mu.Lock()
 	wm := app.windowManager
 	app.mu.Unlock()
@@ -301,21 +338,16 @@ func (app *Application) Run() int {
 	size := backend.Size()
 	wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
 
-	// Mark as running
 	app.running.Store(true)
 	defer app.running.Store(false)
 
-	// Call startup handler
 	if onStartup != nil {
 		onStartup()
 	}
 
-	// Run event loop
 	app.eventLoop()
 
-	// Call shutdown handler
 	app.mu.RLock()
-	onShutdown := app.onShutdown
 	exitCode := app.exitCode
 	app.mu.RUnlock()
 
@@ -528,6 +560,16 @@ func (app *Application) processTimers() {
 	for _, timer := range toFire {
 		if timer.Callback != nil {
 			timer.Callback()
+		}
+	}
+
+	// Also process Desktop timers if we have a Desktop
+	app.mu.RLock()
+	desktop := app.desktop
+	app.mu.RUnlock()
+	if desktop != nil {
+		if d, ok := desktop.(*widgets.Desktop); ok {
+			d.ProcessTimers()
 		}
 	}
 }

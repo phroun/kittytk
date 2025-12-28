@@ -2,24 +2,12 @@
 package widgets
 
 import (
-	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
 )
-
-// debugLog writes debug messages to /tmp/menu_debug.log
-func debugLog(format string, args ...interface{}) {
-	f, err := os.OpenFile("/tmp/menu_debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	fmt.Fprintf(f, "[%s] %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, args...))
-}
 
 // MenuItem represents an item in a menu.
 type MenuItem struct {
@@ -408,7 +396,6 @@ func (m *Menu) SetRequestUpdate(fn func()) {
 // stopScrollTimer stops any active scroll timer.
 func (m *Menu) stopScrollTimer() {
 	if m.scrollTimer != nil {
-		debugLog("stopScrollTimer: stopping timer")
 		m.scrollTimer.Stop()
 		m.scrollTimer = nil
 	}
@@ -416,41 +403,27 @@ func (m *Menu) stopScrollTimer() {
 
 // startScrollTimer starts a repeating timer for continuous scrolling.
 func (m *Menu) startScrollTimer(direction int) {
-	debugLog("startScrollTimer called, direction=%d, scrollHoverZone=%d", direction, m.scrollHoverZone)
 	m.stopScrollTimer()
 	if m.scrollTimerStarter == nil {
-		debugLog("scrollTimerStarter is nil, returning")
 		return
 	}
-	debugLog("Starting timer with 50ms interval")
 	m.scrollTimer = m.scrollTimerStarter(50*time.Millisecond, func() {
-		debugLog("Timer callback fired! direction=%d, scrollHoverZone=%d, canUp=%v, canDown=%v",
-			direction, m.scrollHoverZone, m.canScrollUp(), m.canScrollDown())
 		// Verify scroll zone is still active (user might have moved mouse)
 		if (direction < 0 && m.scrollHoverZone != -1) ||
 			(direction > 0 && m.scrollHoverZone != 1) {
-			debugLog("Scroll zone mismatch, skipping scroll")
 			return
 		}
 		// Scroll if possible
 		if direction < 0 && m.canScrollUp() {
-			debugLog("Scrolling up")
 			m.scrollUp(1)
 		} else if direction > 0 && m.canScrollDown() {
-			debugLog("Scrolling down")
 			m.scrollDown(1)
-		} else {
-			debugLog("Cannot scroll in direction %d", direction)
 		}
 		// Request screen update since timer runs outside normal event loop
 		if m.requestUpdate != nil {
-			debugLog("Calling requestUpdate")
 			m.requestUpdate()
-		} else {
-			debugLog("requestUpdate is nil!")
 		}
 	})
-	debugLog("Timer started, scrollTimer=%v", m.scrollTimer != nil)
 }
 
 // Hide hides the menu.
@@ -1118,7 +1091,6 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// Check if on top scroll indicator
 		if rowIndex == 0 && m.canScrollUp() {
 			if m.scrollHoverZone != -1 {
-				debugLog("HandleMouseMove: entering TOP scroll zone (row=%d, lastRow=%d)", rowIndex, lastRow)
 				m.scrollHoverZone = -1
 				// Do initial scroll immediately, then start timer for continuous scrolling
 				m.scrollUp(1)
@@ -1130,7 +1102,6 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// Check if on bottom scroll indicator
 		if rowIndex == lastRow && m.canScrollDown() {
 			if m.scrollHoverZone != 1 {
-				debugLog("HandleMouseMove: entering BOTTOM scroll zone (row=%d, lastRow=%d)", rowIndex, lastRow)
 				m.scrollHoverZone = 1
 				// Do initial scroll immediately, then start timer for continuous scrolling
 				m.scrollDown(1)
@@ -1141,7 +1112,6 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 		// Not on a scroll indicator - clear scroll state and stop timer
 		if m.scrollHoverZone != 0 {
-			debugLog("HandleMouseMove: leaving scroll zone (row=%d, was zone=%d)", rowIndex, m.scrollHoverZone)
 			m.scrollHoverZone = 0
 			m.stopScrollTimer()
 		}
