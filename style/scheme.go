@@ -408,7 +408,7 @@ func DefaultScheme() *Scheme {
 
 		// Tab Widget
 		TabsFG:                ptr(DefaultStyle().WithFg(ColorBrightWhite)),
-		TabsBG:                nil, // inherit
+		TabsBG:                ptr(DefaultStyle().WithBg(ColorBlue)), // blue tab bar background
 		TabsButton:            nil, // TabsFG + TabsBG
 		PressedTabsButton:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
 		DisabledTabsButton:    nil, // DisabledTextFG on TabsBG
@@ -821,6 +821,26 @@ func (s *Scheme) GetTabsFG(active bool) Color {
 		return s.TabsFG.Fg
 	}
 	return s.GetWindowFG(active)
+}
+
+func (s *Scheme) GetTabsBG() Color {
+	if s.TabsBG != nil {
+		return s.TabsBG.Bg
+	}
+	return ColorDefault // inherit from parent
+}
+
+// GetTabsBar returns the complete style for the tab bar area.
+func (s *Scheme) GetTabsBar(active bool) CellStyle {
+	return DefaultStyle().WithFg(s.GetTabsFG(active)).WithBg(s.GetTabsBG())
+}
+
+// GetActiveTab returns the complete style for the active tab (FG + BG + Attrs).
+func (s *Scheme) GetActiveTab() CellStyle {
+	return DefaultStyle().
+		WithFg(s.GetActiveTabFG()).
+		WithBg(s.GetActiveTabBG()).
+		WithAttrs(s.GetActiveTabAttrs())
 }
 
 func (s *Scheme) GetTabsButton(active bool, inheritedBG Color) CellStyle {

@@ -648,7 +648,7 @@ func (t *TabWidget) SizeHint() core.UnitSize {
 // Paint renders the tab widget.
 func (t *TabWidget) Paint(p *core.Painter) {
 	bounds := t.Bounds()
-	theme := t.Theme()
+	scheme := t.GetScheme()
 	metrics := p.Metrics()
 
 	// Draw background using TabWidget's background color if set
@@ -661,40 +661,36 @@ func (t *TabWidget) Paint(p *core.Painter) {
 	// Draw tab bar based on position
 	switch t.tabPosition {
 	case TabsTop:
-		t.paintTopTabs(p, bounds, theme, metrics)
+		t.paintTopTabs(p, bounds, scheme, metrics)
 	case TabsBottom:
-		t.paintBottomTabs(p, bounds, theme, metrics)
+		t.paintBottomTabs(p, bounds, scheme, metrics)
 	case TabsLeft:
-		t.paintLeftTabs(p, bounds, theme, metrics)
+		t.paintLeftTabs(p, bounds, scheme, metrics)
 	case TabsRight:
-		t.paintRightTabs(p, bounds, theme, metrics)
+		t.paintRightTabs(p, bounds, scheme, metrics)
 	}
 
 	// Draw content
 	t.paintContent(p)
 }
 
-func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
+func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabHeight := t.tabBarHeight()
 	hasFocus := t.HasFocus()
 
-	// Tab bar style: silver on blue
-	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
+	// Tab bar style from scheme
+	tabBarStyle := scheme.GetTabsBar(true)
 	// Underlined tab bar style for unselected tabs and connectors (except slashes)
 	tabBarUnderlined := tabBarStyle.Underline()
-	// Selected tab style when unfocused: uses page control's background color (not underlined)
+	// Selected tab style when unfocused: uses ActiveTab colors with overline
 	// Overline is added so that the window frame above gets underlined
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold().Overline()
-	if bg := t.BackgroundColor(); bg != nil {
-		selectedStyle = selectedStyle.WithBg(*bg)
-	} else {
-		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
-	}
-	// Focused selected tab style: black on cyan (for angle brackets and title, not underlined)
-	// Overline is added so that the window frame above gets underlined
-	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan).Overline()
-	// Pressed button style (inverted, underlined)
-	pressedStyle := tabBarStyle.WithFg(tabBarStyle.Bg).WithBg(tabBarStyle.Fg).Underline()
+	selectedStyle := scheme.GetActiveTab().Overline()
+	// Focused selected tab style: from scheme with overline
+	focusedSelectedStyle := scheme.GetFocusedTab().Overline()
+	// Pressed button style from scheme with underline
+	pressedStyle := scheme.GetPressedTabsButton().Underline()
+	// Disabled style
+	disabledStyle := tabBarUnderlined.WithFg(scheme.GetDisabledTextFG())
 
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: tabHeight}, ' ', tabBarStyle)
@@ -785,7 +781,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 			var s style.CellStyle
 			if !tab.Enabled {
-				s = theme.Disabled
+				s = disabledStyle
 			} else if isSelected {
 				if hasFocus {
 					s = focusedSelectedStyle
@@ -950,7 +946,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 
 		var s style.CellStyle
 		if !tab.Enabled {
-			s = theme.Disabled
+			s = disabledStyle
 		} else if isSelected {
 			if hasFocus {
 				s = focusedSelectedStyle
@@ -1111,27 +1107,24 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, theme *s
 	}
 }
 
-func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
+func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabHeight := t.tabBarHeight()
 	tabY := bounds.Height - tabHeight
 	hasFocus := t.HasFocus()
 
-	// Tab bar style: silver on blue
-	tabBarStyle := style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
+	// Tab bar style from scheme
+	tabBarStyle := scheme.GetTabsBar(true)
 	// Tab bar style with overline - used for areas outside the active tab opening
 	// This causes the content border above to be underlined everywhere except the active tab
 	tabBarOverlined := tabBarStyle.Overline()
-	// Selected tab style when unfocused: uses page control's background color, underlined (no overline)
-	selectedStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).Bold().Underline()
-	if bg := t.BackgroundColor(); bg != nil {
-		selectedStyle = selectedStyle.WithBg(*bg)
-	} else {
-		selectedStyle = selectedStyle.WithBg(style.ColorDefault)
-	}
-	// Focused selected tab style: black on cyan with underline (no overline)
-	focusedSelectedStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan).Underline()
-	// Pressed button style (inverted, with overline)
-	pressedStyle := tabBarStyle.WithFg(tabBarStyle.Bg).WithBg(tabBarStyle.Fg).Overline()
+	// Selected tab style: uses ActiveTab colors with underline (no overline)
+	selectedStyle := scheme.GetActiveTab().Underline()
+	// Focused selected tab style: from scheme with underline (no overline)
+	focusedSelectedStyle := scheme.GetFocusedTab().Underline()
+	// Pressed button style from scheme with overline
+	pressedStyle := scheme.GetPressedTabsButton().Overline()
+	// Disabled style
+	disabledStyle := tabBarOverlined.WithFg(scheme.GetDisabledTextFG())
 
 	// Draw tab bar background with overline (will be overwritten by active tab area without overline)
 	p.FillRect(core.UnitRect{Y: tabY, Width: bounds.Width, Height: tabHeight}, ' ', tabBarOverlined)
@@ -1209,7 +1202,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 			if remainingSpace >= minPartialWidth {
 				var s style.CellStyle
 				if !tab.Enabled {
-					s = theme.Disabled.Overline()
+					s = disabledStyle
 				} else if isSelected {
 					if hasFocus {
 						s = focusedSelectedStyle
@@ -1285,7 +1278,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 
 		var s style.CellStyle
 		if !tab.Enabled {
-			s = theme.Disabled.Overline()
+			s = disabledStyle
 		} else if isSelected {
 			if hasFocus {
 				s = focusedSelectedStyle
@@ -1436,22 +1429,35 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, theme
 	}
 }
 
-func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
+func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabWidth := t.calculateTabBarWidth()
+	hasFocus := t.HasFocus()
+
+	// Tab bar style from scheme
+	tabBarStyle := scheme.GetTabsBar(true)
+	// Selected tab styles from scheme
+	selectedStyle := scheme.GetActiveTab()
+	focusedSelectedStyle := scheme.GetFocusedTab()
+	// Disabled style
+	disabledStyle := tabBarStyle.WithFg(scheme.GetDisabledTextFG())
 
 	// Draw tab bar background
-	p.FillRect(core.UnitRect{Width: tabWidth, Height: bounds.Height}, ' ', theme.MenuBar)
+	p.FillRect(core.UnitRect{Width: tabWidth, Height: bounds.Height}, ' ', tabBarStyle)
 
 	// Draw tabs vertically
 	y := core.Unit(0)
 	for i, tab := range t.tabs {
 		var s style.CellStyle
 		if !tab.Enabled {
-			s = theme.Disabled
+			s = disabledStyle
 		} else if i == t.currentIndex {
-			s = theme.WindowTitleFocused
+			if hasFocus {
+				s = focusedSelectedStyle
+			} else {
+				s = selectedStyle
+			}
 		} else {
-			s = theme.MenuBar
+			s = tabBarStyle
 		}
 
 		// Draw tab
@@ -1470,27 +1476,40 @@ func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, theme *
 
 	// Draw separator line
 	for i := core.Unit(0); i < bounds.Height; i += metrics.CellHeight {
-		p.DrawCell(tabWidth-metrics.CellWidth, i, '│', theme.Normal)
+		p.DrawCell(tabWidth-metrics.CellWidth, i, '│', scheme.GetNormal(true))
 	}
 }
 
-func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
+func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabWidth := t.calculateTabBarWidth()
 	tabX := bounds.Width - tabWidth
+	hasFocus := t.HasFocus()
+
+	// Tab bar style from scheme
+	tabBarStyle := scheme.GetTabsBar(true)
+	// Selected tab styles from scheme
+	selectedStyle := scheme.GetActiveTab()
+	focusedSelectedStyle := scheme.GetFocusedTab()
+	// Disabled style
+	disabledStyle := tabBarStyle.WithFg(scheme.GetDisabledTextFG())
 
 	// Draw tab bar background
-	p.FillRect(core.UnitRect{X: tabX, Width: tabWidth, Height: bounds.Height}, ' ', theme.MenuBar)
+	p.FillRect(core.UnitRect{X: tabX, Width: tabWidth, Height: bounds.Height}, ' ', tabBarStyle)
 
 	// Draw tabs vertically
 	y := core.Unit(0)
 	for i, tab := range t.tabs {
 		var s style.CellStyle
 		if !tab.Enabled {
-			s = theme.Disabled
+			s = disabledStyle
 		} else if i == t.currentIndex {
-			s = theme.WindowTitleFocused
+			if hasFocus {
+				s = focusedSelectedStyle
+			} else {
+				s = selectedStyle
+			}
 		} else {
-			s = theme.MenuBar
+			s = tabBarStyle
 		}
 
 		// Draw tab

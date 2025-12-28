@@ -222,6 +222,8 @@ func createMainWindow(application *app.Application, statusBar *widgets.StatusBar
 	tabWidget.AddTab("Scroll Lists", createScrollListDemo())
 	tabWidget.AddTab("Progress", createProgressDemo())
 	tabWidget.AddTab("Bottom Tabs", createBottomTabsDemo())
+	tabWidget.AddTab("Vertical Tabs", createVerticalTabsDemo())
+	tabWidget.AddTab("MDI Demo", createMDIDemo(application))
 
 	mainWindow.SetContent(tabWidget)
 
@@ -857,6 +859,182 @@ func createDemoWindow(application *app.Application) *window.Window {
 	terminal.Start()
 
 	w.SetContent(splitter)
+
+	return w
+}
+
+// createVerticalTabsDemo creates a panel with vertical tabs demonstration.
+func createVerticalTabsDemo() core.Widget {
+	// Use a horizontal splitter to show left and right tab widgets side by side
+	splitter := widgets.NewHSplitter()
+	splitter.SetPosition(0.5)
+
+	// Left: TabWidget with tabs on the left
+	leftTabWidget := widgets.NewTabWidget()
+	leftTabWidget.SetTabPosition(widgets.TabsLeft)
+
+	leftTab1 := widgets.NewPanel()
+	leftTab1Layout := layout.NewBoxLayout(core.Vertical)
+	leftTab1Label := widgets.NewLabel("This is the first tab in a\nTabsLeft layout.")
+	leftTab1.AddChild(leftTab1Label)
+	leftTab1Desc := widgets.NewLabel("Tabs are displayed vertically\nalong the left edge.")
+	leftTab1.AddChild(leftTab1Desc)
+	leftTab1.SetLayoutManager(leftTab1Layout)
+	leftTabWidget.AddTab("First", leftTab1)
+
+	leftTab2 := widgets.NewPanel()
+	leftTab2Layout := layout.NewBoxLayout(core.Vertical)
+	leftTab2Label := widgets.NewLabel("Second tab content")
+	leftTab2.AddChild(leftTab2Label)
+	leftTab2Button := widgets.NewButton("A Button")
+	leftTab2.AddChild(leftTab2Button)
+	leftTab2.SetLayoutManager(leftTab2Layout)
+	leftTabWidget.AddTab("Second", leftTab2)
+
+	leftTab3 := widgets.NewPanel()
+	leftTab3Layout := layout.NewBoxLayout(core.Vertical)
+	leftTab3Input := widgets.NewTextInput()
+	leftTab3Input.SetPlaceholder("Type here...")
+	leftTab3.AddChild(leftTab3Input)
+	leftTab3.SetLayoutManager(leftTab3Layout)
+	leftTabWidget.AddTab("Third", leftTab3)
+
+	splitter.SetFirst(leftTabWidget)
+
+	// Right: TabWidget with tabs on the right
+	rightTabWidget := widgets.NewTabWidget()
+	rightTabWidget.SetTabPosition(widgets.TabsRight)
+
+	rightTab1 := widgets.NewPanel()
+	rightTab1Layout := layout.NewBoxLayout(core.Vertical)
+	rightTab1Label := widgets.NewLabel("This is the first tab in a\nTabsRight layout.")
+	rightTab1.AddChild(rightTab1Label)
+	rightTab1Desc := widgets.NewLabel("Tabs are displayed vertically\nalong the right edge.")
+	rightTab1.AddChild(rightTab1Desc)
+	rightTab1.SetLayoutManager(rightTab1Layout)
+	rightTabWidget.AddTab("Alpha", rightTab1)
+
+	rightTab2 := widgets.NewPanel()
+	rightTab2Layout := layout.NewBoxLayout(core.Vertical)
+	rightTab2Label := widgets.NewLabel("Beta tab content")
+	rightTab2.AddChild(rightTab2Label)
+	rightTab2Check := widgets.NewCheckbox("Enable option")
+	rightTab2.AddChild(rightTab2Check)
+	rightTab2.SetLayoutManager(rightTab2Layout)
+	rightTabWidget.AddTab("Beta", rightTab2)
+
+	rightTab3 := widgets.NewPanel()
+	rightTab3Layout := layout.NewBoxLayout(core.Vertical)
+	rightTab3Label := widgets.NewLabel("Gamma tab content")
+	rightTab3.AddChild(rightTab3Label)
+	rightTab3.SetLayoutManager(rightTab3Layout)
+	rightTabWidget.AddTab("Gamma", rightTab3)
+
+	splitter.SetSecond(rightTabWidget)
+
+	return splitter
+}
+
+// MDI child window counter for unique naming
+var mdiChildCount int
+
+// createMDIDemo creates a panel demonstrating MDI-style child windows.
+func createMDIDemo(application *app.Application) core.Widget {
+	panel := widgets.NewPanel()
+	boxLayout := layout.NewBoxLayout(core.Vertical)
+	boxLayout.SetSpacing(8)
+
+	// Description
+	descLabel := widgets.NewLabel("MDI (Multiple Document Interface) Demo")
+	panel.AddChild(descLabel)
+
+	infoLabel := widgets.NewLabel("Click the button below to spawn new child windows.\nChild windows appear within the desktop and can be\nmoved, resized, minimized to the dock, and cascaded\nor tiled via the Window menu.")
+	panel.AddChild(infoLabel)
+
+	// Button to spawn new MDI child window
+	spawnButton := widgets.NewButton("Spawn MDI Child Window")
+	spawnButton.SetOnClick(func() {
+		mdiChildCount++
+		childWindow := createMDIChildWindow(application, mdiChildCount)
+		application.WindowManager().AddWindow(childWindow)
+	})
+	panel.AddChild(spawnButton)
+
+	// Add a spacer
+	spacer := widgets.NewSpacer()
+	panel.AddChild(spacer)
+
+	// Info about window management
+	tipLabel := widgets.NewLabel("Tips:")
+	panel.AddChild(tipLabel)
+
+	tip1 := widgets.NewLabel("- Drag title bar to move windows")
+	panel.AddChild(tip1)
+
+	tip2 := widgets.NewLabel("- Drag edges to resize windows")
+	panel.AddChild(tip2)
+
+	tip3 := widgets.NewLabel("- Click [_] to minimize to dock")
+	panel.AddChild(tip3)
+
+	tip4 := widgets.NewLabel("- Click [#] to maximize window")
+	panel.AddChild(tip4)
+
+	tip5 := widgets.NewLabel("- Use Window > Tile or Cascade")
+	panel.AddChild(tip5)
+
+	panel.SetLayoutManager(boxLayout)
+	return panel
+}
+
+// createMDIChildWindow creates a simple MDI child window.
+func createMDIChildWindow(application *app.Application, id int) *window.Window {
+	w := window.NewWindow(fmt.Sprintf("MDI Child %d", id))
+
+	// Offset each child window slightly for cascading effect
+	offset := (id - 1) % 5
+	w.SetBounds(core.UnitRect{
+		X:      core.Unit((offset*3 + 5) * 8),
+		Y:      core.Unit((offset*2 + 2) * 16),
+		Width:  core.Unit(40 * 8),  // 40 columns
+		Height: core.Unit(12 * 16), // 12 rows
+	})
+
+	panel := widgets.NewPanel()
+	boxLayout := layout.NewBoxLayout(core.Vertical)
+	boxLayout.SetSpacing(8)
+
+	label := widgets.NewLabel(fmt.Sprintf("This is MDI Child Window #%d", id))
+	panel.AddChild(label)
+
+	textInput := widgets.NewTextInput()
+	textInput.SetPlaceholder("Enter some text...")
+	panel.AddChild(textInput)
+
+	// Button row
+	buttonPanel := widgets.NewPanel()
+	hLayout := layout.NewBoxLayout(core.Horizontal)
+	hLayout.SetSpacing(8)
+
+	closeButton := widgets.NewButton("Close")
+	closeButton.SetOnClick(func() {
+		w.Close()
+	})
+	buttonPanel.AddChild(closeButton)
+
+	spawnButton := widgets.NewButton("Spawn Another")
+	spawnButton.SetOnClick(func() {
+		mdiChildCount++
+		childWindow := createMDIChildWindow(application, mdiChildCount)
+		application.WindowManager().AddWindow(childWindow)
+	})
+	buttonPanel.AddChild(spawnButton)
+
+	buttonPanel.SetLayoutManager(hLayout)
+	panel.AddChild(buttonPanel)
+
+	panel.SetLayoutManager(boxLayout)
+	w.SetContent(panel)
 
 	return w
 }
