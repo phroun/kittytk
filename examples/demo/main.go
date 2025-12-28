@@ -223,7 +223,7 @@ func createMainWindow(application *app.Application, statusBar *widgets.StatusBar
 	tabWidget.AddTab("Progress", createProgressDemo())
 	tabWidget.AddTab("Bottom Tabs", createBottomTabsDemo())
 	tabWidget.AddTab("Vertical Tabs", createVerticalTabsDemo())
-	tabWidget.AddTab("MDI Demo", createMDIDemo(application))
+	tabWidget.AddTab("MDI Demo", createMDIDemo(application, mainWindow))
 
 	mainWindow.SetContent(tabWidget)
 
@@ -939,7 +939,7 @@ func createVerticalTabsDemo() core.Widget {
 var mdiChildCount int
 
 // createMDIDemo creates a panel demonstrating MDI-style child windows.
-func createMDIDemo(application *app.Application) core.Widget {
+func createMDIDemo(application *app.Application, parentWindow *window.Window) core.Widget {
 	panel := widgets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	boxLayout.SetSpacing(8)
@@ -948,15 +948,15 @@ func createMDIDemo(application *app.Application) core.Widget {
 	descLabel := widgets.NewLabel("MDI (Multiple Document Interface) Demo")
 	panel.AddChild(descLabel)
 
-	infoLabel := widgets.NewLabel("Click the button below to spawn new child windows.\nChild windows appear within the desktop and can be\nmoved, resized, minimized to the dock, and cascaded\nor tiled via the Window menu.")
+	infoLabel := widgets.NewLabel("Click the button below to spawn new child windows.\nChild windows appear within the parent window and can be\nmoved, resized, minimized, and maximized.")
 	panel.AddChild(infoLabel)
 
 	// Button to spawn new MDI child window
 	spawnButton := widgets.NewButton("Spawn MDI Child Window")
 	spawnButton.SetOnClick(func() {
 		mdiChildCount++
-		childWindow := createMDIChildWindow(application, mdiChildCount)
-		application.WindowManager().AddWindow(childWindow)
+		childWindow := createMDIChildWindow(parentWindow, mdiChildCount)
+		childWindow.SetParentWindow(parentWindow)
 	})
 	panel.AddChild(spawnButton)
 
@@ -988,16 +988,16 @@ func createMDIDemo(application *app.Application) core.Widget {
 }
 
 // createMDIChildWindow creates a simple MDI child window.
-func createMDIChildWindow(application *app.Application, id int) *window.Window {
+func createMDIChildWindow(parentWindow *window.Window, id int) *window.Window {
 	w := window.NewWindow(fmt.Sprintf("MDI Child %d", id))
 
 	// Offset each child window slightly for cascading effect
 	offset := (id - 1) % 5
 	w.SetBounds(core.UnitRect{
-		X:      core.Unit((offset*3 + 5) * 8),
+		X:      core.Unit((offset*3 + 2) * 8),
 		Y:      core.Unit((offset*2 + 2) * 16),
-		Width:  core.Unit(40 * 8),  // 40 columns
-		Height: core.Unit(12 * 16), // 12 rows
+		Width:  core.Unit(35 * 8),  // 35 columns
+		Height: core.Unit(10 * 16), // 10 rows
 	})
 
 	panel := widgets.NewPanel()
@@ -1025,8 +1025,8 @@ func createMDIChildWindow(application *app.Application, id int) *window.Window {
 	spawnButton := widgets.NewButton("Spawn Another")
 	spawnButton.SetOnClick(func() {
 		mdiChildCount++
-		childWindow := createMDIChildWindow(application, mdiChildCount)
-		application.WindowManager().AddWindow(childWindow)
+		childWindow := createMDIChildWindow(parentWindow, mdiChildCount)
+		childWindow.SetParentWindow(parentWindow)
 	})
 	buttonPanel.AddChild(spawnButton)
 
