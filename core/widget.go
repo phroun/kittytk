@@ -228,6 +228,10 @@ type PopupRequest struct {
 	Paint func(p *Painter)
 	// HandleMousePress function to handle clicks (returns true if handled)
 	HandleMousePress func(event MousePressEvent) bool
+	// HandleMouseMove function to handle mouse movement (returns true if handled)
+	HandleMouseMove func(event MouseMoveEvent) bool
+	// HandleMouseRelease function to handle mouse release (returns true if handled)
+	HandleMouseRelease func(event MouseReleaseEvent) bool
 }
 
 // PopupController is an interface for managing popup overlays.

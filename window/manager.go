@@ -101,6 +101,10 @@ type PopupOverlay struct {
 	Paint func(p *core.Painter)
 	// HandleMousePress function to handle clicks (returns true if handled)
 	HandleMousePress func(event core.MousePressEvent) bool
+	// HandleMouseMove function to handle mouse movement (returns true if handled)
+	HandleMouseMove func(event core.MouseMoveEvent) bool
+	// HandleMouseRelease function to handle mouse release (returns true if handled)
+	HandleMouseRelease func(event core.MouseReleaseEvent) bool
 }
 
 // NewWindowManager creates a new window manager.
@@ -610,10 +614,12 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 	}
 	// Convert core.PopupRequest to internal PopupOverlay
 	overlay := &PopupOverlay{
-		ID:               request.ID,
-		Bounds:           request.Bounds,
-		Paint:            request.Paint,
-		HandleMousePress: request.HandleMousePress,
+		ID:                 request.ID,
+		Bounds:             request.Bounds,
+		Paint:              request.Paint,
+		HandleMousePress:   request.HandleMousePress,
+		HandleMouseMove:    request.HandleMouseMove,
+		HandleMouseRelease: request.HandleMouseRelease,
 	}
 	m.popups = append(m.popups, overlay)
 }
@@ -1040,7 +1046,20 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 	resizeStartX := m.resizeStartX
 	resizeStartY := m.resizeStartY
 	resizeOriginal := m.resizeOriginal
+	popups := m.popups
 	m.mu.Unlock()
+
+	// Check popups first (highest z-order) - only when not window dragging/resizing
+	if dragging == nil && resizing == nil {
+		for i := len(popups) - 1; i >= 0; i-- {
+			popup := popups[i]
+			if popup.HandleMouseMove != nil {
+				if popup.HandleMouseMove(event) {
+					return true
+				}
+			}
+		}
+	}
 
 	// Handle resize
 	if resizing != nil {
@@ -1257,6 +1276,7 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	dragging := m.dragging
 	resizing := m.resizing
 	pressedWin := m.pressedWindow
+	popups := m.popups
 	m.dragging = nil
 	m.resizing = nil
 	m.resizeEdge = ResizeEdgeNone
@@ -1265,6 +1285,16 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 	if dragging != nil || resizing != nil {
 		return true
+	}
+
+	// Check popups first (highest z-order)
+	for i := len(popups) - 1; i >= 0; i-- {
+		popup := popups[i]
+		if popup.HandleMouseRelease != nil {
+			if popup.HandleMouseRelease(event) {
+				return true
+			}
+		}
 	}
 
 	// Check if we should raise the pressed window (focus-without-raise behavior)

@@ -18,7 +18,8 @@ type ComboBox struct {
 	placeholer   string
 
 	// Drop-down state
-	isOpen bool
+	isOpen     bool
+	hoverIndex int // Index of item currently hovered (-1 for none)
 
 	// Scroll state for drop-down
 	scrollOffset int
@@ -34,6 +35,7 @@ type ComboBox struct {
 func NewComboBox() *ComboBox {
 	c := &ComboBox{
 		currentIndex: -1,
+		hoverIndex:   -1,
 		maxVisible:   8,
 	}
 	c.WidgetBase = *core.NewWidgetBase()
@@ -215,6 +217,7 @@ func (c *ComboBox) ShowPopup() {
 	}
 	c.isOpen = true
 	c.scrollOffset = 0
+	c.hoverIndex = c.currentIndex // Start with current selection highlighted
 	// Ensure current item is visible
 	if c.currentIndex >= 0 {
 		if c.currentIndex < c.scrollOffset {
@@ -322,6 +325,12 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 		},
 		HandleMousePress: func(event core.MousePressEvent) bool {
 			return c.handlePopupMousePress(event, popupBounds)
+		},
+		HandleMouseMove: func(event core.MouseMoveEvent) bool {
+			return c.handlePopupMouseMove(event, popupBounds)
+		},
+		HandleMouseRelease: func(event core.MouseReleaseEvent) bool {
+			return c.handlePopupMouseRelease(event, popupBounds)
 		},
 	}
 
@@ -553,9 +562,13 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 		item := c.items[itemIndex]
 		itemY := core.Unit(i) * metrics.CellHeight
 
-		// Determine item style
+		// Determine item style - highlight hovered item (or current if no hover)
 		var s style.CellStyle
-		if itemIndex == c.currentIndex {
+		highlightIndex := c.hoverIndex
+		if highlightIndex < 0 {
+			highlightIndex = c.currentIndex
+		}
+		if itemIndex == highlightIndex {
 			s = scheme.GetFocusedDropdownItemText()
 		} else {
 			s = scheme.GetDropdownItemText()
@@ -591,6 +604,7 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 }
 
 // handlePopupMousePress handles mouse clicks on the popup overlay.
+// Just updates hover state - selection happens on release.
 func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds core.UnitRect) bool {
 	if event.Button != core.LeftButton {
 		return false
@@ -599,7 +613,62 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 	// Check if the click is within the popup bounds
 	if event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
 		event.Y >= popupBounds.Y && event.Y < popupBounds.Y+popupBounds.Height {
-		// Calculate which item was clicked
+		// Calculate which item was pressed
+		metrics := core.DefaultCellMetrics()
+		relY := event.Y - popupBounds.Y
+		itemIndex := int(relY / metrics.CellHeight)
+		actualIndex := c.scrollOffset + itemIndex
+
+		if actualIndex >= 0 && actualIndex < len(c.items) {
+			c.hoverIndex = actualIndex
+			c.Update()
+		}
+		return true
+	}
+
+	// Click was outside popup - close it
+	c.HidePopup()
+	return true
+}
+
+// handlePopupMouseMove handles mouse movement on the popup overlay.
+func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds core.UnitRect) bool {
+	// Check if mouse is within the popup bounds
+	if event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
+		event.Y >= popupBounds.Y && event.Y < popupBounds.Y+popupBounds.Height {
+		// Calculate which item is under the mouse
+		metrics := core.DefaultCellMetrics()
+		relY := event.Y - popupBounds.Y
+		itemIndex := int(relY / metrics.CellHeight)
+		actualIndex := c.scrollOffset + itemIndex
+
+		if actualIndex >= 0 && actualIndex < len(c.items) {
+			if c.hoverIndex != actualIndex {
+				c.hoverIndex = actualIndex
+				c.Update()
+			}
+		}
+		return true
+	}
+
+	// Mouse is outside popup - clear hover
+	if c.hoverIndex != -1 {
+		c.hoverIndex = -1
+		c.Update()
+	}
+	return false
+}
+
+// handlePopupMouseRelease handles mouse release on the popup overlay.
+func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBounds core.UnitRect) bool {
+	if event.Button != core.LeftButton {
+		return false
+	}
+
+	// Check if the release is within the popup bounds
+	if event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
+		event.Y >= popupBounds.Y && event.Y < popupBounds.Y+popupBounds.Height {
+		// Calculate which item was released on
 		metrics := core.DefaultCellMetrics()
 		relY := event.Y - popupBounds.Y
 		itemIndex := int(relY / metrics.CellHeight)
@@ -615,7 +684,7 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 		}
 	}
 
-	// Click was outside popup - close it
+	// Release was outside popup - close it
 	c.HidePopup()
 	return true
 }

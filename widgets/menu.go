@@ -952,11 +952,17 @@ func (m *Menu) HandleMousePress(event core.MousePressEvent) bool {
 
 		// Check if clicking on scroll indicators
 		if needsScroll {
+			// Calculate scroll amount (page minus one for contextual overlap)
+			scrollAmount := m.visibleItemCount() - 1
+			if scrollAmount < 1 {
+				scrollAmount = 1
+			}
+
 			// Top scroll indicator (row 0)
 			if rowIndex == 0 && m.canScrollUp() {
 				// Click on scroll indicator - transition to clicked mode and scroll
 				m.clickedMode = true
-				m.scrollUp(1)
+				m.scrollUp(scrollAmount)
 				return true
 			}
 
@@ -965,7 +971,7 @@ func (m *Menu) HandleMousePress(event core.MousePressEvent) bool {
 			if rowIndex == lastRow && m.canScrollDown() {
 				// Click on scroll indicator - transition to clicked mode and scroll
 				m.clickedMode = true
-				m.scrollDown(1)
+				m.scrollDown(scrollAmount)
 				return true
 			}
 
@@ -1034,13 +1040,9 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 				m.scrollHoverZone = -1
 				m.scrollHoverTime = time.Now()
 			} else {
-				// Scroll page-minus-one per mouse move, with rate limiting (100ms between scrolls)
-				if time.Since(m.scrollHoverTime) >= 100*time.Millisecond {
-					scrollAmount := m.visibleItemCount() - 1
-					if scrollAmount < 1 {
-						scrollAmount = 1
-					}
-					m.scrollUp(scrollAmount)
+				// Scroll one row at a time with fast rate limiting (50ms between scrolls)
+				if time.Since(m.scrollHoverTime) >= 50*time.Millisecond {
+					m.scrollUp(1)
 					m.scrollHoverTime = time.Now()
 				}
 			}
@@ -1053,13 +1055,9 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 				m.scrollHoverZone = 1
 				m.scrollHoverTime = time.Now()
 			} else {
-				// Scroll page-minus-one per mouse move, with rate limiting (100ms between scrolls)
-				if time.Since(m.scrollHoverTime) >= 100*time.Millisecond {
-					scrollAmount := m.visibleItemCount() - 1
-					if scrollAmount < 1 {
-						scrollAmount = 1
-					}
-					m.scrollDown(scrollAmount)
+				// Scroll one row at a time with fast rate limiting (50ms between scrolls)
+				if time.Since(m.scrollHoverTime) >= 50*time.Millisecond {
+					m.scrollDown(1)
 					m.scrollHoverTime = time.Now()
 				}
 			}
