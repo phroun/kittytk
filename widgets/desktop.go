@@ -250,13 +250,16 @@ func (d *Desktop) SetTheme(theme *style.Theme) {
 // AddApplication registers an application with the desktop.
 func (d *Desktop) AddApplication(app ApplicationProvider) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	d.applications = append(d.applications, app)
 
 	// If this is the first app, make it active
-	if d.activeApp == nil {
+	shouldActivate := d.activeApp == nil
+	if shouldActivate {
 		d.activeApp = app
+	}
+	d.mu.Unlock()
+
+	if shouldActivate {
 		app.OnActivate()
 		d.updateMenuBarContent()
 		d.updateStatusBarContent()
@@ -266,7 +269,6 @@ func (d *Desktop) AddApplication(app ApplicationProvider) {
 // RemoveApplication unregisters an application from the desktop.
 func (d *Desktop) RemoveApplication(app ApplicationProvider) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 
 	for i, a := range d.applications {
 		if a == app {
@@ -276,13 +278,22 @@ func (d *Desktop) RemoveApplication(app ApplicationProvider) {
 	}
 
 	// If this was the active app, switch to another or none
-	if d.activeApp == app {
-		app.OnDeactivate()
+	wasActive := d.activeApp == app
+	var newActiveApp ApplicationProvider
+	if wasActive {
 		if len(d.applications) > 0 {
 			d.activeApp = d.applications[0]
-			d.activeApp.OnActivate()
+			newActiveApp = d.activeApp
 		} else {
 			d.activeApp = nil
+		}
+	}
+	d.mu.Unlock()
+
+	if wasActive {
+		app.OnDeactivate()
+		if newActiveApp != nil {
+			newActiveApp.OnActivate()
 		}
 		d.updateMenuBarContent()
 		d.updateStatusBarContent()
