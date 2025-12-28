@@ -1739,7 +1739,9 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 	if m.activeMenu != nil {
 		if m.activeMenu.HandleKeyPress(event) {
 			// If the menu was hidden (item triggered), clean up without restoring previous window
-			if !m.activeMenu.IsVisible() {
+			// Note: activeMenu may have been set to nil by DeactivateMenuBar if the action
+			// created a new window, so check for nil first
+			if m.activeMenu != nil && !m.activeMenu.IsVisible() {
 				m.CloseMenuWithoutRestore()
 			}
 			return true
