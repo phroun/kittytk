@@ -390,21 +390,25 @@ func (c *ComboBox) IsInlineWidget() bool {
 // Paint renders the combo box.
 func (c *ComboBox) Paint(p *core.Painter) {
 	bounds := c.Bounds()
-	theme := c.Theme()
+	scheme := c.GetScheme()
 	focused := c.HasFocus()
 	metrics := p.Metrics()
+
+	// Get inherited background to determine pane type
+	inheritedBg := c.EffectiveBackgroundColor()
+	paneType := style.GetPaneType(inheritedBg)
 
 	// Determine style
 	var s style.CellStyle
 	if !c.IsEnabled() {
-		s = theme.Disabled
+		s = style.DefaultStyle().WithFg(scheme.GetDisabledComboBoxFG()).WithBg(scheme.GetComboBox(paneType).Bg)
 	} else if c.isOpen {
 		// When popup is open, style like an open menu
-		s = theme.MenuBarSelected
+		s = scheme.GetActiveMenuBarItem()
 	} else if focused {
-		s = theme.InputFocused
+		s = scheme.GetFocusedComboBox()
 	} else {
-		s = theme.Input
+		s = scheme.GetComboBox(paneType)
 	}
 
 	// Draw background
@@ -444,7 +448,7 @@ func (c *ComboBox) Paint(p *core.Painter) {
 // paintPopup renders the drop-down popup.
 func (c *ComboBox) paintPopup(p *core.Painter) {
 	bounds := c.Bounds()
-	theme := c.Theme()
+	scheme := c.GetScheme()
 	metrics := p.Metrics()
 
 	// Calculate popup bounds
@@ -462,8 +466,9 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 		Width:  bounds.Width,
 		Height: core.Unit(popupHeight) * metrics.CellHeight,
 	}
-	p.FillRect(popupBounds, ' ', theme.MenuItem)
-	p.DrawRect(popupBounds, theme.DefaultBorder, theme.MenuItem)
+	itemStyle := scheme.GetDropdownItemText()
+	p.FillRect(popupBounds, ' ', itemStyle)
+	p.DrawRect(popupBounds, c.Theme().DefaultBorder, itemStyle)
 
 	// Draw items
 	for i := 0; i < popupHeight; i++ {
@@ -476,11 +481,11 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 		itemY := popupY + core.Unit(i)*metrics.CellHeight
 
 		// Determine item style
-		var itemStyle style.CellStyle
+		var s style.CellStyle
 		if itemIndex == c.currentIndex {
-			itemStyle = theme.MenuItemSelected
+			s = scheme.GetFocusedDropdownItemText()
 		} else {
-			itemStyle = theme.MenuItem
+			s = scheme.GetDropdownItemText()
 		}
 
 		// Draw item background
@@ -489,7 +494,7 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 			Y:      itemY,
 			Width:  bounds.Width,
 			Height: metrics.CellHeight,
-		}, ' ', itemStyle)
+		}, ' ', s)
 
 		// Draw item text
 		x := metrics.CellWidth
@@ -497,25 +502,25 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 			if x >= bounds.Width-metrics.CellWidth {
 				break
 			}
-			p.DrawCell(x, itemY, ch, itemStyle)
+			p.DrawCell(x, itemY, ch, s)
 			x += metrics.CellWidth
 		}
 	}
 
 	// Draw scroll indicators if needed
 	if c.scrollOffset > 0 {
-		p.DrawCell(bounds.Width-metrics.CellWidth*2, popupY, '▲', theme.MenuItem)
+		p.DrawCell(bounds.Width-metrics.CellWidth*2, popupY, '▲', itemStyle)
 	}
 	if c.scrollOffset+popupHeight < len(c.items) {
 		endY := popupY + core.Unit(popupHeight-1)*metrics.CellHeight
-		p.DrawCell(bounds.Width-metrics.CellWidth*2, endY, '▼', theme.MenuItem)
+		p.DrawCell(bounds.Width-metrics.CellWidth*2, endY, '▼', itemStyle)
 	}
 }
 
 // paintPopupOverlay renders the popup for the overlay system.
 // The popup is rendered at its screen position.
 func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect) {
-	theme := c.Theme()
+	scheme := c.GetScheme()
 	metrics := p.Metrics()
 
 	// Calculate popup height
@@ -534,8 +539,9 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 		Width:  popupBounds.Width,
 		Height: popupBounds.Height,
 	}
-	popupPainter.FillRect(localBounds, ' ', theme.MenuItem)
-	popupPainter.DrawRect(localBounds, theme.DefaultBorder, theme.MenuItem)
+	itemStyle := scheme.GetDropdownItemText()
+	popupPainter.FillRect(localBounds, ' ', itemStyle)
+	popupPainter.DrawRect(localBounds, c.Theme().DefaultBorder, itemStyle)
 
 	// Draw items
 	for i := 0; i < popupHeight; i++ {
@@ -548,11 +554,11 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 		itemY := core.Unit(i) * metrics.CellHeight
 
 		// Determine item style
-		var itemStyle style.CellStyle
+		var s style.CellStyle
 		if itemIndex == c.currentIndex {
-			itemStyle = theme.MenuItemSelected
+			s = scheme.GetFocusedDropdownItemText()
 		} else {
-			itemStyle = theme.MenuItem
+			s = scheme.GetDropdownItemText()
 		}
 
 		// Draw item background
@@ -561,7 +567,7 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			Y:      itemY,
 			Width:  popupBounds.Width,
 			Height: metrics.CellHeight,
-		}, ' ', itemStyle)
+		}, ' ', s)
 
 		// Draw item text
 		x := metrics.CellWidth
@@ -569,18 +575,18 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			if x >= popupBounds.Width-metrics.CellWidth {
 				break
 			}
-			popupPainter.DrawCell(x, itemY, ch, itemStyle)
+			popupPainter.DrawCell(x, itemY, ch, s)
 			x += metrics.CellWidth
 		}
 	}
 
 	// Draw scroll indicators if needed
 	if c.scrollOffset > 0 {
-		popupPainter.DrawCell(popupBounds.Width-metrics.CellWidth*2, 0, '▲', theme.MenuItem)
+		popupPainter.DrawCell(popupBounds.Width-metrics.CellWidth*2, 0, '▲', itemStyle)
 	}
 	if c.scrollOffset+popupHeight < len(c.items) {
 		endY := core.Unit(popupHeight-1) * metrics.CellHeight
-		popupPainter.DrawCell(popupBounds.Width-metrics.CellWidth*2, endY, '▼', theme.MenuItem)
+		popupPainter.DrawCell(popupBounds.Width-metrics.CellWidth*2, endY, '▼', itemStyle)
 	}
 }
 

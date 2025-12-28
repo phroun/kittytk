@@ -328,38 +328,35 @@ func (t *TextInput) IsInlineWidget() bool {
 // Paint renders the text input.
 func (t *TextInput) Paint(p *core.Painter) {
 	bounds := t.Bounds()
-	theme := t.Theme()
+	scheme := t.GetScheme()
 	focused := t.HasFocus()
 	metrics := p.Metrics()
+
+	// Get inherited background color to determine pane type
+	inheritedBg := t.EffectiveBackgroundColor()
+	paneType := style.GetPaneType(inheritedBg)
 
 	// Determine style
 	var s style.CellStyle
 	var fillChar rune = ' '
 	if !t.IsEnabled() {
-		s = theme.Disabled
+		s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(scheme.GetEditBox(paneType).Bg)
 	} else if focused {
-		s = theme.InputFocused
-		// Use speckled fill character for focused state (black on cyan)
+		s = scheme.GetFocusedEditBoxText()
+		// Use speckled fill character for focused state
 		fillChar = '░'
 	} else {
-		// Unfocused editbox text color depends on container background
-		inheritedBg := t.EffectiveBackgroundColor()
-		if inheritedBg == style.ColorBlack || inheritedBg == style.ColorDefault {
-			// White on dark blue for black/default backgrounds
-			s = style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlue)
-		} else {
-			// White on black for other backgrounds
-			s = style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlack)
-		}
+		// Unfocused editbox style depends on pane type
+		s = scheme.GetEditBox(paneType)
 	}
 
 	// Draw background - use fill style with speckled pattern for focused state
 	fillStyle := s
 	if focused && t.IsEnabled() {
-		// Focused fill uses bright white speckles on the cyan background
-		fillStyle = style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorCyan)
-		// Text uses black on cyan (swap from fill)
-		s = style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorCyan)
+		// Focused fill uses the fill style from scheme
+		fillStyle = scheme.GetFocusedEditBoxFill()
+		// Text uses the text style from scheme
+		s = scheme.GetFocusedEditBoxText()
 	}
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, fillChar, fillStyle)
 
@@ -403,7 +400,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 				start, end = end, start
 			}
 			if textPos >= start && textPos < end {
-				charStyle = theme.InputSelection
+				charStyle = scheme.GetSelection()
 			}
 		}
 
@@ -415,8 +412,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 	if focused && !t.readOnly {
 		cursorX := metrics.CellToUnitsX(t.cursorPos - t.scrollOffset)
 		if cursorX >= 0 && cursorX < bounds.Width {
-			// Use black on bright white for cursor
-			cursorStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorBrightWhite)
+			cursorStyle := scheme.GetFocusedEditBoxCursor()
 			var cursorChar rune = ' '
 			if t.cursorPos < len(displayText)+t.scrollOffset {
 				cursorChar = t.getDisplayText()[t.cursorPos]

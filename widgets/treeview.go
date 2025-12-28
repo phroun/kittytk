@@ -439,12 +439,13 @@ func (t *TreeView) SizeHint() core.UnitSize {
 // Paint renders the tree view.
 func (t *TreeView) Paint(p *core.Painter) {
 	bounds := t.Bounds()
-	theme := t.Theme()
+	scheme := t.GetScheme()
 	focused := t.HasFocus()
 	metrics := p.Metrics()
 
-	// Draw background
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
+	// Draw background using list colors
+	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
 	visibleCount := int(bounds.Height / metrics.CellHeight)
 
@@ -462,17 +463,16 @@ func (t *TreeView) Paint(p *core.Painter) {
 		// Determine style
 		var s style.CellStyle
 		if !item.Enabled {
-			s = theme.Disabled
+			s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(scheme.GetListBG())
 		} else if itemIndex == t.currentIndex {
 			if focused {
-				s = theme.Selected
+				s = scheme.GetFocusedListItem()
 			} else {
-				// Unfocused selection: silver on dark blue
-				s = style.DefaultStyle().WithFg(style.ColorBrightWhite).WithBg(style.ColorBlue)
+				s = scheme.GetSelectedListItem()
 			}
 		} else {
-			// Unselected items: white on black
-			s = style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlack)
+			// Unselected items
+			s = style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
 		}
 
 		// Draw row background
@@ -575,21 +575,23 @@ func (t *TreeView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 
 // paintScrollbar draws a vertical scrollbar.
 func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
-	theme := t.Theme()
+	scheme := t.GetScheme()
 	metrics := p.Metrics()
 
 	scrollbarX, thumbStart, thumbHeight, trackHeight := t.scrollbarGeometry(visibleCount)
 
 	// Draw scrollbar track
+	trackStyle := scheme.GetScrollbar()
 	for i := 0; i < trackHeight; i++ {
 		y := core.Unit(i) * metrics.CellHeight
-		p.DrawCell(scrollbarX, y, '│', theme.Disabled)
+		p.DrawCell(scrollbarX, y, '│', trackStyle)
 	}
 
 	// Draw scrollbar thumb
+	thumbStyle := scheme.GetScrollbarThumb()
 	for i := 0; i < thumbHeight; i++ {
 		y := core.Unit(thumbStart+i) * metrics.CellHeight
-		p.DrawCell(scrollbarX, y, '█', theme.Normal)
+		p.DrawCell(scrollbarX, y, '█', thumbStyle)
 	}
 }
 

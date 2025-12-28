@@ -271,39 +271,38 @@ func (s *Splitter) SizeHint() core.UnitSize {
 }
 
 // Paint renders the splitter.
-func (s *Splitter) Paint(p *core.Painter) {
-	bounds := s.Bounds()
-	theme := s.Theme()
+func (sp *Splitter) Paint(p *core.Painter) {
+	bounds := sp.Bounds()
+	scheme := sp.GetScheme()
 	metrics := p.Metrics()
 
 	// Only draw background if explicitly set (allows parent backgrounds to show through)
-	if s.backgroundSet {
-		p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', theme.Normal)
+	if sp.backgroundSet {
+		p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', scheme.GetNormal(true))
 	}
 
 	// Update child bounds
-	s.Layout()
+	sp.Layout()
 
 	// Draw first child
-	if s.first != nil {
-		firstBounds, _ := s.childBounds()
+	if sp.first != nil {
+		firstBounds, _ := sp.childBounds()
 		firstPainter := p.WithOffset(firstBounds.X, firstBounds.Y).
 			WithClip(core.UnitRect{Width: firstBounds.Width, Height: firstBounds.Height})
-		s.first.Paint(firstPainter)
+		sp.first.Paint(firstPainter)
 	}
 
 	// Draw divider with middot drag handle styling
-	divider := s.dividerBounds()
-	focused := s.HasFocus()
-	dividerStyle := theme.ScrollTrack // Use scrollbar track color for divider
-	if s.dragging {
-		dividerStyle = theme.Selected
+	divider := sp.dividerBounds()
+	focused := sp.HasFocus()
+	dividerStyle := scheme.GetSplitter()
+	if sp.dragging {
+		dividerStyle = scheme.GetSelection()
 	} else if focused {
-		// Focused splitter uses bright cyan (like focused checkbox/radio)
-		dividerStyle = theme.ListItemFocused
+		dividerStyle = scheme.GetFocusedSplitter()
 	}
 
-	if s.orientation == core.Horizontal {
+	if sp.orientation == core.Horizontal {
 		// Vertical divider bar with ':' handle
 		midY := bounds.Height / 2
 		// Round to cell boundary
@@ -319,7 +318,7 @@ func (s *Splitter) Paint(p *core.Painter) {
 	} else {
 		// Horizontal divider bar: ────·· Title ··────
 		width := int(bounds.Width / metrics.CellWidth)
-		titleRunes := []rune(s.title)
+		titleRunes := []rune(sp.title)
 		titleLen := len(titleRunes)
 
 		if titleLen == 0 {
@@ -336,7 +335,7 @@ func (s *Splitter) Paint(p *core.Painter) {
 			}
 		} else {
 			// With title: ────·· Title ··────
-			middleContent := "·· " + s.title + " ··"
+			middleContent := "·· " + sp.title + " ··"
 			middleRunes := []rune(middleContent)
 			middleLen := len(middleRunes)
 			startMiddle := (width - middleLen) / 2
@@ -357,11 +356,11 @@ func (s *Splitter) Paint(p *core.Painter) {
 	}
 
 	// Draw second child
-	if s.second != nil {
-		_, secondBounds := s.childBounds()
+	if sp.second != nil {
+		_, secondBounds := sp.childBounds()
 		secondPainter := p.WithOffset(secondBounds.X, secondBounds.Y).
 			WithClip(core.UnitRect{Width: secondBounds.Width, Height: secondBounds.Height})
-		s.second.Paint(secondPainter)
+		sp.second.Paint(secondPainter)
 	}
 }
 

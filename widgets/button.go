@@ -237,7 +237,7 @@ func (b *Button) IsInlineWidget() bool {
 //   - Focused: "<OK>" with angle brackets
 func (b *Button) Paint(p *core.Painter) {
 	bounds := b.Bounds()
-	theme := b.Theme()
+	scheme := b.GetScheme()
 	focused := b.HasFocus()
 	metrics := p.Metrics()
 
@@ -247,20 +247,21 @@ func (b *Button) Paint(p *core.Painter) {
 
 	// Get inherited background color for all styles
 	inheritedBg := b.EffectiveBackgroundColor()
+	paneType := style.GetPaneType(inheritedBg)
 
 	// Determine style - always apply inherited background
 	var s style.CellStyle
 	if !b.IsEnabled() {
-		s = theme.Disabled.WithBg(inheritedBg)
+		s = style.DefaultStyle().WithFg(scheme.GetDisabledButtonFG()).WithBg(inheritedBg)
 	} else if showPressed {
-		s = theme.ButtonPressed
+		s = scheme.GetPressedButton(true) // TODO: pass actual window active state
 	} else if focused {
-		s = theme.ButtonFocused
+		s = scheme.GetFocusedButton()
 	} else if b.isDefault {
 		// Default button gets bold text when not focused
-		s = theme.Button.WithAttrs(style.StyleBold)
+		s = scheme.GetButton().WithAttrs(style.StyleBold)
 	} else {
-		s = theme.Button
+		s = scheme.GetButton()
 	}
 
 	// Use custom style if set
@@ -271,12 +272,13 @@ func (b *Button) Paint(p *core.Painter) {
 	// Clear style uses inherited background
 	clearStyle := style.DefaultStyle().WithBg(inheritedBg)
 
-	// Shadow style - use dim blue if background is black or terminal default, otherwise black
-	shadowFg := style.ColorBlack
-	if inheritedBg == style.ColorBlack || inheritedBg == style.ColorDefault {
-		shadowFg = style.ColorBlue
+	// Shadow style based on pane type
+	shadowFg := scheme.GetButtonShadowFG(paneType)
+	shadowAttrs := style.StyleNormal
+	if paneType == style.PaneDefault {
+		shadowAttrs = style.StyleDim
 	}
-	shadowStyle := style.DefaultStyle().WithFg(shadowFg).WithBg(inheritedBg).WithAttrs(style.StyleDim)
+	shadowStyle := style.DefaultStyle().WithFg(shadowFg).WithBg(inheritedBg).WithAttrs(shadowAttrs)
 
 	// Calculate button content width (excluding shadow)
 	textLen := len([]rune(b.text))

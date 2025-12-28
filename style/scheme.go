@@ -625,6 +625,17 @@ const (
 	PaneOther                   // Other background color
 )
 
+// GetPaneType determines the PaneType from an inherited background color.
+func GetPaneType(bg Color) PaneType {
+	if bg == ColorDefault {
+		return PaneDefault
+	}
+	if bg == ColorBlack {
+		return PaneDark
+	}
+	return PaneOther
+}
+
 func (s *Scheme) GetButtonShadowFG(pane PaneType) Color {
 	switch pane {
 	case PaneDefault:

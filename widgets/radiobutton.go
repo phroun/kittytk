@@ -99,20 +99,23 @@ func (r *RadioButton) IsInlineWidget() bool {
 // Paint renders the radio button.
 func (r *RadioButton) Paint(p *core.Painter) {
 	bounds := r.Bounds()
-	theme := r.Theme()
+	scheme := r.GetScheme()
 	focused := r.HasFocus()
 	metrics := p.Metrics()
 
 	// Determine style - always use inherited background color (ColorDefault = terminal default)
 	inheritedBg := r.EffectiveBackgroundColor()
-	var s style.CellStyle
+	var indicatorStyle, labelStyle style.CellStyle
 	if !r.IsEnabled() {
-		s = theme.Disabled.WithBg(inheritedBg)
+		disabledFG := scheme.GetDisabledTextFG()
+		indicatorStyle = style.DefaultStyle().WithFg(disabledFG).WithBg(inheritedBg)
+		labelStyle = indicatorStyle
 	} else if focused {
-		// Focused: bright cyan foreground on inherited background
-		s = style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(inheritedBg)
+		indicatorStyle = style.DefaultStyle().WithFg(scheme.GetFocusedRadioButtonFG()).WithBg(inheritedBg)
+		labelStyle = style.DefaultStyle().WithFg(scheme.GetFocusedRadioButtonLabelFG()).WithBg(inheritedBg)
 	} else {
-		s = theme.Normal.WithBg(inheritedBg)
+		indicatorStyle = style.DefaultStyle().WithFg(scheme.GetRadioButtonFG(true)).WithBg(inheritedBg)
+		labelStyle = style.DefaultStyle().WithFg(scheme.GetRadioButtonLabelFG(true)).WithBg(inheritedBg)
 	}
 
 	// Draw radio indicator
@@ -125,24 +128,20 @@ func (r *RadioButton) Paint(p *core.Painter) {
 
 	x := core.Unit(0)
 	for _, ch := range indicator {
-		p.DrawCell(x, 0, ch, s)
+		p.DrawCell(x, 0, ch, indicatorStyle)
 		x += metrics.CellWidth
 	}
 
 	// Draw space
-	p.DrawCell(x, 0, ' ', s)
+	p.DrawCell(x, 0, ' ', labelStyle)
 	x += metrics.CellWidth
 
 	// Draw text
-	textStyle := s
-	if !r.IsEnabled() {
-		textStyle = theme.Disabled
-	}
 	for _, ch := range r.text {
 		if x >= bounds.Width {
 			break
 		}
-		p.DrawCell(x, 0, ch, textStyle)
+		p.DrawCell(x, 0, ch, labelStyle)
 		x += metrics.CellWidth
 	}
 }

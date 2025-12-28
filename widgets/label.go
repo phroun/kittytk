@@ -83,20 +83,23 @@ func (l *Label) IsInlineWidget() bool {
 // Paint renders the label.
 func (l *Label) Paint(p *core.Painter) {
 	bounds := l.Bounds()
-	theme := l.Theme()
+	scheme := l.GetScheme()
+	inheritedBG := l.EffectiveBackgroundColor()
 
-	s := theme.Normal
+	// Build style from scheme colors
+	var s style.CellStyle
 	if !l.IsEnabled() {
-		s = theme.Disabled
+		s = style.DefaultStyle().WithFg(scheme.GetDisabledLabelFG()).WithBg(inheritedBG)
+	} else {
+		// Note: Using true for active - TODO: query actual window active state
+		s = style.DefaultStyle().WithFg(scheme.GetLabelFG(true)).WithBg(inheritedBG)
 	}
 
-	// Use custom style if set
+	// Use custom style if set (overrides scheme)
 	if customStyle := l.Style(); customStyle != nil {
 		s = *customStyle
+		s = s.WithBg(inheritedBG) // Still inherit background
 	}
-
-	// Always use inherited background color (ColorDefault = terminal default)
-	s = s.WithBg(l.EffectiveBackgroundColor())
 
 	// Clear background
 	p.Clear(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, s)

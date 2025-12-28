@@ -153,20 +153,23 @@ func (c *Checkbox) IsInlineWidget() bool {
 // Paint renders the checkbox.
 func (c *Checkbox) Paint(p *core.Painter) {
 	bounds := c.Bounds()
-	theme := c.Theme()
+	scheme := c.GetScheme()
 	focused := c.HasFocus()
 	metrics := p.Metrics()
 
 	// Determine style - always use inherited background color (ColorDefault = terminal default)
 	inheritedBg := c.EffectiveBackgroundColor()
-	var s style.CellStyle
+	var indicatorStyle, labelStyle style.CellStyle
 	if !c.IsEnabled() {
-		s = theme.Disabled.WithBg(inheritedBg)
+		disabledFG := scheme.GetDisabledTextFG()
+		indicatorStyle = style.DefaultStyle().WithFg(disabledFG).WithBg(inheritedBg)
+		labelStyle = indicatorStyle
 	} else if focused {
-		// Focused: bright cyan foreground on inherited background
-		s = style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(inheritedBg)
+		indicatorStyle = style.DefaultStyle().WithFg(scheme.GetFocusedCheckBoxFG()).WithBg(inheritedBg)
+		labelStyle = style.DefaultStyle().WithFg(scheme.GetFocusedCheckBoxLabelFG()).WithBg(inheritedBg)
 	} else {
-		s = theme.Normal.WithBg(inheritedBg)
+		indicatorStyle = style.DefaultStyle().WithFg(scheme.GetCheckBoxFG(true)).WithBg(inheritedBg)
+		labelStyle = style.DefaultStyle().WithFg(scheme.GetCheckBoxLabelFG(true)).WithBg(inheritedBg)
 	}
 
 	// Draw checkbox indicator
@@ -182,24 +185,20 @@ func (c *Checkbox) Paint(p *core.Painter) {
 
 	x := core.Unit(0)
 	for _, ch := range indicator {
-		p.DrawCell(x, 0, ch, s)
+		p.DrawCell(x, 0, ch, indicatorStyle)
 		x += metrics.CellWidth
 	}
 
 	// Draw space
-	p.DrawCell(x, 0, ' ', s)
+	p.DrawCell(x, 0, ' ', labelStyle)
 	x += metrics.CellWidth
 
 	// Draw text
-	textStyle := s
-	if !c.IsEnabled() {
-		textStyle = theme.Disabled
-	}
 	for _, ch := range c.text {
 		if x >= bounds.Width {
 			break
 		}
-		p.DrawCell(x, 0, ch, textStyle)
+		p.DrawCell(x, 0, ch, labelStyle)
 		x += metrics.CellWidth
 	}
 }

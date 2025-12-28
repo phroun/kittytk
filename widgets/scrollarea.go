@@ -162,19 +162,20 @@ func (s *ScrollBar) SizeHint() core.UnitSize {
 // Paint renders the scrollbar.
 func (s *ScrollBar) Paint(p *core.Painter) {
 	bounds := s.Bounds()
-	theme := s.Theme()
+	scheme := s.GetScheme()
 	metrics := p.Metrics()
 
 	if s.orientation == core.Horizontal {
-		s.paintHorizontal(p, bounds, theme, metrics)
+		s.paintHorizontal(p, bounds, scheme, metrics)
 	} else {
-		s.paintVertical(p, bounds, theme, metrics)
+		s.paintVertical(p, bounds, scheme, metrics)
 	}
 }
 
-func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
+func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	// Draw track
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, '░', theme.Disabled)
+	trackStyle := scheme.GetScrollbar()
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, '░', trackStyle)
 
 	// Calculate thumb using ListView-style formula:
 	// thumbSize = visibleCount² / totalItems
@@ -203,16 +204,18 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, theme
 		}
 
 		// Draw thumb
+		thumbStyle := scheme.GetScrollbarThumb()
 		for i := 0; i < thumbSize; i++ {
 			x := core.Unit(thumbPos+i) * metrics.CellWidth
-			p.DrawCell(x, 0, '█', theme.Normal)
+			p.DrawCell(x, 0, '█', thumbStyle)
 		}
 	}
 }
 
-func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
+func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	// Draw track
-	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, '░', theme.Disabled)
+	trackStyle := scheme.GetScrollbar()
+	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, '░', trackStyle)
 
 	// Calculate thumb using ListView-style formula:
 	// thumbSize = visibleCount² / totalItems
@@ -241,9 +244,10 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, theme *
 		}
 
 		// Draw thumb
+		thumbStyle := scheme.GetScrollbarThumb()
 		for i := 0; i < thumbSize; i++ {
 			y := core.Unit(thumbPos+i) * metrics.CellHeight
-			p.FillRect(core.UnitRect{Y: y, Width: bounds.Width, Height: metrics.CellHeight}, '█', theme.Normal)
+			p.FillRect(core.UnitRect{Y: y, Width: bounds.Width, Height: metrics.CellHeight}, '█', thumbStyle)
 		}
 	}
 }
@@ -824,11 +828,12 @@ func (s *ScrollArea) SizeHint() core.UnitSize {
 // Paint renders the scroll area.
 func (s *ScrollArea) Paint(p *core.Painter) {
 	bounds := s.Bounds()
-	theme := s.Theme()
+	scheme := s.GetScheme()
 	metrics := p.Metrics()
 
 	// Draw background using inherited background color
-	bgStyle := theme.Normal.WithBg(s.EffectiveBackgroundColor())
+	inheritedBg := s.EffectiveBackgroundColor()
+	bgStyle := scheme.GetNormal(true).WithBg(inheritedBg)
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
 	viewport := s.viewportBounds()
@@ -890,7 +895,7 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 
 	// Draw corner if both scrollbars visible
 	if s.needsHScrollBar() && s.needsVScrollBar() {
-		p.DrawCell(viewport.Width, viewport.Height, ' ', theme.Disabled)
+		p.DrawCell(viewport.Width, viewport.Height, ' ', scheme.GetScrollbar())
 	}
 }
 

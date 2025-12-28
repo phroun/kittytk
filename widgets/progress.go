@@ -192,22 +192,20 @@ func (p *ProgressBar) IsInlineWidget() bool {
 // Paint renders the progress bar.
 func (p *ProgressBar) Paint(painter *core.Painter) {
 	bounds := p.Bounds()
-	theme := p.Theme()
+	scheme := p.GetScheme()
 	metrics := painter.Metrics()
 
 	if p.orientation == core.Horizontal {
-		p.paintHorizontal(painter, bounds, theme, metrics)
+		p.paintHorizontal(painter, bounds, scheme, metrics)
 	} else {
-		p.paintVertical(painter, bounds, theme, metrics)
+		p.paintVertical(painter, bounds, scheme, metrics)
 	}
 }
 
-func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
-	// Progress bar styles
-	// Completed: 75% bright green speckles on dim green (ANSI 92;42m with dim)
-	completedStyle := style.DefaultStyle().WithFg(style.ColorBrightGreen).WithBg(style.ColorGreen).WithAttrs(style.StyleDim)
-	// Incomplete: 25% dark gray speckles on black
-	incompleteStyle := style.DefaultStyle().WithFg(style.ColorBrightBlack).WithBg(style.ColorBlack)
+func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
+	// Get progress bar styles from scheme
+	completedStyle := scheme.GetProgressFull()
+	incompleteStyle := scheme.GetProgressEmpty()
 
 	// Draw incomplete background first
 	for i := 0; i < metrics.CharsForWidth(bounds.Width); i++ {
@@ -251,11 +249,9 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 			startX = 0
 		}
 
-		// Text styles
-		// Active/completed part: black text on green background
-		activeTextStyle := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorGreen)
-		// Inactive/incomplete part: bright yellow text on black background
-		inactiveTextStyle := style.DefaultStyle().WithFg(style.ColorBrightYellow).WithBg(style.ColorBlack)
+		// Get text styles from scheme
+		activeTextStyle := scheme.GetProgressFullText()
+		inactiveTextStyle := scheme.GetProgressEmptyText()
 
 		filledCells := totalCells * p.Percentage() / 100
 		for i, ch := range text {
@@ -272,12 +268,10 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 	}
 }
 
-func (p *ProgressBar) paintVertical(painter *core.Painter, bounds core.UnitRect, theme *style.Theme, metrics core.CellMetrics) {
-	// Progress bar styles
-	// Completed: 75% bright green speckles on dim green (ANSI 92;42m with dim)
-	completedStyle := style.DefaultStyle().WithFg(style.ColorBrightGreen).WithBg(style.ColorGreen).WithAttrs(style.StyleDim)
-	// Incomplete: 25% dark gray speckles on black
-	incompleteStyle := style.DefaultStyle().WithFg(style.ColorBrightBlack).WithBg(style.ColorBlack)
+func (p *ProgressBar) paintVertical(painter *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
+	// Get progress bar styles from scheme
+	completedStyle := scheme.GetProgressFull()
+	incompleteStyle := scheme.GetProgressEmpty()
 
 	totalCells := int(bounds.Height / metrics.CellHeight)
 
