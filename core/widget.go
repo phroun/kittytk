@@ -89,6 +89,15 @@ type Widget interface {
 	// Theme returns the theme to use for this widget.
 	Theme() *style.Theme
 
+	// Scheme returns the scheme ID for this widget (-1 = inherit from container).
+	Scheme() style.SchemeID
+	// SetScheme sets the scheme ID for this widget.
+	SetScheme(id style.SchemeID)
+	// EffectiveScheme returns the resolved scheme ID by walking up the container chain.
+	EffectiveScheme() style.SchemeID
+	// GetScheme returns the resolved Scheme object for this widget.
+	GetScheme() *style.Scheme
+
 	// Rendering
 
 	// Paint renders the widget using the provided painter.
@@ -281,6 +290,7 @@ type WidgetBase struct {
 	focused bool
 
 	focusPolicy     FocusPolicy
+	scheme          style.SchemeID // -1 = inherit from container
 	style           *style.CellStyle
 	backgroundColor *style.Color // nil = inherit from parent
 	popupController PopupController
@@ -294,6 +304,7 @@ func NewWidgetBase() *WidgetBase {
 		visible:     true,
 		enabled:     true,
 		focusPolicy: NoFocus,
+		scheme:      style.SchemeInherit, // -1 = inherit from container
 		sizePolicy:  NewSizePolicy(SizePreferred, SizePreferred),
 		maxSize:     UnitSize{Width: 1<<30 - 1, Height: 1<<30 - 1},
 	}
@@ -723,6 +734,10 @@ func (p *scrollRectProxy) ClearFocus()                            {}
 func (p *scrollRectProxy) Style() *style.CellStyle                { return nil }
 func (p *scrollRectProxy) SetStyle(*style.CellStyle)              {}
 func (p *scrollRectProxy) Theme() *style.Theme                    { return nil }
+func (p *scrollRectProxy) Scheme() style.SchemeID                 { return style.SchemeInherit }
+func (p *scrollRectProxy) SetScheme(style.SchemeID)               {}
+func (p *scrollRectProxy) EffectiveScheme() style.SchemeID        { return style.SchemeDefault }
+func (p *scrollRectProxy) GetScheme() *style.Scheme               { return style.GlobalSchemeRegistry().Get(style.SchemeDefault) }
 func (p *scrollRectProxy) Paint(*Painter)                         {}
 func (p *scrollRectProxy) Update()                                {}
 func (p *scrollRectProxy) NeedsRepaint() bool                     { return false }
@@ -832,6 +847,66 @@ func (w *WidgetBase) Theme() *style.Theme {
 		return app.Theme()
 	}
 	return style.DefaultTheme()
+}
+
+// Scheme returns the scheme ID for this widget (-1 = inherit from container).
+func (w *WidgetBase) Scheme() style.SchemeID {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.scheme
+}
+
+// SetScheme sets the scheme ID for this widget (-1 = inherit from container).
+func (w *WidgetBase) SetScheme(id style.SchemeID) {
+	w.mu.Lock()
+	w.scheme = id
+	w.mu.Unlock()
+	w.Update()
+}
+
+// EffectiveScheme returns the resolved scheme ID by walking up the container chain.
+// If this widget's scheme is -1 (inherit), it walks up to find a parent with a
+// defined scheme. Returns SchemeDefault (0) if no scheme is found.
+func (w *WidgetBase) EffectiveScheme() style.SchemeID {
+	w.mu.RLock()
+	scheme := w.scheme
+	parent := w.parent
+	w.mu.RUnlock()
+
+	// If this widget has an explicit scheme, use it
+	if scheme != style.SchemeInherit {
+		// Validate that the scheme exists; if not, use default
+		if style.GlobalSchemeRegistry().Has(scheme) {
+			return scheme
+		}
+		return style.SchemeDefault
+	}
+
+	// Walk up the parent chain to find an inherited scheme
+	current := parent
+	for current != nil {
+		if widget, ok := current.(Widget); ok {
+			parentScheme := widget.Scheme()
+			if parentScheme != style.SchemeInherit {
+				// Validate that the scheme exists
+				if style.GlobalSchemeRegistry().Has(parentScheme) {
+					return parentScheme
+				}
+				return style.SchemeDefault
+			}
+			current = widget.Parent()
+		} else {
+			break
+		}
+	}
+
+	// No scheme found in chain, use default
+	return style.SchemeDefault
+}
+
+// GetScheme returns the resolved Scheme object for this widget.
+func (w *WidgetBase) GetScheme() *style.Scheme {
+	return style.GlobalSchemeRegistry().Get(w.EffectiveScheme())
 }
 
 // Paint is a no-op (override in subclasses).
