@@ -189,6 +189,15 @@ func createMenuBar(application *app.Application) *widgets.MenuBar {
 
 	menuBar.AddMenu(windowMenu)
 
+	// Alphabet menu (26 items for testing scrolling)
+	alphabetMenu := widgets.NewMenu("&Alphabet")
+	for i := 0; i < 26; i++ {
+		letter := string(rune('A' + i))
+		item := widgets.NewMenuItem("&" + letter + " - Letter " + letter)
+		alphabetMenu.AddItem(item)
+	}
+	menuBar.AddMenu(alphabetMenu)
+
 	// Help menu
 	helpMenu := widgets.NewMenu("&Help")
 
@@ -392,6 +401,17 @@ func createSelectionDemo(tabWidget *widgets.TabWidget) core.Widget {
 	combo.AddItem("Third item")
 	combo.AddItem("Fourth item")
 	radioPanel.AddChild(combo)
+
+	// Alphabet ComboBox (26 items for testing scrolling)
+	alphabetLabel := widgets.NewLabel("Alphabet ComboBox:")
+	radioPanel.AddChild(alphabetLabel)
+
+	alphabetCombo := widgets.NewComboBox()
+	for i := 0; i < 26; i++ {
+		letter := string(rune('A' + i))
+		alphabetCombo.AddItem(letter + " - Letter " + letter)
+	}
+	radioPanel.AddChild(alphabetCombo)
 
 	radioPanel.SetLayoutManager(radioLayout)
 	splitter.SetSecond(radioPanel)
