@@ -149,6 +149,7 @@ type Menu struct {
 	scrollHoverTime time.Time // When drag started hovering over scroll indicator
 	scrollHoverZone int       // -1 = top indicator, 1 = bottom indicator, 0 = none
 	clickedMode     bool      // If true, was opened via click (not drag), release won't dismiss
+	screenBottom    core.Unit // Bottom of available screen area (for submenu height calculation)
 
 	// Callbacks
 	onAboutToShow func()
@@ -201,7 +202,7 @@ func NewMenu(title string) *Menu {
 		acceleratorChar: accel,
 		acceleratorPos:  pos,
 		currentIndex:    -1,
-		maxVisible:      12, // Default max visible items
+		maxVisible:      0, // 0 = calculate from available space when shown
 	}
 	m.WidgetBase = *core.NewWidgetBase()
 	// Note: Menu doesn't call Init because it has a Show(x,y) method
@@ -215,6 +216,30 @@ func NewMenu(title string) *Menu {
 // SetMaxVisible sets the maximum number of visible items (0 = unlimited).
 func (m *Menu) SetMaxVisible(max int) {
 	m.maxVisible = max
+}
+
+// SetAvailableHeight sets the available height for the menu and calculates maxVisible.
+// This should be called before Show() to ensure proper scrolling behavior.
+// The menuY parameter is the Y position where the menu will be shown.
+func (m *Menu) SetAvailableHeight(availableHeight core.Unit) {
+	metrics := core.DefaultCellMetrics()
+	// Calculate how many items can fit, leaving room for scroll indicators if needed
+	maxRows := int(availableHeight / metrics.CellHeight)
+	if maxRows < 3 {
+		maxRows = 3 // Minimum: 1 item + 2 scroll indicators
+	}
+	// Reserve 2 rows for scroll indicators when there are more items than fit
+	if len(m.items) > maxRows {
+		m.maxVisible = maxRows - 2
+	} else {
+		m.maxVisible = 0 // No limit needed, all items fit
+	}
+}
+
+// SetScreenBottom sets the bottom of the available screen area.
+// This is used to calculate available height for submenus.
+func (m *Menu) SetScreenBottom(bottom core.Unit) {
+	m.screenBottom = bottom
 }
 
 // Title returns the menu title.
@@ -873,6 +898,12 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 	m.activeSubMenu = item.SubMenu
 	// Propagate the onItemPressed callback to submenu
 	item.SubMenu.onItemPressed = m.onItemPressed
+	// Calculate available height for submenu based on screen bottom
+	if m.screenBottom > 0 {
+		availableHeight := m.screenBottom - subY
+		item.SubMenu.SetAvailableHeight(availableHeight)
+		item.SubMenu.SetScreenBottom(m.screenBottom)
+	}
 	item.SubMenu.Show(subX, subY)
 }
 
@@ -994,10 +1025,10 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 			m.scrollHoverZone = -1
 			m.scrollHoverTime = time.Now()
 		} else {
-			// Check if we've been hovering for 1 second
-			if time.Since(m.scrollHoverTime) >= time.Second {
-				m.scrollPageUp()
-				m.scrollHoverTime = time.Now() // Reset for next page scroll
+			// Scroll one item per mouse move, with rate limiting (100ms between scrolls)
+			if time.Since(m.scrollHoverTime) >= 100*time.Millisecond {
+				m.scrollUp(1)
+				m.scrollHoverTime = time.Now()
 			}
 		}
 		return true
@@ -1009,10 +1040,10 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 			m.scrollHoverZone = 1
 			m.scrollHoverTime = time.Now()
 		} else {
-			// Check if we've been hovering for 1 second
-			if time.Since(m.scrollHoverTime) >= time.Second {
-				m.scrollPageDown()
-				m.scrollHoverTime = time.Now() // Reset for next page scroll
+			// Scroll one item per mouse move, with rate limiting (100ms between scrolls)
+			if time.Since(m.scrollHoverTime) >= 100*time.Millisecond {
+				m.scrollDown(1)
+				m.scrollHoverTime = time.Now()
 			}
 		}
 		return true
@@ -1413,6 +1444,18 @@ func (m *MenuBar) OpenMenu(index int) {
 	metrics := core.DefaultCellMetrics()
 	x := m.calculateMenuX(index)
 	y := metrics.CellHeight
+
+	// Calculate available height from desktop client area
+	if parent := m.Parent(); parent != nil {
+		if desktop, ok := parent.(interface{ ClientArea() core.UnitRect }); ok {
+			clientArea := desktop.ClientArea()
+			screenBottom := clientArea.Y + clientArea.Height
+			// Available height is from menu bar bottom to bottom of client area
+			availableHeight := screenBottom - y
+			m.activeMenu.SetAvailableHeight(availableHeight)
+			m.activeMenu.SetScreenBottom(screenBottom)
+		}
+	}
 
 	m.activeMenu.Show(x, y)
 	m.Update()
@@ -2007,8 +2050,16 @@ func (m *MenuBar) HandleFocusOut() {
 
 // HandleMouseMove handles mouse movement during drag.
 func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
-	if !m.mouseDown || m.activeMenu == nil {
+	// If no active menu, nothing to do
+	if m.activeMenu == nil {
 		return false
+	}
+
+	// Even when not dragging, forward to menu for hover scroll handling
+	if !m.mouseDown {
+		// Just forward to menu for hover-based scrolling
+		m.activeMenu.HandleMouseMove(event)
+		return false // Don't consume - we're not in drag mode
 	}
 
 	metrics := core.DefaultCellMetrics()
