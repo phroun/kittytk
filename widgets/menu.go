@@ -408,6 +408,12 @@ func (m *Menu) startScrollTimer(direction int) {
 		return
 	}
 	m.scrollTimer = m.scrollTimerStarter(50*time.Millisecond, func() {
+		// Verify scroll zone is still active (user might have moved mouse)
+		if (direction < 0 && m.scrollHoverZone != -1) ||
+			(direction > 0 && m.scrollHoverZone != 1) {
+			return
+		}
+		// Scroll if possible
 		if direction < 0 && m.canScrollUp() {
 			m.scrollUp(1)
 		} else if direction > 0 && m.canScrollDown() {
