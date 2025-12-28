@@ -701,12 +701,19 @@ func (w *Window) Paint(p *core.Painter) {
 		content.Paint(contentPainter)
 	}
 
-	// Paint child windows
-	for _, child := range w.ChildWindows() {
-		if child.IsVisible() && !child.IsMinimized() {
-			childBounds := child.Bounds()
-			childPainter := p.WithOffset(childBounds.X, childBounds.Y)
-			child.Paint(childPainter)
+	// Paint child windows (within the content area, clipped)
+	if len(w.ChildWindows()) > 0 {
+		contentBounds := w.contentBounds()
+		// Create a painter clipped to the content area
+		contentPainter := p.WithOffset(contentBounds.X, contentBounds.Y).
+			WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height})
+
+		for _, child := range w.ChildWindows() {
+			if child.IsVisible() && !child.IsMinimized() {
+				childBounds := child.Bounds()
+				childPainter := contentPainter.WithOffset(childBounds.X, childBounds.Y)
+				child.Paint(childPainter)
+			}
 		}
 	}
 }
