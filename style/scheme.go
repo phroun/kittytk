@@ -280,7 +280,7 @@ func ptr(s CellStyle) *CellStyle {
 func DefaultScheme() *Scheme {
 	return &Scheme{
 		// Environment Related Colors
-		DesktopFill:       ptr(DefaultStyle().WithFg(ColorBlue).WithBg(ColorBlue)),
+		DesktopFill:       ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorGreen).WithAttrs(StyleDim)),
 		StatusBar:         ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
 		StatusBarShortcut: ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorWhite)),
 		Dock:              ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
