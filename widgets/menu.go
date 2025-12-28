@@ -765,8 +765,14 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 
 	case "Escape":
-		m.Hide()
-		return true
+		if m.parentMenu != nil {
+			// Submenu - hide it and return to parent menu
+			m.Hide()
+			return true
+		}
+		// Top-level menu - let menu bar handle closing for proper cleanup
+		// (MenuBar.CloseMenu will call Hide on us)
+		return false
 
 	case "Home":
 		m.currentIndex = m.findNextEnabled(-1)

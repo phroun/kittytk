@@ -174,12 +174,18 @@ func (t *TreeView) SetCurrentIndex(index int) {
 		return
 	}
 
+	// Track whether we need to scroll internally (item wasn't visible)
+	oldScrollOffset := t.scrollOffset
+
 	t.currentIndex = index
 	t.ensureVisible(index)
 	t.Update()
 
-	// Notify parent scroll containers to scroll this item into view
-	if index >= 0 {
+	// Only notify parent scroll containers if the item wasn't already visible
+	// (i.e., we actually needed to scroll internally). This prevents unwanted
+	// parent scrolling when clicking on items that are already visible.
+	scrollWasNeeded := t.scrollOffset != oldScrollOffset
+	if scrollWasNeeded && index >= 0 {
 		metrics := core.DefaultCellMetrics()
 		item := t.flatList[index]
 		level := item.Level()
