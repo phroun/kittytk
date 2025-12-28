@@ -805,10 +805,13 @@ func (w *WidgetBase) SetBackgroundColor(c *style.Color) {
 }
 
 // EffectiveBackgroundColor returns the background color to use for this widget.
-// If this widget has an explicit background color set, it returns that.
-// Otherwise, it walks up the parent chain to find an inherited background color.
-// If no parent has a background color set, it returns style.ColorDefault.
+// It walks up the parent chain looking for either:
+// - An explicit background color (set via SetBackgroundColor)
+// - A scheme-derived background color (what the widget paints based on its scheme)
+// At each level, explicit color takes priority over scheme color.
+// Returns the first non-nil background found, or style.ColorDefault if none.
 func (w *WidgetBase) EffectiveBackgroundColor() style.Color {
+	// First check this widget's explicit background
 	w.mu.RLock()
 	if w.backgroundColor != nil {
 		c := *w.backgroundColor
@@ -820,12 +823,20 @@ func (w *WidgetBase) EffectiveBackgroundColor() style.Color {
 
 	// Walk up the parent chain
 	for parent != nil {
-		// Check if parent has BackgroundColor method
+		// Check explicit background color first (takes priority)
 		if bgProvider, ok := parent.(interface{ BackgroundColor() *style.Color }); ok {
 			if bg := bgProvider.BackgroundColor(); bg != nil {
 				return *bg
 			}
 		}
+
+		// Check scheme-derived background color
+		if schemeBgProvider, ok := parent.(interface{ SchemeBackgroundColor() *style.Color }); ok {
+			if bg := schemeBgProvider.SchemeBackgroundColor(); bg != nil {
+				return *bg
+			}
+		}
+
 		// Move to next parent
 		if widget, ok := parent.(Widget); ok {
 			parent = widget.Parent()

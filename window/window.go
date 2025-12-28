@@ -519,17 +519,17 @@ func (w *Window) SetFrameStyle(s style.CellStyle) {
 	w.Update()
 }
 
-// BackgroundColor returns the window's background color.
-// If no explicit background is set, returns the theme's WindowBackground color
-// so that child widgets can inherit the correct color.
+// BackgroundColor returns the window's explicit background color, if set.
 func (w *Window) BackgroundColor() *style.Color {
-	// First check if an explicit background color was set
-	if bg := w.WidgetBase.BackgroundColor(); bg != nil {
-		return bg
-	}
-	// Fall back to theme's window background color
-	theme := w.Theme()
-	bgColor := theme.WindowBackground.Bg
+	return w.WidgetBase.BackgroundColor()
+}
+
+// SchemeBackgroundColor returns the window's scheme-derived background color.
+// This is the color the window paints its content area with, based on its scheme.
+func (w *Window) SchemeBackgroundColor() *style.Color {
+	scheme := w.GetScheme()
+	focused := w.HasFocus()
+	bgColor := scheme.GetWindowBG(focused)
 	return &bgColor
 }
 
