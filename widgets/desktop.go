@@ -465,6 +465,7 @@ func (d *Desktop) Run() int {
 
 // eventLoop is the main event processing loop.
 func (d *Desktop) eventLoop() {
+	debugLogDesktop("eventLoop starting, desktop=%p", d)
 	for d.running.Load() {
 		d.processTimers()
 		d.processEvents()
@@ -599,6 +600,12 @@ func (d *Desktop) processTimers() {
 	var remaining []*DesktopTimer
 
 	timerCount := len(d.timers)
+
+	// Log every time if we have timers
+	if timerCount > 0 {
+		debugLogDesktop("processTimers: checking %d timers", timerCount)
+	}
+
 	for _, timer := range d.timers {
 		if timer.stopped {
 			debugLogDesktop("processTimers: timer %d is stopped, skipping", timer.ID)
@@ -615,16 +622,14 @@ func (d *Desktop) processTimers() {
 				debugLogDesktop("processTimers: timer %d rescheduled for %v", timer.ID, timer.nextFire.Format("15:04:05.000"))
 			}
 		} else {
+			debugLogDesktop("processTimers: timer %d not due yet (nextFire=%v, now=%v)",
+				timer.ID, timer.nextFire.Format("15:04:05.000"), now.Format("15:04:05.000"))
 			remaining = append(remaining, timer)
 		}
 	}
 
 	d.timers = remaining
 	d.timerMutex.Unlock()
-
-	if timerCount > 0 || len(toFire) > 0 {
-		debugLogDesktop("processTimers: had %d timers, firing %d", timerCount, len(toFire))
-	}
 
 	// Fire timers outside lock
 	for _, timer := range toFire {
@@ -690,6 +695,8 @@ func (d *Desktop) startTimerInternal(interval time.Duration, repeat bool, callba
 		nextFire: time.Now().Add(interval),
 	}
 	d.timers = append(d.timers, timer)
+	debugLogDesktop("startTimerInternal: created timer %d, repeat=%v, interval=%v, nextFire=%v, desktop=%p, total timers=%d",
+		timer.ID, repeat, interval, timer.nextFire.Format("15:04:05.000"), d, len(d.timers))
 	return timer
 }
 
