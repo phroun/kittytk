@@ -998,9 +998,9 @@ func (m *Menu) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
-// HandleMouseMove handles mouse movement for hover-scrolling.
+// HandleMouseMove handles mouse movement for hover-scrolling and item highlighting.
 func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
-	if !m.visible || !m.needsScrolling() {
+	if !m.visible {
 		m.scrollHoverZone = 0
 		return false
 	}
@@ -1012,48 +1012,64 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if event.X < m.popupX || event.X >= m.popupX+size.Width ||
 		event.Y < m.popupY || event.Y >= m.popupY+size.Height {
 		m.scrollHoverZone = 0
+		// Mouse outside menu - clear selection
+		if m.currentIndex != -1 {
+			m.currentIndex = -1
+			m.Update()
+		}
 		return false
 	}
 
 	// Calculate which row the mouse is in
 	rowIndex := int((event.Y - m.popupY) / metrics.CellHeight)
-	lastRow := m.visibleItemCount() + 1 // +1 for top indicator
+	needsScroll := m.needsScrolling()
 
-	// Check if on top scroll indicator
-	if rowIndex == 0 && m.canScrollUp() {
-		if m.scrollHoverZone != -1 {
-			m.scrollHoverZone = -1
-			m.scrollHoverTime = time.Now()
-		} else {
-			// Scroll one item per mouse move, with rate limiting (100ms between scrolls)
-			if time.Since(m.scrollHoverTime) >= 100*time.Millisecond {
-				m.scrollUp(1)
+	// Handle scrolling menus
+	if needsScroll {
+		lastRow := m.visibleItemCount() + 1 // +1 for top indicator
+
+		// Check if on top scroll indicator
+		if rowIndex == 0 && m.canScrollUp() {
+			if m.scrollHoverZone != -1 {
+				m.scrollHoverZone = -1
 				m.scrollHoverTime = time.Now()
+			} else {
+				// Scroll page-minus-one per mouse move, with rate limiting (100ms between scrolls)
+				if time.Since(m.scrollHoverTime) >= 100*time.Millisecond {
+					scrollAmount := m.visibleItemCount() - 1
+					if scrollAmount < 1 {
+						scrollAmount = 1
+					}
+					m.scrollUp(scrollAmount)
+					m.scrollHoverTime = time.Now()
+				}
 			}
+			return true
 		}
-		return true
-	}
 
-	// Check if on bottom scroll indicator
-	if rowIndex == lastRow && m.canScrollDown() {
-		if m.scrollHoverZone != 1 {
-			m.scrollHoverZone = 1
-			m.scrollHoverTime = time.Now()
-		} else {
-			// Scroll one item per mouse move, with rate limiting (100ms between scrolls)
-			if time.Since(m.scrollHoverTime) >= 100*time.Millisecond {
-				m.scrollDown(1)
+		// Check if on bottom scroll indicator
+		if rowIndex == lastRow && m.canScrollDown() {
+			if m.scrollHoverZone != 1 {
+				m.scrollHoverZone = 1
 				m.scrollHoverTime = time.Now()
+			} else {
+				// Scroll page-minus-one per mouse move, with rate limiting (100ms between scrolls)
+				if time.Since(m.scrollHoverTime) >= 100*time.Millisecond {
+					scrollAmount := m.visibleItemCount() - 1
+					if scrollAmount < 1 {
+						scrollAmount = 1
+					}
+					m.scrollDown(scrollAmount)
+					m.scrollHoverTime = time.Now()
+				}
 			}
+			return true
 		}
-		return true
-	}
 
-	// Not on a scroll indicator
-	m.scrollHoverZone = 0
+		// Not on a scroll indicator - clear scroll state
+		m.scrollHoverZone = 0
 
-	// Update highlighted item
-	if rowIndex >= 0 {
+		// Update highlighted item (accounting for scroll indicator)
 		adjustedRow := rowIndex - 1 // Subtract 1 for top indicator
 		itemIndex := m.scrollOffset + adjustedRow
 		if itemIndex >= 0 && itemIndex < len(m.items) {
@@ -1062,6 +1078,16 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 				m.currentIndex = itemIndex
 				m.Update()
 			}
+		}
+		return true
+	}
+
+	// Non-scrolling menu - direct row to item mapping
+	if rowIndex >= 0 && rowIndex < len(m.items) {
+		item := m.items[rowIndex]
+		if !item.Separator && item.Enabled {
+			m.currentIndex = rowIndex
+			m.Update()
 		}
 	}
 
@@ -2110,26 +2136,11 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return true
 	}
 
-	// Check if mouse is in dropdown menu - highlight item
+	// Check if mouse is in dropdown menu - forward to menu for scroll/highlight handling
 	if m.activeMenu != nil && m.activeMenu.visible {
-		size := m.activeMenu.calculateSize()
-		if event.X >= m.activeMenu.popupX && event.X < m.activeMenu.popupX+size.Width &&
-			event.Y >= m.activeMenu.popupY && event.Y < m.activeMenu.popupY+size.Height {
-			itemIndex := int((event.Y - m.activeMenu.popupY) / metrics.CellHeight)
-			if itemIndex >= 0 && itemIndex < len(m.activeMenu.items) {
-				item := m.activeMenu.items[itemIndex]
-				if !item.Separator && item.Enabled {
-					m.activeMenu.currentIndex = itemIndex
-					m.activeMenu.Update()
-				}
-			}
-			return true
-		}
-		// Mouse is outside both menu bar and dropdown - deselect item
-		if m.activeMenu.currentIndex != -1 {
-			m.activeMenu.currentIndex = -1
-			m.activeMenu.Update()
-		}
+		// Forward to Menu.HandleMouseMove for scroll indicator handling
+		m.activeMenu.HandleMouseMove(event)
+		return true
 	}
 
 	return true
