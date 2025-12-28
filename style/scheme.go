@@ -444,3 +444,496 @@ func DefaultScheme() *Scheme {
 		FocusedGroupBoxTitle:  nil, // FocusTextFG on inherit
 	}
 }
+
+// =========================================================================
+// Resolver Methods - Handle nil fallbacks per scheme-plan.txt
+// =========================================================================
+
+// or returns the first non-nil style, or a terminal default style.
+func or(styles ...*CellStyle) CellStyle {
+	for _, s := range styles {
+		if s != nil {
+			return *s
+		}
+	}
+	// Terminal defaults: FG=39, BG=49
+	return DefaultStyle()
+}
+
+// orFG returns the foreground from the first non-nil style.
+func orFG(styles ...*CellStyle) Color {
+	for _, s := range styles {
+		if s != nil {
+			return s.Fg
+		}
+	}
+	return ColorDefault // terminal default 39
+}
+
+// orBG returns the background from the first non-nil style.
+func orBG(styles ...*CellStyle) Color {
+	for _, s := range styles {
+		if s != nil {
+			return s.Bg
+		}
+	}
+	return ColorDefault // terminal default 49
+}
+
+// --- Environment Colors ---
+
+func (s *Scheme) GetDesktopFill() CellStyle       { return or(s.DesktopFill) }
+func (s *Scheme) GetStatusBar() CellStyle         { return or(s.StatusBar) }
+func (s *Scheme) GetStatusBarShortcut() CellStyle { return or(s.StatusBarShortcut) }
+func (s *Scheme) GetDock() CellStyle              { return or(s.Dock) }
+func (s *Scheme) GetDockItem() CellStyle          { return or(s.DockItem) }
+func (s *Scheme) GetFocusedDockItem() CellStyle   { return or(s.FocusedDockItem) }
+
+// --- Window Colors ---
+
+func (s *Scheme) GetWindowBorder(active bool) CellStyle {
+	if active {
+		return or(s.ActiveWindowBorder)
+	}
+	return or(s.InactiveWindowBorder)
+}
+
+func (s *Scheme) GetWindowTitle(active bool) CellStyle {
+	if active {
+		return or(s.ActiveWindowTitle)
+	}
+	return or(s.InactiveWindowTitle)
+}
+
+func (s *Scheme) GetTitleBarButton(active, focused, pressed bool) CellStyle {
+	if pressed {
+		return or(s.PressedTitleBarButton)
+	}
+	if focused {
+		return or(s.FocusedTitleBarButton)
+	}
+	if active {
+		return or(s.ActiveTitleBarButton)
+	}
+	return or(s.InactiveTitleBarButton)
+}
+
+func (s *Scheme) GetWindowFG(active bool) Color {
+	if active {
+		return orFG(s.ActiveWindowFG)
+	}
+	return orFG(s.InactiveWindowFG)
+}
+
+func (s *Scheme) GetWindowBG(active bool) Color {
+	if active {
+		return orBG(s.ActiveWindowBG)
+	}
+	return orBG(s.InactiveWindowBG)
+}
+
+// --- State Colors ---
+
+func (s *Scheme) GetFocusBG() Color        { return orBG(s.FocusBG) }
+func (s *Scheme) GetFocusFG() Color        { return orFG(s.FocusFG) }
+func (s *Scheme) GetFocusTextFG() Color    { return orFG(s.FocusTextFG) }
+func (s *Scheme) GetDisabledTextFG() Color { return orFG(s.DisabledTextFG) }
+func (s *Scheme) GetSelection() CellStyle  { return or(s.Selection) }
+
+func (s *Scheme) GetNormal(active bool) CellStyle {
+	if s.Normal != nil {
+		return *s.Normal
+	}
+	// nil = WindowFG on WindowBG
+	return DefaultStyle().WithFg(s.GetWindowFG(active)).WithBg(s.GetWindowBG(active))
+}
+
+// --- Menu Colors ---
+
+func (s *Scheme) GetMenuBar() CellStyle           { return or(s.MenuBar) }
+func (s *Scheme) GetMenuBarMeta() CellStyle       { return or(s.MenuBarMeta) }
+func (s *Scheme) GetMenuBarInfo() CellStyle       { return or(s.MenuBarInfo) }
+func (s *Scheme) GetActiveMenuBarItem() CellStyle { return or(s.ActiveMenuBarItem) }
+func (s *Scheme) GetActiveMenuBarMeta() CellStyle { return or(s.ActiveMenuBarMeta) }
+func (s *Scheme) GetMenuGutter() CellStyle        { return or(s.MenuGutter) }
+func (s *Scheme) GetMenuCheckIcon() CellStyle     { return or(s.MenuCheckIcon) }
+func (s *Scheme) GetMenuRadioIcon() CellStyle     { return or(s.MenuRadioIcon) }
+func (s *Scheme) GetMenuItemText() CellStyle      { return or(s.MenuItemText) }
+func (s *Scheme) GetMenuAccelerator() CellStyle   { return or(s.MenuAccelerator) }
+func (s *Scheme) GetMenuShortcut() CellStyle      { return or(s.MenuShortcut) }
+func (s *Scheme) GetMenuSeparator() CellStyle     { return or(s.MenuSeparator) }
+func (s *Scheme) GetMenuSeparatorGutter() CellStyle { return or(s.MenuSeparatorGutter) }
+func (s *Scheme) GetMenuBarButton() CellStyle     { return or(s.MenuBarButton) }
+func (s *Scheme) GetDisabledMenuBarButton() CellStyle { return or(s.DisabledMenuBarButton) }
+func (s *Scheme) GetDisabledMenuGutter() CellStyle { return or(s.DisabledMenuGutter) }
+func (s *Scheme) GetDisabledMenuItem() CellStyle  { return or(s.DisabledMenuItem) }
+func (s *Scheme) GetDisabledMenuIcon() CellStyle  { return or(s.DisabledMenuIcon) }
+func (s *Scheme) GetFocusedMenuCheckIcon() CellStyle { return or(s.FocusedMenuCheckIcon) }
+func (s *Scheme) GetFocusedMenuRadioIcon() CellStyle { return or(s.FocusedMenuRadioIcon) }
+func (s *Scheme) GetFocusedMenuItemText() CellStyle { return or(s.FocusedMenuItemText) }
+func (s *Scheme) GetFocusedMenuAccelerator() CellStyle { return or(s.FocusedMenuAccelerator) }
+func (s *Scheme) GetFocusedMenuShortcut() CellStyle { return or(s.FocusedMenuShortcut) }
+
+// --- Widget Group Colors ---
+
+func (s *Scheme) GetWidgetGroupFG() Color   { return orFG(s.WidgetGroupFG) }
+func (s *Scheme) GetWidgetGroupBG() Color   { return orBG(s.WidgetGroupBG) }
+func (s *Scheme) GetWidgetContentFG() Color { return orFG(s.WidgetContentFG) }
+func (s *Scheme) GetWidgetContentBG() Color { return orBG(s.WidgetContentBG) }
+
+// --- Label Colors ---
+
+func (s *Scheme) GetLabelFG(active bool) Color {
+	if s.LabelFG != nil {
+		return s.LabelFG.Fg
+	}
+	return s.GetWindowFG(active)
+}
+
+func (s *Scheme) GetDisabledLabelFG() Color {
+	return orFG(s.DisabledLabelFG, s.DisabledTextFG)
+}
+
+// --- Button Colors ---
+
+func (s *Scheme) GetButton() CellStyle { return or(s.Button) }
+
+func (s *Scheme) GetDisabledButtonFG() Color {
+	return orFG(s.DisabledButtonFG, s.DisabledTextFG)
+}
+
+func (s *Scheme) GetFocusedButton() CellStyle {
+	if s.FocusedButton != nil {
+		return *s.FocusedButton
+	}
+	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
+}
+
+func (s *Scheme) GetPressedButton(active bool) CellStyle {
+	if s.PressedButton != nil {
+		return *s.PressedButton
+	}
+	return DefaultStyle().WithFg(s.GetWindowFG(active)).WithBg(s.GetWindowBG(active))
+}
+
+// PaneType indicates the type of pane for button shadow selection.
+type PaneType int
+
+const (
+	PaneDefault PaneType = iota // ANSI 49 background
+	PaneDark                    // Black background
+	PaneOther                   // Other background color
+)
+
+func (s *Scheme) GetButtonShadowFG(pane PaneType) Color {
+	switch pane {
+	case PaneDefault:
+		return orFG(s.DefaultPaneButtonShadowFG)
+	case PaneDark:
+		return orFG(s.DarkPaneButtonShadowFG)
+	default:
+		return orFG(s.ButtonShadowFG)
+	}
+}
+
+// --- EditBox Colors ---
+
+func (s *Scheme) GetEditBox(pane PaneType) CellStyle {
+	switch pane {
+	case PaneDefault:
+		return or(s.DefaultPaneEditBox, s.EditBox)
+	case PaneDark:
+		return or(s.DarkPaneEditBox, s.EditBox)
+	default:
+		return or(s.EditBox)
+	}
+}
+
+func (s *Scheme) GetEditBoxPlaceholder(pane PaneType) CellStyle {
+	switch pane {
+	case PaneDefault:
+		return or(s.DefaultPaneEditBoxPlaceholder, s.EditBoxPlaceholder)
+	case PaneDark:
+		return or(s.DarkPaneEditBoxPlaceholder, s.EditBoxPlaceholder)
+	default:
+		return or(s.EditBoxPlaceholder)
+	}
+}
+
+func (s *Scheme) GetFocusedEditBoxText() CellStyle   { return or(s.FocusedEditBoxText) }
+func (s *Scheme) GetFocusedEditBoxCursor() CellStyle { return or(s.FocusedEditBoxCursor) }
+func (s *Scheme) GetFocusedEditBoxFill() CellStyle   { return or(s.FocusedEditBoxFill) }
+
+// --- ComboBox Colors ---
+
+func (s *Scheme) GetComboBox(pane PaneType) CellStyle {
+	if s.ComboBox != nil {
+		return *s.ComboBox
+	}
+	return s.GetEditBox(pane)
+}
+
+func (s *Scheme) GetComboBoxArrow(pane PaneType) CellStyle {
+	if s.ComboBoxArrow != nil {
+		return *s.ComboBoxArrow
+	}
+	return s.GetEditBox(pane)
+}
+
+func (s *Scheme) GetDisabledComboBoxFG() Color {
+	return orFG(s.DisabledComboBoxFG, s.DisabledButtonFG, s.DisabledTextFG)
+}
+
+func (s *Scheme) GetFocusedComboBox() CellStyle {
+	if s.FocusedComboBox != nil {
+		return *s.FocusedComboBox
+	}
+	return s.GetFocusedButton()
+}
+
+func (s *Scheme) GetFocusedComboBoxArrow() CellStyle {
+	if s.FocusedComboBoxArrow != nil {
+		return *s.FocusedComboBoxArrow
+	}
+	return s.GetFocusedComboBox()
+}
+
+func (s *Scheme) GetPressedComboBox(active bool) CellStyle {
+	if s.PressedComboBox != nil {
+		return *s.PressedComboBox
+	}
+	return s.GetPressedButton(active)
+}
+
+func (s *Scheme) GetPressedComboBoxArrow(active bool) CellStyle {
+	if s.PressedComboBoxArrow != nil {
+		return *s.PressedComboBoxArrow
+	}
+	return s.GetPressedComboBox(active)
+}
+
+func (s *Scheme) GetDropdownItemText() CellStyle {
+	return or(s.DropdownItemText, s.MenuItemText)
+}
+
+func (s *Scheme) GetFocusedDropdownItemText() CellStyle {
+	return or(s.FocusedDropdownItemText, s.FocusedMenuItemText)
+}
+
+func (s *Scheme) GetDropdownSeparator() CellStyle {
+	return or(s.DropdownSeparator, s.MenuSeparator)
+}
+
+func (s *Scheme) GetDisabledDropdownItem() CellStyle {
+	return or(s.DisabledDropdownItem, s.DisabledMenuItem)
+}
+
+// --- CheckBox Colors ---
+
+func (s *Scheme) GetCheckBoxFG(active bool) Color {
+	if s.CheckBoxFG != nil {
+		return s.CheckBoxFG.Fg
+	}
+	return s.GetLabelFG(active)
+}
+
+func (s *Scheme) GetCheckBoxLabelFG(active bool) Color {
+	if s.CheckBoxLabelFG != nil {
+		return s.CheckBoxLabelFG.Fg
+	}
+	return s.GetLabelFG(active)
+}
+
+func (s *Scheme) GetFocusedCheckBoxFG() Color {
+	return orFG(s.FocusedCheckBoxFG, s.FocusTextFG)
+}
+
+func (s *Scheme) GetFocusedCheckBoxLabelFG() Color {
+	return orFG(s.FocusedCheckBoxLabelFG, s.FocusTextFG)
+}
+
+// --- RadioButton Colors ---
+
+func (s *Scheme) GetRadioButtonFG(active bool) Color {
+	if s.RadioButtonFG != nil {
+		return s.RadioButtonFG.Fg
+	}
+	return s.GetLabelFG(active)
+}
+
+func (s *Scheme) GetRadioButtonLabelFG(active bool) Color {
+	if s.RadioButtonLabelFG != nil {
+		return s.RadioButtonLabelFG.Fg
+	}
+	return s.GetLabelFG(active)
+}
+
+func (s *Scheme) GetFocusedRadioButtonFG() Color {
+	return orFG(s.FocusedRadioButtonFG, s.FocusTextFG)
+}
+
+func (s *Scheme) GetFocusedRadioButtonLabelFG() Color {
+	return orFG(s.FocusedRadioButtonLabelFG, s.FocusTextFG)
+}
+
+// --- Splitter Colors ---
+
+func (s *Scheme) GetSplitter() CellStyle { return or(s.Splitter) }
+
+func (s *Scheme) GetSplitterHandle() CellStyle {
+	return or(s.SplitterHandle, s.Splitter)
+}
+
+func (s *Scheme) GetSplitterTitle() CellStyle {
+	return or(s.SplitterTitle, s.Splitter)
+}
+
+func (s *Scheme) GetFocusedSplitter() CellStyle {
+	if s.FocusedSplitter != nil {
+		return *s.FocusedSplitter
+	}
+	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
+}
+
+func (s *Scheme) GetFocusedSplitterHandle() CellStyle {
+	return or(s.FocusedSplitterHandle, s.FocusedSplitter)
+}
+
+func (s *Scheme) GetFocusedSplitterTitle() CellStyle {
+	return or(s.FocusedSplitterTitle, s.FocusedSplitter)
+}
+
+// --- Tab Widget Colors ---
+
+func (s *Scheme) GetTabsFG(active bool) Color {
+	if s.TabsFG != nil {
+		return s.TabsFG.Fg
+	}
+	return s.GetWindowFG(active)
+}
+
+func (s *Scheme) GetTabsButton(active bool, inheritedBG Color) CellStyle {
+	if s.TabsButton != nil {
+		return *s.TabsButton
+	}
+	return DefaultStyle().WithFg(s.GetTabsFG(active)).WithBg(inheritedBG)
+}
+
+func (s *Scheme) GetPressedTabsButton() CellStyle {
+	if s.PressedTabsButton != nil {
+		return *s.PressedTabsButton
+	}
+	return DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)
+}
+
+func (s *Scheme) GetDisabledTabsButton(inheritedBG Color) CellStyle {
+	if s.DisabledTabsButton != nil {
+		return *s.DisabledTabsButton
+	}
+	return DefaultStyle().WithFg(s.GetDisabledTextFG()).WithBg(inheritedBG)
+}
+
+func (s *Scheme) GetActiveTabFG() Color {
+	if s.ActiveTabFG != nil {
+		return s.ActiveTabFG.Fg
+	}
+	return s.GetWidgetGroupFG()
+}
+
+func (s *Scheme) GetActiveTabBG() Color {
+	if s.ActiveTabBG != nil {
+		return s.ActiveTabBG.Bg
+	}
+	return s.GetWidgetGroupBG()
+}
+
+func (s *Scheme) GetActiveTabAttrs() TextStyle {
+	if s.ActiveTabFG != nil {
+		return s.ActiveTabFG.Attrs
+	}
+	return StyleNormal
+}
+
+func (s *Scheme) GetFocusedTab() CellStyle {
+	if s.FocusedTab != nil {
+		return *s.FocusedTab
+	}
+	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
+}
+
+// --- List Colors ---
+
+func (s *Scheme) GetListBG() Color {
+	if s.ListBG != nil {
+		return s.ListBG.Bg
+	}
+	return s.GetWidgetContentBG()
+}
+
+func (s *Scheme) GetListFG() Color {
+	if s.ListFG != nil {
+		return s.ListFG.Fg
+	}
+	return s.GetWidgetContentFG()
+}
+
+func (s *Scheme) GetFocusedListBG() Color {
+	return orBG(s.FocusedListBG, s.ListBG)
+}
+
+func (s *Scheme) GetFocusedListFG() Color {
+	return orFG(s.FocusedListFG, s.ListFG)
+}
+
+func (s *Scheme) GetSelectedListItem() CellStyle {
+	return or(s.SelectedListItem, s.Selection)
+}
+
+func (s *Scheme) GetFocusedListItem() CellStyle {
+	if s.FocusedListItem != nil {
+		return *s.FocusedListItem
+	}
+	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
+}
+
+// --- Scrollbar Colors ---
+
+func (s *Scheme) GetScrollbar() CellStyle      { return or(s.Scrollbar) }
+func (s *Scheme) GetScrollbarThumb() CellStyle { return or(s.ScrollbarThumb) }
+
+// --- ProgressBar Colors ---
+
+func (s *Scheme) GetProgressFull() CellStyle      { return or(s.ProgressFull) }
+func (s *Scheme) GetProgressEmpty() CellStyle     { return or(s.ProgressEmpty) }
+func (s *Scheme) GetProgressFullText() CellStyle  { return or(s.ProgressFullText) }
+func (s *Scheme) GetProgressEmptyText() CellStyle { return or(s.ProgressEmptyText) }
+
+// --- GroupBox Colors ---
+
+func (s *Scheme) GetGroupBoxBorder(active bool, inheritedBG Color) CellStyle {
+	if s.GroupBoxBorder != nil {
+		return *s.GroupBoxBorder
+	}
+	return DefaultStyle().WithFg(s.GetWindowFG(active)).WithBg(inheritedBG)
+}
+
+func (s *Scheme) GetGroupBoxTitle(active bool, inheritedBG Color) CellStyle {
+	if s.GroupBoxTitle != nil {
+		return *s.GroupBoxTitle
+	}
+	return DefaultStyle().WithFg(s.GetWindowFG(active)).WithBg(inheritedBG)
+}
+
+func (s *Scheme) GetFocusedGroupBoxBorder(inheritedBG Color) CellStyle {
+	if s.FocusedGroupBoxBorder != nil {
+		return *s.FocusedGroupBoxBorder
+	}
+	return DefaultStyle().WithFg(s.GetFocusTextFG()).WithBg(inheritedBG)
+}
+
+func (s *Scheme) GetFocusedGroupBoxTitle(inheritedBG Color) CellStyle {
+	if s.FocusedGroupBoxTitle != nil {
+		return *s.FocusedGroupBoxTitle
+	}
+	return DefaultStyle().WithFg(s.GetFocusTextFG()).WithBg(inheritedBG)
+}
