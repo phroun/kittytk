@@ -902,6 +902,15 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 	// This includes Tab and Shift+Tab which the window's FocusManager handles
 	// for internal focus navigation.
 	if active != nil && !active.IsMinimized() {
+		// Ensure the window has a focused widget before processing key events.
+		// This is critical for proper Tab/Shift+Tab behavior - if no widget is
+		// focused, the first key press should establish focus.
+		if fm := active.FocusManager(); fm != nil {
+			if fm.FocusedWidget() == nil {
+				fm.FocusFirst()
+			}
+		}
+
 		if active.HandleKeyPress(event) {
 			return true
 		}
