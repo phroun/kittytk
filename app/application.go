@@ -326,6 +326,14 @@ func (app *Application) Run() int {
 	}
 
 	// Fallback: no Desktop, run directly (legacy mode)
+	// DEPRECATED: Application-centric event loop is legacy code.
+	// Applications should use Desktop.Run() instead.
+	// This code path will be removed in a future version.
+	panic("DEPRECATED: Application.Run() fallback mode is no longer supported. " +
+		"Applications must be associated with a Desktop and use Desktop.Run(). " +
+		"This legacy code path has been removed to simplify the architecture.")
+
+	/* Legacy code preserved for reference during refactoring:
 	if err := backend.Init(); err != nil {
 		return 1
 	}
@@ -356,18 +364,29 @@ func (app *Application) Run() int {
 	}
 
 	return exitCode
+	*/
+
+	// Unreachable - panic above ensures we never get here
+	return 1
 }
 
 // eventLoop is the main event processing loop.
+// DEPRECATED: This is legacy code from Application-centric mode.
+// The Desktop now owns the event loop.
 func (app *Application) eventLoop() {
+	panic("DEPRECATED: Application.eventLoop() is no longer supported. Use Desktop.Run() instead.")
+	/* Legacy code:
 	for app.running.Load() {
 		app.processTimers()
 		app.processEvents()
 		app.render()
 	}
+	*/
 }
 
 // processEvents handles pending events.
+// DEPRECATED: This is legacy code from Application-centric mode.
+// The Desktop now owns event processing.
 func (app *Application) processEvents() {
 	app.mu.RLock()
 	backend := app.backend
@@ -509,6 +528,8 @@ func (app *Application) handleShortcut(event core.KeyPressEvent) bool {
 }
 
 // render redraws the screen.
+// DEPRECATED: This is legacy code from Application-centric mode.
+// The Desktop now owns rendering.
 func (app *Application) render() {
 	app.mu.RLock()
 	backend := app.backend
@@ -531,6 +552,8 @@ func (app *Application) render() {
 }
 
 // processTimers checks and fires due timers.
+// DEPRECATED: This is legacy code from Application-centric mode.
+// The Desktop now owns timer processing via Desktop.ProcessTimers().
 func (app *Application) processTimers() {
 	app.timerMutex.Lock()
 	now := time.Now()

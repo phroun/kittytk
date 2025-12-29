@@ -1076,8 +1076,11 @@ func (a *Application) setFocusWidget(w interface{ ClearFocus() }) {
 }
 
 // requestRepaint is a forward reference for Application.
+// DEPRECATED: This is legacy code from Application-centric mode.
+// Widgets should use Update() which marks them for repaint, and the Desktop
+// event loop handles actual repainting.
 func (a *Application) requestRepaint() {
-	// Will be implemented in the app package
+	// No-op - Desktop now handles repainting
 }
 
 // Theme returns the application theme.

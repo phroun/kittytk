@@ -162,8 +162,9 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 	windowMenu := widgets.NewMenu("&Window")
 	newWindowItem := widgets.NewMenuItem("&New Window")
 	newWindowItem.SetOnTriggered(func() {
-		demoWindow := createDemoWindow(desktop, application)
-		application.AddWindow(demoWindow)
+		// Create a NEW application with its own identity, menus, and status bar
+		newApp := createSecondaryApplication(desktop)
+		desktop.AddApplication(newApp)
 	})
 	windowMenu.AddItem(newWindowItem)
 
@@ -1048,6 +1049,128 @@ func createMDIChildWindow(parentWindow *window.Window, id int) *window.Window {
 	w.SetContent(panel)
 
 	return w
+}
+
+// Secondary application counter for unique naming
+var secondaryAppCount int
+
+// createSecondaryApplication creates a new application with its own menus and status bar.
+func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
+	secondaryAppCount++
+	appNum := secondaryAppCount
+
+	// Create new application
+	newApp := app.New(nil)
+	newApp.SetName(fmt.Sprintf("Secondary App %d", appNum))
+
+	// Create simple menu bar for this application
+	menus := createSecondaryMenus(desktop, newApp, appNum)
+	newApp.SetMenuBarContent(menus)
+
+	// Create unique status bar content
+	newApp.SetStatusBarContent([]widgets.StatusSection{
+		{Spans: []widgets.StatusTextSpan{
+			{Text: fmt.Sprintf("Secondary Application #%d", appNum)},
+		}},
+	})
+
+	// Create window for this application
+	w := window.NewWindow(fmt.Sprintf("App %d Window", appNum))
+	offset := (appNum - 1) % 5
+	w.SetBounds(core.UnitRect{
+		X:      core.Unit((offset*3 + 5) * 8),
+		Y:      core.Unit((offset*2 + 3) * 16),
+		Width:  core.Unit(45 * 8),
+		Height: core.Unit(12 * 16),
+	})
+
+	// Create simple content
+	panel := widgets.NewPanel()
+	boxLayout := layout.NewBoxLayout(core.Vertical)
+	boxLayout.SetSpacing(8)
+
+	label := widgets.NewLabel(fmt.Sprintf("This window belongs to Application #%d", appNum))
+	panel.AddChild(label)
+
+	infoLabel := widgets.NewLabel("Notice the menu bar and status bar change\nwhen this window is focused.")
+	panel.AddChild(infoLabel)
+
+	textInput := widgets.NewTextInput()
+	textInput.SetPlaceholder("Enter text here...")
+	panel.AddChild(textInput)
+
+	closeButton := widgets.NewButton("Close Window")
+	closeButton.SetOnClick(func() {
+		w.Close()
+	})
+	panel.AddChild(closeButton)
+
+	panel.SetLayoutManager(boxLayout)
+	w.SetContent(panel)
+
+	newApp.AddWindow(w)
+
+	return newApp
+}
+
+// createSecondaryMenus creates a simple menu bar for secondary applications.
+func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application, appNum int) []*widgets.Menu {
+	var menus []*widgets.Menu
+
+	// File menu
+	fileMenu := widgets.NewMenu("&File")
+	closeItem := widgets.NewMenuItem("&Close Window")
+	closeItem.SetShortcut(core.NewShortcut("^W"))
+	closeItem.SetOnTriggered(func() {
+		// Close the first window of this application
+		windows := application.Windows()
+		if len(windows) > 0 {
+			windows[0].Close()
+		}
+	})
+	fileMenu.AddItem(closeItem)
+
+	fileMenu.AddSeparator()
+
+	exitItem := widgets.NewMenuItem("E&xit")
+	exitItem.SetShortcut(core.NewShortcut("^Q"))
+	exitItem.SetOnTriggered(func() {
+		desktop.Quit()
+	})
+	fileMenu.AddItem(exitItem)
+	menus = append(menus, fileMenu)
+
+	// App-specific menu
+	appMenu := widgets.NewMenu(fmt.Sprintf("&App %d", appNum))
+	infoItem := widgets.NewMenuItem("&About This App")
+	infoItem.SetOnTriggered(func() {
+		dialog := widgets.NewMessageBox(
+			fmt.Sprintf("About App %d", appNum),
+			fmt.Sprintf("This is Secondary Application #%d\n\nIt has its own menus and status bar.", appNum),
+			widgets.ButtonOK,
+		)
+		dialog.SetIcon(widgets.IconInformation)
+		application.AddWindow(&dialog.Window)
+	})
+	appMenu.AddItem(infoItem)
+	menus = append(menus, appMenu)
+
+	// Help menu
+	helpMenu := widgets.NewMenu("&Help")
+	aboutItem := widgets.NewMenuItem("&About")
+	aboutItem.SetOnTriggered(func() {
+		dialog := widgets.NewMessageBox(
+			"About",
+			"Secondary Application\n\nDemonstrates multi-application support.",
+			widgets.ButtonOK,
+		)
+		dialog.SetIcon(widgets.IconInformation)
+		application.AddWindow(&dialog.Window)
+	})
+	helpMenu.AddItem(aboutItem)
+	menus = append(menus, helpMenu)
+
+	return menus
 }
 
 // showAboutDialog shows the about dialog.

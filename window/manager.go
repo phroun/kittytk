@@ -246,7 +246,15 @@ func (m *WindowManager) AddWindow(win *Window) {
 	}
 	m.windows = append(m.windows, win)
 	handler := m.onWindowAdded
+	desktop := m.desktop
 	m.mu.Unlock()
+
+	// Set window's parent to desktop so widgets can traverse up to find timer provider
+	if desktop != nil {
+		if container, ok := desktop.(core.Container); ok {
+			win.SetParent(container)
+		}
+	}
 
 	// Set up request callbacks so button clicks go through WindowManager
 	win.SetOnMinimizeRequest(func() {
