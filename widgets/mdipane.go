@@ -780,6 +780,26 @@ func (m *MDIPane) SizeHint() core.UnitSize {
 	return m.Bounds().Size()
 }
 
+// HandleFocusIn is called when MDIPane gains focus.
+// This ensures the active window's focus is properly initialized,
+// which is important when the MDIPane first becomes visible.
+func (m *MDIPane) HandleFocusIn() {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	// Ensure active window has a focused widget
+	if active != nil && !active.IsMinimized() {
+		if fm := active.FocusManager(); fm != nil {
+			if fm.FocusedWidget() == nil {
+				fm.FocusFirst()
+			}
+		}
+	}
+
+	m.Update()
+}
+
 // CollectFocusChain implements core.FocusChainProvider.
 // When an MDI child window is active, MDIPane acts as a focus boundary -
 // Tab navigation stays within the MDIPane and is forwarded to the active window.
