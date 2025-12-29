@@ -75,7 +75,10 @@ const (
 	ActionWindowPrev  = "window-prev"
 
 	// Application
-	ActionQuit = "quit"
+	ActionQuit         = "quit"
+	ActionAppHide      = "app-hide"
+	ActionAppHideOthers = "app-hide-others"
+	ActionAppShowAll   = "app-show-all"
 )
 
 // NewKeyBindings creates a new key bindings map with defaults.
@@ -148,6 +151,9 @@ func (kb *KeyBindings) SetDefaults() {
 
 	// Application
 	kb.bindings[ActionQuit] = []string{"^Q", "^C"}
+	kb.bindings[ActionAppHide] = []string{"^H"}
+	kb.bindings[ActionAppHideOthers] = []string{"^M-H"}
+	kb.bindings[ActionAppShowAll] = []string{} // No default binding
 }
 
 // Bind sets the keys for an action (replaces existing).

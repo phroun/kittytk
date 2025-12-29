@@ -393,6 +393,8 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 }
 
 // updateMenuBarContent updates the menu bar with the active app's menus.
+// The first menu after the system menu automatically gets standard app items
+// (Hide, Hide Others, Show All, Quit) appended.
 func (d *Desktop) updateMenuBarContent() {
 	if d.menuBar == nil {
 		return
@@ -410,10 +412,163 @@ func (d *Desktop) updateMenuBarContent() {
 		d.menuBar.AddMenu(d.systemMenu)
 	}
 
-	// Add active app's menus
+	// Add active app's menus with standard items injected into the first one
 	if activeApp != nil {
-		for _, menu := range activeApp.MenuBarContent() {
-			d.menuBar.AddMenu(menu)
+		appMenus := activeApp.MenuBarContent()
+		appName := activeApp.Name()
+
+		if len(appMenus) > 0 {
+			// Create a merged copy of the first menu with standard items
+			firstMenu := appMenus[0]
+			mergedMenu := d.createAppMenuWithStandardItems(firstMenu, appName)
+			d.menuBar.AddMenu(mergedMenu)
+
+			// Add remaining menus as-is
+			for i := 1; i < len(appMenus); i++ {
+				d.menuBar.AddMenu(appMenus[i])
+			}
+		} else {
+			// App has no menus - create a standard app menu
+			appMenu := d.createStandardAppMenu(appName)
+			d.menuBar.AddMenu(appMenu)
+		}
+	}
+}
+
+// createAppMenuWithStandardItems creates a copy of the given menu with standard
+// app items (Hide, Hide Others, Show All, Quit) appended.
+func (d *Desktop) createAppMenuWithStandardItems(original *Menu, appName string) *Menu {
+	// Create a new menu with the same title
+	merged := NewMenu(original.Title())
+
+	// Copy all items from the original menu
+	for _, item := range original.Items() {
+		merged.AddItem(item)
+	}
+
+	// Add standard app items
+	d.appendStandardAppItems(merged, appName)
+
+	return merged
+}
+
+// createStandardAppMenu creates a standard app menu when the app provides none.
+// The menu is named after the app with the first letter as the accelerator.
+func (d *Desktop) createStandardAppMenu(appName string) *Menu {
+	// Create menu with app name, first letter as accelerator
+	menuTitle := "&" + appName
+	appMenu := NewMenu(menuTitle)
+
+	// Add standard app items
+	d.appendStandardAppItems(appMenu, appName)
+
+	return appMenu
+}
+
+// appendStandardAppItems adds the standard app menu items to the given menu.
+// Items added: separator, Hide [App], Hide Others, Show All, separator, Quit [App]
+func (d *Desktop) appendStandardAppItems(menu *Menu, appName string) {
+	menu.AddSeparator()
+
+	// Hide [App Name]
+	hideItem := NewMenuItem("&Hide " + appName)
+	if keys := core.DefaultKeyBindings.Keys(core.ActionAppHide); len(keys) > 0 {
+		hideItem.SetShortcut(core.NewShortcut(keys[0]))
+	}
+	hideItem.SetOnTriggered(func() {
+		d.hideActiveApp()
+	})
+	menu.AddItem(hideItem)
+
+	// Hide Others
+	hideOthersItem := NewMenuItem("Hide &Others")
+	if keys := core.DefaultKeyBindings.Keys(core.ActionAppHideOthers); len(keys) > 0 {
+		hideOthersItem.SetShortcut(core.NewShortcut(keys[0]))
+	}
+	hideOthersItem.SetOnTriggered(func() {
+		d.hideOtherApps()
+	})
+	menu.AddItem(hideOthersItem)
+
+	// Show All
+	showAllItem := NewMenuItem("&Show All")
+	if keys := core.DefaultKeyBindings.Keys(core.ActionAppShowAll); len(keys) > 0 {
+		showAllItem.SetShortcut(core.NewShortcut(keys[0]))
+	}
+	showAllItem.SetOnTriggered(func() {
+		d.showAllApps()
+	})
+	menu.AddItem(showAllItem)
+
+	menu.AddSeparator()
+
+	// Quit [App Name]
+	quitItem := NewMenuItem("&Quit " + appName)
+	if keys := core.DefaultKeyBindings.Keys(core.ActionQuit); len(keys) > 0 {
+		quitItem.SetShortcut(core.NewShortcut(keys[0]))
+	}
+	quitItem.SetOnTriggered(func() {
+		d.Quit()
+	})
+	menu.AddItem(quitItem)
+}
+
+// hideActiveApp minimizes all windows of the active application.
+func (d *Desktop) hideActiveApp() {
+	d.mu.RLock()
+	activeApp := d.activeApp
+	d.mu.RUnlock()
+
+	if activeApp == nil || d.windowManager == nil {
+		return
+	}
+
+	for _, win := range activeApp.Windows() {
+		if win != nil && win.IsVisible() && !win.IsMinimized() {
+			d.windowManager.MinimizeWindow(win)
+		}
+	}
+}
+
+// hideOtherApps minimizes all windows of applications other than the active one.
+func (d *Desktop) hideOtherApps() {
+	d.mu.RLock()
+	activeApp := d.activeApp
+	apps := make([]ApplicationProvider, len(d.applications))
+	copy(apps, d.applications)
+	d.mu.RUnlock()
+
+	if d.windowManager == nil {
+		return
+	}
+
+	for _, app := range apps {
+		if app != activeApp {
+			for _, win := range app.Windows() {
+				if win != nil && win.IsVisible() && !win.IsMinimized() {
+					d.windowManager.MinimizeWindow(win)
+				}
+			}
+		}
+	}
+}
+
+// showAllApps restores all minimized windows of all applications.
+func (d *Desktop) showAllApps() {
+	d.mu.RLock()
+	apps := make([]ApplicationProvider, len(d.applications))
+	copy(apps, d.applications)
+	d.mu.RUnlock()
+
+	if d.windowManager == nil {
+		return
+	}
+
+	for _, app := range apps {
+		for _, win := range app.Windows() {
+			if win != nil && win.IsMinimized() {
+				d.windowManager.RestoreWindow(win)
+			}
 		}
 	}
 }

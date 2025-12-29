@@ -103,32 +103,27 @@ func main() {
 }
 
 // createMenus creates the application's menu bar content.
+// The first menu is named after the app - standard items (Hide, Show All, Quit)
+// are automatically appended by the Desktop.
 func createMenus(desktop *widgets.Desktop, application *app.Application) []*widgets.Menu {
 	var menus []*widgets.Menu
 
-	// File menu
-	fileMenu := widgets.NewMenu("&File")
+	// App menu (named after the application - standard items added automatically)
+	appMenu := widgets.NewMenu("&Demo")
 	newItem := widgets.NewMenuItem("&New")
 	newItem.SetShortcut(core.NewShortcut("^N"))
-	fileMenu.AddItem(newItem)
+	appMenu.AddItem(newItem)
 
 	openItem := widgets.NewMenuItem("&Open...")
 	openItem.SetShortcut(core.NewShortcut("^O"))
-	fileMenu.AddItem(openItem)
+	appMenu.AddItem(openItem)
 
 	saveItem := widgets.NewMenuItem("&Save")
 	saveItem.SetShortcut(core.NewShortcut("^S"))
-	fileMenu.AddItem(saveItem)
+	appMenu.AddItem(saveItem)
 
-	fileMenu.AddSeparator()
-
-	exitItem := widgets.NewMenuItem("E&xit")
-	exitItem.SetShortcut(core.NewShortcut("^Q"))
-	exitItem.SetOnTriggered(func() {
-		desktop.Quit()
-	})
-	fileMenu.AddItem(exitItem)
-	menus = append(menus, fileMenu)
+	// Note: Hide, Hide Others, Show All, and Quit are added automatically
+	menus = append(menus, appMenu)
 
 	// Edit menu
 	editMenu := widgets.NewMenu("&Edit")
@@ -1114,11 +1109,12 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 }
 
 // createSecondaryMenus creates a simple menu bar for secondary applications.
+// The first menu is named after the app - standard items are added automatically.
 func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application, appNum int) []*widgets.Menu {
 	var menus []*widgets.Menu
 
-	// File menu
-	fileMenu := widgets.NewMenu("&File")
+	// App menu (named after the application - standard items added automatically)
+	appMenu := widgets.NewMenu(fmt.Sprintf("&App %d", appNum))
 	closeItem := widgets.NewMenuItem("&Close Window")
 	closeItem.SetShortcut(core.NewShortcut("^W"))
 	closeItem.SetOnTriggered(func() {
@@ -1128,20 +1124,13 @@ func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application
 			windows[0].Close()
 		}
 	})
-	fileMenu.AddItem(closeItem)
+	appMenu.AddItem(closeItem)
 
-	fileMenu.AddSeparator()
+	// Note: Hide, Hide Others, Show All, and Quit are added automatically
+	menus = append(menus, appMenu)
 
-	exitItem := widgets.NewMenuItem("E&xit")
-	exitItem.SetShortcut(core.NewShortcut("^Q"))
-	exitItem.SetOnTriggered(func() {
-		desktop.Quit()
-	})
-	fileMenu.AddItem(exitItem)
-	menus = append(menus, fileMenu)
-
-	// App-specific menu
-	appMenu := widgets.NewMenu(fmt.Sprintf("&App %d", appNum))
+	// Info menu (app-specific)
+	infoMenu := widgets.NewMenu("&Info")
 	infoItem := widgets.NewMenuItem("&About This App")
 	infoItem.SetOnTriggered(func() {
 		dialog := widgets.NewMessageBox(
@@ -1152,8 +1141,8 @@ func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application
 		dialog.SetIcon(widgets.IconInformation)
 		application.AddWindow(&dialog.Window)
 	})
-	appMenu.AddItem(infoItem)
-	menus = append(menus, appMenu)
+	infoMenu.AddItem(infoItem)
+	menus = append(menus, infoMenu)
 
 	// Help menu
 	helpMenu := widgets.NewMenu("&Help")
