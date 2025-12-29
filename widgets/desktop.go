@@ -184,6 +184,9 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	d.windowManager.SetOnRepaintNeeded(func() {
 		d.RequestUpdate()
 	})
+	d.windowManager.SetOnActiveChanged(func(win *window.Window) {
+		d.windowFocusChanged(win)
+	})
 	d.focusManager = core.NewGlobalFocusManager()
 	d.windowManager.SetDesktop(d)
 
