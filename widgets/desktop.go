@@ -264,10 +264,20 @@ func (d *Desktop) AddApplication(app ApplicationProvider) {
 	if shouldActivate {
 		d.activeApp = app
 	}
+	wm := d.windowManager
 	d.mu.Unlock()
 
 	// Set this desktop as the application's desktop
 	app.SetDesktop(d)
+
+	// Add any existing windows from the app to the WindowManager.
+	// This handles the case where windows were added to the app before
+	// it was registered with the desktop.
+	if wm != nil {
+		for _, win := range app.Windows() {
+			wm.AddWindow(win)
+		}
+	}
 
 	if shouldActivate {
 		app.OnActivate()
