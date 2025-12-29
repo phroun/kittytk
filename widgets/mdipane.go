@@ -229,7 +229,7 @@ func (m *MDIPane) SetActiveWindow(win *window.Window) {
 	m.ActivateWindow(win)
 }
 
-// ActivateWindow brings a window to the front and gives it focus.
+// ActivateWindow brings a window to the front and makes it the active window.
 func (m *MDIPane) ActivateWindow(win *window.Window) {
 	m.mu.Lock()
 	if win == m.activeWindow {
@@ -255,12 +255,18 @@ func (m *MDIPane) ActivateWindow(win *window.Window) {
 	handler := m.onActiveWindowChanged
 	m.mu.Unlock()
 
-	// Update focus states
+	// Update active states (separate from widget focus)
 	if oldActive != nil {
-		oldActive.ClearFocus()
+		oldActive.SetActive(false)
 	}
 	if win != nil {
-		win.SetFocus()
+		win.SetActive(true)
+		// Focus the window's first widget if no widget is focused
+		if fm := win.FocusManager(); fm != nil {
+			if fm.FocusedWidget() == nil {
+				fm.FocusFirst()
+			}
+		}
 	}
 
 	if handler != nil {

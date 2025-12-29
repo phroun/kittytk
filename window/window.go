@@ -115,6 +115,9 @@ type Window struct {
 	titleFocus        TitleFocus    // Which title bar element has keyboard focus
 	resizeEdges       int           // Which edges are being keyboard-resized (ResizeEdge* constants)
 	resizeStartBounds core.UnitRect // Bounds when resize operation started (for Escape to revert)
+
+	// Active state (set by WindowManager/MDIPane, separate from focus)
+	isActive bool
 }
 
 // NewWindow creates a new window with the given title.
@@ -368,6 +371,33 @@ func (w *Window) IsMinimized() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.state == WindowStateMinimized
+}
+
+// IsActive returns true if this window is the active window in its container
+// (WindowManager or MDIPane). This is separate from focus - a window is active
+// when it's selected, even if a child widget has keyboard focus.
+func (w *Window) IsActive() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.isActive
+}
+
+// SetActive sets the window's active state. This is called by WindowManager
+// or MDIPane when the window becomes the active (selected) window.
+func (w *Window) SetActive(active bool) {
+	w.mu.Lock()
+	if w.isActive == active {
+		w.mu.Unlock()
+		return
+	}
+	w.isActive = active
+	handler := w.onActivate
+	w.mu.Unlock()
+
+	if handler != nil {
+		handler(active)
+	}
+	w.Update()
 }
 
 // Close attempts to close the window.
@@ -673,12 +703,17 @@ func (w *Window) Paint(p *core.Painter) {
 	title := w.title
 	border := w.borderStyle
 	content := w.content
-	focused := w.HasFocus()
+	isActive := w.isActive
+	hasFocus := w.HasFocus()
 	w.mu.RUnlock()
 
 	bounds := w.Bounds()
 	metrics := p.Metrics()
 	scheme := w.GetScheme()
+
+	// Window appears focused if it's active (selected in MDIPane/WindowManager)
+	// OR if the window itself has focus
+	focused := isActive || hasFocus
 
 	// Get styles from scheme based on focus state
 	titleStyle := scheme.GetWindowTitle(focused)

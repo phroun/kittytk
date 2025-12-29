@@ -396,17 +396,17 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 		}
 	}
 
-	// Update focus states
+	// Update active states (SetActive handles the onActivate callback)
 	if oldActive != nil {
-		oldActive.ClearFocus()
-		if oldActive.onActivate != nil {
-			oldActive.onActivate(false)
-		}
+		oldActive.SetActive(false)
 	}
 	if win != nil {
-		win.SetFocus()
-		if win.onActivate != nil {
-			win.onActivate(true)
+		win.SetActive(true)
+		// Focus the window's first widget if no widget is focused
+		if fm := win.FocusManager(); fm != nil {
+			if fm.FocusedWidget() == nil {
+				fm.FocusFirst()
+			}
 		}
 	}
 
@@ -431,10 +431,7 @@ func (m *WindowManager) DeactivateActiveWindow() {
 	handler := m.onActiveChanged
 	m.mu.Unlock()
 
-	oldActive.ClearFocus()
-	if oldActive.onActivate != nil {
-		oldActive.onActivate(false)
-	}
+	oldActive.SetActive(false)
 
 	if handler != nil {
 		handler(nil)
@@ -480,17 +477,17 @@ func (m *WindowManager) FocusWindow(win *Window) {
 	handler := m.onActiveChanged
 	m.mu.Unlock()
 
-	// Update focus states
+	// Update active states (SetActive handles the onActivate callback)
 	if oldActive != nil {
-		oldActive.ClearFocus()
-		if oldActive.onActivate != nil {
-			oldActive.onActivate(false)
-		}
+		oldActive.SetActive(false)
 	}
 	if win != nil {
-		win.SetFocus()
-		if win.onActivate != nil {
-			win.onActivate(true)
+		win.SetActive(true)
+		// Focus the window's first widget if no widget is focused
+		if fm := win.FocusManager(); fm != nil {
+			if fm.FocusedWidget() == nil {
+				fm.FocusFirst()
+			}
 		}
 	}
 
