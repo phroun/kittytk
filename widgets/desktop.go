@@ -355,13 +355,9 @@ func (d *Desktop) findApplicationForWindow(w *window.Window) ApplicationProvider
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	searchTitle := ""
-	if w != nil {
-		searchTitle = w.Title()
-	}
-
 	// Debug: build info about all apps and their windows
 	debugInfo := ""
+	var result ApplicationProvider
 	for _, app := range d.applications {
 		appWindows := app.Windows()
 		debugInfo += app.Name() + "["
@@ -373,23 +369,20 @@ func (d *Desktop) findApplicationForWindow(w *window.Window) ApplicationProvider
 				debugInfo += win.Title()
 				if win == w {
 					debugInfo += "*" // Mark if this is the match
+					if result == nil {
+						result = app
+					}
 				}
 			}
 		}
 		debugInfo += "] "
-
-		for _, win := range appWindows {
-			if win == w {
-				return app
-			}
-		}
 	}
 
-	// If not found, log the debug info
-	if d.statusBar != nil && w != nil {
-		d.statusBar.SetText("[NOT FOUND] " + searchTitle + " in: " + debugInfo)
+	// Always log the debug info to status bar
+	if d.statusBar != nil {
+		d.statusBar.SetText("[APPS] " + debugInfo)
 	}
-	return nil
+	return result
 }
 
 // windowFocusChanged is called when window focus changes.
