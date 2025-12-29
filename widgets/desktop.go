@@ -168,9 +168,17 @@ func (d *Desktop) createSystemMenu() *Menu {
 	menu.AddItem(NewSeparator())
 	menu.AddItem(NewMenuItem("Desktop &Accessories").SetEnabled(false)) // Placeholder
 	menu.AddItem(NewSeparator())
-	menu.AddItem(NewMenuItem("&Quit").SetShortcut(core.Shortcut("^Q")).SetOnTriggered(func() {
+
+	// Exit Desktop - uses ActionExitDesktop keybinding
+	exitItem := NewMenuItem("E&xit Desktop")
+	if keys := core.DefaultKeyBindings.Keys(core.ActionExitDesktop); len(keys) > 0 {
+		exitItem.SetShortcut(core.NewShortcut(keys[0]))
+	}
+	exitItem.SetOnTriggered(func() {
 		d.Quit()
-	}))
+	})
+	menu.AddItem(exitItem)
+
 	return menu
 }
 
@@ -502,13 +510,13 @@ func (d *Desktop) appendStandardAppItems(menu *Menu, appName string) {
 
 	menu.AddSeparator()
 
-	// Quit [App Name]
+	// Quit [App Name] - quits only this application, not the entire desktop
 	quitItem := NewMenuItem("&Quit " + appName)
 	if keys := core.DefaultKeyBindings.Keys(core.ActionQuit); len(keys) > 0 {
 		quitItem.SetShortcut(core.NewShortcut(keys[0]))
 	}
 	quitItem.SetOnTriggered(func() {
-		d.Quit()
+		d.quitActiveApp()
 	})
 	menu.AddItem(quitItem)
 }
@@ -570,6 +578,44 @@ func (d *Desktop) showAllApps() {
 				d.windowManager.RestoreWindow(win)
 			}
 		}
+	}
+}
+
+// quitActiveApp closes all windows of the active application and removes it.
+// If this was the last application with windows, the desktop automatically exits.
+func (d *Desktop) quitActiveApp() {
+	d.mu.RLock()
+	activeApp := d.activeApp
+	d.mu.RUnlock()
+
+	if activeApp == nil {
+		return
+	}
+
+	// Close all windows of this application
+	for _, win := range activeApp.Windows() {
+		if win != nil {
+			win.Close()
+		}
+	}
+
+	// Remove the application from the desktop
+	d.RemoveApplication(activeApp)
+
+	// Check if there are any remaining windows across all applications
+	d.mu.RLock()
+	hasWindows := false
+	for _, app := range d.applications {
+		if len(app.Windows()) > 0 {
+			hasWindows = true
+			break
+		}
+	}
+	d.mu.RUnlock()
+
+	// If no windows remain, exit the desktop
+	if !hasWindows {
+		d.Quit()
 	}
 }
 

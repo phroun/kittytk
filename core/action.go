@@ -179,22 +179,13 @@ func (s Shortcut) String() string {
 
 // DisplayString returns a human-readable representation of the shortcut
 // for display in menus and tooltips.
+// Uses compact notation: ^ for Ctrl, M- for Alt, S- for Shift.
 func (s Shortcut) DisplayString() string {
 	if s == "" {
 		return ""
 	}
-	key := string(s)
-	// Convert key handler format to display format
-	if len(key) >= 2 && key[0] == '^' {
-		return "Ctrl+" + string(key[1])
-	}
-	if len(key) >= 2 && key[0:2] == "M-" {
-		return "Alt+" + key[2:]
-	}
-	if len(key) >= 2 && key[0:2] == "S-" {
-		return "Shift+" + key[2:]
-	}
-	return key
+	// Return the key handler format directly - it's already compact and readable
+	return string(s)
 }
 
 // ActionGroup manages a collection of related actions.
