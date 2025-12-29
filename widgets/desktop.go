@@ -369,7 +369,22 @@ func (d *Desktop) findApplicationForWindow(w *window.Window) ApplicationProvider
 func (d *Desktop) windowFocusChanged(w *window.Window) {
 	owner := d.findApplicationForWindow(w)
 
+	// Debug: log window focus change
+	winTitle := ""
+	if w != nil {
+		winTitle = w.Title()
+	}
+	ownerName := "<nil>"
+	if owner != nil {
+		ownerName = owner.Name()
+	}
+
 	d.mu.Lock()
+	prevAppName := "<nil>"
+	if d.activeApp != nil {
+		prevAppName = d.activeApp.Name()
+	}
+
 	if owner != d.activeApp {
 		if d.activeApp != nil {
 			d.activeApp.OnDeactivate()
@@ -383,6 +398,10 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 
 	d.updateMenuBarContent()
 	d.updateStatusBarContent()
+	// DEBUG: Override status bar with focus info
+	if d.statusBar != nil {
+		d.statusBar.SetText("[DEBUG] Focus: " + winTitle + " | App: " + prevAppName + " -> " + ownerName)
+	}
 }
 
 // updateMenuBarContent updates the menu bar with the active app's menus.
