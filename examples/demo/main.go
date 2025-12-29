@@ -948,9 +948,49 @@ var mdiChildCount int
 // createMDIDemo creates an MDIPane widget demonstration.
 // The MDIPane is a reusable widget that can be embedded anywhere.
 func createMDIDemo(desktop *widgets.Desktop, application *app.Application, parentWindow *window.Window) core.Widget {
+	// Create a container panel to hold the MDIPane and DockRow
+	containerPanel := widgets.NewPanel()
+	containerLayout := layout.NewBoxLayout(core.Vertical)
+	containerLayout.SetSpacing(0)
+
 	// Create an MDIPane - this is a widget that can be embedded in tabs, splitters, etc.
 	mdiPane := widgets.NewMDIPane()
 	mdiPane.SetBackgroundChar('░') // Light shade pattern
+
+	// Create a dock row at the bottom for minimized windows
+	dockRow := widgets.NewDockRow()
+	dockRow.SetEntryWidth(20)
+
+	// Track minimized windows to their dock entries
+	dockEntries := make(map[*window.Window]*widgets.DockEntry)
+
+	// Wire up minimize callback to add dock entries
+	mdiPane.SetOnWindowMinimized(func(win *window.Window) {
+		entry := &widgets.DockEntry{
+			Title: win.Title(),
+			OnClick: func() {
+				mdiPane.RestoreWindow(win)
+			},
+		}
+		dockEntries[win] = entry
+		dockRow.AddEntry(entry)
+	})
+
+	// Wire up restore callback to remove dock entries
+	mdiPane.SetOnWindowRestored(func(win *window.Window) {
+		if entry, ok := dockEntries[win]; ok {
+			dockRow.RemoveEntry(entry)
+			delete(dockEntries, win)
+		}
+	})
+
+	// Also remove from dock when window is closed
+	mdiPane.SetOnWindowRemoved(func(win *window.Window) {
+		if entry, ok := dockEntries[win]; ok {
+			dockRow.RemoveEntry(entry)
+			delete(dockEntries, win)
+		}
+	})
 
 	// Create a control panel as background content
 	controlPanel := widgets.NewPanel()
@@ -961,7 +1001,7 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, paren
 	descLabel := widgets.NewLabel("MDIPane Widget Demo")
 	controlPanel.AddChild(descLabel)
 
-	infoLabel := widgets.NewLabel("This MDIPane widget manages floating windows.\nIt can be embedded in tabs, splitters, or any container.")
+	infoLabel := widgets.NewLabel("This MDIPane widget manages floating windows.\nClick [_] to minimize windows to the dock below.")
 	controlPanel.AddChild(infoLabel)
 
 	// Button to spawn new MDI child window
@@ -1026,10 +1066,10 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, paren
 	tipLabel := widgets.NewLabel("Tips:")
 	controlPanel.AddChild(tipLabel)
 
-	tip1 := widgets.NewLabel("- Drag title bar to move")
+	tip1 := widgets.NewLabel("- Click [_] to minimize to dock")
 	controlPanel.AddChild(tip1)
 
-	tip2 := widgets.NewLabel("- Drag edges to resize")
+	tip2 := widgets.NewLabel("- Click dock entry to restore")
 	controlPanel.AddChild(tip2)
 
 	tip3 := widgets.NewLabel("- Double-click title to maximize")
@@ -1040,12 +1080,17 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, paren
 	// Set the control panel as background content of the MDI pane
 	mdiPane.SetContent(controlPanel)
 
+	// Add MDIPane and DockRow to container
+	containerPanel.AddChild(mdiPane)
+	containerPanel.AddChild(dockRow)
+	containerPanel.SetLayoutManager(containerLayout)
+
 	// Spawn an initial window to show capabilities
 	mdiChildCount++
 	initialWindow := createMDIPaneChildWindow(mdiPane, mdiChildCount)
 	mdiPane.AddWindow(initialWindow)
 
-	return mdiPane
+	return containerPanel
 }
 
 // createMDIPaneChildWindow creates a window for use in an MDIPane.

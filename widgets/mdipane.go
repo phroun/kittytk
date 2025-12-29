@@ -62,9 +62,11 @@ type MDIPane struct {
 	lastClickWindow *window.Window
 
 	// Callbacks
-	onWindowAdded        func(*window.Window)
-	onWindowRemoved      func(*window.Window)
+	onWindowAdded         func(*window.Window)
+	onWindowRemoved       func(*window.Window)
 	onActiveWindowChanged func(*window.Window)
+	onWindowMinimized     func(*window.Window)
+	onWindowRestored      func(*window.Window)
 }
 
 // NewMDIPane creates a new MDI pane widget.
@@ -332,6 +334,16 @@ func (m *MDIPane) MaximizeWindow(win *window.Window) {
 // MinimizeWindow minimizes a window.
 func (m *MDIPane) MinimizeWindow(win *window.Window) {
 	win.Minimize()
+
+	// Notify via callback
+	m.mu.RLock()
+	handler := m.onWindowMinimized
+	m.mu.RUnlock()
+
+	if handler != nil {
+		handler(win)
+	}
+
 	m.Update()
 }
 
@@ -339,6 +351,16 @@ func (m *MDIPane) MinimizeWindow(win *window.Window) {
 func (m *MDIPane) RestoreWindow(win *window.Window) {
 	win.Restore()
 	m.ActivateWindow(win)
+
+	// Notify via callback
+	m.mu.RLock()
+	handler := m.onWindowRestored
+	m.mu.RUnlock()
+
+	if handler != nil {
+		handler(win)
+	}
+
 	m.Update()
 }
 
@@ -475,6 +497,20 @@ func (m *MDIPane) SetOnWindowRemoved(handler func(*window.Window)) {
 func (m *MDIPane) SetOnActiveWindowChanged(handler func(*window.Window)) {
 	m.mu.Lock()
 	m.onActiveWindowChanged = handler
+	m.mu.Unlock()
+}
+
+// SetOnWindowMinimized sets the callback for when a window is minimized.
+func (m *MDIPane) SetOnWindowMinimized(handler func(*window.Window)) {
+	m.mu.Lock()
+	m.onWindowMinimized = handler
+	m.mu.Unlock()
+}
+
+// SetOnWindowRestored sets the callback for when a window is restored.
+func (m *MDIPane) SetOnWindowRestored(handler func(*window.Window)) {
+	m.mu.Lock()
+	m.onWindowRestored = handler
 	m.mu.Unlock()
 }
 
