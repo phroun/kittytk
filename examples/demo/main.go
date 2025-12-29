@@ -1081,6 +1081,9 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, paren
 	mdiPane.SetContent(controlPanel)
 
 	// Add MDIPane and DockRow to container
+	// The layout needs explicit widget registration with stretch factors
+	containerLayout.AddWidgetWithStretch(mdiPane, 1) // MDIPane expands to fill space
+	containerLayout.AddWidget(dockRow)               // DockRow gets its preferred height
 	containerPanel.AddChild(mdiPane)
 	containerPanel.AddChild(dockRow)
 	containerPanel.SetLayoutManager(containerLayout)
