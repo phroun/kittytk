@@ -230,6 +230,8 @@ func (m *MDIPane) SetActiveWindow(win *window.Window) {
 }
 
 // ActivateWindow brings a window to the front and makes it the active window.
+// When a window becomes active, MDIPane takes focus so that all keyboard
+// events (including Tab) are routed through MDIPane to the active window.
 func (m *MDIPane) ActivateWindow(win *window.Window) {
 	m.mu.Lock()
 	if win == m.activeWindow {
@@ -255,12 +257,17 @@ func (m *MDIPane) ActivateWindow(win *window.Window) {
 	handler := m.onActiveWindowChanged
 	m.mu.Unlock()
 
-	// Update active states (separate from widget focus)
+	// Update active states
 	if oldActive != nil {
 		oldActive.SetActive(false)
 	}
 	if win != nil {
 		win.SetActive(true)
+
+		// MDIPane takes focus so keyboard events come here first.
+		// We then forward them to the active window.
+		m.SetFocus()
+
 		// Focus the window's first widget if no widget is focused
 		if fm := win.FocusManager(); fm != nil {
 			if fm.FocusedWidget() == nil {
@@ -520,6 +527,29 @@ func (m *MDIPane) SetOnWindowRestored(handler func(*window.Window)) {
 	m.mu.Unlock()
 }
 
+// DeactivateActiveWindow deactivates the current active window (if any).
+// This is called when the user clicks on the MDIPane's content area,
+// which transfers focus away from the active MDI child.
+func (m *MDIPane) DeactivateActiveWindow() {
+	m.mu.Lock()
+	oldActive := m.activeWindow
+	if oldActive == nil {
+		m.mu.Unlock()
+		return
+	}
+	m.activeWindow = nil
+	handler := m.onActiveWindowChanged
+	m.mu.Unlock()
+
+	oldActive.SetActive(false)
+
+	if handler != nil {
+		handler(nil)
+	}
+
+	m.Update()
+}
+
 // ClientArea returns the area available for windows.
 func (m *MDIPane) ClientArea() core.UnitRect {
 	bounds := m.Bounds()
@@ -750,6 +780,31 @@ func (m *MDIPane) SizeHint() core.UnitSize {
 	return m.Bounds().Size()
 }
 
+// CollectFocusChain implements core.FocusChainProvider.
+// When an MDI child window is active, MDIPane acts as a focus boundary -
+// Tab navigation stays within the MDIPane and is forwarded to the active window.
+// When no MDI child is active, focus can move through the content widgets.
+func (m *MDIPane) CollectFocusChain(collector func(core.Widget)) {
+	m.mu.RLock()
+	activeWindow := m.activeWindow
+	content := m.content
+	m.mu.RUnlock()
+
+	// When an MDI child is active, MDIPane is the only focusable item
+	// in the chain. This makes MDIPane a focus trap - Tab events come to
+	// MDIPane which forwards them to the active window.
+	if activeWindow != nil && !activeWindow.IsMinimized() {
+		collector(m)
+		return
+	}
+
+	// No active MDI child - include MDIPane and its content in the chain
+	collector(m)
+	if content != nil {
+		collector(content)
+	}
+}
+
 // Paint renders the MDI pane.
 func (m *MDIPane) Paint(p *core.Painter) {
 	bounds := m.Bounds()
@@ -805,12 +860,15 @@ func (m *MDIPane) Paint(p *core.Painter) {
 }
 
 // HandleKeyPress handles keyboard input.
+// When an MDI child window is active, MDIPane forwards ALL keyboard events
+// to that window, including Tab and Shift+Tab. This ensures focus stays
+// within the active window until the user clicks elsewhere or closes it.
 func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RLock()
 	active := m.activeWindow
 	m.mu.RUnlock()
 
-	// Check for MDI-specific shortcuts
+	// Check for MDI-specific shortcuts (window switching)
 	switch event.Key {
 	case "M-Tab", "C-Tab":
 		m.NextWindow()
@@ -820,7 +878,9 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 	}
 
-	// Forward to active window
+	// Forward ALL key events to the active window.
+	// This includes Tab and Shift+Tab which the window's FocusManager handles
+	// for internal focus navigation.
 	if active != nil && !active.IsMinimized() {
 		if active.HandleKeyPress(event) {
 			return true
@@ -929,6 +989,9 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 			return win.HandleMousePress(localEvent)
 		}
 	}
+
+	// Clicking on the background or content deactivates the active MDI child
+	m.DeactivateActiveWindow()
 
 	// Forward to content
 	if content != nil {

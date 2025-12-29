@@ -704,16 +704,16 @@ func (w *Window) Paint(p *core.Painter) {
 	border := w.borderStyle
 	content := w.content
 	isActive := w.isActive
-	hasFocus := w.HasFocus()
 	w.mu.RUnlock()
 
 	bounds := w.Bounds()
 	metrics := p.Metrics()
 	scheme := w.GetScheme()
 
-	// Window appears focused if it's active (selected in MDIPane/WindowManager)
-	// OR if the window itself has focus
-	focused := isActive || hasFocus
+	// Window appears focused if it's the active window in its container
+	// (MDIPane/WindowManager). The isActive flag is the authoritative source -
+	// we don't use HasFocus() because focus may be on a child widget.
+	focused := isActive
 
 	// Get styles from scheme based on focus state
 	titleStyle := scheme.GetWindowTitle(focused)
@@ -775,7 +775,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	p.FillRect(titleRect, ' ', titleStyle)
 
 	scheme := w.GetScheme()
-	focused := w.HasFocus()
+	focused := w.IsActive()
 
 	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
 	controlX := core.Unit(0)
@@ -836,7 +836,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	p.DrawRect(localBounds, border, frameStyle)
 
 	scheme := w.GetScheme()
-	focused := w.HasFocus()
+	focused := w.IsActive()
 
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
