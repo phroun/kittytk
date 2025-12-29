@@ -355,9 +355,23 @@ func (d *Desktop) findApplicationForWindow(w *window.Window) ApplicationProvider
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	// Debug: build info about all apps and their windows
+	for _, app := range d.applications {
+		for _, win := range app.Windows() {
+			if win == w {
+				return app
+			}
+		}
+	}
+	return nil
+}
+
+// debugAppsAndWindows returns a string showing all apps and their windows.
+// The searched window is marked with * if found.
+func (d *Desktop) debugAppsAndWindows(searchWin *window.Window) string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
 	debugInfo := ""
-	var result ApplicationProvider
 	for _, app := range d.applications {
 		appWindows := app.Windows()
 		debugInfo += app.Name() + "["
@@ -367,22 +381,14 @@ func (d *Desktop) findApplicationForWindow(w *window.Window) ApplicationProvider
 			}
 			if win != nil {
 				debugInfo += win.Title()
-				if win == w {
-					debugInfo += "*" // Mark if this is the match
-					if result == nil {
-						result = app
-					}
+				if win == searchWin {
+					debugInfo += "*"
 				}
 			}
 		}
 		debugInfo += "] "
 	}
-
-	// Always log the debug info to status bar
-	if d.statusBar != nil {
-		d.statusBar.SetText("[APPS] " + debugInfo)
-	}
-	return result
+	return debugInfo
 }
 
 // windowFocusChanged is called when window focus changes.
@@ -418,9 +424,10 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 
 	d.updateMenuBarContent()
 	d.updateStatusBarContent()
-	// DEBUG: Override status bar with focus info
+	// DEBUG: Override status bar with focus info AND apps/windows listing
 	if d.statusBar != nil {
-		d.statusBar.SetText("[DEBUG] Focus: " + winTitle + " | App: " + prevAppName + " -> " + ownerName)
+		appsInfo := d.debugAppsAndWindows(w)
+		d.statusBar.SetText("[DEBUG] " + winTitle + " | " + prevAppName + " -> " + ownerName + " | " + appsInfo)
 	}
 }
 
