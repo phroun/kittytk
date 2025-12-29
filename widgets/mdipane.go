@@ -155,6 +155,12 @@ func (m *MDIPane) AddWindow(win *window.Window) {
 		return m.ClientArea()
 	})
 
+	// When the window is closed, remove it from the MDI pane
+	win.SetOnClose(func() bool {
+		m.RemoveWindow(win)
+		return true // Allow the close
+	})
+
 	// Position if not explicitly set
 	bounds := win.Bounds()
 	if bounds.X == 0 && bounds.Y == 0 {
@@ -188,24 +194,44 @@ func (m *MDIPane) RemoveWindow(win *window.Window) {
 	}
 
 	// Update active window
-	if m.activeWindow == win {
+	wasActive := m.activeWindow == win
+	var newActive *window.Window
+	if wasActive {
 		m.activeWindow = nil
 		if len(m.windows) > 0 {
-			m.activeWindow = m.windows[len(m.windows)-1]
+			newActive = m.windows[len(m.windows)-1]
+			m.activeWindow = newActive
 		}
 	}
 
 	removedHandler := m.onWindowRemoved
 	activeHandler := m.onActiveWindowChanged
-	newActive := m.activeWindow
 	m.mu.Unlock()
+
+	// Update active states and focus
+	if wasActive {
+		win.SetActive(false)
+		if newActive != nil {
+			newActive.SetActive(true)
+			// Focus the new active window's first widget
+			if fm := newActive.FocusManager(); fm != nil {
+				if fm.FocusedWidget() == nil {
+					fm.FocusFirst()
+				}
+			}
+		}
+		// MDIPane keeps focus so keyboard events come here
+		m.SetFocus()
+	}
 
 	if removedHandler != nil {
 		removedHandler(win)
 	}
-	if activeHandler != nil && newActive != win {
+	if activeHandler != nil && wasActive {
 		activeHandler(newActive)
 	}
+
+	m.Update()
 }
 
 // Windows returns all windows in z-order.
