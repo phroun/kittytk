@@ -719,7 +719,17 @@ func (w *Window) Paint(p *core.Painter) {
 		if parent := w.Parent(); parent != nil {
 			policy := parent.FocusPolicy()
 			if policy == core.StrongFocus || policy == core.TabFocus {
-				focused = parent.HasFocus()
+				// MDI-style container: check if parent has focus OR this window has internal focus.
+				// When clicking on a widget inside the window, focus goes to that widget (not parent).
+				if !parent.HasFocus() {
+					windowHasInternalFocus := false
+					if fm := w.FocusManager(); fm != nil {
+						if focusedWidget := fm.FocusedWidget(); focusedWidget != nil {
+							windowHasInternalFocus = focusedWidget.HasFocus()
+						}
+					}
+					focused = windowHasInternalFocus
+				}
 			}
 		}
 	}
@@ -784,13 +794,21 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	p.FillRect(titleRect, ' ', titleStyle)
 
 	scheme := w.GetScheme()
-	// Derive visual focus: active AND parent has focus (for MDI children)
+	// Derive visual focus: active AND (parent has focus OR window has internal focus)
 	focused := w.IsActive()
 	if focused {
 		if parent := w.Parent(); parent != nil {
 			policy := parent.FocusPolicy()
 			if policy == core.StrongFocus || policy == core.TabFocus {
-				focused = parent.HasFocus()
+				if !parent.HasFocus() {
+					windowHasInternalFocus := false
+					if fm := w.FocusManager(); fm != nil {
+						if focusedWidget := fm.FocusedWidget(); focusedWidget != nil {
+							windowHasInternalFocus = focusedWidget.HasFocus()
+						}
+					}
+					focused = windowHasInternalFocus
+				}
 			}
 		}
 	}
@@ -854,13 +872,21 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	p.DrawRect(localBounds, border, frameStyle)
 
 	scheme := w.GetScheme()
-	// Derive visual focus: active AND parent has focus (for MDI children)
+	// Derive visual focus: active AND (parent has focus OR window has internal focus)
 	focused := w.IsActive()
 	if focused {
 		if parent := w.Parent(); parent != nil {
 			policy := parent.FocusPolicy()
 			if policy == core.StrongFocus || policy == core.TabFocus {
-				focused = parent.HasFocus()
+				if !parent.HasFocus() {
+					windowHasInternalFocus := false
+					if fm := w.FocusManager(); fm != nil {
+						if focusedWidget := fm.FocusedWidget(); focusedWidget != nil {
+							windowHasInternalFocus = focusedWidget.HasFocus()
+						}
+					}
+					focused = windowHasInternalFocus
+				}
 			}
 		}
 	}
