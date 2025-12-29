@@ -523,15 +523,27 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	maxRowsBelow := int(spaceBelow / metrics.CellHeight)
 	maxRowsAbove := int(spaceAbove / metrics.CellHeight)
 
-	// Choose direction with more space
+	// Decide popup direction: strongly prefer dropping down
+	// Only pop up if:
+	// 1. Below can't show at least half the items, AND
+	// 2. Above has substantially more space (50% more AND at least 3 more rows)
+	popDown := true
+	itemCount := len(c.items)
+	halfItems := (itemCount + 1) / 2 // Majority of items
+
+	if maxRowsBelow < halfItems {
+		// Below can't show majority - consider popping up
+		if maxRowsAbove >= maxRowsBelow*3/2 && maxRowsAbove >= maxRowsBelow+3 {
+			popDown = false
+		}
+	}
+
 	var popupY core.Unit
 	var maxRowsAvailable int
-	if maxRowsBelow >= maxRowsAbove {
-		// Pop down (preferred)
+	if popDown {
 		popupY = widgetBottomPos.Y
 		maxRowsAvailable = maxRowsBelow
 	} else {
-		// Pop up (more space above)
 		maxRowsAvailable = maxRowsAbove
 		// popupY will be set after we know the popup height
 	}
@@ -555,7 +567,7 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	popupHeightUnits := core.Unit(visibleRows) * metrics.CellHeight
 
 	// If popping up, calculate Y position now that we know height
-	if maxRowsAbove > maxRowsBelow {
+	if !popDown {
 		popupY = widgetTopPos.Y - popupHeightUnits
 		if popupY < screenBounds.Y {
 			popupY = screenBounds.Y
