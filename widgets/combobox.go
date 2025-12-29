@@ -523,16 +523,22 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	maxRowsBelow := int(spaceBelow / metrics.CellHeight)
 	maxRowsAbove := int(spaceAbove / metrics.CellHeight)
 
-	// Decide popup direction: strongly prefer dropping down
-	// Only pop up if:
-	// 1. Below can't show at least half the items, AND
-	// 2. Above has substantially more space (50% more AND at least 3 more rows)
+	// Minimum rows needed to show useful content (at least 2 items + potential scroll indicators)
+	const minRowsRequired = 4
+
+	// Decide popup direction: strongly prefer dropping down, but need minimum space
+	// Pop up if:
+	// 1. Below doesn't have minimum required space (4 rows), OR
+	// 2. Below can't show at least half the items AND above has substantially more space
 	popDown := true
 	itemCount := len(c.items)
 	halfItems := (itemCount + 1) / 2 // Majority of items
 
-	if maxRowsBelow < halfItems {
-		// Below can't show majority - consider popping up
+	if maxRowsBelow < minRowsRequired && maxRowsAbove >= minRowsRequired {
+		// Below doesn't have minimum space but above does - pop up
+		popDown = false
+	} else if maxRowsBelow < halfItems {
+		// Below can't show majority - consider popping up if above has substantially more
 		if maxRowsAbove >= maxRowsBelow*3/2 && maxRowsAbove >= maxRowsBelow+3 {
 			popDown = false
 		}
