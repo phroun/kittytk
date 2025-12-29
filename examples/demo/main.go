@@ -1075,33 +1075,47 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 	w.SetBounds(core.UnitRect{
 		X:      core.Unit((offset*3 + 5) * 8),
 		Y:      core.Unit((offset*2 + 3) * 16),
-		Width:  core.Unit(45 * 8),
-		Height: core.Unit(12 * 16),
+		Width:  core.Unit(60 * 8),
+		Height: core.Unit(20 * 16),
 	})
 
-	// Create simple content
-	panel := widgets.NewPanel()
+	// Create a vertical splitter to divide the window
+	splitter := widgets.NewVSplitter()
+	splitter.SetTitle("Terminal")
+	splitter.SetPosition(0.3) // Top panel gets 30% of space
+
+	// Top panel with controls
+	topPanel := widgets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	boxLayout.SetSpacing(8)
 
 	label := widgets.NewLabel(fmt.Sprintf("This window belongs to Application #%d", appNum))
-	panel.AddChild(label)
+	topPanel.AddChild(label)
 
 	infoLabel := widgets.NewLabel("Notice the menu bar and status bar change\nwhen this window is focused.")
-	panel.AddChild(infoLabel)
+	topPanel.AddChild(infoLabel)
 
 	textInput := widgets.NewTextInput()
 	textInput.SetPlaceholder("Enter text here...")
-	panel.AddChild(textInput)
+	topPanel.AddChild(textInput)
 
 	closeButton := widgets.NewButton("Close Window")
 	closeButton.SetOnClick(func() {
 		w.Close()
 	})
-	panel.AddChild(closeButton)
+	topPanel.AddChild(closeButton)
 
-	panel.SetLayoutManager(boxLayout)
-	w.SetContent(panel)
+	topPanel.SetLayoutManager(boxLayout)
+	splitter.SetFirst(topPanel)
+
+	// Bottom panel with PurfecTerm terminal
+	terminal := widgets.NewPurfecTerm()
+	splitter.SetSecond(terminal)
+
+	// Start the terminal shell
+	terminal.Start()
+
+	w.SetContent(splitter)
 
 	newApp.AddWindow(w)
 
