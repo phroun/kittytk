@@ -365,52 +365,18 @@ func (d *Desktop) findApplicationForWindow(w *window.Window) ApplicationProvider
 	return nil
 }
 
-// debugAppsAndWindows returns a string showing all apps and their windows.
-// The searched window is marked with * if found.
-func (d *Desktop) debugAppsAndWindows(searchWin *window.Window) string {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	debugInfo := ""
-	for _, app := range d.applications {
-		appWindows := app.Windows()
-		debugInfo += app.Name() + "["
-		for i, win := range appWindows {
-			if i > 0 {
-				debugInfo += ","
-			}
-			if win != nil {
-				debugInfo += win.Title()
-				if win == searchWin {
-					debugInfo += "*"
-				}
-			}
-		}
-		debugInfo += "] "
-	}
-	return debugInfo
-}
-
 // windowFocusChanged is called when window focus changes.
 func (d *Desktop) windowFocusChanged(w *window.Window) {
+	// When w is nil, it means the window was deactivated (e.g., menu bar took focus).
+	// In this case, we should NOT change the active app or update menus - the user
+	// is still interacting with the same app through its menu bar.
+	if w == nil {
+		return
+	}
+
 	owner := d.findApplicationForWindow(w)
 
-	// Debug: log window focus change
-	winTitle := ""
-	if w != nil {
-		winTitle = w.Title()
-	}
-	ownerName := "<nil>"
-	if owner != nil {
-		ownerName = owner.Name()
-	}
-
 	d.mu.Lock()
-	prevAppName := "<nil>"
-	if d.activeApp != nil {
-		prevAppName = d.activeApp.Name()
-	}
-
 	if owner != d.activeApp {
 		if d.activeApp != nil {
 			d.activeApp.OnDeactivate()
@@ -424,11 +390,6 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 
 	d.updateMenuBarContent()
 	d.updateStatusBarContent()
-	// DEBUG: Override status bar with focus info AND apps/windows listing
-	if d.statusBar != nil {
-		appsInfo := d.debugAppsAndWindows(w)
-		d.statusBar.SetText("[DEBUG] " + winTitle + " | " + prevAppName + " -> " + ownerName + " | " + appsInfo)
-	}
 }
 
 // updateMenuBarContent updates the menu bar with the active app's menus.
