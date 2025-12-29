@@ -710,14 +710,17 @@ func (w *Window) Paint(p *core.Painter) {
 	metrics := p.Metrics()
 	scheme := w.GetScheme()
 
-	// Window appears focused if it's the active window in its container
-	// (MDIPane/WindowManager) AND its container has focus.
-	// For MDI children: parent is MDIPane - only show focused when MDI tab is active
-	// For top-level windows: parent is Desktop - HasFocus() is true when any descendant has focus
+	// Window appears focused if it's the active window in its container.
+	// For MDI children (parent is MDIPane with StrongFocus): also require parent to have focus,
+	// so MDI windows only appear focused when their tab is active.
+	// For top-level windows (parent is Desktop with NoFocus): don't check parent focus.
 	focused := isActive
 	if focused {
 		if parent := w.Parent(); parent != nil {
-			focused = parent.HasFocus()
+			policy := parent.FocusPolicy()
+			if policy == core.StrongFocus || policy == core.TabFocus {
+				focused = parent.HasFocus()
+			}
 		}
 	}
 
@@ -785,7 +788,10 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	focused := w.IsActive()
 	if focused {
 		if parent := w.Parent(); parent != nil {
-			focused = parent.HasFocus()
+			policy := parent.FocusPolicy()
+			if policy == core.StrongFocus || policy == core.TabFocus {
+				focused = parent.HasFocus()
+			}
 		}
 	}
 
@@ -852,7 +858,10 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	focused := w.IsActive()
 	if focused {
 		if parent := w.Parent(); parent != nil {
-			focused = parent.HasFocus()
+			policy := parent.FocusPolicy()
+			if policy == core.StrongFocus || policy == core.TabFocus {
+				focused = parent.HasFocus()
+			}
 		}
 	}
 
