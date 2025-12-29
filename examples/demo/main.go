@@ -1059,8 +1059,8 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 	secondaryAppCount++
 	appNum := secondaryAppCount
 
-	// Create new application
-	newApp := app.New(nil)
+	// Create new independent application (not the singleton)
+	newApp := app.NewSecondary()
 	newApp.SetName(fmt.Sprintf("Secondary App %d", appNum))
 
 	// Create simple menu bar for this application

@@ -109,6 +109,7 @@ func Instance() *Application {
 }
 
 // New creates a new application with the given backend.
+// This returns the singleton main application instance.
 func New(backend core.RenderBackend) *Application {
 	app := Instance()
 	app.mu.Lock()
@@ -129,6 +130,19 @@ func New(backend core.RenderBackend) *Application {
 	app.focusManager.SetAccessibilityManager(app.accessibilityManager)
 
 	return app
+}
+
+// NewSecondary creates a new independent application instance.
+// Unlike New(), this creates a fresh Application that is NOT the singleton.
+// Secondary applications are used for multi-app desktops where each app
+// has its own windows, menus, and status bar content.
+// Secondary apps share the desktop's WindowManager and don't have their own event loop.
+func NewSecondary() *Application {
+	return &Application{
+		quitChan:   make(chan struct{}),
+		updateChan: make(chan struct{}, 100),
+		theme:      style.DefaultTheme(),
+	}
 }
 
 // SetName sets the application name.
