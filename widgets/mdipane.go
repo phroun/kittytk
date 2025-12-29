@@ -290,14 +290,15 @@ func (m *MDIPane) ActivateWindow(win *window.Window) {
 	if win != nil {
 		win.SetActive(true)
 
-		// MDIPane takes focus so keyboard events come here first.
-		// We then forward them to the active window.
-		m.SetFocus()
-
-		// Focus the window's first widget if no widget is focused
-		if fm := win.FocusManager(); fm != nil {
-			if fm.FocusedWidget() == nil {
-				fm.FocusFirst()
+		// Only take focus and initialize child window focus if MDIPane
+		// already has focus. This prevents stealing focus during initial
+		// setup when windows are added but the MDI tab isn't active yet.
+		if m.HasFocus() {
+			// Focus the window's first widget if no widget is focused
+			if fm := win.FocusManager(); fm != nil {
+				if fm.FocusedWidget() == nil {
+					fm.FocusFirst()
+				}
 			}
 		}
 	}
