@@ -93,41 +93,31 @@ type Timer struct {
 	stopped  bool
 }
 
-// Global application instance
-var instance *Application
-var instanceOnce sync.Once
-
-// Instance returns the global application instance.
-func Instance() *Application {
-	instanceOnce.Do(func() {
-		instance = &Application{
-			quitChan:   make(chan struct{}),
-			updateChan: make(chan struct{}, 100),
-		}
-	})
-	return instance
-}
-
-// New creates a new application with the given backend.
-// This returns the singleton main application instance.
+// New creates a new application instance.
+// Applications are containers for windows, menus, and status bar content.
+// Multiple applications can coexist on a single Desktop.
+// The backend parameter is optional - pass nil if the Desktop owns the backend.
 func New(backend core.RenderBackend) *Application {
-	app := Instance()
-	app.mu.Lock()
-	defer app.mu.Unlock()
+	app := &Application{
+		quitChan:   make(chan struct{}),
+		updateChan: make(chan struct{}, 100),
+		theme:      style.DefaultTheme(),
+	}
 
-	app.backend = backend
-	app.windowManager = window.NewWindowManager()
-	// Wire up repaint callback for window dragging/updates
-	app.windowManager.SetOnRepaintNeeded(func() {
-		app.RequestUpdate()
-	})
-	app.focusManager = core.NewGlobalFocusManager()
-	app.accessibilityManager = core.NewAccessibilityManager()
-	app.shortcuts = core.DefaultShortcuts()
-	app.theme = style.DefaultTheme()
+	if backend != nil {
+		app.backend = backend
+		app.windowManager = window.NewWindowManager()
+		// Wire up repaint callback for window dragging/updates
+		app.windowManager.SetOnRepaintNeeded(func() {
+			app.RequestUpdate()
+		})
+		app.focusManager = core.NewGlobalFocusManager()
+		app.accessibilityManager = core.NewAccessibilityManager()
+		app.shortcuts = core.DefaultShortcuts()
 
-	// Connect accessibility to focus manager
-	app.focusManager.SetAccessibilityManager(app.accessibilityManager)
+		// Connect accessibility to focus manager
+		app.focusManager.SetAccessibilityManager(app.accessibilityManager)
+	}
 
 	return app
 }
