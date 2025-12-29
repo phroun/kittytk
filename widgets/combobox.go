@@ -1402,7 +1402,17 @@ func (c *ComboBox) ensureVisible(index int) {
 			}
 		}
 		if index >= c.scrollOffset+effectiveVisible {
-			c.scrollOffset = index - effectiveVisible + 1
+			// Calculate the new scroll offset needed to show this index.
+			// We need to account for the fact that scrolling may cause an up indicator
+			// to appear (if scrollOffset was 0 and becomes > 0), which reduces visible items.
+			newOffset := index - effectiveVisible + 1
+
+			// If scrolling from offset 0, an up indicator will appear, taking another row
+			if !c.clickMode && len(c.items) > c.maxVisible && c.scrollOffset == 0 && newOffset > 0 {
+				newOffset++ // Account for the up indicator that will appear
+			}
+
+			c.scrollOffset = newOffset
 		}
 	}
 	c.Update()
