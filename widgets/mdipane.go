@@ -1204,6 +1204,7 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Forward to active window
 	m.mu.RLock()
 	active := m.activeWindow
+	content := m.content
 	m.mu.RUnlock()
 
 	if active != nil && !active.IsMinimized() {
@@ -1214,6 +1215,18 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if active.HandleMouseMove(localEvent) {
 			m.Update()
 			return true
+		}
+	}
+
+	// Forward to content (for hover states on buttons, etc.)
+	if content != nil {
+		if handler, ok := content.(interface {
+			HandleMouseMove(core.MouseMoveEvent) bool
+		}); ok {
+			if handler.HandleMouseMove(event) {
+				m.Update()
+				return true
+			}
 		}
 	}
 
@@ -1237,6 +1250,7 @@ func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Forward to active window
 	m.mu.RLock()
 	active := m.activeWindow
+	content := m.content
 	m.mu.RUnlock()
 
 	if active != nil && !active.IsMinimized() {
@@ -1247,6 +1261,18 @@ func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		if active.HandleMouseRelease(localEvent) {
 			m.Update()
 			return true
+		}
+	}
+
+	// Forward to content (for buttons and other widgets in the MDI background)
+	if content != nil {
+		if handler, ok := content.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			if handler.HandleMouseRelease(event) {
+				m.Update()
+				return true
+			}
 		}
 	}
 
