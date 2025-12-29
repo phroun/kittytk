@@ -1397,19 +1397,28 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
-	// Handle Shift+Tab from first widget to enter title bar
+	// Check if this is a Tab or Shift+Tab event
 	isShiftTab := event.Key == "S-Tab" || event.Key == "Shift-Tab" ||
 		(event.Key == "Tab" && event.Modifiers&core.ShiftModifier != 0)
-	if isShiftTab {
-		if fm != nil {
+	isTab := event.Key == "Tab" && event.Modifiers&core.ShiftModifier == 0
+
+	// For Tab/Shift+Tab, first give the focused widget a chance to handle it.
+	// This is critical for containers like MDIPane that manage their own Tab navigation.
+	// If the focused widget handles it, we're done.
+	if (isTab || isShiftTab) && fm != nil {
+		focused := fm.FocusedWidget()
+		if focused != nil && focused.HandleKeyPress(event) {
+			return true
+		}
+
+		// Focused widget didn't handle it.
+		// For Shift+Tab at first widget, enter title bar.
+		if isShiftTab {
 			chain := fm.FocusChain()
-			focused := fm.FocusedWidget()
-			// If at first focusable widget, go to title bar
 			for _, widget := range chain {
 				if widget.IsVisible() && widget.IsEnabled() {
 					if widget == focused {
 						// At first widget, enter title bar at Title (move/resize)
-						// Title is the last element before content in the tab order
 						w.SetTitleFocus(TitleFocusTitle)
 						fm.ClearFocus()
 						return true
@@ -1417,10 +1426,15 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 					break // Not at first widget
 				}
 			}
+			// Not at first widget, move to previous
+			return fm.FocusPrevious()
 		}
+
+		// Regular Tab - move to next widget
+		return fm.FocusNext()
 	}
 
-	// Use focus manager to handle Tab navigation and forward to focused widget
+	// For non-Tab keys, use focus manager
 	if fm != nil {
 		if fm.HandleKeyPress(event) {
 			return true
