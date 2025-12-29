@@ -711,9 +711,15 @@ func (w *Window) Paint(p *core.Painter) {
 	scheme := w.GetScheme()
 
 	// Window appears focused if it's the active window in its container
-	// (MDIPane/WindowManager). The isActive flag is the authoritative source -
-	// we don't use HasFocus() because focus may be on a child widget.
+	// (MDIPane/WindowManager) AND its container has focus.
+	// For MDI children: parent is MDIPane - only show focused when MDI tab is active
+	// For top-level windows: parent is Desktop - HasFocus() is true when any descendant has focus
 	focused := isActive
+	if focused {
+		if parent := w.Parent(); parent != nil {
+			focused = parent.HasFocus()
+		}
+	}
 
 	// Get styles from scheme based on focus state
 	titleStyle := scheme.GetWindowTitle(focused)
@@ -775,7 +781,13 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	p.FillRect(titleRect, ' ', titleStyle)
 
 	scheme := w.GetScheme()
+	// Derive visual focus: active AND parent has focus (for MDI children)
 	focused := w.IsActive()
+	if focused {
+		if parent := w.Parent(); parent != nil {
+			focused = parent.HasFocus()
+		}
+	}
 
 	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
 	controlX := core.Unit(0)
@@ -836,7 +848,13 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	p.DrawRect(localBounds, border, frameStyle)
 
 	scheme := w.GetScheme()
+	// Derive visual focus: active AND parent has focus (for MDI children)
 	focused := w.IsActive()
+	if focused {
+		if parent := w.Parent(); parent != nil {
+			focused = parent.HasFocus()
+		}
+	}
 
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
