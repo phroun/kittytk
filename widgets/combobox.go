@@ -115,11 +115,25 @@ func (c *ComboBox) startScrollTimer(direction int) {
 		// Timer is stopped when leaving the scroll zone, so just scroll if we can
 		if direction < 0 && c.canScrollUp() {
 			c.scrollUp(1)
+			// If we can no longer scroll up, the scroll indicator disappears and
+			// is replaced by an item. Update hover to that item since mouse is there.
+			if !c.canScrollUp() {
+				c.hoverIndex = c.scrollOffset
+			}
 			if c.requestUpdate != nil {
 				c.requestUpdate()
 			}
 		} else if direction > 0 && c.canScrollDown() {
 			c.scrollDown(1)
+			// If we can no longer scroll down, the scroll indicator disappears and
+			// is replaced by an item. Update hover to that item since mouse is there.
+			if !c.canScrollDown() {
+				lastVisible := c.scrollOffset + c.visibleItemCount() - 1
+				if lastVisible >= len(c.items) {
+					lastVisible = len(c.items) - 1
+				}
+				c.hoverIndex = lastVisible
+			}
 			if c.requestUpdate != nil {
 				c.requestUpdate()
 			}
