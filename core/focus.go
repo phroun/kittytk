@@ -357,6 +357,21 @@ func (fm *FocusManager) collectFocusableWithSkip(widget Widget, chain *[]Widget,
 		return
 	}
 
+	// Stop at widgets that have their own FocusManager (like Window).
+	// Those widgets manage their own focus chain - we don't recurse into their children.
+	// We still add the widget itself to the chain if it's focusable.
+	if owner, ok := widget.(FocusManagerOwner); ok {
+		if childFM := owner.FocusManager(); childFM != nil && childFM != fm {
+			// This widget has its own FocusManager, don't recurse into its children.
+			// Add the widget itself if focusable (allows tabbing TO the window).
+			policy := widget.FocusPolicy()
+			if policy == StrongFocus || policy == TabFocus {
+				*chain = append(*chain, widget)
+			}
+			return
+		}
+	}
+
 	// Check if widget provides custom focus chain ordering
 	// Skip this check for the widget that initiated the FocusChainProvider call
 	if widget != skipProvider {

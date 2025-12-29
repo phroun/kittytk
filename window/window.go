@@ -813,6 +813,11 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		titleDisplayStyle = scheme.GetTitleBarButton(focused, true, false)
 	}
 	p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle)
+
+	// Fill content area with background (same as normal frame)
+	contentBounds := w.contentBounds()
+	theme := w.Theme()
+	p.FillRect(contentBounds, ' ', theme.WindowBackground)
 }
 
 // paintNormalFrame draws the full window frame with borders.
