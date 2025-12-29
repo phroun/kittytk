@@ -931,8 +931,9 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 		// Ensure the window has a focused widget before processing key events.
 		// This is critical for proper Tab/Shift+Tab behavior - if no widget is
 		// focused, the first key press should establish focus.
+		// BUT: don't do this if the title bar has focus (e.g., during window move/resize).
 		if fm := active.FocusManager(); fm != nil {
-			if fm.FocusedWidget() == nil {
+			if fm.FocusedWidget() == nil && !active.HasTitleFocus() {
 				fm.FocusFirst()
 			}
 		}
