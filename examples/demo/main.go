@@ -948,10 +948,10 @@ var mdiChildCount int
 // createMDIDemo creates an MDIPane widget demonstration.
 // The MDIPane is a reusable widget that can be embedded anywhere.
 func createMDIDemo(desktop *widgets.Desktop, application *app.Application, parentWindow *window.Window) core.Widget {
-	// Create a container panel to hold the MDIPane and DockRow
-	containerPanel := widgets.NewPanel()
-	containerLayout := layout.NewBoxLayout(core.Vertical)
-	containerLayout.SetSpacing(0)
+	// Use a VSplitter to divide space between MDIPane and DockRow
+	splitter := widgets.NewVSplitter()
+	splitter.SetPosition(0.9) // MDIPane gets 90%, DockRow gets 10%
+	splitter.SetTitle("Dock")
 
 	// Create an MDIPane - this is a widget that can be embedded in tabs, splitters, etc.
 	mdiPane := widgets.NewMDIPane()
@@ -1080,20 +1080,16 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, paren
 	// Set the control panel as background content of the MDI pane
 	mdiPane.SetContent(controlPanel)
 
-	// Add MDIPane and DockRow to container
-	// The layout needs explicit widget registration with stretch factors
-	containerLayout.AddWidgetWithStretch(mdiPane, 1) // MDIPane expands to fill space
-	containerLayout.AddWidget(dockRow)               // DockRow gets its preferred height
-	containerPanel.AddChild(mdiPane)
-	containerPanel.AddChild(dockRow)
-	containerPanel.SetLayoutManager(containerLayout)
+	// Set up the splitter: MDIPane on top, DockRow on bottom
+	splitter.SetFirst(mdiPane)
+	splitter.SetSecond(dockRow)
 
 	// Spawn an initial window to show capabilities
 	mdiChildCount++
 	initialWindow := createMDIPaneChildWindow(mdiPane, mdiChildCount)
 	mdiPane.AddWindow(initialWindow)
 
-	return containerPanel
+	return splitter
 }
 
 // createMDIPaneChildWindow creates a window for use in an MDIPane.
