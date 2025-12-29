@@ -24,8 +24,9 @@ type ComboBox struct {
 	hoverIndex int // Index of item currently hovered (-1 for none)
 
 	// Scroll state for drop-down
-	scrollOffset int
-	maxVisible   int
+	scrollOffset     int
+	maxVisible       int // User-configured maximum (0 = auto-size to screen)
+	popupVisibleRows int // Actual visible rows for current popup (calculated from screen space)
 
 	// Mouse interaction state
 	mouseDown     bool       // Mouse button is held down
@@ -57,7 +58,7 @@ func NewComboBox() *ComboBox {
 	c := &ComboBox{
 		currentIndex:    -1,
 		hoverIndex:      -1,
-		maxVisible:      8,
+		maxVisible:      0, // 0 = auto-size to available screen space
 		originalIndex:   -1,
 		scrollHoverZone: 0,
 	}
@@ -66,6 +67,20 @@ func NewComboBox() *ComboBox {
 	c.SetFocusPolicy(core.StrongFocus)
 	c.SetAccessibleRole(core.RoleComboBox)
 	return c
+}
+
+// effectiveMaxVisible returns the number of visible rows to use for popup calculations.
+// When the popup is open, this returns popupVisibleRows (calculated from screen space).
+// Otherwise, it returns maxVisible (user-configured) or a default for initial calculations.
+func (c *ComboBox) effectiveMaxVisible() int {
+	if c.isOpen && c.popupVisibleRows > 0 {
+		return c.popupVisibleRows
+	}
+	if c.maxVisible > 0 {
+		return c.maxVisible
+	}
+	// Default for initial calculations before popup is registered
+	return 20
 }
 
 // SetScrollTimerStarter sets the function used to create scroll timers.
@@ -158,12 +173,13 @@ func (c *ComboBox) stopScrollTimer() {
 // visibleItemCount returns the number of items currently visible in the popup.
 // This accounts for scroll indicator rows in drag mode.
 func (c *ComboBox) visibleItemCount() int {
-	count := c.maxVisible
+	maxVis := c.effectiveMaxVisible()
+	count := maxVis
 	if count > len(c.items) {
 		count = len(c.items)
 	}
 	// In drag mode with scrolling, scroll indicators take up rows
-	if len(c.items) > c.maxVisible && !c.clickMode {
+	if len(c.items) > maxVis && !c.clickMode {
 		if c.canScrollUp() {
 			count--
 		}
@@ -181,12 +197,13 @@ func (c *ComboBox) canScrollUp() bool {
 
 // canScrollDown returns true if there are items below the visible area.
 func (c *ComboBox) canScrollDown() bool {
+	maxVis := c.effectiveMaxVisible()
 	if c.clickMode {
-		// In click mode, all maxVisible rows are item rows
-		return c.scrollOffset+c.maxVisible < len(c.items)
+		// In click mode, all visible rows are item rows
+		return c.scrollOffset+maxVis < len(c.items)
 	}
 	// In drag mode, account for scroll up indicator if present
-	effectiveVisible := c.maxVisible
+	effectiveVisible := maxVis
 	if c.scrollOffset > 0 {
 		effectiveVisible-- // up indicator takes a row
 	}
@@ -194,13 +211,13 @@ func (c *ComboBox) canScrollDown() bool {
 }
 
 // enterClickMode switches to click mode and clamps scroll offset.
-// In click mode, all maxVisible rows are item rows (no scroll indicators),
+// In click mode, all visible rows are item rows (no scroll indicators),
 // so the max scroll offset is lower than in drag mode. This function ensures
 // the scroll offset is valid for click mode to avoid empty rows at the bottom.
 func (c *ComboBox) enterClickMode() {
 	c.clickMode = true
 	// Clamp scroll offset for click mode (which has more visible item rows)
-	maxOffset := len(c.items) - c.maxVisible
+	maxOffset := len(c.items) - c.effectiveMaxVisible()
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -221,10 +238,11 @@ func (c *ComboBox) scrollUp(amount int) {
 // scrollDown scrolls the list down by the given amount.
 func (c *ComboBox) scrollDown(amount int) {
 	// Calculate effective visible count
-	visibleCount := c.maxVisible
+	maxVis := c.effectiveMaxVisible()
+	visibleCount := maxVis
 	// In drag mode with scrolling, up indicator takes a row when scrollOffset > 0
 	// After scrolling down, scrollOffset will definitely be > 0
-	if !c.clickMode && len(c.items) > c.maxVisible {
+	if !c.clickMode && len(c.items) > maxVis {
 		visibleCount-- // up indicator will take a row
 	}
 	maxOffset := len(c.items) - visibleCount
@@ -413,12 +431,13 @@ func (c *ComboBox) ShowPopup() {
 	c.hoverIndex = c.currentIndex    // Start with current selection highlighted
 	c.scrollHoverZone = 0
 
-	// Ensure current item is visible
+	// Ensure current item is visible (use a reasonable default before popup is registered)
+	maxVis := c.effectiveMaxVisible()
 	if c.currentIndex >= 0 {
 		if c.currentIndex < c.scrollOffset {
 			c.scrollOffset = c.currentIndex
-		} else if c.currentIndex >= c.scrollOffset+c.maxVisible {
-			c.scrollOffset = c.currentIndex - c.maxVisible + 1
+		} else if c.currentIndex >= c.scrollOffset+maxVis {
+			c.scrollOffset = c.currentIndex - maxVis + 1
 		}
 	}
 
@@ -489,29 +508,55 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	bounds := c.Bounds()
 	metrics := core.DefaultCellMetrics()
 
-	// Calculate popup height
-	popupHeight := len(c.items)
-	if popupHeight > c.maxVisible {
-		popupHeight = c.maxVisible
-	}
-	popupHeightUnits := core.Unit(popupHeight) * metrics.CellHeight
-
-	// Get screen bounds to check if we need to pop up instead of down
+	// Get screen bounds to calculate available space
 	screenBounds := pc.ScreenBounds()
 
-	// Get the widget's bottom-left corner on screen (where popup should start)
+	// Get the widget's positions on screen
 	widgetBottomPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: metrics.CellHeight})
+	widgetTopPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: 0})
 
-	// Default: pop down (below the widget)
-	popupY := widgetBottomPos.Y
+	// Calculate available space below and above the widget
+	spaceBelow := screenBounds.Y + screenBounds.Height - widgetBottomPos.Y
+	spaceAbove := widgetTopPos.Y - screenBounds.Y
 
-	// Check if popup would go below screen - if so, pop up instead
-	if popupY+popupHeightUnits > screenBounds.Y+screenBounds.Height {
-		// Pop up: position popup above the widget
-		// Get widget's top-left corner
-		widgetTopPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: 0})
+	// Calculate max rows that fit in each direction
+	maxRowsBelow := int(spaceBelow / metrics.CellHeight)
+	maxRowsAbove := int(spaceAbove / metrics.CellHeight)
+
+	// Choose direction with more space
+	var popupY core.Unit
+	var maxRowsAvailable int
+	if maxRowsBelow >= maxRowsAbove {
+		// Pop down (preferred)
+		popupY = widgetBottomPos.Y
+		maxRowsAvailable = maxRowsBelow
+	} else {
+		// Pop up (more space above)
+		maxRowsAvailable = maxRowsAbove
+		// popupY will be set after we know the popup height
+	}
+
+	// Calculate actual visible rows: min of items, available space, and user max (if set)
+	visibleRows := len(c.items)
+	if visibleRows > maxRowsAvailable {
+		visibleRows = maxRowsAvailable
+	}
+	if c.maxVisible > 0 && visibleRows > c.maxVisible {
+		visibleRows = c.maxVisible
+	}
+	// Ensure at least 1 row
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+
+	// Store for use during rendering
+	c.popupVisibleRows = visibleRows
+
+	popupHeightUnits := core.Unit(visibleRows) * metrics.CellHeight
+
+	// If popping up, calculate Y position now that we know height
+	if maxRowsAbove > maxRowsBelow {
 		popupY = widgetTopPos.Y - popupHeightUnits
-		// Make sure we don't go above the screen either
 		if popupY < screenBounds.Y {
 			popupY = screenBounds.Y
 		}
@@ -669,9 +714,10 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 	metrics := p.Metrics()
 
 	// Calculate popup bounds
+	maxVis := c.effectiveMaxVisible()
 	popupHeight := len(c.items)
-	if popupHeight > c.maxVisible {
-		popupHeight = c.maxVisible
+	if popupHeight > maxVis {
+		popupHeight = maxVis
 	}
 
 	popupY := metrics.CellHeight // Below the main widget
@@ -754,14 +800,15 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 	popupPainter.FillRect(localBounds, ' ', itemStyle)
 	popupPainter.DrawRect(localBounds, c.Theme().DefaultBorder, itemStyle)
 
-	needsScroll := len(c.items) > c.maxVisible
+	maxVis := c.effectiveMaxVisible()
+	needsScroll := len(c.items) > maxVis
 
 	// In drag mode with scrolling, first/last rows are scroll indicators
 	// In click mode, all rows are items (scrollbar on right side)
 	showScrollIndicators := needsScroll && !c.clickMode
 
 	// Calculate visible item count and starting Y position
-	visibleItems := c.maxVisible
+	visibleItems := maxVis
 	if visibleItems > len(c.items) {
 		visibleItems = len(c.items)
 	}
@@ -928,8 +975,9 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 		event.Y >= popupBounds.Y && event.Y < popupBounds.Y+popupBounds.Height {
 
 		// Check for scrollbar clicks in click mode
-		if c.clickMode && len(c.items) > c.maxVisible {
-			popupHeight := c.maxVisible
+		maxVis := c.effectiveMaxVisible()
+		if c.clickMode && len(c.items) > maxVis {
+			popupHeight := maxVis
 			if popupHeight > len(c.items) {
 				popupHeight = len(c.items)
 			}
@@ -978,7 +1026,7 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 		rowIndex := int(relY / metrics.CellHeight)
 
 		// In drag mode with scrolling, adjust for scroll up indicator
-		needsScroll := len(c.items) > c.maxVisible
+		needsScroll := len(c.items) > c.effectiveMaxVisible()
 		if !c.clickMode && needsScroll && c.scrollOffset > 0 {
 			rowIndex-- // First row is scroll up indicator
 		}
@@ -1008,7 +1056,8 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 // handlePopupMouseMove handles mouse movement on the popup overlay.
 func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds core.UnitRect) bool {
 	metrics := core.DefaultCellMetrics()
-	popupHeight := c.maxVisible
+	maxVis := c.effectiveMaxVisible()
+	popupHeight := maxVis
 	if popupHeight > len(c.items) {
 		popupHeight = len(c.items)
 	}
@@ -1114,7 +1163,7 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 	}
 
 	// Mouse is within the popup bounds
-	needsScroll := len(c.items) > c.maxVisible
+	needsScroll := len(c.items) > maxVis
 	showScrollIndicators := needsScroll && !c.clickMode
 
 	// In drag mode with scrolling, check scroll indicator rows
@@ -1207,7 +1256,7 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 		rowIndex := int(relY / metrics.CellHeight)
 
 		// In drag mode with scrolling, adjust for scroll up indicator
-		needsScroll := len(c.items) > c.maxVisible
+		needsScroll := len(c.items) > c.effectiveMaxVisible()
 		if !wasClickMode && needsScroll && c.scrollOffset > 0 {
 			rowIndex-- // First row is scroll up indicator
 		}
@@ -1264,7 +1313,9 @@ func (c *ComboBox) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	switch event.Key {
 	case " ", "Space", "Enter":
+		c.clickMode = true // Keyboard invocation opens in click mode
 		c.ShowPopup()
+		c.enterClickMode() // Ensure scroll offset is clamped for click mode
 		return true
 
 	case "Up":
@@ -1292,7 +1343,9 @@ func (c *ComboBox) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case "F4", "M-Down":
+		c.clickMode = true // Keyboard invocation opens in click mode
 		c.ShowPopup()
+		c.enterClickMode() // Ensure scroll offset is clamped for click mode
 		return true
 	}
 
@@ -1348,7 +1401,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 
 	case "PageUp":
 		idx := getEffectiveIndex()
-		newIndex := idx - c.maxVisible
+		newIndex := idx - c.effectiveMaxVisible()
 		if newIndex < 0 {
 			newIndex = 0
 		}
@@ -1359,7 +1412,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 
 	case "PageDown":
 		idx := getEffectiveIndex()
-		newIndex := idx + c.maxVisible
+		newIndex := idx + c.effectiveMaxVisible()
 		if newIndex >= len(c.items) {
 			newIndex = len(c.items) - 1
 		}
@@ -1386,12 +1439,13 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 
 // ensureVisible ensures the given index is visible in the popup.
 func (c *ComboBox) ensureVisible(index int) {
+	maxVis := c.effectiveMaxVisible()
 	if index < c.scrollOffset {
 		c.scrollOffset = index
 	} else {
 		// Calculate effective visible count accounting for scroll indicators in drag mode
-		effectiveVisible := c.maxVisible
-		if !c.clickMode && len(c.items) > c.maxVisible {
+		effectiveVisible := maxVis
+		if !c.clickMode && len(c.items) > maxVis {
 			// In drag mode with scrolling, indicators take rows
 			if c.scrollOffset > 0 {
 				effectiveVisible-- // up indicator takes a row
@@ -1408,7 +1462,7 @@ func (c *ComboBox) ensureVisible(index int) {
 			newOffset := index - effectiveVisible + 1
 
 			// If scrolling from offset 0, an up indicator will appear, taking another row
-			if !c.clickMode && len(c.items) > c.maxVisible && c.scrollOffset == 0 && newOffset > 0 {
+			if !c.clickMode && len(c.items) > maxVis && c.scrollOffset == 0 && newOffset > 0 {
 				newOffset++ // Account for the up indicator that will appear
 			}
 
@@ -1457,7 +1511,7 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 	// If popup is open and click is in popup area, let popup handler deal with it
 	if c.isOpen {
 		popupY := metrics.CellHeight
-		popupHeight := c.maxVisible
+		popupHeight := c.effectiveMaxVisible()
 		if popupHeight > len(c.items) {
 			popupHeight = len(c.items)
 		}
@@ -1518,7 +1572,7 @@ func (c *ComboBox) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Calculate popup bounds for hit testing
 	popupY := metrics.CellHeight
-	popupHeight := c.maxVisible
+	popupHeight := c.effectiveMaxVisible()
 	if popupHeight > len(c.items) {
 		popupHeight = len(c.items)
 	}
@@ -1600,7 +1654,7 @@ func (c *ComboBox) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 	// Calculate popup bounds
 	popupY := metrics.CellHeight
-	popupHeight := c.maxVisible
+	popupHeight := c.effectiveMaxVisible()
 	if popupHeight > len(c.items) {
 		popupHeight = len(c.items)
 	}
