@@ -355,12 +355,39 @@ func (d *Desktop) findApplicationForWindow(w *window.Window) ApplicationProvider
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
+	searchTitle := ""
+	if w != nil {
+		searchTitle = w.Title()
+	}
+
+	// Debug: build info about all apps and their windows
+	debugInfo := ""
 	for _, app := range d.applications {
-		for _, win := range app.Windows() {
+		appWindows := app.Windows()
+		debugInfo += app.Name() + "["
+		for i, win := range appWindows {
+			if i > 0 {
+				debugInfo += ","
+			}
+			if win != nil {
+				debugInfo += win.Title()
+				if win == w {
+					debugInfo += "*" // Mark if this is the match
+				}
+			}
+		}
+		debugInfo += "] "
+
+		for _, win := range appWindows {
 			if win == w {
 				return app
 			}
 		}
+	}
+
+	// If not found, log the debug info
+	if d.statusBar != nil && w != nil {
+		d.statusBar.SetText("[NOT FOUND] " + searchTitle + " in: " + debugInfo)
 	}
 	return nil
 }
