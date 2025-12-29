@@ -2,15 +2,37 @@
 
 This document captures design discussions and considerations for implementing context-sensitive menu bars and MDI (Multiple Document Interface) support in the TUI toolkit.
 
+## Implementation Status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Context-sensitive menus | ✅ Done | Via ApplicationProvider.MenuBarContent() |
+| Context-sensitive status bar | ✅ Done | Via ApplicationProvider.StatusBarContent() |
+| Desktop composition | ✅ Done | MenuBar + WindowManager + DockRow + StatusBar |
+| Standard app menu items | ✅ Done | Auto-injected Hide/Show All/Quit |
+| Action type | ⚠️ Partial | Exists but no registry pattern |
+| MDIPane widget | 🔴 Planned | See below |
+| Responder chain | 🔴 Deferred | Current menu-swap approach sufficient |
+| Menu merging | 🔴 Deferred | Low priority |
+| Menu as model | 🔴 Deferred | Medium priority for future |
+
+---
+
 ## Overview
 
 The goal is to support Mac-like context-sensitive menus where the menu bar content can change based on which window or document is active, while also providing flexible MDI support that isn't tightly coupled to a specific container type.
 
+---
+
 ## MDIPane Widget
+
+### Status: 🔴 NOT YET IMPLEMENTED
 
 ### Motivation
 
 The Window class should remain focused on being a window (frame, title bar, buttons). Container semantics for managing floating child windows should live in a separate widget.
+
+Currently, window management is embedded in `Desktop` and `WindowManager`. There's no standalone MDI container that can be embedded in other widgets.
 
 ### Proposed Design
 
@@ -29,10 +51,11 @@ An `MDIPane` widget that:
 
 5. **Provides the MDI API**:
    - `AddWindow(w *Window)`, `RemoveWindow(w *Window)`
-   - `FocusedWindow()`, `SetFocusedWindow(w *Window)`
-   - `FocusNextWindow()`, `FocusPrevWindow()`
+   - `ActiveWindow()`, `SetActiveWindow(w *Window)`
+   - `NextWindow()`, `PrevWindow()`
    - `Windows() []*Window` for external UI to query
-   - Callbacks: `OnWindowAdded`, `OnWindowRemoved`, `OnWindowFocusChanged`
+   - `TileWindows()`, `CascadeWindows()`
+   - Callbacks: `OnWindowAdded`, `OnWindowRemoved`, `OnActiveWindowChanged`
 
 6. **Doesn't prescribe UI** - external components (menus, docks, sidebars) use the API
 
@@ -46,180 +69,179 @@ mainWindow.SetContent(mdiPane)
 tabWidget.AddTab("Documents", mdiPane)
 
 // Split view - MDI pane on left, tools on right
-splitter.AddChild(mdiPane)
-splitter.AddChild(toolPanel)
+splitter.SetFirst(mdiPane)
+splitter.SetSecond(toolPanel)
 
 // MDI with built-in toolbar above
 panel.AddChild(toolbar)
 panel.AddChild(mdiPane) // fills remaining space
 ```
 
-### Desktop Refactoring
+### Relationship to Desktop
 
-Desktop could be refactored to use MDIPane internally, becoming a composition of:
-- MenuBar (top)
-- MDIPane (fills middle)
-- DockRow (above status bar)
-- StatusBar (bottom)
+Desktop uses MDIPane-like functionality internally via WindowManager. The MDIPane widget would:
+- Share core logic with WindowManager where possible
+- Be usable independently of Desktop
+- Enable nested MDI scenarios
+
+---
 
 ## Context-Sensitive Menu Bars
 
-### The Problem
+### Status: ✅ IMPLEMENTED
 
-Rather than having a static menu bar that owns all content, we want:
+### What We Built
 
-1. **Context sensitivity** - menu bar content changes based on which window/application is active
-2. **Window-driven population** - windows find and populate their designated menu bar, not the reverse
-3. **Inheritance** - dialog boxes and tool windows share menus with their parent/owner
-4. **Flexibility** - support for multiple menu bars, merged menus, etc.
+Rather than the responder chain pattern (Cocoa-style), we implemented explicit menu swapping:
 
-### Conceptual Model
+1. **ApplicationProvider interface** - apps implement `MenuBarContent()` to provide menus
+2. **Desktop.windowFocusChanged()** - detects when focus moves to a different app's window
+3. **Desktop.updateMenuBarContent()** - clears menu bar and rebuilds from active app's menus
+4. **Standard app menu items** - Desktop auto-injects Hide, Hide Others, Show All, Quit into first app menu
 
-#### Menu Bar as Display Slot
+### Why This Approach
 
-The MenuBar becomes more of a "display slot" or "projection surface" than an owner of content:
+- Simpler than responder chain
+- Clear ownership - each app defines its complete menus
+- Easy to understand and debug
+- Sufficient for multi-application scenarios
 
-- **MenuBarSlot**: A physical location/widget that displays menu bar content
-- **MenuBarProvider**: An interface that windows/widgets implement to supply menu content
-- **Focus-driven activation**: When focus changes, the system finds the appropriate provider and displays its content
+### Original Consideration: Responder Chain
 
-#### Inheritance Chain
+The document originally considered Cocoa-style responder chain where the *same* menu items route to *different handlers* based on focus. This remains a valid alternative if we need:
+- Standard commands (Save, Undo) handled by many different widgets
+- More dynamic enable/disable based on focused widget
+- Less menu definition duplication
 
-When looking for a MenuBarProvider:
-1. Start from the focused widget
-2. Walk up the parent chain
-3. Dialogs and tool windows that don't implement MenuBarProvider inherit from their parent/owner window
+For now, the menu-swapping approach serves our needs well.
 
-### Open Questions
+---
 
-1. **Widget vs Data**: Is menu bar content a widget instance, or declarative data that gets rendered?
+## StatusBar Considerations
 
-2. **Menu Merging**: Can providers merge menus (base app menus + document-specific additions)?
+### Status: ✅ IMPLEMENTED
 
-3. **Binding Model**: How explicit is the slot-to-provider binding? Automatic via ancestry, or explicitly registered?
+StatusBar follows the same pattern as MenuBar:
 
-4. **Multiple Slots**: Could a window provide different menus for different slots (main menu bar vs local toolbar menu)?
+- `ApplicationProvider.StatusBarContent()` - apps provide status sections
+- `Desktop.updateStatusBarContent()` - swaps content based on active app
+- Focus-driven updates when active application changes
 
-## Prior Art
+---
 
-### Qt
+## Actions System
 
-- Separates `QMenuBar` (display) from `QAction` (commands)
-- Actions are abstract - same action appears in menu, toolbar, context menu, shortcut
-- `QMdiArea` is an explicit container widget for MDI children
-- On macOS, can automatically move menu bar to system location
-- Actions have "menu roles" for macOS integration (About, Preferences, Quit go to app menu)
+### Status: ⚠️ PARTIALLY IMPLEMENTED
 
-### GTK (3/4)
+### What Exists
 
-- `GAction` + `GMenu` pattern - menus are declarative data, not widgets
-- `GMenu` is a model, `GtkMenuBar` renders it
-- Actions live on `GtkApplication` or `GtkApplicationWindow`
-- Clear separation: define actions once, present them in multiple UI locations
+In `core/action.go`:
+```go
+type Action struct {
+    Text        string
+    Shortcut    Shortcut
+    Enabled     bool
+    Checkable   bool
+    Checked     bool
+    OnTriggered func()
+}
+```
 
-### Cocoa (macOS native)
+`Menu.AddAction(action *Action)` method exists.
 
-- **Responder chain**: Menu actions walk up from focused view to find a handler
-- `validateMenuItem:` - objects enable/disable menu items dynamically based on current state
-- Menu bar is app-global, but *which object handles each action* depends on focus
-- First responder determines context without swapping menu bar content
+### What's Missing
 
-### Electron
+1. **No ID field** - can't look up actions by identifier
+2. **Static Enabled** - should be `func() bool` for dynamic enable/disable
+3. **No registry** - no central place to define and look up actions
+4. **Not widely used** - most code uses direct menu item creation
 
-- Menus defined as JSON/data structures
-- Mapped to native menus on macOS, in-window on other platforms
-- Click handlers bound at definition time
+### Future Enhancement
 
-## Key Patterns to Consider
-
-### 1. Actions as First-Class Objects
-
-Define a command once (name, shortcut, icon, handler), use it in menu bar, toolbar, context menu:
-
+Consider evolving to:
 ```go
 type Action struct {
     ID          string
     Text        string
-    Shortcut    string
-    Icon        string
-    Enabled     func() bool
-    Triggered   func()
+    Shortcut    Shortcut
+    Icon        *style.TextIcon
+    Enabled     func() bool  // Dynamic!
+    Checkable   bool
+    Checked     func() bool  // Dynamic!
+    OnTriggered func()
 }
+
+// Per-application registry
+app.RegisterAction(action)
+action := app.Action("file.save")
 ```
 
-### 2. Responder Chain
+---
 
-Rather than swapping menu content, the *same* menu items route to *different handlers* based on focus. "Save" always exists in the menu, but the focused document handles it.
+## Prior Art
 
-This avoids the complexity of swapping menu bars while still achieving context sensitivity.
+### Qt
+- Separates `QMenuBar` (display) from `QAction` (commands)
+- Actions are abstract - same action appears in menu, toolbar, context menu, shortcut
+- `QMdiArea` is an explicit container widget for MDI children
+- On macOS, can automatically move menu bar to system location
 
-### 3. Menu as Model, Not Widget
+### GTK (3/4)
+- `GAction` + `GMenu` pattern - menus are declarative data, not widgets
+- `GMenu` is a model, `GtkMenuBar` renders it
+- Actions live on `GtkApplication` or `GtkApplicationWindow`
 
-Separate the menu definition (model/data) from the display (widget):
+### Cocoa (macOS native)
+- **Responder chain**: Menu actions walk up from focused view to find a handler
+- `validateMenuItem:` - objects enable/disable menu items dynamically
+- Menu bar is app-global, but *which object handles each action* depends on focus
+
+---
+
+## Future Considerations
+
+### Menu as Model (Deferred)
+
+Separating menu definition (model/data) from display (widget) would enable:
+- Same menu data for menu bar and context menu
+- Declarative menu definitions
+- Easier serialization
 
 ```go
-// Menu model - just data
 type MenuModel struct {
     Items []MenuItemModel
 }
-
-// Multiple widgets can render the same model
 menuBar.SetModel(model)
 contextMenu.SetModel(model)
 ```
 
-### 4. Chrome Widgets Find Their Context
+### Menu Merging (Deferred)
 
-Dock, MenuBar, StatusBar could look up their parent chain to find the nearest MDIPane (or other context provider) and interact with it:
+Allowing providers to merge menus (base app menus + document-specific additions) would support:
+- Plugin systems adding menu items
+- Document types adding specialized menus
 
-```go
-func (w *DockRow) findMDIPane() *MDIPane {
-    for parent := w.Parent(); parent != nil; parent = parent.Parent() {
-        if mdi, ok := parent.(*MDIPane); ok {
-            return mdi
-        }
-    }
-    return nil
-}
-```
-
-## StatusBar Considerations
-
-StatusBar could follow a similar pattern to MenuBar:
-
-- **StatusBarSlot**: Display location
-- **StatusBarProvider**: Interface for windows to provide status content
-- **Focus-driven**: Active window's status content is displayed
+---
 
 ## Recommendations
 
-### Phase 1: MDIPane Foundation
+### Completed Phases
 
-1. Create `MDIPane` widget with basic functionality
-2. Implement window management (add, remove, focus, z-order)
-3. Implement input routing (mouse, keyboard)
-4. Add lifecycle callbacks
+1. ~~**Phase 1: MDIPane Foundation**~~ - Partially done via WindowManager
+2. ~~**Phase 2: Desktop Refactoring**~~ - Done, Desktop uses composition
+3. ~~**Phase 3: Action System**~~ - Partial, basic Action type exists
+4. ~~**Phase 4: Context-Sensitive Menus**~~ - Done via menu swapping
 
-### Phase 2: Desktop Refactoring
+### Next Steps
 
-1. Refactor Desktop to use MDIPane internally
-2. Ensure backward compatibility
-3. Chrome widgets (Dock, etc.) look up MDIPane via ancestry
+1. **MDIPane Widget** - Extract reusable MDI container from Desktop/WindowManager
+2. **Dynamic Action.Enabled** - Convert to `func() bool` for context-sensitive enable/disable
+3. **Action Registry** - Add ID field and per-app lookup
 
-### Phase 3: Action System
-
-1. Define Action type as first-class object
-2. Actions can be used in menus, toolbars, shortcuts
-3. Enable/disable based on context
-
-### Phase 4: Context-Sensitive Menus
-
-1. Implement MenuBarProvider interface
-2. Implement focus-driven provider discovery
-3. Consider responder chain for action handling
+---
 
 ## Notes
 
-- The responder chain pattern (Cocoa-style) may be more elegant than explicit menu swapping
-- Start with simpler MDIPane work before tackling the full menu architecture
+- The menu-swapping approach proved simpler and sufficient vs responder chain
+- MDIPane remains valuable for embedding MDI in tabs, splitters, etc.
 - Keep the API flexible enough to support different application patterns

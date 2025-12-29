@@ -945,53 +945,158 @@ func createVerticalTabsDemo() core.Widget {
 // MDI child window counter for unique naming
 var mdiChildCount int
 
-// createMDIDemo creates a panel demonstrating MDI-style child windows.
+// createMDIDemo creates an MDIPane widget demonstration.
+// The MDIPane is a reusable widget that can be embedded anywhere.
 func createMDIDemo(desktop *widgets.Desktop, application *app.Application, parentWindow *window.Window) core.Widget {
+	// Create an MDIPane - this is a widget that can be embedded in tabs, splitters, etc.
+	mdiPane := widgets.NewMDIPane()
+	mdiPane.SetBackgroundChar('░') // Light shade pattern
+
+	// Create a control panel as background content
+	controlPanel := widgets.NewPanel()
+	controlLayout := layout.NewBoxLayout(core.Vertical)
+	controlLayout.SetSpacing(8)
+
+	// Description
+	descLabel := widgets.NewLabel("MDIPane Widget Demo")
+	controlPanel.AddChild(descLabel)
+
+	infoLabel := widgets.NewLabel("This MDIPane widget manages floating windows.\nIt can be embedded in tabs, splitters, or any container.")
+	controlPanel.AddChild(infoLabel)
+
+	// Button to spawn new MDI child window
+	spawnButton := widgets.NewButton("Spawn Window in MDIPane")
+	spawnButton.SetOnClick(func() {
+		mdiChildCount++
+		childWindow := createMDIPaneChildWindow(mdiPane, mdiChildCount)
+		mdiPane.AddWindow(childWindow)
+	})
+	controlPanel.AddChild(spawnButton)
+
+	// Button row for window management
+	buttonPanel := widgets.NewPanel()
+	hLayout := layout.NewBoxLayout(core.Horizontal)
+	hLayout.SetSpacing(8)
+
+	tileButton := widgets.NewButton("Tile")
+	tileButton.SetOnClick(func() {
+		mdiPane.TileWindows()
+	})
+	buttonPanel.AddChild(tileButton)
+
+	cascadeButton := widgets.NewButton("Cascade")
+	cascadeButton.SetOnClick(func() {
+		mdiPane.CascadeWindows()
+	})
+	buttonPanel.AddChild(cascadeButton)
+
+	nextButton := widgets.NewButton("Next")
+	nextButton.SetOnClick(func() {
+		mdiPane.NextWindow()
+	})
+	buttonPanel.AddChild(nextButton)
+
+	prevButton := widgets.NewButton("Prev")
+	prevButton.SetOnClick(func() {
+		mdiPane.PrevWindow()
+	})
+	buttonPanel.AddChild(prevButton)
+
+	buttonPanel.SetLayoutManager(hLayout)
+	controlPanel.AddChild(buttonPanel)
+
+	// Status label showing active window
+	statusLabel := widgets.NewLabel("Active: none")
+	controlPanel.AddChild(statusLabel)
+
+	// Update status when active window changes
+	mdiPane.SetOnActiveWindowChanged(func(win *window.Window) {
+		if win != nil {
+			statusLabel.SetText(fmt.Sprintf("Active: %s", win.Title()))
+		} else {
+			statusLabel.SetText("Active: none")
+		}
+	})
+
+	// Add a spacer
+	spacer := widgets.NewSpacer()
+	controlPanel.AddChild(spacer)
+
+	// Tips
+	tipLabel := widgets.NewLabel("Tips:")
+	controlPanel.AddChild(tipLabel)
+
+	tip1 := widgets.NewLabel("- Drag title bar to move")
+	controlPanel.AddChild(tip1)
+
+	tip2 := widgets.NewLabel("- Drag edges to resize")
+	controlPanel.AddChild(tip2)
+
+	tip3 := widgets.NewLabel("- Double-click title to maximize")
+	controlPanel.AddChild(tip3)
+
+	controlPanel.SetLayoutManager(controlLayout)
+
+	// Set the control panel as background content of the MDI pane
+	mdiPane.SetContent(controlPanel)
+
+	// Spawn an initial window to show capabilities
+	mdiChildCount++
+	initialWindow := createMDIPaneChildWindow(mdiPane, mdiChildCount)
+	mdiPane.AddWindow(initialWindow)
+
+	return mdiPane
+}
+
+// createMDIPaneChildWindow creates a window for use in an MDIPane.
+func createMDIPaneChildWindow(mdiPane *widgets.MDIPane, id int) *window.Window {
+	w := window.NewWindow(fmt.Sprintf("Document %d", id))
+
+	// Position with cascade offset
+	offset := (id - 1) % 5
+	w.SetBounds(core.UnitRect{
+		X:      core.Unit((offset*2 + 1) * 8),
+		Y:      core.Unit((offset + 1) * 16),
+		Width:  core.Unit(30 * 8),
+		Height: core.Unit(8 * 16),
+	})
+
 	panel := widgets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	boxLayout.SetSpacing(8)
 
-	// Description
-	descLabel := widgets.NewLabel("MDI (Multiple Document Interface) Demo")
-	panel.AddChild(descLabel)
+	label := widgets.NewLabel(fmt.Sprintf("Document #%d", id))
+	panel.AddChild(label)
 
-	infoLabel := widgets.NewLabel("Click the button below to spawn new child windows.\nChild windows appear within the parent window and can be\nmoved, resized, minimized, and maximized.")
-	panel.AddChild(infoLabel)
+	textInput := widgets.NewTextInput()
+	textInput.SetPlaceholder("Enter document content...")
+	panel.AddChild(textInput)
 
-	// Button to spawn new MDI child window
-	spawnButton := widgets.NewButton("Spawn MDI Child Window")
-	spawnButton.SetOnClick(func() {
+	buttonPanel := widgets.NewPanel()
+	hLayout := layout.NewBoxLayout(core.Horizontal)
+	hLayout.SetSpacing(8)
+
+	newButton := widgets.NewButton("New")
+	newButton.SetOnClick(func() {
 		mdiChildCount++
-		childWindow := createMDIChildWindow(parentWindow, mdiChildCount)
-		childWindow.SetParentWindow(parentWindow)
+		newWin := createMDIPaneChildWindow(mdiPane, mdiChildCount)
+		mdiPane.AddWindow(newWin)
 	})
-	panel.AddChild(spawnButton)
+	buttonPanel.AddChild(newButton)
 
-	// Add a spacer
-	spacer := widgets.NewSpacer()
-	panel.AddChild(spacer)
+	closeButton := widgets.NewButton("Close")
+	closeButton.SetOnClick(func() {
+		mdiPane.RemoveWindow(w)
+	})
+	buttonPanel.AddChild(closeButton)
 
-	// Info about window management
-	tipLabel := widgets.NewLabel("Tips:")
-	panel.AddChild(tipLabel)
-
-	tip1 := widgets.NewLabel("- Drag title bar to move windows")
-	panel.AddChild(tip1)
-
-	tip2 := widgets.NewLabel("- Drag edges to resize windows")
-	panel.AddChild(tip2)
-
-	tip3 := widgets.NewLabel("- Click [_] to minimize to dock")
-	panel.AddChild(tip3)
-
-	tip4 := widgets.NewLabel("- Click [#] to maximize window")
-	panel.AddChild(tip4)
-
-	tip5 := widgets.NewLabel("- Use Window > Tile or Cascade")
-	panel.AddChild(tip5)
+	buttonPanel.SetLayoutManager(hLayout)
+	panel.AddChild(buttonPanel)
 
 	panel.SetLayoutManager(boxLayout)
-	return panel
+	w.SetContent(panel)
+
+	return w
 }
 
 // createMDIChildWindow creates a simple MDI child window.
