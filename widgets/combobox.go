@@ -179,6 +179,22 @@ func (c *ComboBox) canScrollDown() bool {
 	return c.scrollOffset+effectiveVisible < len(c.items)
 }
 
+// enterClickMode switches to click mode and clamps scroll offset.
+// In click mode, all maxVisible rows are item rows (no scroll indicators),
+// so the max scroll offset is lower than in drag mode. This function ensures
+// the scroll offset is valid for click mode to avoid empty rows at the bottom.
+func (c *ComboBox) enterClickMode() {
+	c.clickMode = true
+	// Clamp scroll offset for click mode (which has more visible item rows)
+	maxOffset := len(c.items) - c.maxVisible
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if c.scrollOffset > maxOffset {
+		c.scrollOffset = maxOffset
+	}
+}
+
 // scrollUp scrolls the list up by the given amount.
 func (c *ComboBox) scrollUp(amount int) {
 	c.scrollOffset -= amount
@@ -1220,7 +1236,7 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 	} else {
 		// Not in click mode, released outside without drag - enter click mode
 		// This is the "click to open" case - popup should stay open
-		c.clickMode = true
+		c.enterClickMode()
 	}
 
 	return true
@@ -1587,7 +1603,7 @@ func (c *ComboBox) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 			// Click without drag on combobox - switch to click mode
 			// User clicked and released on combobox without moving
 			// Popup should stay open for click-to-select
-			c.clickMode = true
+			c.enterClickMode()
 			return true
 		}
 	}
@@ -1595,7 +1611,7 @@ func (c *ComboBox) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Release on the combobox button itself (not popup)
 	if event.Y < popupY && event.X >= 0 && event.X < bounds.Width && wasMouseDown && !wasDragging {
 		// Quick click on combobox - switch to click mode
-		c.clickMode = true
+		c.enterClickMode()
 		return true
 	}
 
@@ -1605,7 +1621,7 @@ func (c *ComboBox) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		c.HidePopup()
 	} else if wasMouseDown {
 		// Released outside without dragging - just switch to click mode
-		c.clickMode = true
+		c.enterClickMode()
 	}
 
 	return true
