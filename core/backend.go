@@ -39,12 +39,14 @@ type RenderBackend interface {
 	// DrawCell draws a single character at the given position.
 	DrawCell(x, y Unit, ch rune, s style.CellStyle)
 
-	// DrawText draws a string starting at the given position.
+	// DrawText draws a string starting at the given position using the given font.
+	// If font is nil, uses DefaultFont().
 	// Returns the width consumed in units.
-	DrawText(x, y Unit, text string, s style.CellStyle) Unit
+	DrawText(x, y Unit, text string, s style.CellStyle, font *Font) Unit
 
-	// DrawTextAligned draws text aligned within a box.
-	DrawTextAligned(bounds UnitRect, text string, hAlign, vAlign Alignment, s style.CellStyle)
+	// DrawTextAligned draws text aligned within a box using the given font.
+	// If font is nil, uses DefaultFont().
+	DrawTextAligned(bounds UnitRect, text string, hAlign, vAlign Alignment, s style.CellStyle, font *Font)
 
 	// FillRect fills a rectangle with a character and style.
 	FillRect(r UnitRect, ch rune, s style.CellStyle)
@@ -266,18 +268,20 @@ func (p *Painter) DrawCell(x, y Unit, ch rune, s style.CellStyle) {
 	p.backend.DrawCell(sx, sy, ch, s)
 }
 
-// DrawText draws a string.
-func (p *Painter) DrawText(x, y Unit, text string, s style.CellStyle) Unit {
+// DrawText draws a string using the specified font.
+// If font is nil, uses DefaultFont().
+func (p *Painter) DrawText(x, y Unit, text string, s style.CellStyle, font *Font) Unit {
 	sx, sy := p.toScreen(x, y)
 	p.applyClip()
-	return p.backend.DrawText(sx, sy, text, s)
+	return p.backend.DrawText(sx, sy, text, s, font)
 }
 
-// DrawTextAligned draws text aligned within a box.
-func (p *Painter) DrawTextAligned(bounds UnitRect, text string, hAlign, vAlign Alignment, s style.CellStyle) {
+// DrawTextAligned draws text aligned within a box using the specified font.
+// If font is nil, uses DefaultFont().
+func (p *Painter) DrawTextAligned(bounds UnitRect, text string, hAlign, vAlign Alignment, s style.CellStyle, font *Font) {
 	screenBounds := p.transform.ApplyRect(bounds)
 	p.applyClip()
-	p.backend.DrawTextAligned(screenBounds, text, hAlign, vAlign, s)
+	p.backend.DrawTextAligned(screenBounds, text, hAlign, vAlign, s, font)
 }
 
 // FillRect fills a rectangle.

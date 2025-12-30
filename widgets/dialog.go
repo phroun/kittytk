@@ -709,7 +709,7 @@ func (f *FileDialog) Paint(p *core.Painter) {
 	y := metrics.CellHeight * 2
 
 	// Path label and input
-	p.DrawText(metrics.CellWidth*2, y, "Location:", f.Theme().Normal)
+	p.DrawText(metrics.CellWidth*2, y, "Location:", f.Theme().Normal, nil)
 	f.pathInput.SetBounds(core.UnitRect{
 		X:      metrics.CellWidth * 12,
 		Y:      y,
@@ -732,7 +732,7 @@ func (f *FileDialog) Paint(p *core.Painter) {
 
 	// File name input (for save dialog)
 	if f.fileNameInput != nil {
-		p.DrawText(metrics.CellWidth*2, y, "File name:", f.Theme().Normal)
+		p.DrawText(metrics.CellWidth*2, y, "File name:", f.Theme().Normal, nil)
 		f.fileNameInput.SetBounds(core.UnitRect{
 			X:      metrics.CellWidth * 14,
 			Y:      y,
@@ -896,7 +896,7 @@ func (d *InputDialog) Paint(p *core.Painter) {
 
 	// Label
 	y := metrics.CellHeight * 2
-	p.DrawText(metrics.CellWidth*2, y, d.labelText, theme.Normal)
+	p.DrawText(metrics.CellWidth*2, y, d.labelText, theme.Normal, nil)
 
 	// Input
 	y += metrics.CellHeight

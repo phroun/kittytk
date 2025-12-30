@@ -906,14 +906,14 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		isFocused := titleFocus == TitleFocusClose
 		isPressed := pressedButton == TitleButtonClose && buttonHovered
 		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
-		p.DrawText(controlX, 0, "[x]", btnStyle)
+		p.DrawText(controlX, 0, "[x]", btnStyle, nil)
 		controlX += metrics.TextWidth(3)
 	}
 	if flags&WindowFlagNoMinimize == 0 {
 		isFocused := titleFocus == TitleFocusMinimize
 		isPressed := pressedButton == TitleButtonMinimize && buttonHovered
 		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
-		p.DrawText(controlX, 0, "[.]", btnStyle)
+		p.DrawText(controlX, 0, "[.]", btnStyle, nil)
 		controlX += metrics.TextWidth(3)
 	}
 	if flags&WindowFlagNoMaximize == 0 {
@@ -921,9 +921,9 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
 		if state == WindowStateMaximized {
-			p.DrawText(controlX, 0, "[o]", btnStyle) // Restore icon
+			p.DrawText(controlX, 0, "[o]", btnStyle, nil) // Restore icon
 		} else {
-			p.DrawText(controlX, 0, "[^]", btnStyle) // Maximize icon
+			p.DrawText(controlX, 0, "[^]", btnStyle, nil) // Maximize icon
 		}
 		controlX += metrics.TextWidth(3)
 	}
@@ -935,13 +935,13 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		displayTitle = "< " + title + " >"
 		titleDisplayStyle = scheme.GetTitleBarButton(focused, true, false)
 	}
-	p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle)
+	p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle, nil)
 
 	// Draw blur button on far right when blur item is focused
 	if titleFocus == TitleFocusBlur {
 		blurBtnStyle := scheme.GetTitleBarButton(focused, true, false) // Focused button style
 		blurX := bounds.Width - metrics.TextWidth(3)                   // Position at far right
-		p.DrawText(blurX, 0, "[~]", blurBtnStyle)
+		p.DrawText(blurX, 0, "[~]", blurBtnStyle, nil)
 	}
 
 	// Fill content area with background (same as normal frame)
@@ -1055,14 +1055,14 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			isFocused := titleFocus == TitleFocusClose
 			isPressed := pressedButton == TitleButtonClose && buttonHovered
 			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
-			p.DrawText(controlX, 0, "[x]", btnStyle)
+			p.DrawText(controlX, 0, "[x]", btnStyle, nil)
 			controlX += metrics.TextWidth(3)
 		}
 		if flags&WindowFlagNoMinimize == 0 {
 			isFocused := titleFocus == TitleFocusMinimize
 			isPressed := pressedButton == TitleButtonMinimize && buttonHovered
 			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
-			p.DrawText(controlX, 0, "[.]", btnStyle)
+			p.DrawText(controlX, 0, "[.]", btnStyle, nil)
 			controlX += metrics.TextWidth(3)
 		}
 		if flags&WindowFlagNoMaximize == 0 {
@@ -1070,9 +1070,9 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
 			if state == WindowStateMaximized {
-				p.DrawText(controlX, 0, "[o]", btnStyle) // Restore icon
+				p.DrawText(controlX, 0, "[o]", btnStyle, nil) // Restore icon
 			} else {
-				p.DrawText(controlX, 0, "[^]", btnStyle) // Maximize icon
+				p.DrawText(controlX, 0, "[^]", btnStyle, nil) // Maximize icon
 			}
 			controlX += metrics.TextWidth(3)
 		}
@@ -1099,13 +1099,13 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		if len(displayTitle) > maxTitleWidth && maxTitleWidth > 0 {
 			displayTitle = displayTitle[:maxTitleWidth-1] + "…"
 		}
-		p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle)
+		p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle, nil)
 
 		// Draw blur button on far right when blur item is focused
 		if titleFocus == TitleFocusBlur {
 			blurBtnStyle := scheme.GetTitleBarButton(true, true, false) // Focused button style
 			blurX := localBounds.Width - metrics.CellWidth - metrics.TextWidth(3) // Position before right border
-			p.DrawText(blurX, 0, "[~]", blurBtnStyle)
+			p.DrawText(blurX, 0, "[~]", blurBtnStyle, nil)
 		}
 	}
 

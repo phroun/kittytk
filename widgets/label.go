@@ -154,6 +154,7 @@ func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellSt
 			l.alignment,
 			core.AlignTop,
 			s,
+			l.EffectiveFont(),
 		)
 		y += metrics.CellHeight
 	}
@@ -183,6 +184,7 @@ func (l *Label) paintWrapped(p *core.Painter, bounds core.UnitRect, s style.Cell
 			l.alignment,
 			core.AlignTop,
 			s,
+			l.EffectiveFont(),
 		)
 		y += metrics.CellHeight
 	}

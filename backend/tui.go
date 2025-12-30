@@ -395,25 +395,38 @@ func (t *TUIBackend) DrawCell(x, y core.Unit, ch rune, s style.CellStyle) {
 	t.setCell(col, row, ch, s)
 }
 
-// DrawText draws a string starting at the given position.
-func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle) core.Unit {
+// DrawText draws a string starting at the given position using the given font.
+func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, font *core.Font) core.Unit {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if font == nil {
+		font = core.DefaultFont()
+	}
 
 	col := t.metrics.UnitsToCellX(x)
 	row := t.metrics.UnitsToCellY(y)
 
 	startCol := col
+	isTuesday := font.Name == "Tuesday"
+
 	for _, ch := range text {
 		if col >= t.cols {
 			break
 		}
 		t.setCell(col, row, ch, s)
 		col++
+
 		// Handle wide characters (CJK, emoji)
 		if runeWidth(ch) > 1 {
 			if col < t.cols {
 				t.setCell(col, row, 0, s) // Placeholder for wide char
+				col++
+			}
+		} else if isTuesday && isAlphanumeric(ch) {
+			// Tuesday font: add space after alphabetic/numeric chars
+			if col < t.cols {
+				t.setCell(col, row, ' ', s)
 				col++
 			}
 		}
@@ -422,10 +435,19 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle) co
 	return t.metrics.TextWidth(col - startCol)
 }
 
-// DrawTextAligned draws text aligned within a box.
-func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, vAlign core.Alignment, s style.CellStyle) {
+// isAlphanumeric returns true if the character is a letter or digit.
+func isAlphanumeric(ch rune) bool {
+	return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
+}
+
+// DrawTextAligned draws text aligned within a box using the given font.
+func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, vAlign core.Alignment, s style.CellStyle, font *core.Font) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if font == nil {
+		font = core.DefaultFont()
+	}
 
 	// Convert bounds to cells
 	col1 := t.metrics.UnitsToCellX(bounds.X)
@@ -436,7 +458,18 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 	boxWidth := col2 - col1
 	boxHeight := row2 - row1
 
-	textLen := utf8.RuneCountInString(text)
+	isTuesday := font.Name == "Tuesday"
+
+	// Calculate text width in cells accounting for font
+	textCells := 0
+	for _, ch := range text {
+		textCells++
+		if runeWidth(ch) > 1 {
+			textCells++
+		} else if isTuesday && isAlphanumeric(ch) {
+			textCells++ // Extra cell for spacing
+		}
+	}
 
 	// Calculate horizontal position
 	var col int
@@ -444,9 +477,9 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 	case core.AlignLeft:
 		col = col1
 	case core.AlignCenter:
-		col = col1 + (boxWidth-textLen)/2
+		col = col1 + (boxWidth-textCells)/2
 	case core.AlignRight:
-		col = col2 - textLen
+		col = col2 - textCells
 	default:
 		col = col1
 	}
@@ -473,6 +506,20 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 			t.setCell(col, row, ch, s)
 		}
 		col++
+
+		// Handle wide characters
+		if runeWidth(ch) > 1 {
+			if col < col2 && col >= col1 {
+				t.setCell(col, row, 0, s)
+			}
+			col++
+		} else if isTuesday && isAlphanumeric(ch) {
+			// Tuesday font: add space after alphabetic/numeric chars
+			if col < col2 && col >= col1 {
+				t.setCell(col, row, ' ', s)
+			}
+			col++
+		}
 	}
 }
 
