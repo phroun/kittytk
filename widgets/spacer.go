@@ -10,16 +10,18 @@ import (
 type Spacer struct {
 	core.WidgetBase
 
-	// Size in cells (default 1x1)
-	widthCells  int
-	heightCells int
+	// Size in units
+	size core.UnitSize
 }
 
 // NewSpacer creates a new spacer with default size of 1x1 cell.
 func NewSpacer() *Spacer {
+	metrics := core.DefaultCellMetrics()
 	s := &Spacer{
-		widthCells:  1,
-		heightCells: 1,
+		size: core.UnitSize{
+			Width:  metrics.CellWidth,
+			Height: metrics.CellHeight,
+		},
 	}
 	s.WidgetBase = *core.NewWidgetBase()
 	s.Init(s)
@@ -27,28 +29,31 @@ func NewSpacer() *Spacer {
 	return s
 }
 
-// NewSpacerWithSize creates a new spacer with the specified size in cells.
-func NewSpacerWithSize(widthCells, heightCells int) *Spacer {
-	s := NewSpacer()
-	s.widthCells = widthCells
-	s.heightCells = heightCells
+// NewSpacerWithSize creates a new spacer with the specified size in units.
+func NewSpacerWithSize(size core.UnitSize) *Spacer {
+	s := &Spacer{
+		size: size,
+	}
+	s.WidgetBase = *core.NewWidgetBase()
+	s.Init(s)
+	s.SetFocusPolicy(core.NoFocus)
 	return s
 }
 
-// SetSizeCells sets the spacer size in cells.
-func (s *Spacer) SetSizeCells(widthCells, heightCells int) {
-	s.widthCells = widthCells
-	s.heightCells = heightCells
+// SetSize sets the spacer size in units.
+func (s *Spacer) SetSize(size core.UnitSize) {
+	s.size = size
 	s.Update()
 }
 
-// SizeHint returns the preferred size based on cell dimensions.
+// Size returns the spacer size in units.
+func (s *Spacer) Size() core.UnitSize {
+	return s.size
+}
+
+// SizeHint returns the preferred size.
 func (s *Spacer) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
-	return core.UnitSize{
-		Width:  core.Unit(s.widthCells) * metrics.CellWidth,
-		Height: core.Unit(s.heightCells) * metrics.CellHeight,
-	}
+	return s.size
 }
 
 // Paint renders the spacer (which is invisible - just takes up space).
