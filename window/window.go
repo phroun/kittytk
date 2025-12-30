@@ -872,7 +872,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 
 	// When blur item is focused, draw dashed frame with inactive title color
-	// but keep corners, adjacent chars, and buttons in active color
+	// but keep corners, horizontally adjacent chars, and buttons in active color
 	if titleFocus == TitleFocusBlur {
 		scheme := w.GetScheme()
 		blurFrameStyle := scheme.GetWindowTitle(false)  // Inactive title color for dashed lines
@@ -882,15 +882,14 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		horizDash := '┄' // U+2504 BOX DRAWINGS LIGHT TRIPLE DASH HORIZONTAL
 		vertDash := '┆'  // U+2506 BOX DRAWINGS LIGHT TRIPLE DASH VERTICAL
 
-		// Single solid corners (in active color)
-		topLeft := '┌'
-		topRight := '┐'
-		bottomLeft := '└'
-		bottomRight := '┘'
+		// Double corners (in active color)
+		topLeft := '╔'
+		topRight := '╗'
+		bottomLeft := '╚'
+		bottomRight := '╝'
 
-		// Get border characters for adjacent positions (from the border style)
+		// Get border character for horizontally adjacent positions
 		horizLine := border.Horizontal
-		vertLine := border.Vertical
 
 		// Draw corners in active color
 		p.DrawCell(0, 0, topLeft, activeFrameStyle)
@@ -918,24 +917,14 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			}
 		}
 
-		// Draw left edge - first and last chars adjacent to corners in active color, rest dashed
+		// Draw left edge - all dashed
 		for y := metrics.CellHeight; y < localBounds.Height-metrics.CellHeight; y += metrics.CellHeight {
-			if y == metrics.CellHeight || y == localBounds.Height-2*metrics.CellHeight {
-				// Adjacent to corner - use active style with normal vertical line
-				p.DrawCell(0, y, vertLine, activeFrameStyle)
-			} else {
-				p.DrawCell(0, y, vertDash, blurFrameStyle)
-			}
+			p.DrawCell(0, y, vertDash, blurFrameStyle)
 		}
 
-		// Draw right edge - first and last chars adjacent to corners in active color, rest dashed
+		// Draw right edge - all dashed
 		for y := metrics.CellHeight; y < localBounds.Height-metrics.CellHeight; y += metrics.CellHeight {
-			if y == metrics.CellHeight || y == localBounds.Height-2*metrics.CellHeight {
-				// Adjacent to corner - use active style with normal vertical line
-				p.DrawCell(localBounds.Width-metrics.CellWidth, y, vertLine, activeFrameStyle)
-			} else {
-				p.DrawCell(localBounds.Width-metrics.CellWidth, y, vertDash, blurFrameStyle)
-			}
+			p.DrawCell(localBounds.Width-metrics.CellWidth, y, vertDash, blurFrameStyle)
 		}
 	} else {
 		p.DrawRect(localBounds, border, frameStyle)
