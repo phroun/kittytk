@@ -1420,6 +1420,17 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 	}
 }
 
+// announceCurrentMenu announces the currently selected menu for accessibility.
+func (m *MenuBar) announceCurrentMenu() {
+	if m.currentIndex < 0 || m.currentIndex >= len(m.menus) {
+		return
+	}
+	menu := m.menus[m.currentIndex]
+	if am := core.FindAccessibilityManager(m); am != nil {
+		am.AnnouncePolite(menu.title + ", menu")
+	}
+}
+
 // clampScrollOffset adjusts the scroll offset when the container is resized.
 // It ensures we don't have unnecessary empty space on the right when we could
 // show more menus, and resets to 0 when scrolling is no longer needed.
@@ -2012,6 +2023,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 			} else {
 				m.currentIndex = newIndex
 				m.ensureMenuVisible(newIndex)
+				m.announceCurrentMenu()
 				m.Update()
 			}
 		}
@@ -2028,6 +2040,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 			} else {
 				m.currentIndex = newIndex
 				m.ensureMenuVisible(newIndex)
+				m.announceCurrentMenu()
 				m.Update()
 			}
 		}
