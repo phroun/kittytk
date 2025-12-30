@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"sync"
 
 	"github.com/phroun/tuitk/app"
 	"github.com/phroun/tuitk/backend"
@@ -159,6 +160,12 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 	// Track accessibility settings
 	var showVisualAnnouncements, speakAnnouncements bool
 
+	// Track current speech process so we can interrupt it
+	var (
+		speechMu  sync.Mutex
+		speechCmd *exec.Cmd
+	)
+
 	updateAccessibilityHandler := func() {
 		am := desktop.AccessibilityManager()
 		if am == nil {
@@ -186,8 +193,21 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 			// Text-to-speech on macOS using 'say' command
 			if speakAnnouncements && runtime.GOOS == "darwin" {
 				go func(msg string) {
-					cmd := exec.Command("say", "-r", "200", msg)
-					_ = cmd.Run()
+					speechMu.Lock()
+					// Kill any previous speech
+					if speechCmd != nil && speechCmd.Process != nil {
+						_ = speechCmd.Process.Kill()
+						_ = speechCmd.Wait()
+					}
+					// Start new speech
+					speechCmd = exec.Command("say", "-r", "250", msg)
+					speechMu.Unlock()
+
+					_ = speechCmd.Run()
+
+					speechMu.Lock()
+					speechCmd = nil
+					speechMu.Unlock()
 				}(announcement.Message)
 			}
 		}
