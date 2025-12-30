@@ -1184,7 +1184,11 @@ func (d *Desktop) SetKeyboardBlurChildren(enabled bool) {
 // PerformKeyboardBlur implements core.KeyboardBlurChildrenProvider.
 // It performs the F10 action (focus the menu bar), same as pressing F10.
 func (d *Desktop) PerformKeyboardBlur() {
-	// Same as F10 - activate the menu bar
+	// Deactivate the active window first (so it visually shows as inactive)
+	if d.windowManager != nil {
+		d.windowManager.DeactivateActiveWindow()
+	}
+	// Then activate the menu bar
 	if d.menuBar != nil {
 		d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
 	}
@@ -1473,6 +1477,10 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 	if d.menuBar != nil {
 		// F10 toggles menu bar focus
 		if event.Key == "F10" {
+			// Deactivate the active window when invoking menu bar
+			if d.windowManager != nil && !d.menuBar.HasFocus() {
+				d.windowManager.DeactivateActiveWindow()
+			}
 			d.menuBar.HandleKeyPress(event)
 			return true
 		}
