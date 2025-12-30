@@ -99,9 +99,10 @@ type Timer struct {
 // The backend parameter is optional - pass nil if the Desktop owns the backend.
 func New(backend core.RenderBackend) *Application {
 	app := &Application{
-		quitChan:   make(chan struct{}),
-		updateChan: make(chan struct{}, 100),
-		theme:      style.DefaultTheme(),
+		quitChan:             make(chan struct{}),
+		updateChan:           make(chan struct{}, 100),
+		theme:                style.DefaultTheme(),
+		accessibilityManager: core.NewAccessibilityManager(),
 	}
 
 	if backend != nil {
@@ -112,7 +113,6 @@ func New(backend core.RenderBackend) *Application {
 			app.RequestUpdate()
 		})
 		app.focusManager = core.NewGlobalFocusManager()
-		app.accessibilityManager = core.NewAccessibilityManager()
 		app.shortcuts = core.DefaultShortcuts()
 
 		// Connect accessibility to focus manager

@@ -201,7 +201,9 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		showVisualAnnouncements = screenReaderItem.Checked
 		updateAccessibilityHandler()
 		if showVisualAnnouncements {
-			application.AccessibilityManager().AnnouncePolite("Visual announcements enabled")
+			if am := application.AccessibilityManager(); am != nil {
+				am.AnnouncePolite("Visual announcements enabled")
+			}
 		}
 	})
 	viewMenu.AddItem(screenReaderItem)
@@ -217,7 +219,9 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		speakAnnouncements = speakItem.Checked
 		updateAccessibilityHandler()
 		if speakAnnouncements {
-			application.AccessibilityManager().AnnouncePolite("Text to speech enabled")
+			if am := application.AccessibilityManager(); am != nil {
+				am.AnnouncePolite("Text to speech enabled")
+			}
 		}
 	})
 	viewMenu.AddItem(speakItem)
