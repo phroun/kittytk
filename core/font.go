@@ -68,10 +68,11 @@ type Font struct {
 
 // Predefined fonts
 var (
-	// FontMonday12 is the standard font (8 units per character).
+	// FontMonday12 is the standard fixed-width font (8 units per character).
 	FontMonday12 = &Font{Name: "Monday", Size: 12}
 
-	// FontTuesday12 is the wide font (16 units per character).
+	// FontTuesday12 is a proportional-style font (16 units for letters/digits,
+	// 8 units for punctuation and symbols).
 	FontTuesday12 = &Font{Name: "Tuesday", Size: 12}
 )
 
@@ -86,32 +87,25 @@ func (f *Font) LineHeight() Unit {
 	return 16
 }
 
-// baseCharWidth returns the internal unit width per character for this font.
-// This is private to prevent leaking implementation details.
-func (f *Font) baseCharWidth() Unit {
-	if f == nil || f.Name == "" || f.Name == "Monday" {
-		return 8
-	}
-	if f.Name == "Tuesday" {
-		return 16
-	}
-	// Default to Monday width for unknown fonts
-	return 8
-}
-
 // MeasureText returns the width in units needed to display the given text.
-// This accounts for the font's metrics and handles special characters like CJK.
+// This accounts for the font's metrics and handles special characters.
+// For Tuesday font, only alphabetic characters are double-width; punctuation
+// and symbols remain standard width to simulate proportional font behavior.
 func (f *Font) MeasureText(text string) Unit {
 	if f == nil {
 		f = DefaultFont()
 	}
 
-	charWidth := f.baseCharWidth()
 	total := Unit(0)
+	isTuesday := f.Name == "Tuesday"
 
 	for _, ch := range text {
-		// Add width for each rune
-		total += charWidth
+		// Determine base width for this character
+		if isTuesday && isAlphabetic(ch) {
+			total += 16
+		} else {
+			total += 8
+		}
 
 		// Wide characters (CJK, etc.) need additional width
 		if isWideChar(ch) {
@@ -123,12 +117,45 @@ func (f *Font) MeasureText(text string) Unit {
 }
 
 // MeasureRunes returns the width in units for a given number of runes.
-// This is useful when you already know the rune count and characters are standard width.
+// This assumes all characters are alphabetic (full width for Tuesday font).
+// For mixed content, use MeasureText instead.
 func (f *Font) MeasureRunes(runeCount int) Unit {
 	if f == nil {
 		f = DefaultFont()
 	}
-	return Unit(runeCount) * f.baseCharWidth()
+	if f.Name == "Tuesday" {
+		return Unit(runeCount) * 16
+	}
+	return Unit(runeCount) * 8
+}
+
+// isAlphabetic returns true if the character is a letter or digit.
+func isAlphabetic(ch rune) bool {
+	// Basic Latin letters
+	if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') {
+		return true
+	}
+	// Digits
+	if ch >= '0' && ch <= '9' {
+		return true
+	}
+	// Latin Extended-A
+	if ch >= 0x0100 && ch <= 0x017F {
+		return true
+	}
+	// Latin Extended-B
+	if ch >= 0x0180 && ch <= 0x024F {
+		return true
+	}
+	// Greek and Coptic
+	if ch >= 0x0370 && ch <= 0x03FF {
+		return true
+	}
+	// Cyrillic
+	if ch >= 0x0400 && ch <= 0x04FF {
+		return true
+	}
+	return false
 }
 
 // HasStyle returns true if the font has the given style flag set.
