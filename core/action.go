@@ -188,6 +188,85 @@ func (s Shortcut) DisplayString() string {
 	return string(s)
 }
 
+// AccessibilityString returns a fully spelled-out representation of the shortcut
+// for screen reader announcements.
+// Translates: M- → Meta, A- → Alt, C-/^ → Control, S- → Shift, s- → Super, H- → Hyper
+// Uppercase final letter implies Shift (e.g., M-O → Meta+Shift+O)
+func (s Shortcut) AccessibilityString() string {
+	if s == "" {
+		return ""
+	}
+
+	str := string(s)
+	var modifiers []string
+	hasExplicitShift := false
+
+	// Parse modifier prefixes
+	for len(str) > 0 {
+		if len(str) >= 2 {
+			prefix := str[:2]
+			switch prefix {
+			case "M-":
+				modifiers = append(modifiers, "Meta")
+				str = str[2:]
+				continue
+			case "A-":
+				modifiers = append(modifiers, "Alt")
+				str = str[2:]
+				continue
+			case "C-":
+				modifiers = append(modifiers, "Control")
+				str = str[2:]
+				continue
+			case "S-":
+				modifiers = append(modifiers, "Shift")
+				hasExplicitShift = true
+				str = str[2:]
+				continue
+			case "s-":
+				modifiers = append(modifiers, "Super")
+				str = str[2:]
+				continue
+			case "H-":
+				modifiers = append(modifiers, "Hyper")
+				str = str[2:]
+				continue
+			}
+		}
+		// Check for ^ prefix (Control)
+		if len(str) >= 1 && str[0] == '^' {
+			modifiers = append(modifiers, "Control")
+			str = str[1:]
+			continue
+		}
+		break
+	}
+
+	// The remaining string is the key
+	key := str
+
+	// Check if single letter key is uppercase (implies Shift)
+	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' && !hasExplicitShift {
+		modifiers = append(modifiers, "Shift")
+	}
+
+	// Build the result
+	if len(modifiers) == 0 {
+		return key
+	}
+
+	result := ""
+	for i, mod := range modifiers {
+		if i > 0 {
+			result += "+"
+		}
+		result += mod
+	}
+	result += "+" + key
+
+	return result
+}
+
 // ActionGroup manages a collection of related actions.
 type ActionGroup struct {
 	mu       sync.RWMutex

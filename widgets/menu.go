@@ -552,7 +552,7 @@ func (m *Menu) announceCurrentItem() {
 		extras = append(extras, "submenu")
 	}
 	if item.Shortcut != "" {
-		extras = append(extras, item.Shortcut.DisplayString())
+		extras = append(extras, item.Shortcut.AccessibilityString())
 	}
 	if !item.Enabled {
 		extras = append(extras, "disabled")
