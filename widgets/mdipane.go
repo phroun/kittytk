@@ -32,6 +32,11 @@ type MDIPane struct {
 	// Background pattern character
 	bgChar rune
 
+	// Whether to draw the pattern background (true) or solid background like ScrollArea (false)
+	// Defaults to true when no content, automatically set to false when content is added
+	drawPattern    bool
+	drawPatternSet bool // tracks if drawPattern was explicitly set
+
 	// Floating windows in z-order (back to front)
 	windows []*window.Window
 
@@ -75,7 +80,8 @@ type MDIPane struct {
 // NewMDIPane creates a new MDI pane widget.
 func NewMDIPane() *MDIPane {
 	m := &MDIPane{
-		bgChar: '░', // Light shade for MDI background
+		bgChar:      '░',  // Light shade for MDI background
+		drawPattern: true, // Default to pattern when no content
 	}
 	m.WidgetBase = *core.NewWidgetBase()
 	m.Init(m)
@@ -83,13 +89,39 @@ func NewMDIPane() *MDIPane {
 	return m
 }
 
+// DrawPattern returns whether the MDI pane draws a pattern background.
+func (m *MDIPane) DrawPattern() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.drawPattern
+}
+
+// SetDrawPattern sets whether the MDI pane draws a pattern background.
+// When true, draws a pattern character with DesktopFill colors.
+// When false, draws a solid background like ScrollArea.
+func (m *MDIPane) SetDrawPattern(drawPattern bool) {
+	m.mu.Lock()
+	m.drawPattern = drawPattern
+	m.drawPatternSet = true
+	m.mu.Unlock()
+	m.Update()
+}
+
 // SetContent sets the background content widget.
 // This widget is displayed behind all floating windows.
+// When content is added and drawPattern hasn't been explicitly set,
+// drawPattern is automatically set to false for a solid background.
 func (m *MDIPane) SetContent(content core.Widget) {
 	m.mu.Lock()
+	hadContent := m.content != nil
 	m.content = content
 	if content != nil {
 		content.SetParent(m)
+		// Auto-switch to solid background when first content is added
+		// (unless drawPattern was explicitly set)
+		if !hadContent && !m.drawPatternSet {
+			m.drawPattern = false
+		}
 	}
 	m.mu.Unlock()
 	m.layoutContent()
@@ -918,16 +950,25 @@ func (m *MDIPane) Paint(p *core.Painter) {
 
 	m.mu.RLock()
 	bgChar := m.bgChar
+	drawPattern := m.drawPattern
 	content := m.content
 	windows := m.windows
 	m.mu.RUnlock()
 
-	// Draw background pattern
-	bgStyle := scheme.GetDesktopFill()
-	for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
-		for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
-			p.DrawCell(x, y, bgChar, bgStyle)
+	// Draw background
+	if drawPattern {
+		// Draw pattern background (like Desktop)
+		bgStyle := scheme.GetDesktopFill()
+		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
+			for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
+				p.DrawCell(x, y, bgChar, bgStyle)
+			}
 		}
+	} else {
+		// Draw solid background (like ScrollArea)
+		inheritedBg := m.EffectiveBackgroundColor()
+		bgStyle := scheme.GetNormal(true).WithBg(inheritedBg)
+		p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 	}
 
 	// Draw content if any
