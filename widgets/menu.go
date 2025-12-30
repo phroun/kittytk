@@ -1758,7 +1758,13 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			var s style.CellStyle
 			isSelected := i == m.currentIndex
 			if isSelected {
-				s = scheme.GetActiveMenuBarItem()
+				// Use Active style when dropdown is open with item selected,
+				// Focused style when dropdown not open or has no selection
+				if m.activeMenu != nil && m.activeMenu.currentIndex != -1 {
+					s = scheme.GetActiveMenuBarItem()
+				} else {
+					s = scheme.GetFocusedMenuBarItem()
+				}
 			} else {
 				s = menuBarStyle
 			}
@@ -1766,7 +1772,11 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			// Calculate accelerator style for this menu
 			var accelStyle style.CellStyle
 			if isSelected {
-				accelStyle = scheme.GetActiveMenuBarMeta()
+				if m.activeMenu != nil && m.activeMenu.currentIndex != -1 {
+					accelStyle = scheme.GetActiveMenuBarMeta()
+				} else {
+					accelStyle = scheme.GetFocusedMenuBarMeta()
+				}
 			} else {
 				accelStyle = scheme.GetMenuBarMeta()
 			}
@@ -1845,8 +1855,15 @@ func (m *MenuBar) Paint(p *core.Painter) {
 
 		// Determine style
 		var s style.CellStyle
-		if i == m.currentIndex {
-			s = scheme.GetActiveMenuBarItem()
+		isSelected := i == m.currentIndex
+		if isSelected {
+			// Use Active style when dropdown is open with item selected,
+			// Focused style when dropdown not open or has no selection
+			if m.activeMenu != nil && m.activeMenu.currentIndex != -1 {
+				s = scheme.GetActiveMenuBarItem()
+			} else {
+				s = scheme.GetFocusedMenuBarItem()
+			}
 		} else {
 			s = menuBarStyle
 		}
@@ -1863,8 +1880,12 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		textX := x + metrics.CellWidth
 		// Accelerator style depends on whether menu is selected
 		var accelStyle style.CellStyle
-		if i == m.currentIndex {
-			accelStyle = scheme.GetActiveMenuBarMeta()
+		if isSelected {
+			if m.activeMenu != nil && m.activeMenu.currentIndex != -1 {
+				accelStyle = scheme.GetActiveMenuBarMeta()
+			} else {
+				accelStyle = scheme.GetFocusedMenuBarMeta()
+			}
 		} else {
 			accelStyle = scheme.GetMenuBarMeta()
 		}
