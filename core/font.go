@@ -46,8 +46,8 @@ func ExplicitFontColor(c style.Color) FontColor {
 }
 
 // Font represents a typeface with styling information.
-// In text mode, fonts control character cell width and text attributes.
-// In future graphical modes, fonts will map to actual typeface rendering.
+// Fonts provide metrics for text measurement in units and control text attributes.
+// Use MeasureText or MeasureRunes to determine the width of text in units.
 type Font struct {
 	// Name identifies the font family.
 	// Built-in fonts: "Monday" (standard width), "Tuesday" (double width)
@@ -66,12 +66,12 @@ type Font struct {
 	Background FontColor
 }
 
-// Predefined fonts for text mode
+// Predefined fonts
 var (
-	// FontMonday12 is the standard text mode font (8 units per character).
+	// FontMonday12 is the standard font (8 units per character).
 	FontMonday12 = &Font{Name: "Monday", Size: 12}
 
-	// FontTuesday12 is the double-width text mode font (16 units per character).
+	// FontTuesday12 is the wide font (16 units per character).
 	FontTuesday12 = &Font{Name: "Tuesday", Size: 12}
 )
 
@@ -80,9 +80,15 @@ func DefaultFont() *Font {
 	return FontMonday12
 }
 
-// CharWidth returns the width of a single character in units.
-// Monday: 8 units, Tuesday: 16 units
-func (f *Font) CharWidth() Unit {
+// LineHeight returns the height of a line of text in units.
+func (f *Font) LineHeight() Unit {
+	// All current fonts are 16 units tall
+	return 16
+}
+
+// baseCharWidth returns the internal unit width per character for this font.
+// This is private to prevent leaking implementation details.
+func (f *Font) baseCharWidth() Unit {
 	if f == nil || f.Name == "" || f.Name == "Monday" {
 		return 8
 	}
@@ -93,63 +99,36 @@ func (f *Font) CharWidth() Unit {
 	return 8
 }
 
-// CharHeight returns the height of a single character in units.
-// Currently all fonts are 16 units tall.
-func (f *Font) CharHeight() Unit {
-	if f == nil {
-		return 16
-	}
-	// All current fonts are 16 units tall
-	return 16
-}
-
 // MeasureText returns the width in units needed to display the given text.
-// This accounts for the font's character width and handles special characters.
+// This accounts for the font's metrics and handles special characters like CJK.
 func (f *Font) MeasureText(text string) Unit {
 	if f == nil {
 		f = DefaultFont()
 	}
 
-	charWidth := f.CharWidth()
-	count := Unit(0)
+	charWidth := f.baseCharWidth()
+	total := Unit(0)
 
 	for _, ch := range text {
-		// Count each rune
-		count += charWidth
+		// Add width for each rune
+		total += charWidth
 
-		// Handle CJK wide characters (they take 2 cells even in Monday)
+		// Wide characters (CJK, etc.) need additional width
 		if isWideChar(ch) {
-			count += 8 // Add one extra cell width for wide chars
+			total += 8
 		}
 	}
 
-	return count
+	return total
 }
 
 // MeasureRunes returns the width in units for a given number of runes.
-// This is useful when you already know the rune count.
+// This is useful when you already know the rune count and characters are standard width.
 func (f *Font) MeasureRunes(runeCount int) Unit {
 	if f == nil {
 		f = DefaultFont()
 	}
-	return Unit(runeCount) * f.CharWidth()
-}
-
-// CellsPerChar returns how many terminal cells each character occupies.
-// Monday: 1 cell, Tuesday: 2 cells (char + space)
-func (f *Font) CellsPerChar() int {
-	if f == nil || f.Name == "" || f.Name == "Monday" {
-		return 1
-	}
-	if f.Name == "Tuesday" {
-		return 2
-	}
-	return 1
-}
-
-// IsDoubleWidth returns true if this font renders characters at double width.
-func (f *Font) IsDoubleWidth() bool {
-	return f != nil && f.Name == "Tuesday"
+	return Unit(runeCount) * f.baseCharWidth()
 }
 
 // HasStyle returns true if the font has the given style flag set.
