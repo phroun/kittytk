@@ -2,6 +2,7 @@
 package widgets
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/phroun/tuitk/core"
@@ -213,6 +214,22 @@ func (t *TreeView) SetCurrentIndex(index int) {
 		t.ScrollRectIntoView(itemRect)
 	}
 
+	// Announce selection change for accessibility
+	if index >= 0 && index < len(t.flatList) {
+		if am := core.FindAccessibilityManager(t); am != nil {
+			item := t.flatList[index]
+			state := ""
+			if !item.IsLeaf() {
+				if item.Expanded {
+					state = ", expanded"
+				} else {
+					state = ", collapsed"
+				}
+			}
+			am.AnnouncePolite(fmt.Sprintf("%s, tree item%s, level %d", item.Text, state, item.Level()+1))
+		}
+	}
+
 	if t.onCurrentChanged != nil && index >= 0 {
 		t.onCurrentChanged(t.flatList[index])
 	}
@@ -236,6 +253,11 @@ func (t *TreeView) ExpandItem(item *TreeItem) {
 	// Restore selection by finding the same item in new flat list
 	t.restoreSelectionByItem(selectedItem)
 	t.Update()
+
+	// Announce expansion for accessibility
+	if am := core.FindAccessibilityManager(t); am != nil {
+		am.AnnouncePolite(fmt.Sprintf("%s, expanded", item.Text))
+	}
 
 	if t.onItemExpanded != nil {
 		t.onItemExpanded(item)
@@ -265,6 +287,11 @@ func (t *TreeView) CollapseItem(item *TreeItem) {
 		t.restoreSelectionByItem(item)
 	}
 	t.Update()
+
+	// Announce collapse for accessibility
+	if am := core.FindAccessibilityManager(t); am != nil {
+		am.AnnouncePolite(fmt.Sprintf("%s, collapsed", item.Text))
+	}
 
 	if t.onItemCollapsed != nil {
 		t.onItemCollapsed(item)

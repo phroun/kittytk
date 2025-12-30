@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"fmt"
+
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
 )
@@ -223,6 +225,14 @@ func (l *ListView) SetCurrentIndex(index int) {
 		}
 		if l.onSelectionChanged != nil {
 			l.onSelectionChanged()
+		}
+	}
+
+	// Announce selection change for accessibility
+	if index >= 0 && index < len(l.items) {
+		if am := core.FindAccessibilityManager(l); am != nil {
+			item := l.items[index]
+			am.AnnouncePolite(fmt.Sprintf("%s, list item, %d of %d", item.Text, index+1, len(l.items)))
 		}
 	}
 

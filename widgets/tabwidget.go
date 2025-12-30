@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"fmt"
+
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
 )
@@ -297,6 +299,12 @@ func (t *TabWidget) SetCurrentIndex(index int) {
 
 	t.currentIndex = index
 	t.Update()
+
+	// Announce tab change for accessibility
+	if am := core.FindAccessibilityManager(t); am != nil {
+		tab := t.tabs[index]
+		am.AnnouncePolite(fmt.Sprintf("%s, tab, %d of %d", tab.Text, index+1, len(t.tabs)))
+	}
 
 	if t.onCurrentChanged != nil {
 		t.onCurrentChanged(index)

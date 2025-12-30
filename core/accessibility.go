@@ -453,3 +453,23 @@ func (t *TerminalScreenReader) SetFocus(info AccessibleInfo) {
 func (t *TerminalScreenReader) IsAvailable() bool {
 	return true
 }
+
+// AccessibilityProvider is an interface for objects that provide an AccessibilityManager.
+// Desktop implements this interface.
+type AccessibilityProvider interface {
+	AccessibilityManager() *AccessibilityManager
+}
+
+// FindAccessibilityManager traverses up the widget parent chain to find an AccessibilityManager.
+// Returns nil if no provider is found.
+func FindAccessibilityManager(w Widget) *AccessibilityManager {
+	current := w
+	for current != nil {
+		// Check if current widget provides AccessibilityManager
+		if provider, ok := current.(AccessibilityProvider); ok {
+			return provider.AccessibilityManager()
+		}
+		current = current.Parent()
+	}
+	return nil
+}

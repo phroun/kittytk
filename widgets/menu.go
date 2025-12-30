@@ -503,6 +503,58 @@ func (m *Menu) findPrevEnabled(from int) int {
 	return -1
 }
 
+// announceCurrentItem announces the currently selected menu item for accessibility.
+func (m *Menu) announceCurrentItem() {
+	if m.currentIndex < 0 || m.currentIndex >= len(m.items) {
+		return
+	}
+	item := m.items[m.currentIndex]
+	if item.Separator {
+		return
+	}
+
+	// Find AccessibilityManager by traversing parent chain
+	var am *core.AccessibilityManager
+	current := m.Parent()
+	for current != nil {
+		if provider, ok := current.(core.AccessibilityProvider); ok {
+			am = provider.AccessibilityManager()
+			break
+		}
+		current = current.Parent()
+	}
+	if am == nil {
+		return
+	}
+
+	// Build announcement
+	text := item.Text
+	extras := []string{}
+
+	if item.Checkable {
+		if item.Checked {
+			extras = append(extras, "checked")
+		} else {
+			extras = append(extras, "unchecked")
+		}
+	}
+	if item.SubMenu != nil {
+		extras = append(extras, "submenu")
+	}
+	if item.Shortcut != "" {
+		extras = append(extras, item.Shortcut.DisplayString())
+	}
+	if !item.Enabled {
+		extras = append(extras, "disabled")
+	}
+
+	announcement := text + ", menu item"
+	if len(extras) > 0 {
+		announcement += ", " + strings.Join(extras, ", ")
+	}
+	am.AnnouncePolite(announcement)
+}
+
 // calculateSize calculates the menu size.
 func (m *Menu) calculateSize() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
@@ -815,6 +867,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.currentIndex = m.findPrevEnabled(m.currentIndex)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
+		m.announceCurrentItem()
 		m.Update()
 		return true
 
@@ -822,6 +875,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.currentIndex = m.findNextEnabled(m.currentIndex)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
+		m.announceCurrentItem()
 		m.Update()
 		return true
 
