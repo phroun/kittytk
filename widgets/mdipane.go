@@ -37,9 +37,6 @@ type MDIPane struct {
 	drawPattern    bool
 	drawPatternSet bool // tracks if drawPattern was explicitly set
 
-	// Fixed size for use inside ScrollArea (0,0 means auto-size to bounds)
-	fixedSize core.UnitSize
-
 	// Floating windows in z-order (back to front)
 	windows []*window.Window
 
@@ -900,43 +897,15 @@ func (m *MDIPane) SetLayoutManager(lm core.LayoutManager) {
 }
 
 // SizeHint returns the preferred size.
-// If a fixed size is set via SetFixedSize, returns that size.
+// If minimum size is set (via SetMinimumSize), returns that as the hint.
+// This allows the MDIPane to report a fixed size when embedded in a ScrollArea.
 // Otherwise returns the current bounds size.
 func (m *MDIPane) SizeHint() core.UnitSize {
-	m.mu.RLock()
-	fixedSize := m.fixedSize
-	m.mu.RUnlock()
-
-	if fixedSize.Width > 0 && fixedSize.Height > 0 {
-		return fixedSize
+	minSize := m.MinimumSize()
+	if minSize.Width > 0 || minSize.Height > 0 {
+		return minSize
 	}
 	return m.Bounds().Size()
-}
-
-// SetFixedSize sets a fixed size for the MDIPane in cells.
-// This is useful when embedding the MDIPane in a ScrollArea.
-// Set width and height to 0 to return to auto-sizing based on bounds.
-func (m *MDIPane) SetFixedSize(widthCells, heightCells int) {
-	metrics := core.DefaultCellMetrics()
-	m.mu.Lock()
-	m.fixedSize = core.UnitSize{
-		Width:  core.Unit(widthCells) * metrics.CellWidth,
-		Height: core.Unit(heightCells) * metrics.CellHeight,
-	}
-	m.mu.Unlock()
-	m.Update()
-}
-
-// FixedSize returns the fixed size in cells, or (0, 0) if not set.
-func (m *MDIPane) FixedSize() (widthCells, heightCells int) {
-	metrics := core.DefaultCellMetrics()
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.fixedSize.Width > 0 && m.fixedSize.Height > 0 {
-		return int(m.fixedSize.Width / metrics.CellWidth),
-			int(m.fixedSize.Height / metrics.CellHeight)
-	}
-	return 0, 0
 }
 
 // HandleFocusIn is called when MDIPane gains focus.

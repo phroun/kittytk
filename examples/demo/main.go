@@ -956,7 +956,16 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, paren
 	// Create an MDIPane - this is a widget that can be embedded in tabs, splitters, etc.
 	mdiPane := widgets.NewMDIPane()
 	mdiPane.SetBackgroundChar('░') // Light shade pattern
-	mdiPane.SetFixedSize(80, 25)   // Fixed size: 80 columns x 25 rows
+
+	// Set fixed size using Units (80 columns x 25 rows)
+	// To fix both dimensions, set min and max to the same value
+	metrics := core.DefaultCellMetrics()
+	fixedSize := core.UnitSize{
+		Width:  80 * metrics.CellWidth,
+		Height: 25 * metrics.CellHeight,
+	}
+	mdiPane.SetMinimumSize(fixedSize)
+	mdiPane.SetMaximumSize(fixedSize)
 
 	// Wrap the MDIPane in a ScrollArea for scrolling when larger than view
 	mdiScrollArea := widgets.NewScrollArea()
