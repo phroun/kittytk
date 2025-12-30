@@ -22,11 +22,17 @@ type TabWidget struct {
 	closable      bool // Can tabs be closed
 	showSeparator bool // Show separator between tab bar and content
 
-	// Tab scrolling (when tabs don't fit)
+	// Tab scrolling for horizontal tabs (when tabs don't fit)
 	tabScrollOffset int  // First visible tab index
 	scrollLeftHovered bool  // Mouse over [<] button while pressed
 	scrollRightHovered bool // Mouse over [>] button while pressed
 	scrollButtonPressed int // 0=none, -1=left, 1=right
+
+	// Tab scrolling for vertical tabs
+	vertScrollOffset    int  // First visible tab index for vertical tabs
+	scrollbarDragging   bool // Whether scrollbar thumb is being dragged
+	scrollbarDragStart  int  // Row where drag started
+	scrollbarDragOffset int  // Scroll offset when drag started
 
 	// Callbacks
 	onCurrentChanged func(index int)
@@ -452,18 +458,28 @@ func (t *TabWidget) contentBounds() core.UnitRect {
 		}
 	case TabsLeft:
 		tabWidth := t.calculateTabBarWidth()
+		// Add scrollbar width if scrolling is needed
+		scrollbarWidth := core.Unit(0)
+		if t.vertTabsNeedScrolling() {
+			scrollbarWidth = metrics.CellWidth
+		}
 		return core.UnitRect{
-			X:      tabWidth + separatorWidth,
+			X:      tabWidth + separatorWidth + scrollbarWidth,
 			Y:      0,
-			Width:  bounds.Width - tabWidth - separatorWidth,
+			Width:  bounds.Width - tabWidth - separatorWidth - scrollbarWidth,
 			Height: bounds.Height,
 		}
 	case TabsRight:
 		tabWidth := t.calculateTabBarWidth()
+		// Add scrollbar width if scrolling is needed
+		scrollbarWidth := core.Unit(0)
+		if t.vertTabsNeedScrolling() {
+			scrollbarWidth = metrics.CellWidth
+		}
 		return core.UnitRect{
 			X:      0,
 			Y:      0,
-			Width:  bounds.Width - tabWidth - separatorWidth,
+			Width:  bounds.Width - tabWidth - separatorWidth - scrollbarWidth,
 			Height: bounds.Height,
 		}
 	}
@@ -658,6 +674,168 @@ func (t *TabWidget) isLastTabFullyVisible() bool {
 		}
 	}
 	return true
+}
+
+// --- Vertical Tab Scrolling ---
+
+// vertVisibleCount returns how many tabs can fit in the vertical tab bar.
+func (t *TabWidget) vertVisibleCount() int {
+	bounds := t.Bounds()
+	metrics := core.DefaultCellMetrics()
+	return int(bounds.Height / metrics.CellHeight)
+}
+
+// vertTabsNeedScrolling returns true if vertical tabs need scrolling.
+func (t *TabWidget) vertTabsNeedScrolling() bool {
+	return len(t.tabs) > t.vertVisibleCount()
+}
+
+// vertEnsureVisible ensures the given tab index is visible in the vertical tab bar.
+func (t *TabWidget) vertEnsureVisible(index int) {
+	if index < 0 || index >= len(t.tabs) {
+		return
+	}
+
+	visibleCount := t.vertVisibleCount()
+	if visibleCount <= 0 {
+		return
+	}
+
+	// If tab is above visible area, scroll up
+	if index < t.vertScrollOffset {
+		t.vertScrollOffset = index
+	}
+
+	// If tab is below visible area, scroll down
+	if index >= t.vertScrollOffset+visibleCount {
+		t.vertScrollOffset = index - visibleCount + 1
+	}
+
+	// Clamp scroll offset
+	maxOffset := len(t.tabs) - visibleCount
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if t.vertScrollOffset > maxOffset {
+		t.vertScrollOffset = maxOffset
+	}
+	if t.vertScrollOffset < 0 {
+		t.vertScrollOffset = 0
+	}
+}
+
+// vertScrollbarGeometry returns scrollbar dimensions and thumb position.
+// Returns: scrollbarX (for left tabs it's 0, for right tabs it's at the right edge),
+// thumbStart, thumbHeight, trackHeight (all in rows)
+func (t *TabWidget) vertScrollbarGeometry() (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
+	bounds := t.Bounds()
+	metrics := core.DefaultCellMetrics()
+	totalTabs := len(t.tabs)
+	visibleCount := t.vertVisibleCount()
+
+	// Scrollbar position depends on tab position
+	if t.tabPosition == TabsLeft {
+		scrollbarX = 0 // Left edge (outside)
+	} else {
+		scrollbarX = bounds.Width - metrics.CellWidth // Right edge (outside)
+	}
+
+	trackHeight = visibleCount
+
+	if totalTabs <= visibleCount {
+		// No scrolling needed - thumb fills track
+		thumbStart = 0
+		thumbHeight = trackHeight
+		return
+	}
+
+	// Calculate thumb height - proportional to visible/total, minimum 1 row
+	thumbHeight = visibleCount * visibleCount / totalTabs
+	if thumbHeight < 1 {
+		thumbHeight = 1
+	}
+
+	// Calculate thumb position
+	maxScroll := totalTabs - visibleCount
+	scrollableTrack := trackHeight - thumbHeight
+
+	if maxScroll > 0 && scrollableTrack > 0 {
+		thumbStart = t.vertScrollOffset * scrollableTrack / maxScroll
+
+		// Ensure thumb doesn't go to extremes unless scroll is at extremes
+		if t.vertScrollOffset > 0 && thumbStart == 0 {
+			thumbStart = 1
+		}
+		if t.vertScrollOffset < maxScroll && thumbStart >= scrollableTrack {
+			thumbStart = scrollableTrack - 1
+		}
+	}
+
+	return scrollbarX, thumbStart, thumbHeight, trackHeight
+}
+
+// paintVertScrollbar draws the vertical scrollbar for vertical tabs.
+func (t *TabWidget) paintVertScrollbar(p *core.Painter, scrollbarX core.Unit) {
+	scheme := t.GetScheme()
+	metrics := p.Metrics()
+
+	_, thumbStart, thumbHeight, trackHeight := t.vertScrollbarGeometry()
+
+	// Draw scrollbar track
+	trackStyle := scheme.GetScrollbar()
+	for i := 0; i < trackHeight; i++ {
+		y := core.Unit(i) * metrics.CellHeight
+		p.DrawCell(scrollbarX, y, '│', trackStyle)
+	}
+
+	// Draw scrollbar thumb
+	thumbStyle := scheme.GetScrollbarThumb()
+	for i := 0; i < thumbHeight; i++ {
+		y := core.Unit(thumbStart+i) * metrics.CellHeight
+		p.DrawCell(scrollbarX, y, '█', thumbStyle)
+	}
+}
+
+// handleVertScrollbarClick handles a click on the vertical tab scrollbar.
+func (t *TabWidget) handleVertScrollbarClick(y core.Unit, metrics core.CellMetrics) {
+	clickedRow := int(y / metrics.CellHeight)
+	_, thumbStart, thumbHeight, _ := t.vertScrollbarGeometry()
+
+	// Check if click is on thumb - start drag
+	if clickedRow >= thumbStart && clickedRow < thumbStart+thumbHeight {
+		t.scrollbarDragging = true
+		t.scrollbarDragStart = clickedRow
+		t.scrollbarDragOffset = t.vertScrollOffset
+		return
+	}
+
+	// Click above thumb - page up
+	if clickedRow < thumbStart {
+		visibleCount := t.vertVisibleCount()
+		newOffset := t.vertScrollOffset - visibleCount
+		if newOffset < 0 {
+			newOffset = 0
+		}
+		t.vertScrollOffset = newOffset
+		t.Update()
+		return
+	}
+
+	// Click below thumb - page down
+	if clickedRow >= thumbStart+thumbHeight {
+		visibleCount := t.vertVisibleCount()
+		maxOffset := len(t.tabs) - visibleCount
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		newOffset := t.vertScrollOffset + visibleCount
+		if newOffset > maxOffset {
+			newOffset = maxOffset
+		}
+		t.vertScrollOffset = newOffset
+		t.Update()
+		return
+	}
 }
 
 // SizeHint returns the preferred size.
@@ -1479,6 +1657,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabWidth := t.calculateTabBarWidth()
 	hasFocus := t.HasFocus()
+	needsScrolling := t.vertTabsNeedScrolling()
+	visibleCount := t.vertVisibleCount()
 
 	// Tab bar style from scheme
 	tabBarStyle := scheme.GetTabsBar(true)
@@ -1488,12 +1668,24 @@ func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	// Disabled style
 	disabledStyle := tabBarStyle.WithFg(scheme.GetDisabledTextFG())
 
-	// Draw tab bar background
-	p.FillRect(core.UnitRect{Width: tabWidth, Height: bounds.Height}, ' ', tabBarStyle)
+	// Calculate content offset (scrollbar on left edge when scrolling needed)
+	contentX := core.Unit(0)
+	if needsScrolling {
+		contentX = metrics.CellWidth // Make room for scrollbar on left
+	}
 
-	// Draw tabs vertically
+	// Draw tab bar background
+	p.FillRect(core.UnitRect{X: contentX, Width: tabWidth, Height: bounds.Height}, ' ', tabBarStyle)
+
+	// Draw visible tabs vertically
 	y := core.Unit(0)
-	for i, tab := range t.tabs {
+	endIndex := t.vertScrollOffset + visibleCount
+	if endIndex > len(t.tabs) {
+		endIndex = len(t.tabs)
+	}
+
+	for i := t.vertScrollOffset; i < endIndex; i++ {
+		tab := t.tabs[i]
 		var s style.CellStyle
 		if !tab.Enabled {
 			s = disabledStyle
@@ -1507,11 +1699,14 @@ func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			s = tabBarStyle
 		}
 
-		// Draw tab
-		p.FillRect(core.UnitRect{Y: y, Width: tabWidth, Height: metrics.CellHeight}, ' ', s)
-		textX := metrics.CellWidth
+		// Draw tab background
+		p.FillRect(core.UnitRect{X: contentX, Y: y, Width: tabWidth, Height: metrics.CellHeight}, ' ', s)
+
+		// Draw tab text
+		textX := contentX + metrics.CellWidth
+		textEndX := contentX + tabWidth - metrics.CellWidth
 		for _, ch := range tab.Text {
-			if textX >= tabWidth-metrics.CellWidth {
+			if textX >= textEndX {
 				break
 			}
 			p.DrawCell(textX, y, ch, s)
@@ -1521,18 +1716,25 @@ func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		y += metrics.CellHeight
 	}
 
+	// Draw scrollbar if needed (on left edge - outside)
+	if needsScrolling {
+		t.paintVertScrollbar(p, 0)
+	}
+
 	// Draw separator line if enabled
 	if t.showSeparator {
+		separatorX := contentX + tabWidth
 		for i := core.Unit(0); i < bounds.Height; i += metrics.CellHeight {
-			p.DrawCell(tabWidth, i, '│', scheme.GetNormal(true))
+			p.DrawCell(separatorX, i, '│', scheme.GetNormal(true))
 		}
 	}
 }
 
 func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabWidth := t.calculateTabBarWidth()
-	tabX := bounds.Width - tabWidth
 	hasFocus := t.HasFocus()
+	needsScrolling := t.vertTabsNeedScrolling()
+	visibleCount := t.vertVisibleCount()
 
 	// Tab bar style from scheme
 	tabBarStyle := scheme.GetTabsBar(true)
@@ -1542,12 +1744,25 @@ func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, scheme
 	// Disabled style
 	disabledStyle := tabBarStyle.WithFg(scheme.GetDisabledTextFG())
 
+	// Calculate tab bar position (scrollbar on right edge when scrolling needed)
+	tabX := bounds.Width - tabWidth
+	scrollbarX := bounds.Width - metrics.CellWidth
+	if needsScrolling {
+		tabX = bounds.Width - tabWidth - metrics.CellWidth // Make room for scrollbar on right
+	}
+
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{X: tabX, Width: tabWidth, Height: bounds.Height}, ' ', tabBarStyle)
 
-	// Draw tabs vertically
+	// Draw visible tabs vertically
 	y := core.Unit(0)
-	for i, tab := range t.tabs {
+	endIndex := t.vertScrollOffset + visibleCount
+	if endIndex > len(t.tabs) {
+		endIndex = len(t.tabs)
+	}
+
+	for i := t.vertScrollOffset; i < endIndex; i++ {
+		tab := t.tabs[i]
 		var s style.CellStyle
 		if !tab.Enabled {
 			s = disabledStyle
@@ -1561,11 +1776,14 @@ func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, scheme
 			s = tabBarStyle
 		}
 
-		// Draw tab
+		// Draw tab background
 		p.FillRect(core.UnitRect{X: tabX, Y: y, Width: tabWidth, Height: metrics.CellHeight}, ' ', s)
+
+		// Draw tab text
 		textX := tabX + metrics.CellWidth
+		textEndX := tabX + tabWidth - metrics.CellWidth
 		for _, ch := range tab.Text {
-			if textX >= bounds.Width-metrics.CellWidth {
+			if textX >= textEndX {
 				break
 			}
 			p.DrawCell(textX, y, ch, s)
@@ -1573,6 +1791,11 @@ func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, scheme
 		}
 
 		y += metrics.CellHeight
+	}
+
+	// Draw scrollbar if needed (on right edge - outside)
+	if needsScrolling {
+		t.paintVertScrollbar(p, scrollbarX)
 	}
 
 	// Draw separator line if enabled (on left edge of tab bar)
@@ -1751,7 +1974,12 @@ func (t *TabWidget) nextTabAndEnsureVisible() {
 		idx := (t.currentIndex + i) % len(t.tabs)
 		if t.tabs[idx].Enabled {
 			t.SetCurrentIndex(idx)
-			t.ensureTabFullyVisible(idx)
+			// Use appropriate ensure visible based on tab position
+			if t.tabPosition == TabsLeft || t.tabPosition == TabsRight {
+				t.vertEnsureVisible(idx)
+			} else {
+				t.ensureTabFullyVisible(idx)
+			}
 			return
 		}
 	}
@@ -1767,7 +1995,12 @@ func (t *TabWidget) prevTabAndEnsureVisible() {
 		idx := (t.currentIndex - i + len(t.tabs)) % len(t.tabs)
 		if t.tabs[idx].Enabled {
 			t.SetCurrentIndex(idx)
-			t.ensureTabFullyVisible(idx)
+			// Use appropriate ensure visible based on tab position
+			if t.tabPosition == TabsLeft || t.tabPosition == TabsRight {
+				t.vertEnsureVisible(idx)
+			} else {
+				t.ensureTabFullyVisible(idx)
+			}
 			return
 		}
 	}
@@ -1778,7 +2011,11 @@ func (t *TabWidget) firstTab() {
 	for i := 0; i < len(t.tabs); i++ {
 		if t.tabs[i].Enabled {
 			t.SetCurrentIndex(i)
-			t.ensureTabFullyVisible(i)
+			if t.tabPosition == TabsLeft || t.tabPosition == TabsRight {
+				t.vertEnsureVisible(i)
+			} else {
+				t.ensureTabFullyVisible(i)
+			}
 			return
 		}
 	}
@@ -1789,7 +2026,11 @@ func (t *TabWidget) lastTab() {
 	for i := len(t.tabs) - 1; i >= 0; i-- {
 		if t.tabs[i].Enabled {
 			t.SetCurrentIndex(i)
-			t.ensureTabFullyVisible(i)
+			if t.tabPosition == TabsLeft || t.tabPosition == TabsRight {
+				t.vertEnsureVisible(i)
+			} else {
+				t.ensureTabFullyVisible(i)
+			}
 			return
 		}
 	}
@@ -1823,20 +2064,51 @@ func (t *TabWidget) HandleMousePress(event core.MousePressEvent) bool {
 		}
 	case TabsLeft:
 		tabWidth := t.calculateTabBarWidth()
-		if event.X < tabWidth {
-			idx := int(event.Y / metrics.CellHeight)
+		needsScrolling := t.vertTabsNeedScrolling()
+		scrollbarWidth := core.Unit(0)
+		if needsScrolling {
+			scrollbarWidth = metrics.CellWidth
+		}
+
+		// Check if click is on scrollbar (left edge)
+		if needsScrolling && event.X < metrics.CellWidth {
+			t.handleVertScrollbarClick(event.Y, metrics)
+			return true
+		}
+
+		// Check if click is on tab area
+		if event.X < tabWidth+scrollbarWidth {
+			row := int(event.Y / metrics.CellHeight)
+			idx := t.vertScrollOffset + row
 			if idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
 				t.SetCurrentIndex(idx)
+				t.vertEnsureVisible(idx)
 			}
 			return true
 		}
 	case TabsRight:
 		bounds := t.Bounds()
 		tabWidth := t.calculateTabBarWidth()
-		if event.X >= bounds.Width-tabWidth {
-			idx := int(event.Y / metrics.CellHeight)
+		needsScrolling := t.vertTabsNeedScrolling()
+		scrollbarWidth := core.Unit(0)
+		if needsScrolling {
+			scrollbarWidth = metrics.CellWidth
+		}
+
+		// Check if click is on scrollbar (right edge)
+		if needsScrolling && event.X >= bounds.Width-metrics.CellWidth {
+			t.handleVertScrollbarClick(event.Y, metrics)
+			return true
+		}
+
+		// Check if click is on tab area
+		tabX := bounds.Width - tabWidth - scrollbarWidth
+		if event.X >= tabX {
+			row := int(event.Y / metrics.CellHeight)
+			idx := t.vertScrollOffset + row
 			if idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
 				t.SetCurrentIndex(idx)
+				t.vertEnsureVisible(idx)
 			}
 			return true
 		}
@@ -2206,6 +2478,42 @@ func (t *TabWidget) HandleFocusOut() {
 
 // HandleMouseMove handles mouse movement.
 func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Handle vertical scrollbar thumb drag
+	if t.scrollbarDragging {
+		metrics := core.DefaultCellMetrics()
+		currentRow := int(event.Y / metrics.CellHeight)
+		rowDelta := currentRow - t.scrollbarDragStart
+
+		visibleCount := t.vertVisibleCount()
+		totalTabs := len(t.tabs)
+		maxScroll := totalTabs - visibleCount
+
+		if maxScroll > 0 {
+			_, _, thumbHeight, trackHeight := t.vertScrollbarGeometry()
+			scrollableTrack := trackHeight - thumbHeight
+
+			if scrollableTrack > 0 {
+				// Calculate how many items to scroll based on thumb movement
+				scrollDelta := rowDelta * maxScroll / scrollableTrack
+				newOffset := t.scrollbarDragOffset + scrollDelta
+
+				// Clamp to valid range
+				if newOffset < 0 {
+					newOffset = 0
+				}
+				if newOffset > maxScroll {
+					newOffset = maxScroll
+				}
+
+				if newOffset != t.vertScrollOffset {
+					t.vertScrollOffset = newOffset
+					t.Update()
+				}
+			}
+		}
+		return true
+	}
+
 	// If tracking scroll button press, update hover state
 	if t.scrollButtonPressed != 0 {
 		metrics := core.DefaultCellMetrics()
@@ -2255,6 +2563,12 @@ func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 // HandleMouseRelease handles mouse button release.
 func (t *TabWidget) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	// Clear vertical scrollbar drag state
+	if t.scrollbarDragging {
+		t.scrollbarDragging = false
+		return true
+	}
+
 	// If tracking scroll button press, handle release
 	if t.scrollButtonPressed != 0 {
 		pressedButton := t.scrollButtonPressed
@@ -2304,8 +2618,13 @@ func (t *TabWidget) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 // HandleResize is called when the tab widget is resized.
 func (t *TabWidget) HandleResize(oldSize, newSize core.UnitSize) {
-	// Adjust scroll offset based on new size
-	t.adjustScrollOffsetForResize(oldSize.Width > newSize.Width)
+	// Adjust scroll offset based on new size and tab position
+	isVertical := t.tabPosition == TabsLeft || t.tabPosition == TabsRight
+	if isVertical {
+		t.adjustVertScrollOffsetForResize(oldSize.Height > newSize.Height)
+	} else {
+		t.adjustScrollOffsetForResize(oldSize.Width > newSize.Width)
+	}
 
 	// Update content bounds for the current tab
 	if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
@@ -2357,6 +2676,53 @@ func (t *TabWidget) adjustScrollOffsetForResize(isNarrowing bool) {
 			// Last tab no longer fully visible, restore and stop
 			t.tabScrollOffset++
 			break
+		}
+	}
+}
+
+// adjustVertScrollOffsetForResize adjusts the vertical tab scroll offset when the widget is resized.
+// When shrinking: ensure the current tab stays visible.
+// When growing: reveal more tabs at the top if possible, or reset to 0 if all fit.
+func (t *TabWidget) adjustVertScrollOffsetForResize(isShrinking bool) {
+	if len(t.tabs) == 0 {
+		t.vertScrollOffset = 0
+		return
+	}
+
+	visibleCount := t.vertVisibleCount()
+
+	// If scrolling isn't needed at all, reset to 0
+	if !t.vertTabsNeedScrolling() {
+		t.vertScrollOffset = 0
+		return
+	}
+
+	if isShrinking {
+		// When shrinking, ensure current tab is still visible
+		t.vertEnsureVisible(t.currentIndex)
+	} else {
+		// When growing, try to reveal more tabs at the top
+		// while keeping as many tabs visible as possible
+		maxOffset := len(t.tabs) - visibleCount
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+
+		// Clamp current offset to valid range
+		if t.vertScrollOffset > maxOffset {
+			t.vertScrollOffset = maxOffset
+		}
+
+		// Try to reduce offset to show more tabs from the top
+		// while keeping the current tab visible
+		for t.vertScrollOffset > 0 {
+			// Check if current tab would still be visible with smaller offset
+			if t.currentIndex >= t.vertScrollOffset-1 &&
+				t.currentIndex < t.vertScrollOffset-1+visibleCount {
+				t.vertScrollOffset--
+			} else {
+				break
+			}
 		}
 	}
 }
