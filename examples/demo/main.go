@@ -956,6 +956,11 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, paren
 	// Create an MDIPane - this is a widget that can be embedded in tabs, splitters, etc.
 	mdiPane := widgets.NewMDIPane()
 	mdiPane.SetBackgroundChar('░') // Light shade pattern
+	mdiPane.SetFixedSize(80, 25)   // Fixed size: 80 columns x 25 rows
+
+	// Wrap the MDIPane in a ScrollArea for scrolling when larger than view
+	mdiScrollArea := widgets.NewScrollArea()
+	mdiScrollArea.SetContent(mdiPane)
 
 	// Create a dock row at the bottom for minimized windows
 	dockRow := widgets.NewDockRow()
@@ -1080,8 +1085,8 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, paren
 	// Set the control panel as background content of the MDI pane
 	mdiPane.SetContent(controlPanel)
 
-	// Set up the splitter: MDIPane on top, DockRow on bottom
-	splitter.SetFirst(mdiPane)
+	// Set up the splitter: ScrollArea (containing MDIPane) on top, DockRow on bottom
+	splitter.SetFirst(mdiScrollArea)
 	splitter.SetSecond(dockRow)
 
 	// Spawn an initial window to show capabilities
