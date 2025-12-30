@@ -1140,10 +1140,15 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		// Move to next title element or exit to content
 		next := w.nextTitleFocus(titleFocus)
 		if next == TitleFocusNone {
-			// Exit title bar, focus first widget in content
-			w.SetTitleFocus(TitleFocusNone)
-			if fm := w.FocusManager(); fm != nil {
-				fm.FocusFirst()
+			if titleFocus == TitleFocusBlur {
+				// Blur is at the end of entire tab order - wrap to Close button
+				w.SetTitleFocus(TitleFocusClose)
+			} else {
+				// Exit title bar, focus first widget in content
+				w.SetTitleFocus(TitleFocusNone)
+				if fm := w.FocusManager(); fm != nil {
+					fm.FocusFirst()
+				}
 			}
 		} else {
 			w.SetTitleFocus(next)
