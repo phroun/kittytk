@@ -3,6 +3,8 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
+	"runtime"
 
 	"github.com/phroun/tuitk/app"
 	"github.com/phroun/tuitk/backend"
@@ -151,6 +153,75 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 	statusBarItem.SetCheckable(true)
 	statusBarItem.SetChecked(true)
 	viewMenu.AddItem(statusBarItem)
+
+	viewMenu.AddSeparator()
+
+	// Track accessibility settings
+	var showVisualAnnouncements, speakAnnouncements bool
+
+	updateAccessibilityHandler := func() {
+		am := application.AccessibilityManager()
+		if am == nil {
+			return
+		}
+
+		if !showVisualAnnouncements && !speakAnnouncements {
+			// Both disabled
+			am.OnAnnounce = nil
+			return
+		}
+
+		am.OnAnnounce = func(announcement core.AccessibilityAnnouncement) {
+			// Visual output to status bar
+			if showVisualAnnouncements {
+				if statusBar := desktop.StatusBar(); statusBar != nil {
+					prefix := "📢"
+					if announcement.Priority == "assertive" {
+						prefix = "⚠️"
+					}
+					statusBar.SetText(fmt.Sprintf("%s [%s] %s", prefix, announcement.Priority, announcement.Message))
+				}
+			}
+
+			// Text-to-speech on macOS using 'say' command
+			if speakAnnouncements && runtime.GOOS == "darwin" {
+				go func(msg string) {
+					cmd := exec.Command("say", "-r", "200", msg)
+					_ = cmd.Run()
+				}(announcement.Message)
+			}
+		}
+	}
+
+	// Screen reader visual output toggle
+	screenReaderItem := widgets.NewMenuItem("Show A&nnouncements in Status Bar")
+	screenReaderItem.SetCheckable(true)
+	screenReaderItem.SetChecked(false)
+	screenReaderItem.SetOnTriggered(func() {
+		showVisualAnnouncements = screenReaderItem.Checked
+		updateAccessibilityHandler()
+		if showVisualAnnouncements {
+			application.AccessibilityManager().AnnouncePolite("Visual announcements enabled")
+		}
+	})
+	viewMenu.AddItem(screenReaderItem)
+
+	// Text-to-speech toggle (macOS only)
+	speakItem := widgets.NewMenuItem("Speak Announcements (macOS)")
+	speakItem.SetCheckable(true)
+	speakItem.SetChecked(false)
+	if runtime.GOOS != "darwin" {
+		speakItem.SetEnabled(false)
+	}
+	speakItem.SetOnTriggered(func() {
+		speakAnnouncements = speakItem.Checked
+		updateAccessibilityHandler()
+		if speakAnnouncements {
+			application.AccessibilityManager().AnnouncePolite("Text to speech enabled")
+		}
+	})
+	viewMenu.AddItem(speakItem)
+
 	menus = append(menus, viewMenu)
 
 	// Window menu
