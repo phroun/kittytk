@@ -95,6 +95,9 @@ type Desktop struct {
 	// Theme
 	theme *style.Theme
 
+	// Font (default font for all windows/widgets)
+	font *core.Font
+
 	// Running state
 	running atomic.Bool
 
@@ -285,6 +288,35 @@ func (d *Desktop) SetTheme(theme *style.Theme) {
 	d.theme = theme
 	d.mu.Unlock()
 	d.RequestUpdate()
+}
+
+// Font returns the desktop's default font, or nil if using the system default.
+func (d *Desktop) Font() *core.Font {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.font
+}
+
+// SetFont sets the desktop's default font.
+// This font is inherited by all windows and widgets unless overridden.
+// Set to nil to use the system default (Monday 12pt).
+func (d *Desktop) SetFont(font *core.Font) {
+	d.mu.Lock()
+	d.font = font
+	d.mu.Unlock()
+	d.RequestUpdate()
+}
+
+// EffectiveFont returns the font to use for the desktop.
+// Returns the set font, or the system default if none is set.
+func (d *Desktop) EffectiveFont() *core.Font {
+	d.mu.RLock()
+	f := d.font
+	d.mu.RUnlock()
+	if f != nil {
+		return f
+	}
+	return core.DefaultFont()
 }
 
 // AddApplication registers an application with the desktop.

@@ -332,6 +332,7 @@ type WidgetBase struct {
 	scheme          style.SchemeID // -1 = inherit from container
 	style           *style.CellStyle
 	backgroundColor *style.Color // nil = inherit from parent
+	font            *Font        // nil = inherit from parent/window/desktop
 	popupController PopupController
 
 	needsRepaint bool
@@ -914,6 +915,28 @@ func (w *WidgetBase) EffectiveBackgroundColor() style.Color {
 	}
 
 	return style.ColorDefault
+}
+
+// Font returns the font explicitly set on this widget, or nil if inheriting.
+func (w *WidgetBase) Font() *Font {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.font
+}
+
+// SetFont sets an explicit font for this widget.
+// Set to nil to inherit from parent/window/desktop.
+func (w *WidgetBase) SetFont(f *Font) {
+	w.mu.Lock()
+	w.font = f
+	w.mu.Unlock()
+	w.Update()
+}
+
+// EffectiveFont returns the font to use for this widget.
+// It checks this widget, then walks up the parent chain.
+func (w *WidgetBase) EffectiveFont() *Font {
+	return FindEffectiveFont(w.Self())
 }
 
 // Theme returns the theme for this widget.

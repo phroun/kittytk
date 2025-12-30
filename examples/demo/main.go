@@ -307,7 +307,7 @@ func createMainWindow(desktop *widgets.Desktop, application *app.Application) *w
 
 	// Add demo tabs
 	tabWidget.AddTab("Basic Widgets", createBasicWidgetsDemo(desktop))
-	tabWidget.AddTab("Selection", createSelectionDemo(tabWidget))
+	tabWidget.AddTab("Selection", createSelectionDemo(tabWidget, mainWindow, desktop))
 	tabWidget.AddTab("Lists", createListDemo())
 	tabWidget.AddTab("Scroll Selection", createScrollSelectionDemo(tabWidget))
 	tabWidget.AddTab("Scroll Lists", createScrollListDemo())
@@ -387,7 +387,7 @@ func createBasicWidgetsDemo(desktop *widgets.Desktop) core.Widget {
 }
 
 // createSelectionDemo creates a panel with selection widgets using a draggable splitter.
-func createSelectionDemo(tabWidget *widgets.TabWidget) core.Widget {
+func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window, desktop *widgets.Desktop) core.Widget {
 	// Use a vertical splitter to divide checkboxes from radio buttons
 	splitter := widgets.NewVSplitter()
 	splitter.SetPosition(0.4) // Checkboxes get 40% of space
@@ -410,6 +410,30 @@ func createSelectionDemo(tabWidget *widgets.TabWidget) core.Widget {
 	check3 := widgets.NewCheckbox("Tri-state checkbox")
 	check3.SetTriState(true)
 	checkPanel.AddChild(check3)
+
+	// Font switching checkboxes
+	fontLabel := widgets.NewLabel("Font Options:")
+	checkPanel.AddChild(fontLabel)
+
+	windowFontCheck := widgets.NewCheckbox("Window: Tuesday (double-width)")
+	windowFontCheck.SetOnToggled(func(checked bool) {
+		if checked {
+			mainWindow.SetFont(core.FontTuesday12)
+		} else {
+			mainWindow.SetFont(nil) // Inherit from desktop
+		}
+	})
+	checkPanel.AddChild(windowFontCheck)
+
+	desktopFontCheck := widgets.NewCheckbox("Desktop: Tuesday (double-width)")
+	desktopFontCheck.SetOnToggled(func(checked bool) {
+		if checked {
+			desktop.SetFont(core.FontTuesday12)
+		} else {
+			desktop.SetFont(nil) // Use default (Monday)
+		}
+	})
+	checkPanel.AddChild(desktopFontCheck)
 
 	checkPanel.SetLayoutManager(checkLayout)
 	splitter.SetFirst(checkPanel)

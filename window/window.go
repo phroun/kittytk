@@ -89,6 +89,9 @@ type Window struct {
 	titleStyle   style.CellStyle
 	frameStyle   style.CellStyle
 
+	// Font (nil = inherit from desktop/MDI pane)
+	font *core.Font
+
 	// Sizing
 	minWidth     core.Unit
 	minHeight    core.Unit
@@ -578,6 +581,44 @@ func (w *Window) SetFrameStyle(s style.CellStyle) {
 	w.frameStyle = s
 	w.mu.Unlock()
 	w.Update()
+}
+
+// Font returns the window's font, or nil if inheriting from desktop.
+func (w *Window) Font() *core.Font {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.font
+}
+
+// SetFont sets the window's font.
+// Set to nil to inherit from the desktop/MDI pane.
+func (w *Window) SetFont(f *core.Font) {
+	w.mu.Lock()
+	w.font = f
+	w.mu.Unlock()
+	w.Update()
+}
+
+// EffectiveFont returns the font to use for this window and its contents.
+func (w *Window) EffectiveFont() *core.Font {
+	w.mu.RLock()
+	if w.font != nil {
+		f := w.font
+		w.mu.RUnlock()
+		return f
+	}
+	w.mu.RUnlock()
+
+	// Check parent (desktop or MDI pane)
+	if parent := w.Parent(); parent != nil {
+		if fp, ok := parent.(core.FontProvider); ok {
+			if f := fp.Font(); f != nil {
+				return f
+			}
+		}
+	}
+
+	return core.DefaultFont()
 }
 
 // BackgroundColor returns the window's explicit background color, if set.
