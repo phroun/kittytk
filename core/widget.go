@@ -265,6 +265,19 @@ type ScrollOffsetProvider interface {
 	ScrollOffset() (x, y int)
 }
 
+// KeyboardBlurChildrenProvider is implemented by containers (like MDIPane and Desktop)
+// that support keyboard-based window blur. When enabled, windows in the container
+// include a virtual "blur" focus item that allows keyboard users to exit the window
+// and return focus to the parent container.
+type KeyboardBlurChildrenProvider interface {
+	// KeyboardBlurChildren returns whether keyboard blur is enabled for child windows.
+	KeyboardBlurChildren() bool
+
+	// PerformKeyboardBlur is called when the blur item is activated (Enter/Space).
+	// It should deactivate the current window and return focus appropriately.
+	PerformKeyboardBlur()
+}
+
 // Application is a forward declaration (defined in app package).
 // This interface allows widgets to access application-level services.
 type Application struct {

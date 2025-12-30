@@ -54,6 +54,7 @@ const (
 	TitleFocusClose                      // Close button focused
 	TitleFocusMinimize                   // Minimize button focused
 	TitleFocusMaximize                   // Maximize button focused
+	TitleFocusBlur                       // Blur item focused (exit window)
 )
 
 
@@ -869,13 +870,60 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 
 	// Draw border at local (0,0) - painter is already offset to window position
 	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
-	p.DrawRect(localBounds, border, frameStyle)
+
+	// When blur item is focused, draw dashed frame with inactive title color
+	if titleFocus == TitleFocusBlur {
+		scheme := w.GetScheme()
+		blurFrameStyle := scheme.GetWindowTitle(false) // Use inactive title color
+
+		// Dashed line characters
+		horizDash := '┄' // U+2504 BOX DRAWINGS LIGHT TRIPLE DASH HORIZONTAL
+		vertDash := '┆'  // U+2506 BOX DRAWINGS LIGHT TRIPLE DASH VERTICAL
+
+		// Single solid corners
+		topLeft := '┌'
+		topRight := '┐'
+		bottomLeft := '└'
+		bottomRight := '┘'
+
+		// Draw corners
+		p.DrawCell(0, 0, topLeft, blurFrameStyle)
+		p.DrawCell(localBounds.Width-metrics.CellWidth, 0, topRight, blurFrameStyle)
+		p.DrawCell(0, localBounds.Height-metrics.CellHeight, bottomLeft, blurFrameStyle)
+		p.DrawCell(localBounds.Width-metrics.CellWidth, localBounds.Height-metrics.CellHeight, bottomRight, blurFrameStyle)
+
+		// Draw top edge (between corners)
+		for x := metrics.CellWidth; x < localBounds.Width-metrics.CellWidth; x += metrics.CellWidth {
+			p.DrawCell(x, 0, horizDash, blurFrameStyle)
+		}
+
+		// Draw bottom edge (between corners)
+		for x := metrics.CellWidth; x < localBounds.Width-metrics.CellWidth; x += metrics.CellWidth {
+			p.DrawCell(x, localBounds.Height-metrics.CellHeight, horizDash, blurFrameStyle)
+		}
+
+		// Draw left edge (between corners)
+		for y := metrics.CellHeight; y < localBounds.Height-metrics.CellHeight; y += metrics.CellHeight {
+			p.DrawCell(0, y, vertDash, blurFrameStyle)
+		}
+
+		// Draw right edge (between corners)
+		for y := metrics.CellHeight; y < localBounds.Height-metrics.CellHeight; y += metrics.CellHeight {
+			p.DrawCell(localBounds.Width-metrics.CellWidth, y, vertDash, blurFrameStyle)
+		}
+	} else {
+		p.DrawRect(localBounds, border, frameStyle)
+	}
 
 	scheme := w.GetScheme()
 	// Derive visual focus: active AND (parent has focus OR window has internal focus)
+	// When blur item is focused, use inactive styles for the whole title bar
 	focused := w.IsActive()
 	if focused {
-		if parent := w.Parent(); parent != nil {
+		if titleFocus == TitleFocusBlur {
+			// Blur item focused - window appears inactive
+			focused = false
+		} else if parent := w.Parent(); parent != nil {
 			policy := parent.FocusPolicy()
 			if policy == core.StrongFocus || policy == core.TabFocus {
 				if !parent.HasFocus() {
@@ -935,6 +983,9 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		if titleFocus == TitleFocusTitle {
 			displayTitle = "< " + title + " >"
 			titleDisplayStyle = scheme.GetTitleBarButton(focused, true, false)
+		} else if titleFocus == TitleFocusBlur {
+			// Blur item focused - use inactive title style
+			titleDisplayStyle = scheme.GetWindowTitle(false)
 		}
 		maxTitleWidth := metrics.CharsForWidth(bounds.Width) - 12 // Leave room for controls on both sides
 		if len(displayTitle) > maxTitleWidth && maxTitleWidth > 0 {
@@ -1019,6 +1070,29 @@ func (w *Window) SetTitleFocus(focus TitleFocus) {
 // HasTitleFocus returns true if any title bar element has keyboard focus.
 func (w *Window) HasTitleFocus() bool {
 	return w.TitleFocus() != TitleFocusNone
+}
+
+// hasKeyboardBlurEnabled returns true if the parent container has keyboard blur enabled.
+func (w *Window) hasKeyboardBlurEnabled() bool {
+	parent := w.Parent()
+	if parent == nil {
+		return false
+	}
+	if provider, ok := parent.(core.KeyboardBlurChildrenProvider); ok {
+		return provider.KeyboardBlurChildren()
+	}
+	return false
+}
+
+// performKeyboardBlur calls the parent's PerformKeyboardBlur if available.
+func (w *Window) performKeyboardBlur() {
+	parent := w.Parent()
+	if parent == nil {
+		return
+	}
+	if provider, ok := parent.(core.KeyboardBlurChildrenProvider); ok {
+		provider.PerformKeyboardBlur()
+	}
 }
 
 // handleTitleBarKey handles keyboard input when title bar has focus.
@@ -1119,6 +1193,10 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				w.resizeStartBounds = w.Bounds()
 			}
 			w.mu.Unlock()
+		case TitleFocusBlur:
+			// Blur the window - return focus to parent container
+			w.SetTitleFocus(TitleFocusNone)
+			w.performKeyboardBlur()
 		}
 		return true
 	}
@@ -1387,7 +1465,7 @@ func (w *Window) nextTitleFocus(current TitleFocus) TitleFocus {
 	flags := w.flags
 	w.mu.RUnlock()
 
-	// Order: Close -> Minimize -> Maximize -> Title -> (exit to content)
+	// Order: Close -> Minimize -> Maximize -> Title -> Blur (if enabled) -> (exit to content)
 	switch current {
 	case TitleFocusClose:
 		if flags&WindowFlagNoMinimize == 0 {
@@ -1402,6 +1480,12 @@ func (w *Window) nextTitleFocus(current TitleFocus) TitleFocus {
 	case TitleFocusMaximize:
 		return TitleFocusTitle
 	case TitleFocusTitle:
+		// If keyboard blur is enabled, go to blur item next
+		if w.hasKeyboardBlurEnabled() {
+			return TitleFocusBlur
+		}
+		return TitleFocusNone // Exit to content
+	case TitleFocusBlur:
 		return TitleFocusNone // Exit to content
 	}
 	return TitleFocusNone
@@ -1413,8 +1497,10 @@ func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
 	flags := w.flags
 	w.mu.RUnlock()
 
-	// Reverse order: Title -> Maximize -> Minimize -> Close
+	// Reverse order: Blur -> Title -> Maximize -> Minimize -> Close
 	switch current {
+	case TitleFocusBlur:
+		return TitleFocusTitle
 	case TitleFocusTitle:
 		if flags&WindowFlagNoMaximize == 0 {
 			return TitleFocusMaximize
@@ -1465,14 +1551,18 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 
 		// Focused widget didn't handle it.
-		// For Shift+Tab at first widget, enter title bar.
+		// For Shift+Tab at first widget, enter title bar (blur item if enabled, otherwise title).
 		if isShiftTab {
 			chain := fm.FocusChain()
 			for _, widget := range chain {
 				if widget.IsVisible() && widget.IsEnabled() {
 					if widget == focused {
-						// At first widget, enter title bar at Title (move/resize)
-						w.SetTitleFocus(TitleFocusTitle)
+						// At first widget, enter blur item if enabled, otherwise title bar
+						if w.hasKeyboardBlurEnabled() {
+							w.SetTitleFocus(TitleFocusBlur)
+						} else {
+							w.SetTitleFocus(TitleFocusTitle)
+						}
 						fm.ClearFocus()
 						return true
 					}

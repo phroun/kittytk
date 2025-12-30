@@ -68,6 +68,10 @@ type Desktop struct {
 	// Background pattern
 	bgChar rune
 
+	// Whether child windows include a virtual "blur" focus item that allows
+	// keyboard users to exit the window and focus the menu bar. Default: true.
+	keyboardBlurChildren bool
+
 	// Content area (shown behind windows but below menu/status)
 	content core.Widget
 
@@ -132,11 +136,12 @@ func (t *DesktopTimer) Stop() {
 // NewDesktop creates a new desktop widget.
 func NewDesktop() *Desktop {
 	d := &Desktop{
-		bgChar:     '▓', // Default pattern (three-quarter shade block)
-		dockRow:    NewDockRow(),
-		quitChan:   make(chan struct{}),
-		updateChan: make(chan struct{}, 100),
-		theme:      style.DefaultTheme(),
+		bgChar:               '▓', // Default pattern (three-quarter shade block)
+		dockRow:              NewDockRow(),
+		quitChan:             make(chan struct{}),
+		updateChan:           make(chan struct{}, 100),
+		theme:                style.DefaultTheme(),
+		keyboardBlurChildren: true, // Default to enabling keyboard blur
 	}
 	d.WidgetBase = *core.NewWidgetBase()
 	d.Init(d)
@@ -1160,6 +1165,31 @@ func (d *Desktop) BackgroundChar() rune {
 	return d.bgChar
 }
 
+// KeyboardBlurChildren returns whether child windows include a virtual "blur"
+// focus item that allows keyboard users to exit the window.
+func (d *Desktop) KeyboardBlurChildren() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.keyboardBlurChildren
+}
+
+// SetKeyboardBlurChildren sets whether child windows include a virtual "blur"
+// focus item that allows keyboard users to exit the window and focus the menu bar.
+func (d *Desktop) SetKeyboardBlurChildren(enabled bool) {
+	d.mu.Lock()
+	d.keyboardBlurChildren = enabled
+	d.mu.Unlock()
+}
+
+// PerformKeyboardBlur implements core.KeyboardBlurChildrenProvider.
+// It performs the F10 action (focus the menu bar), same as pressing F10.
+func (d *Desktop) PerformKeyboardBlur() {
+	// Same as F10 - activate the menu bar
+	if d.menuBar != nil {
+		d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
+	}
+}
+
 // SetContent sets the content widget (shown behind windows).
 func (d *Desktop) SetContent(content core.Widget) {
 	d.content = content
@@ -1749,3 +1779,6 @@ func (s *StatusBar) HandleMousePress(event core.MousePressEvent) bool {
 	// Status bar clicks could be used for section-specific actions
 	return true
 }
+
+// Verify Desktop implements KeyboardBlurChildrenProvider
+var _ core.KeyboardBlurChildrenProvider = (*Desktop)(nil)

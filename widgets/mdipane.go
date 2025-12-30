@@ -37,6 +37,10 @@ type MDIPane struct {
 	drawPattern    bool
 	drawPatternSet bool // tracks if drawPattern was explicitly set
 
+	// Whether child windows include a virtual "blur" focus item that allows
+	// keyboard users to exit the window and return to MDIPane. Default: true.
+	keyboardBlurChildren bool
+
 	// Floating windows in z-order (back to front)
 	windows []*window.Window
 
@@ -80,8 +84,9 @@ type MDIPane struct {
 // NewMDIPane creates a new MDI pane widget.
 func NewMDIPane() *MDIPane {
 	m := &MDIPane{
-		bgChar:      '░',  // Light shade for MDI background
-		drawPattern: true, // Default to pattern when no content
+		bgChar:               '░',  // Light shade for MDI background
+		drawPattern:          true, // Default to pattern when no content
+		keyboardBlurChildren: true, // Default to enabling keyboard blur
 	}
 	m.WidgetBase = *core.NewWidgetBase()
 	m.Init(m)
@@ -105,6 +110,28 @@ func (m *MDIPane) SetDrawPattern(drawPattern bool) {
 	m.drawPatternSet = true
 	m.mu.Unlock()
 	m.Update()
+}
+
+// KeyboardBlurChildren returns whether child windows include a virtual "blur"
+// focus item that allows keyboard users to exit the window.
+func (m *MDIPane) KeyboardBlurChildren() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.keyboardBlurChildren
+}
+
+// SetKeyboardBlurChildren sets whether child windows include a virtual "blur"
+// focus item that allows keyboard users to exit the window and return to MDIPane.
+func (m *MDIPane) SetKeyboardBlurChildren(enabled bool) {
+	m.mu.Lock()
+	m.keyboardBlurChildren = enabled
+	m.mu.Unlock()
+}
+
+// PerformKeyboardBlur implements core.KeyboardBlurChildrenProvider.
+// It deactivates the current active window, same as clicking on the MDI pane background.
+func (m *MDIPane) PerformKeyboardBlur() {
+	m.DeactivateActiveWindow()
 }
 
 // SetContent sets the background content widget.
@@ -1440,5 +1467,6 @@ func abs(x int) int {
 	return x
 }
 
-// Verify MDIPane implements Container
+// Verify MDIPane implements Container and KeyboardBlurChildrenProvider
 var _ core.Container = (*MDIPane)(nil)
+var _ core.KeyboardBlurChildrenProvider = (*MDIPane)(nil)
