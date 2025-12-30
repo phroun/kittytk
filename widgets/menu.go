@@ -1288,7 +1288,7 @@ func (m *MenuBar) isLastMenuFullyVisible() bool {
 
 	x := leftEllipseWidth
 	for i := m.scrollOffset; i < len(m.menus); i++ {
-		menuWidth := core.Unit(len(m.menus[i].title)+2) * metrics.CellWidth
+		menuWidth := core.Unit(utf8.RuneCountInString(m.menus[i].title)+2) * metrics.CellWidth
 		x += menuWidth
 		if x > availableWidth {
 			return false
@@ -1324,7 +1324,7 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 	// Calculate position of the target menu
 	x := leftEllipseWidth
 	for i := m.scrollOffset; i <= index; i++ {
-		menuWidth := core.Unit(len(m.menus[i].title)+2) * metrics.CellWidth
+		menuWidth := core.Unit(utf8.RuneCountInString(m.menus[i].title)+2) * metrics.CellWidth
 		if i == index {
 			// Check if this menu fits
 			if x+menuWidth > availableWidth {
@@ -1335,7 +1335,7 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 					leftEllipseWidth = metrics.TextWidth(3) // "..." (always present when scrolled)
 					x = leftEllipseWidth
 					for j := m.scrollOffset; j <= index; j++ {
-						mw := core.Unit(len(m.menus[j].title)+2) * metrics.CellWidth
+						mw := core.Unit(utf8.RuneCountInString(m.menus[j].title)+2) * metrics.CellWidth
 						if j == index && x+mw <= availableWidth {
 							return
 						}
@@ -1376,7 +1376,7 @@ func (m *MenuBar) clampScrollOffset() {
 		x := leftEllipseWidth
 		fitsWithMoreMenus := true
 		for i := testOffset; i < len(m.menus); i++ {
-			menuWidth := core.Unit(len(m.menus[i].title)+2) * metrics.CellWidth
+			menuWidth := core.Unit(utf8.RuneCountInString(m.menus[i].title)+2) * metrics.CellWidth
 			// Reserve space for right ellipsis if not the last menu
 			rightEllipsisWidth := core.Unit(0)
 			if i < len(m.menus)-1 {
@@ -1616,7 +1616,7 @@ func (m *MenuBar) calculateMenuX(index int) core.Unit {
 
 	// Calculate position from scroll offset
 	for i := m.scrollOffset; i < index; i++ {
-		x += core.Unit(len(m.menus[i].title)+2) * metrics.CellWidth
+		x += core.Unit(utf8.RuneCountInString(m.menus[i].title)+2) * metrics.CellWidth
 	}
 	return x
 }
