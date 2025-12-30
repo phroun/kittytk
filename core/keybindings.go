@@ -154,7 +154,7 @@ func (kb *KeyBindings) SetDefaults() {
 	kb.bindings[ActionQuit] = []string{"^Q"}
 	kb.bindings[ActionExitDesktop] = []string{"M-^X"}
 	kb.bindings[ActionAppHide] = []string{"^H"}
-	kb.bindings[ActionAppHideOthers] = []string{"^M-H"}
+	kb.bindings[ActionAppHideOthers] = []string{"M-^H"}
 	kb.bindings[ActionAppShowAll] = []string{} // No default binding
 }
 

@@ -1528,6 +1528,11 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
+	// Check global desktop keybindings
+	if d.handleGlobalShortcuts(event) {
+		return true
+	}
+
 	// If dock has focus, forward keys to it
 	if d.dockRow != nil && d.dockRow.HasFocus() {
 		return d.dockRow.HandleKeyPress(event)
@@ -1536,6 +1541,54 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Forward to content
 	if d.content != nil {
 		return d.content.HandleKeyPress(event)
+	}
+
+	return false
+}
+
+// handleGlobalShortcuts checks for global desktop keybindings.
+func (d *Desktop) handleGlobalShortcuts(event core.KeyPressEvent) bool {
+	// Exit Desktop
+	for _, key := range core.DefaultKeyBindings.Keys(core.ActionExitDesktop) {
+		if event.Key == key {
+			d.Quit()
+			return true
+		}
+	}
+
+	// App-level shortcuts (only if we have an active app)
+	if d.activeApp != nil {
+		// Hide current app
+		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppHide) {
+			if event.Key == key {
+				d.hideActiveApp()
+				return true
+			}
+		}
+
+		// Hide others
+		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppHideOthers) {
+			if event.Key == key {
+				d.hideOtherApps()
+				return true
+			}
+		}
+
+		// Show all
+		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppShowAll) {
+			if event.Key == key {
+				d.showAllApps()
+				return true
+			}
+		}
+
+		// Quit app
+		for _, key := range core.DefaultKeyBindings.Keys(core.ActionQuit) {
+			if event.Key == key {
+				d.quitActiveApp()
+				return true
+			}
+		}
 	}
 
 	return false
