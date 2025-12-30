@@ -872,44 +872,70 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 
 	// When blur item is focused, draw dashed frame with inactive title color
+	// but keep corners, adjacent chars, and buttons in active color
 	if titleFocus == TitleFocusBlur {
 		scheme := w.GetScheme()
-		blurFrameStyle := scheme.GetWindowTitle(false) // Use inactive title color
+		blurFrameStyle := scheme.GetWindowTitle(false)  // Inactive title color for dashed lines
+		activeFrameStyle := scheme.GetWindowBorder(true) // Active color for corners
 
 		// Dashed line characters
 		horizDash := '┄' // U+2504 BOX DRAWINGS LIGHT TRIPLE DASH HORIZONTAL
 		vertDash := '┆'  // U+2506 BOX DRAWINGS LIGHT TRIPLE DASH VERTICAL
 
-		// Single solid corners
+		// Single solid corners (in active color)
 		topLeft := '┌'
 		topRight := '┐'
 		bottomLeft := '└'
 		bottomRight := '┘'
 
-		// Draw corners
-		p.DrawCell(0, 0, topLeft, blurFrameStyle)
-		p.DrawCell(localBounds.Width-metrics.CellWidth, 0, topRight, blurFrameStyle)
-		p.DrawCell(0, localBounds.Height-metrics.CellHeight, bottomLeft, blurFrameStyle)
-		p.DrawCell(localBounds.Width-metrics.CellWidth, localBounds.Height-metrics.CellHeight, bottomRight, blurFrameStyle)
+		// Get border characters for adjacent positions (from the border style)
+		horizLine := border.Horizontal
+		vertLine := border.Vertical
 
-		// Draw top edge (between corners)
+		// Draw corners in active color
+		p.DrawCell(0, 0, topLeft, activeFrameStyle)
+		p.DrawCell(localBounds.Width-metrics.CellWidth, 0, topRight, activeFrameStyle)
+		p.DrawCell(0, localBounds.Height-metrics.CellHeight, bottomLeft, activeFrameStyle)
+		p.DrawCell(localBounds.Width-metrics.CellWidth, localBounds.Height-metrics.CellHeight, bottomRight, activeFrameStyle)
+
+		// Draw top edge - first and last chars adjacent to corners in active color, rest dashed
 		for x := metrics.CellWidth; x < localBounds.Width-metrics.CellWidth; x += metrics.CellWidth {
-			p.DrawCell(x, 0, horizDash, blurFrameStyle)
+			if x == metrics.CellWidth || x == localBounds.Width-2*metrics.CellWidth {
+				// Adjacent to corner - use active style with normal horizontal line
+				p.DrawCell(x, 0, horizLine, activeFrameStyle)
+			} else {
+				p.DrawCell(x, 0, horizDash, blurFrameStyle)
+			}
 		}
 
-		// Draw bottom edge (between corners)
+		// Draw bottom edge - first and last chars adjacent to corners in active color, rest dashed
 		for x := metrics.CellWidth; x < localBounds.Width-metrics.CellWidth; x += metrics.CellWidth {
-			p.DrawCell(x, localBounds.Height-metrics.CellHeight, horizDash, blurFrameStyle)
+			if x == metrics.CellWidth || x == localBounds.Width-2*metrics.CellWidth {
+				// Adjacent to corner - use active style with normal horizontal line
+				p.DrawCell(x, localBounds.Height-metrics.CellHeight, horizLine, activeFrameStyle)
+			} else {
+				p.DrawCell(x, localBounds.Height-metrics.CellHeight, horizDash, blurFrameStyle)
+			}
 		}
 
-		// Draw left edge (between corners)
+		// Draw left edge - first and last chars adjacent to corners in active color, rest dashed
 		for y := metrics.CellHeight; y < localBounds.Height-metrics.CellHeight; y += metrics.CellHeight {
-			p.DrawCell(0, y, vertDash, blurFrameStyle)
+			if y == metrics.CellHeight || y == localBounds.Height-2*metrics.CellHeight {
+				// Adjacent to corner - use active style with normal vertical line
+				p.DrawCell(0, y, vertLine, activeFrameStyle)
+			} else {
+				p.DrawCell(0, y, vertDash, blurFrameStyle)
+			}
 		}
 
-		// Draw right edge (between corners)
+		// Draw right edge - first and last chars adjacent to corners in active color, rest dashed
 		for y := metrics.CellHeight; y < localBounds.Height-metrics.CellHeight; y += metrics.CellHeight {
-			p.DrawCell(localBounds.Width-metrics.CellWidth, y, vertDash, blurFrameStyle)
+			if y == metrics.CellHeight || y == localBounds.Height-2*metrics.CellHeight {
+				// Adjacent to corner - use active style with normal vertical line
+				p.DrawCell(localBounds.Width-metrics.CellWidth, y, vertLine, activeFrameStyle)
+			} else {
+				p.DrawCell(localBounds.Width-metrics.CellWidth, y, vertDash, blurFrameStyle)
+			}
 		}
 	} else {
 		p.DrawRect(localBounds, border, frameStyle)
@@ -917,13 +943,10 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 
 	scheme := w.GetScheme()
 	// Derive visual focus: active AND (parent has focus OR window has internal focus)
-	// When blur item is focused, use inactive styles for the whole title bar
+	// When blur item is focused, buttons stay in active color but title bar text uses inactive
 	focused := w.IsActive()
 	if focused {
-		if titleFocus == TitleFocusBlur {
-			// Blur item focused - window appears inactive
-			focused = false
-		} else if parent := w.Parent(); parent != nil {
+		if parent := w.Parent(); parent != nil {
 			policy := parent.FocusPolicy()
 			if policy == core.StrongFocus || policy == core.TabFocus {
 				if !parent.HasFocus() {
@@ -939,6 +962,9 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		}
 	}
 
+	// For button styling, use active appearance even when blur is focused
+	buttonFocused := focused || titleFocus == TitleFocusBlur
+
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
 		// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
@@ -946,21 +972,21 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		if flags&WindowFlagNoClose == 0 {
 			isFocused := titleFocus == TitleFocusClose
 			isPressed := pressedButton == TitleButtonClose && buttonHovered
-			btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
+			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
 			p.DrawText(controlX, 0, "[x]", btnStyle)
 			controlX += metrics.TextWidth(3)
 		}
 		if flags&WindowFlagNoMinimize == 0 {
 			isFocused := titleFocus == TitleFocusMinimize
 			isPressed := pressedButton == TitleButtonMinimize && buttonHovered
-			btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
+			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
 			p.DrawText(controlX, 0, "[.]", btnStyle)
 			controlX += metrics.TextWidth(3)
 		}
 		if flags&WindowFlagNoMaximize == 0 {
 			isFocused := titleFocus == TitleFocusMaximize
 			isPressed := pressedButton == TitleButtonMaximize && buttonHovered
-			btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
+			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
 			if state == WindowStateMaximized {
 				p.DrawText(controlX, 0, "[o]", btnStyle) // Restore icon
 			} else {
@@ -984,7 +1010,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			displayTitle = "< " + title + " >"
 			titleDisplayStyle = scheme.GetTitleBarButton(focused, true, false)
 		} else if titleFocus == TitleFocusBlur {
-			// Blur item focused - use inactive title style
+			// Blur item focused - use inactive title style for the title text
 			titleDisplayStyle = scheme.GetWindowTitle(false)
 		}
 		maxTitleWidth := metrics.CharsForWidth(bounds.Width) - 12 // Leave room for controls on both sides
