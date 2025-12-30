@@ -77,6 +77,10 @@ type Widget interface {
 	// SetFocus attempts to give focus to this widget.
 	SetFocus()
 
+	// SetFocusWithoutScroll sets focus without scrolling parent containers.
+	// Use this for mouse-initiated focus changes where visibility is proven.
+	SetFocusWithoutScroll()
+
 	// ClearFocus removes focus from this widget.
 	ClearFocus()
 
@@ -767,6 +771,7 @@ func (p *scrollRectProxy) FocusPolicy() FocusPolicy               { return NoFoc
 func (p *scrollRectProxy) SetFocusPolicy(FocusPolicy)             {}
 func (p *scrollRectProxy) HasFocus() bool                         { return false }
 func (p *scrollRectProxy) SetFocus()                              {}
+func (p *scrollRectProxy) SetFocusWithoutScroll()                 {}
 func (p *scrollRectProxy) ClearFocus()                            {}
 func (p *scrollRectProxy) Furtive() bool                          { return false }
 func (p *scrollRectProxy) SetFurtive(bool)                        {}

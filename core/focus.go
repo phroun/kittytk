@@ -113,6 +113,48 @@ func (fm *FocusManager) SetFocusedWidget(widget Widget) bool {
 	return true
 }
 
+// SetFocusedWidgetWithoutScroll sets the focused widget without scrolling into view.
+// Use this for mouse-initiated focus changes where visibility is already proven.
+func (fm *FocusManager) SetFocusedWidgetWithoutScroll(widget Widget) bool {
+	if widget != nil && !fm.canFocus(widget) {
+		return false
+	}
+
+	fm.mu.Lock()
+	if fm.focusedWidget == widget {
+		fm.mu.Unlock()
+		return true
+	}
+
+	oldFocus := fm.focusedWidget
+	fm.focusedWidget = widget
+	handler := fm.onFocusChanged
+	am := fm.accessibilityManager
+	fm.mu.Unlock()
+
+	// Clear focus on old widget (this sets focused=false and calls HandleFocusOut)
+	if oldFocus != nil {
+		oldFocus.ClearFocus()
+	}
+
+	// Set focus on new widget without scrolling
+	if widget != nil {
+		widget.SetFocusWithoutScroll()
+	}
+
+	// Announce focus change for accessibility
+	if am != nil && widget != nil {
+		am.AnnounceFocus(widget)
+	}
+
+	// Call callback
+	if handler != nil {
+		handler(oldFocus, widget)
+	}
+
+	return true
+}
+
 // setFocusedWidgetInternal is called by widgets when they gain focus.
 // It updates the focus manager's state and clears focus from the old widget,
 // but does NOT call SetFocus on the new widget (to avoid recursion).
@@ -272,6 +314,22 @@ func (fm *FocusManager) FocusFirst() bool {
 	for _, w := range chain {
 		if fm.canFocus(w) {
 			return fm.SetFocusedWidget(w)
+		}
+	}
+	return false
+}
+
+// FocusFirstWithoutScroll moves focus to the first focusable widget without scrolling.
+// Use this for mouse-initiated focus changes where visibility is already proven.
+func (fm *FocusManager) FocusFirstWithoutScroll() bool {
+	fm.mu.RLock()
+	root := fm.root
+	fm.mu.RUnlock()
+
+	chain := fm.buildFocusChain(root)
+	for _, w := range chain {
+		if fm.canFocus(w) {
+			return fm.SetFocusedWidgetWithoutScroll(w)
 		}
 	}
 	return false

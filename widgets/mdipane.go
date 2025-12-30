@@ -332,10 +332,12 @@ func (m *MDIPane) ActivateWindow(win *window.Window) {
 		// already has focus. This prevents stealing focus during initial
 		// setup when windows are added but the MDI tab isn't active yet.
 		if m.HasFocus() {
-			// Focus the window's first widget if no widget is focused
+			// Focus the window's first widget if no widget is focused.
+			// Use FocusFirstWithoutScroll since ActivateWindow is typically
+			// called from mouse handlers where visibility is already proven.
 			if fm := win.FocusManager(); fm != nil {
 				if fm.FocusedWidget() == nil {
-					fm.FocusFirst()
+					fm.FocusFirstWithoutScroll()
 				}
 			}
 		}
@@ -380,10 +382,12 @@ func (m *MDIPane) FocusWindow(win *window.Window) {
 	}
 	if win != nil {
 		win.SetActive(true)
-		// Focus the window's first widget if no widget is focused
+		// Focus the window's first widget if no widget is focused.
+		// Use FocusFirstWithoutScroll since this is called from mouse handlers
+		// and visibility is already proven by the click.
 		if fm := win.FocusManager(); fm != nil {
 			if fm.FocusedWidget() == nil {
-				fm.FocusFirst()
+				fm.FocusFirstWithoutScroll()
 			}
 		}
 	}
@@ -1088,7 +1092,8 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 	// Any click inside the MDIPane should give it focus, so keyboard events
 	// (including Tab) route through MDIPane to the active child window.
-	m.SetFocus()
+	// Use SetFocusWithoutScroll since mouse clicks prove visibility - no need to scroll.
+	m.SetFocusWithoutScroll()
 
 	m.mu.RLock()
 	windows := m.windows
