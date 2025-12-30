@@ -1007,6 +1007,10 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 
 // HandleMousePress handles mouse clicks.
 func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
+	// Any click inside the MDIPane should give it focus, so keyboard events
+	// (including Tab) route through MDIPane to the active child window.
+	m.SetFocus()
+
 	m.mu.RLock()
 	windows := m.windows
 	content := m.content
