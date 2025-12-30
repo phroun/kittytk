@@ -1007,6 +1007,13 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			displayTitle = displayTitle[:maxTitleWidth-1] + "…"
 		}
 		p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle)
+
+		// Draw blur button on far right when blur item is focused
+		if titleFocus == TitleFocusBlur {
+			blurBtnStyle := scheme.GetTitleBarButton(true, true, false) // Focused button style
+			blurX := localBounds.Width - metrics.CellWidth - metrics.TextWidth(3) // Position before right border
+			p.DrawText(blurX, 0, "[~]", blurBtnStyle)
+		}
 	}
 
 	// Fill content area with background
