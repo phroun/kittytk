@@ -135,7 +135,9 @@ func (m *MDIPane) PerformKeyboardBlur() {
 }
 
 // IsWindowPassive implements core.PassiveWindowProvider.
-// A window is passive when it's active but contains an MDIPane with an active descendant window.
+// A window is passive when:
+// 1. It's active but contains an MDIPane with an active descendant window, OR
+// 2. An ancestor Desktop has menu bar focused (no active window at desktop level)
 func (m *MDIPane) IsWindowPassive(win core.Widget) bool {
 	// Only the active window can be passive
 	m.mu.RLock()
@@ -146,8 +148,31 @@ func (m *MDIPane) IsWindowPassive(win core.Widget) bool {
 		return false
 	}
 
+	// Check if an ancestor Desktop has menu bar focused (no active window)
+	if hasAncestorMenuBarFocused(m) {
+		return true
+	}
+
 	// Check if this window contains an MDIPane with an active window
 	return hasActiveDescendantWindow(win)
+}
+
+// hasAncestorMenuBarFocused walks up the widget tree to check if an ancestor
+// Desktop has the menu bar focused (indicated by no active window in the window manager).
+func hasAncestorMenuBarFocused(w core.Widget) bool {
+	current := w.Parent()
+	for current != nil {
+		// Check if this is a Desktop with no active window (menu bar has focus)
+		if desktop, ok := current.(*Desktop); ok {
+			if wm := desktop.WindowManager(); wm != nil {
+				if wm.ActiveWindow() == nil && wm.PreviousActiveWindow() != nil {
+					return true
+				}
+			}
+		}
+		current = current.Parent()
+	}
+	return false
 }
 
 // hasActiveDescendantWindow recursively checks if a widget contains an MDIPane
