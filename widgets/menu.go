@@ -161,6 +161,7 @@ type Menu struct {
 	onAboutToShow func()
 	onAboutToHide func()
 	onItemPressed func() // Called when an item is pressed, signals MenuBar to enter drag mode
+	onWillTrigger func() // Called just before an item is triggered, to restore window focus
 }
 
 // parseAcceleratorTitle parses a title with & markup.
@@ -453,6 +454,18 @@ func (m *Menu) SetOnAboutToShow(handler func()) {
 // SetOnAboutToHide sets the about to hide callback.
 func (m *Menu) SetOnAboutToHide(handler func()) {
 	m.onAboutToHide = handler
+}
+
+// setOnWillTrigger sets the callback that is called just before a menu item is triggered.
+// This is used by MenuBar to restore the previous window before the action executes.
+func (m *Menu) setOnWillTrigger(handler func()) {
+	m.onWillTrigger = handler
+	// Propagate to submenus
+	for _, item := range m.items {
+		if item.SubMenu != nil {
+			item.SubMenu.setOnWillTrigger(handler)
+		}
+	}
 }
 
 // findNextEnabled finds the next enabled item.
@@ -979,6 +992,11 @@ func (m *Menu) triggerItem(item *MenuItem) {
 	for menu != nil {
 		menu.Hide()
 		menu = menu.parentMenu
+	}
+
+	// Notify menu bar to restore window focus before action executes
+	if m.onWillTrigger != nil {
+		m.onWillTrigger()
 	}
 
 	// Trigger the action
@@ -1510,6 +1528,19 @@ func (m *MenuBar) OpenMenu(index int) {
 		m.mouseDown = true
 		m.dragging = true
 	}
+
+	// Set up callback to restore window focus before menu action executes
+	m.activeMenu.setOnWillTrigger(func() {
+		// Clean up menu bar state
+		m.activeMenu = nil
+		m.currentIndex = -1
+		m.acceleratorsActive = false
+		m.ClearFocus()
+		// Restore previous window focus
+		if m.onMenuDismiss != nil {
+			m.onMenuDismiss()
+		}
+	})
 
 	// Ensure the menu is visible before opening (scroll if needed)
 	m.ensureMenuVisible(index)
@@ -2244,10 +2275,8 @@ func (m *MenuBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 						m.activeMenu.openSubMenu(item)
 					} else {
 						m.activeMenu.triggerItem(item)
-						// Clean up menu bar state after triggering
-						// Use CloseMenuWithoutRestore to avoid restoring previous window
-						// (the action may have created a new window that should stay on top)
-						m.CloseMenuWithoutRestore()
+						// Note: triggerItem's onWillTrigger callback handles cleanup
+						// and restores the previous window before the action executes
 					}
 					return true
 				}
