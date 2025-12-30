@@ -303,7 +303,16 @@ func (d *Desktop) Font() *core.Font {
 func (d *Desktop) SetFont(font *core.Font) {
 	d.mu.Lock()
 	d.font = font
+	apps := make([]ApplicationProvider, len(d.applications))
+	copy(apps, d.applications)
 	d.mu.Unlock()
+
+	// Recalculate layout for all windows since font affects widget sizes
+	for _, app := range apps {
+		for _, w := range app.Windows() {
+			w.Layout()
+		}
+	}
 	d.RequestUpdate()
 }
 

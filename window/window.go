@@ -596,6 +596,7 @@ func (w *Window) SetFont(f *core.Font) {
 	w.mu.Lock()
 	w.font = f
 	w.mu.Unlock()
+	w.Layout() // Recalculate layout since font affects widget sizes
 	w.Update()
 }
 

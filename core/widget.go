@@ -929,7 +929,13 @@ func (w *WidgetBase) Font() *Font {
 func (w *WidgetBase) SetFont(f *Font) {
 	w.mu.Lock()
 	w.font = f
+	parent := w.parent
 	w.mu.Unlock()
+
+	// Trigger parent container's layout since font affects widget size
+	if parent != nil {
+		parent.Layout()
+	}
 	w.Update()
 }
 
