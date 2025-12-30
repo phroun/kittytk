@@ -1635,21 +1635,50 @@ func (t *TabWidget) paintContent(p *core.Painter) {
 func (t *TabWidget) HandleKeyPress(event core.KeyPressEvent) bool {
 	// When TabWidget has focus, handle tab bar navigation
 	if t.HasFocus() {
+		// Determine navigation direction based on tab position
+		isVertical := t.tabPosition == TabsLeft || t.tabPosition == TabsRight
+
 		switch event.Key {
 		case "Left":
-			t.prevTabAndEnsureVisible()
-			return true
+			if !isVertical {
+				t.prevTabAndEnsureVisible()
+				return true
+			}
 		case "Right":
-			t.nextTabAndEnsureVisible()
-			return true
+			if !isVertical {
+				t.nextTabAndEnsureVisible()
+				return true
+			}
+		case "Up":
+			if isVertical {
+				t.prevTabAndEnsureVisible()
+				return true
+			}
+		case "Down":
+			if isVertical {
+				t.nextTabAndEnsureVisible()
+				return true
+			}
 		case "C-Left", "M-Left", "A-Left":
-			// Jump to first tab
-			t.firstTab()
-			return true
+			if !isVertical {
+				t.firstTab()
+				return true
+			}
 		case "C-Right", "M-Right", "A-Right":
-			// Jump to last tab
-			t.lastTab()
-			return true
+			if !isVertical {
+				t.lastTab()
+				return true
+			}
+		case "C-Up", "M-Up", "A-Up":
+			if isVertical {
+				t.firstTab()
+				return true
+			}
+		case "C-Down", "M-Down", "A-Down":
+			if isVertical {
+				t.lastTab()
+				return true
+			}
 		}
 	}
 

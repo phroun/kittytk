@@ -906,6 +906,17 @@ func createVerticalTabsDemo() core.Widget {
 	leftTab3.SetLayoutManager(leftTab3Layout)
 	leftTabWidget.AddTab("Third", leftTab3)
 
+	// Add more tabs to demonstrate scrolling
+	leftExtraTabNames := []string{"Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth", "Eleventh", "Twelfth", "Thirteenth"}
+	for _, name := range leftExtraTabNames {
+		panel := widgets.NewPanel()
+		panelLayout := layout.NewBoxLayout(core.Vertical)
+		label := widgets.NewLabel(name + " tab content\nin TabsLeft layout.")
+		panel.AddChild(label)
+		panel.SetLayoutManager(panelLayout)
+		leftTabWidget.AddTab(name, panel)
+	}
+
 	splitter.SetFirst(leftTabWidget)
 
 	// Right: TabWidget with tabs on the right
@@ -936,6 +947,17 @@ func createVerticalTabsDemo() core.Widget {
 	rightTab3.AddChild(rightTab3Label)
 	rightTab3.SetLayoutManager(rightTab3Layout)
 	rightTabWidget.AddTab("Gamma", rightTab3)
+
+	// Add more tabs to demonstrate scrolling
+	rightExtraTabNames := []string{"Delta", "Epsilon", "Zeta", "Eta", "Theta", "Iota", "Kappa", "Lambda", "Mu", "Nu"}
+	for _, name := range rightExtraTabNames {
+		panel := widgets.NewPanel()
+		panelLayout := layout.NewBoxLayout(core.Vertical)
+		label := widgets.NewLabel(name + " tab content\nin TabsRight layout.")
+		panel.AddChild(label)
+		panel.SetLayoutManager(panelLayout)
+		rightTabWidget.AddTab(name, panel)
+	}
 
 	splitter.SetSecond(rightTabWidget)
 
