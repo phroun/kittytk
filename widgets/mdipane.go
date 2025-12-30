@@ -135,9 +135,41 @@ func (m *MDIPane) PerformKeyboardBlur() {
 }
 
 // IsWindowPassive implements core.PassiveWindowProvider.
-// For MDIPane, windows are not currently considered passive (they're either active or inactive).
+// A window is passive when it's active but contains an MDIPane with an active descendant window.
 func (m *MDIPane) IsWindowPassive(win core.Widget) bool {
-	// MDI children are either active or inactive, never passive
+	// Only the active window can be passive
+	m.mu.RLock()
+	activeWin := m.activeWindow
+	m.mu.RUnlock()
+
+	if activeWin == nil || activeWin != win {
+		return false
+	}
+
+	// Check if this window contains an MDIPane with an active window
+	return hasActiveDescendantWindow(win)
+}
+
+// hasActiveDescendantWindow recursively checks if a widget contains an MDIPane
+// with an active window (indicating focus is in a nested MDI child).
+func hasActiveDescendantWindow(w core.Widget) bool {
+	container, ok := w.(core.Container)
+	if !ok {
+		return false
+	}
+
+	for _, child := range container.Children() {
+		// Check if child is an MDIPane with an active window
+		if mdi, ok := child.(*MDIPane); ok {
+			if mdi.ActiveWindow() != nil {
+				return true
+			}
+		}
+		// Recursively check children
+		if hasActiveDescendantWindow(child) {
+			return true
+		}
+	}
 	return false
 }
 
