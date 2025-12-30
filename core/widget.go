@@ -278,6 +278,17 @@ type KeyboardBlurChildrenProvider interface {
 	PerformKeyboardBlur()
 }
 
+// PassiveWindowProvider is implemented by containers (like Desktop and MDIPane)
+// to indicate when a window should be rendered with a "passive" frame style.
+// A passive window uses thick single-line border (same color as active) instead
+// of double-line border. This is used when the menu bar has focus but the window
+// is remembered as the previous window, or when focus is in an MDI child.
+type PassiveWindowProvider interface {
+	// IsWindowPassive returns true if the given window should be painted with
+	// passive (thick single-line) frame style instead of active (double-line).
+	IsWindowPassive(win Widget) bool
+}
+
 // Application is a forward declaration (defined in app package).
 // This interface allows widgets to access application-level services.
 type Application struct {

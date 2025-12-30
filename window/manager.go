@@ -362,6 +362,13 @@ func (m *WindowManager) ActiveWindow() *Window {
 	return m.activeWindow
 }
 
+// PreviousActiveWindow returns the window that was active before the menu bar was activated.
+func (m *WindowManager) PreviousActiveWindow() *Window {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.previousActiveWindow
+}
+
 // ActivateWindow brings a window to the front and gives it focus.
 func (m *WindowManager) ActivateWindow(win *Window) {
 	m.mu.Lock()

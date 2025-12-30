@@ -735,17 +735,32 @@ func (w *Window) Paint(p *core.Painter) {
 		}
 	}
 
+	// Check for passive state: window is remembered by menu bar while no window is active
+	isPassive := false
+	if parent := w.Parent(); parent != nil {
+		if provider, ok := parent.(core.PassiveWindowProvider); ok {
+			isPassive = provider.IsWindowPassive(w)
+		}
+	}
+
 	// Get styles from scheme based on focus state
-	titleStyle := scheme.GetWindowTitle(focused)
-	frameStyle := scheme.GetWindowBorder(focused)
+	// Passive windows use active colors (same as focused)
+	titleStyle := scheme.GetWindowTitle(focused || isPassive)
+	frameStyle := scheme.GetWindowBorder(focused || isPassive)
+
+	// Passive windows use heavy (thick single-line) border instead of double
+	frameBorder := border
+	if isPassive {
+		frameBorder = style.BorderHeavy
+	}
 
 	// Draw frame based on state
 	if state == WindowStateMaximized && flags&WindowFlagNoTitle == 0 {
 		// Maximized: only title bar, no side borders
-		w.paintMaximizedFrame(p, bounds, metrics, title, titleStyle, frameStyle, border)
+		w.paintMaximizedFrame(p, bounds, metrics, title, titleStyle, frameStyle, frameBorder)
 	} else if flags&WindowFlagFrameless == 0 {
 		// Normal frame
-		w.paintNormalFrame(p, bounds, metrics, title, titleStyle, frameStyle, border, flags)
+		w.paintNormalFrame(p, bounds, metrics, title, titleStyle, frameStyle, frameBorder, flags)
 	}
 
 	// Paint content
@@ -850,6 +865,13 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		titleDisplayStyle = scheme.GetTitleBarButton(focused, true, false)
 	}
 	p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle)
+
+	// Draw blur button on far right when blur item is focused
+	if titleFocus == TitleFocusBlur {
+		blurBtnStyle := scheme.GetTitleBarButton(focused, true, false) // Focused button style
+		blurX := bounds.Width - metrics.TextWidth(3)                   // Position at far right
+		p.DrawText(blurX, 0, "[~]", blurBtnStyle)
+	}
 
 	// Fill content area with background (same as normal frame)
 	contentBounds := w.contentBounds()

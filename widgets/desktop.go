@@ -1194,6 +1194,20 @@ func (d *Desktop) PerformKeyboardBlur() {
 	}
 }
 
+// IsWindowPassive implements core.PassiveWindowProvider.
+// A window is passive when it's the remembered previous window while the menu bar has focus.
+func (d *Desktop) IsWindowPassive(win core.Widget) bool {
+	if d.windowManager == nil {
+		return false
+	}
+	// Window is passive when:
+	// 1. No active window (menu bar has focus)
+	// 2. This window is the remembered previous window
+	activeWin := d.windowManager.ActiveWindow()
+	previousWin := d.windowManager.PreviousActiveWindow()
+	return activeWin == nil && previousWin != nil && previousWin == win
+}
+
 // SetContent sets the content widget (shown behind windows).
 func (d *Desktop) SetContent(content core.Widget) {
 	d.content = content

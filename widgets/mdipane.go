@@ -134,6 +134,13 @@ func (m *MDIPane) PerformKeyboardBlur() {
 	m.DeactivateActiveWindow()
 }
 
+// IsWindowPassive implements core.PassiveWindowProvider.
+// For MDIPane, windows are not currently considered passive (they're either active or inactive).
+func (m *MDIPane) IsWindowPassive(win core.Widget) bool {
+	// MDI children are either active or inactive, never passive
+	return false
+}
+
 // SetContent sets the background content widget.
 // This widget is displayed behind all floating windows.
 // When content is added and drawPattern hasn't been explicitly set,

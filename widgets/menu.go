@@ -4,6 +4,7 @@ package widgets
 import (
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
@@ -471,11 +472,16 @@ func (m *Menu) findNextEnabled(from int) int {
 
 // findPrevEnabled finds the previous enabled item.
 func (m *Menu) findPrevEnabled(from int) int {
-	for i := 1; i <= len(m.items); i++ {
-		idx := from - i
-		if idx < 0 {
-			idx = len(m.items) + idx
-		}
+	n := len(m.items)
+	if n == 0 {
+		return -1
+	}
+	// When from is -1 (nothing selected), treat as 0 so going back wraps to last item
+	if from < 0 {
+		from = 0
+	}
+	for i := 1; i <= n; i++ {
+		idx := ((from - i) % n + n) % n
 		item := m.items[idx]
 		if !item.Separator && item.Enabled {
 			return idx
@@ -1227,7 +1233,7 @@ func (m *MenuBar) calculateTotalMenusWidth() core.Unit {
 	metrics := core.DefaultCellMetrics()
 	total := core.Unit(0)
 	for _, menu := range m.menus {
-		total += core.Unit(len(menu.title)+2) * metrics.CellWidth
+		total += core.Unit(utf8.RuneCountInString(menu.title)+2) * metrics.CellWidth
 	}
 	return total
 }
@@ -1621,7 +1627,7 @@ func (m *MenuBar) SizeHint() core.UnitSize {
 
 	width := core.Unit(0)
 	for _, menu := range m.menus {
-		width += core.Unit(len(menu.title)+2) * metrics.CellWidth
+		width += core.Unit(utf8.RuneCountInString(menu.title)+2) * metrics.CellWidth
 	}
 
 	return core.UnitSize{
@@ -1704,7 +1710,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// Draw visible menus
 	for i := m.scrollOffset; i < len(m.menus); i++ {
 		menu := m.menus[i]
-		menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
+		menuWidth := core.Unit(utf8.RuneCountInString(menu.title)+2) * metrics.CellWidth
 
 		// Reserve space for right ellipsis if there are more menus after this one
 		rightEllipsisWidth := core.Unit(0)
@@ -2068,7 +2074,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 
 		for i := m.scrollOffset; i < len(m.menus); i++ {
 			menu := m.menus[i]
-			menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
+			menuWidth := core.Unit(utf8.RuneCountInString(menu.title)+2) * metrics.CellWidth
 			if event.X >= x && event.X < x+menuWidth {
 				// Track mouse down for potential drag
 				m.mouseDown = true
@@ -2181,7 +2187,7 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 		for i := m.scrollOffset; i < len(m.menus); i++ {
 			menu := m.menus[i]
-			menuWidth := core.Unit(len(menu.title)+2) * metrics.CellWidth
+			menuWidth := core.Unit(utf8.RuneCountInString(menu.title)+2) * metrics.CellWidth
 			if event.X >= x && event.X < x+menuWidth {
 				if m.activeMenu != menu {
 					m.OpenMenu(i)
