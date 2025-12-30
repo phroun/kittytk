@@ -190,8 +190,9 @@ func (s Shortcut) DisplayString() string {
 
 // AccessibilityString returns a fully spelled-out representation of the shortcut
 // for screen reader announcements.
-// Translates: M- → Meta, A- → Alt, C-/^ → Control, S- → Shift, s- → Super, H- → Hyper
-// Uppercase final letter implies Shift (e.g., M-O → Meta+Shift+O)
+// Translates: M- → Meta, A- → Alt, C- → Control, ^ → Control, S- → Shift, s- → Super, H- → Hyper
+// Uppercase final letter implies Shift for hyphenated modifiers (e.g., M-O → Meta+Shift+O)
+// but NOT for ^ notation (^X is just Control+X, case is irrelevant with ^)
 func (s Shortcut) AccessibilityString() string {
 	if s == "" {
 		return ""
@@ -200,6 +201,7 @@ func (s Shortcut) AccessibilityString() string {
 	str := string(s)
 	var modifiers []string
 	hasExplicitShift := false
+	usedCaretNotation := false
 
 	// Parse modifier prefixes
 	for len(str) > 0 {
@@ -233,9 +235,10 @@ func (s Shortcut) AccessibilityString() string {
 				continue
 			}
 		}
-		// Check for ^ prefix (Control)
+		// Check for ^ prefix (Control) - case of following letter doesn't imply shift
 		if len(str) >= 1 && str[0] == '^' {
 			modifiers = append(modifiers, "Control")
+			usedCaretNotation = true
 			str = str[1:]
 			continue
 		}
@@ -246,7 +249,8 @@ func (s Shortcut) AccessibilityString() string {
 	key := str
 
 	// Check if single letter key is uppercase (implies Shift)
-	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' && !hasExplicitShift {
+	// Only applies to hyphenated modifiers, NOT to ^ notation
+	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' && !hasExplicitShift && !usedCaretNotation {
 		modifiers = append(modifiers, "Shift")
 	}
 
