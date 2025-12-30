@@ -267,6 +267,9 @@ func (m *WindowManager) AddWindow(win *Window) {
 			m.MaximizeWindow(win)
 		}
 	})
+	win.SetOnCloseComplete(func() {
+		m.RemoveWindow(win)
+	})
 	win.SetGetConstrainingBounds(func() core.UnitRect {
 		return m.ClientArea()
 	})

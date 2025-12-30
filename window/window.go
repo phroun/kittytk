@@ -105,6 +105,7 @@ type Window struct {
 	// Request callbacks (for WindowManager integration)
 	onMinimizeRequest     func()               // Called when user clicks minimize button
 	onMaximizeRequest     func()               // Called when user clicks maximize button
+	onCloseComplete       func()               // Called when window is closed, to remove from manager
 	getConstrainingBounds func() core.UnitRect // Returns the client area for movement constraints
 	popupController       core.PopupController // Popup controller for ComboBox etc.
 
@@ -405,6 +406,7 @@ func (w *Window) SetActive(active bool) {
 func (w *Window) Close() bool {
 	w.mu.RLock()
 	handler := w.onClose
+	closeComplete := w.onCloseComplete
 	w.mu.RUnlock()
 
 	if handler != nil && !handler() {
@@ -422,6 +424,12 @@ func (w *Window) Close() bool {
 	}
 
 	w.Hide()
+
+	// Notify manager to remove this window
+	if closeComplete != nil {
+		closeComplete()
+	}
+
 	return true
 }
 
@@ -468,6 +476,14 @@ func (w *Window) SetOnMinimizeRequest(handler func()) {
 func (w *Window) SetOnMaximizeRequest(handler func()) {
 	w.mu.Lock()
 	w.onMaximizeRequest = handler
+	w.mu.Unlock()
+}
+
+// SetOnCloseComplete sets the callback for when the window is fully closed.
+// This is called by WindowManager to remove the window from its list.
+func (w *Window) SetOnCloseComplete(handler func()) {
+	w.mu.Lock()
+	w.onCloseComplete = handler
 	w.mu.Unlock()
 }
 

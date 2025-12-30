@@ -280,11 +280,8 @@ func (m *MDIPane) AddWindow(win *window.Window) {
 	win.SetGetConstrainingBounds(func() core.UnitRect {
 		return m.ClientArea()
 	})
-
-	// When the window is closed, remove it from the MDI pane
-	win.SetOnClose(func() bool {
+	win.SetOnCloseComplete(func() {
 		m.RemoveWindow(win)
-		return true // Allow the close
 	})
 
 	// Position if not explicitly set
