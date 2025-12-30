@@ -394,7 +394,15 @@ func (w *Window) SetActive(active bool) {
 	}
 	w.isActive = active
 	handler := w.onActivate
+	title := w.title
 	w.mu.Unlock()
+
+	// Announce window activation for accessibility
+	if active {
+		if am := core.FindAccessibilityManager(w); am != nil {
+			am.AnnouncePolite(title + ", window")
+		}
+	}
 
 	if handler != nil {
 		handler(active)
@@ -407,10 +415,16 @@ func (w *Window) Close() bool {
 	w.mu.RLock()
 	handler := w.onClose
 	closeComplete := w.onCloseComplete
+	title := w.title
 	w.mu.RUnlock()
 
 	if handler != nil && !handler() {
 		return false
+	}
+
+	// Announce window closing for accessibility
+	if am := core.FindAccessibilityManager(w); am != nil {
+		am.AnnouncePolite(title + ", closed")
 	}
 
 	// Close child windows first
@@ -1119,11 +1133,40 @@ func (w *Window) TitleFocus() TitleFocus {
 // SetTitleFocus sets which title bar element has keyboard focus.
 func (w *Window) SetTitleFocus(focus TitleFocus) {
 	w.mu.Lock()
+	oldFocus := w.titleFocus
 	w.titleFocus = focus
 	if focus == TitleFocusNone {
 		w.resizeEdges = ResizeEdgeNone // Clear resize state when leaving title bar
 	}
+	title := w.title
 	w.mu.Unlock()
+
+	// Announce titlebar element change for accessibility
+	if focus != oldFocus && focus != TitleFocusNone {
+		if am := core.FindAccessibilityManager(w); am != nil {
+			var elementName string
+			switch focus {
+			case TitleFocusClose:
+				elementName = "close button"
+			case TitleFocusMinimize:
+				elementName = "minimize button"
+			case TitleFocusMaximize:
+				if w.IsMaximized() {
+					elementName = "restore button"
+				} else {
+					elementName = "maximize button"
+				}
+			case TitleFocusTitle:
+				elementName = title + ", title bar"
+			case TitleFocusBlur:
+				elementName = "blur button"
+			}
+			if elementName != "" {
+				am.AnnouncePolite(elementName)
+			}
+		}
+	}
+
 	w.Update()
 }
 

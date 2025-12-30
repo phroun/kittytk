@@ -2,6 +2,7 @@
 package widgets
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/phroun/tuitk/core"
@@ -357,6 +358,11 @@ func (c *ComboBox) SetCurrentIndex(index int) {
 	c.currentIndex = index
 	if index >= 0 {
 		c.editText = c.items[index]
+
+		// Announce selection change for accessibility
+		if am := core.FindAccessibilityManager(c); am != nil {
+			am.AnnouncePolite(fmt.Sprintf("%s, %d of %d", c.items[index], index+1, len(c.items)))
+		}
 	}
 	c.Update()
 	c.notifyIndexChanged()
