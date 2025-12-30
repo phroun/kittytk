@@ -329,22 +329,40 @@ func (m *WindowManager) RemoveWindow(win *Window) {
 	}
 
 	// Update active window
-	if m.activeWindow == win {
+	wasActive := m.activeWindow == win
+	var newActive *Window
+	if wasActive {
 		m.activeWindow = nil
 		if len(m.windows) > 0 {
-			m.activeWindow = m.windows[len(m.windows)-1]
+			newActive = m.windows[len(m.windows)-1]
+			m.activeWindow = newActive
 		}
 	}
 
 	handler := m.onWindowRemoved
 	activeHandler := m.onActiveChanged
-	newActive := m.activeWindow
 	m.mu.Unlock()
+
+	// Deactivate the removed window
+	if wasActive {
+		win.SetActive(false)
+	}
+
+	// Activate the new active window
+	if newActive != nil {
+		newActive.SetActive(true)
+		// Focus the window's first widget if no widget is focused
+		if fm := newActive.FocusManager(); fm != nil {
+			if fm.FocusedWidget() == nil {
+				fm.FocusFirst()
+			}
+		}
+	}
 
 	if handler != nil {
 		handler(win)
 	}
-	if activeHandler != nil && newActive != win {
+	if activeHandler != nil && wasActive {
 		activeHandler(newActive)
 	}
 }
