@@ -33,6 +33,7 @@ type TabWidget struct {
 	scrollbarDragging   bool // Whether scrollbar thumb is being dragged
 	scrollbarDragStart  int  // Row where drag started
 	scrollbarDragOffset int  // Scroll offset when drag started
+	vertTabDragging     bool // Whether dragging over vertical tabs (sweep selection)
 
 	// Callbacks
 	onCurrentChanged func(index int)
@@ -458,28 +459,20 @@ func (t *TabWidget) contentBounds() core.UnitRect {
 		}
 	case TabsLeft:
 		tabWidth := t.calculateTabBarWidth()
-		// Add scrollbar width if scrolling is needed
-		scrollbarWidth := core.Unit(0)
-		if t.vertTabsNeedScrolling() {
-			scrollbarWidth = metrics.CellWidth
-		}
+		// Scrollbar reuses the outside padding column, no extra width needed
 		return core.UnitRect{
-			X:      tabWidth + separatorWidth + scrollbarWidth,
+			X:      tabWidth + separatorWidth,
 			Y:      0,
-			Width:  bounds.Width - tabWidth - separatorWidth - scrollbarWidth,
+			Width:  bounds.Width - tabWidth - separatorWidth,
 			Height: bounds.Height,
 		}
 	case TabsRight:
 		tabWidth := t.calculateTabBarWidth()
-		// Add scrollbar width if scrolling is needed
-		scrollbarWidth := core.Unit(0)
-		if t.vertTabsNeedScrolling() {
-			scrollbarWidth = metrics.CellWidth
-		}
+		// Scrollbar reuses the outside padding column, no extra width needed
 		return core.UnitRect{
 			X:      0,
 			Y:      0,
-			Width:  bounds.Width - tabWidth - separatorWidth - scrollbarWidth,
+			Width:  bounds.Width - tabWidth - separatorWidth,
 			Height: bounds.Height,
 		}
 	}
@@ -1668,11 +1661,8 @@ func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	// Disabled style
 	disabledStyle := tabBarStyle.WithFg(scheme.GetDisabledTextFG())
 
-	// Calculate content offset (scrollbar on left edge when scrolling needed)
+	// Scrollbar overlays the left padding column, no extra offset needed
 	contentX := core.Unit(0)
-	if needsScrolling {
-		contentX = metrics.CellWidth // Make room for scrollbar on left
-	}
 
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{X: contentX, Width: tabWidth, Height: bounds.Height}, ' ', tabBarStyle)
@@ -1744,12 +1734,9 @@ func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, scheme
 	// Disabled style
 	disabledStyle := tabBarStyle.WithFg(scheme.GetDisabledTextFG())
 
-	// Calculate tab bar position (scrollbar on right edge when scrolling needed)
+	// Scrollbar overlays the right padding column, no shift needed
 	tabX := bounds.Width - tabWidth
 	scrollbarX := bounds.Width - metrics.CellWidth
-	if needsScrolling {
-		tabX = bounds.Width - tabWidth - metrics.CellWidth // Make room for scrollbar on right
-	}
 
 	// Draw tab bar background
 	p.FillRect(core.UnitRect{X: tabX, Width: tabWidth, Height: bounds.Height}, ' ', tabBarStyle)
@@ -2065,24 +2052,21 @@ func (t *TabWidget) HandleMousePress(event core.MousePressEvent) bool {
 	case TabsLeft:
 		tabWidth := t.calculateTabBarWidth()
 		needsScrolling := t.vertTabsNeedScrolling()
-		scrollbarWidth := core.Unit(0)
-		if needsScrolling {
-			scrollbarWidth = metrics.CellWidth
-		}
 
-		// Check if click is on scrollbar (left edge)
+		// Check if click is on scrollbar (left padding column, overlaid by scrollbar)
 		if needsScrolling && event.X < metrics.CellWidth {
 			t.handleVertScrollbarClick(event.Y, metrics)
 			return true
 		}
 
-		// Check if click is on tab area
-		if event.X < tabWidth+scrollbarWidth {
+		// Check if click is on tab area (scrollbar reuses padding, no extra width)
+		if event.X < tabWidth {
 			row := int(event.Y / metrics.CellHeight)
 			idx := t.vertScrollOffset + row
 			if idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
 				t.SetCurrentIndex(idx)
 				t.vertEnsureVisible(idx)
+				t.vertTabDragging = true // Start sweep drag
 			}
 			return true
 		}
@@ -2090,25 +2074,22 @@ func (t *TabWidget) HandleMousePress(event core.MousePressEvent) bool {
 		bounds := t.Bounds()
 		tabWidth := t.calculateTabBarWidth()
 		needsScrolling := t.vertTabsNeedScrolling()
-		scrollbarWidth := core.Unit(0)
-		if needsScrolling {
-			scrollbarWidth = metrics.CellWidth
-		}
 
-		// Check if click is on scrollbar (right edge)
+		// Check if click is on scrollbar (right padding column, overlaid by scrollbar)
 		if needsScrolling && event.X >= bounds.Width-metrics.CellWidth {
 			t.handleVertScrollbarClick(event.Y, metrics)
 			return true
 		}
 
-		// Check if click is on tab area
-		tabX := bounds.Width - tabWidth - scrollbarWidth
+		// Check if click is on tab area (scrollbar reuses padding, no extra width)
+		tabX := bounds.Width - tabWidth
 		if event.X >= tabX {
 			row := int(event.Y / metrics.CellHeight)
 			idx := t.vertScrollOffset + row
 			if idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
 				t.SetCurrentIndex(idx)
 				t.vertEnsureVisible(idx)
+				t.vertTabDragging = true // Start sweep drag
 			}
 			return true
 		}
@@ -2473,6 +2454,8 @@ func (t *TabWidget) HandleFocusIn() {
 
 // HandleFocusOut is called when focus is lost.
 func (t *TabWidget) HandleFocusOut() {
+	t.vertTabDragging = false
+	t.scrollbarDragging = false
 	t.Update()
 }
 
@@ -2508,6 +2491,35 @@ func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
 				if newOffset != t.vertScrollOffset {
 					t.vertScrollOffset = newOffset
 					t.Update()
+				}
+			}
+		}
+		return true
+	}
+
+	// Handle vertical tab sweep drag (select tabs as mouse moves over them)
+	if t.vertTabDragging {
+		metrics := core.DefaultCellMetrics()
+		bounds := t.Bounds()
+		tabWidth := t.calculateTabBarWidth()
+
+		// Determine if mouse is in the tab area
+		inTabArea := false
+		switch t.tabPosition {
+		case TabsLeft:
+			inTabArea = event.X < tabWidth
+		case TabsRight:
+			tabX := bounds.Width - tabWidth
+			inTabArea = event.X >= tabX
+		}
+
+		if inTabArea {
+			row := int(event.Y / metrics.CellHeight)
+			idx := t.vertScrollOffset + row
+			if idx >= 0 && idx < len(t.tabs) && t.tabs[idx].Enabled {
+				if idx != t.currentIndex {
+					t.SetCurrentIndex(idx)
+					t.vertEnsureVisible(idx)
 				}
 			}
 		}
@@ -2566,6 +2578,12 @@ func (t *TabWidget) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Clear vertical scrollbar drag state
 	if t.scrollbarDragging {
 		t.scrollbarDragging = false
+		return true
+	}
+
+	// Clear vertical tab sweep drag state
+	if t.vertTabDragging {
+		t.vertTabDragging = false
 		return true
 	}
 
