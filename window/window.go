@@ -1588,8 +1588,25 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 			return fm.FocusPrevious()
 		}
 
-		// Regular Tab - move to next widget
-		return fm.FocusNext()
+		// Regular Tab - check if at last widget
+		if isTab {
+			chain := fm.FocusChain()
+			// Find the last visible/enabled widget
+			var lastWidget core.Widget
+			for _, widget := range chain {
+				if widget.IsVisible() && widget.IsEnabled() {
+					lastWidget = widget
+				}
+			}
+			if focused == lastWidget && w.hasKeyboardBlurEnabled() {
+				// At last widget with blur enabled, go to blur item
+				w.SetTitleFocus(TitleFocusBlur)
+				fm.ClearFocus()
+				return true
+			}
+			// Not at last widget, or blur not enabled - move to next
+			return fm.FocusNext()
+		}
 	}
 
 	// For non-Tab keys, use focus manager
