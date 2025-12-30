@@ -1410,6 +1410,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		if idx > 0 {
 			c.hoverIndex = idx - 1
 			c.ensureVisible(c.hoverIndex)
+			c.announceHoverItem()
 			c.Update()
 		}
 		return true
@@ -1419,6 +1420,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		if idx < len(c.items)-1 {
 			c.hoverIndex = idx + 1
 			c.ensureVisible(c.hoverIndex)
+			c.announceHoverItem()
 			c.Update()
 		}
 		return true
@@ -1431,6 +1433,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		}
 		c.hoverIndex = newIndex
 		c.ensureVisible(newIndex)
+		c.announceHoverItem()
 		c.Update()
 		return true
 
@@ -1442,23 +1445,36 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		}
 		c.hoverIndex = newIndex
 		c.ensureVisible(newIndex)
+		c.announceHoverItem()
 		c.Update()
 		return true
 
 	case "Home":
 		c.hoverIndex = 0
 		c.scrollOffset = 0
+		c.announceHoverItem()
 		c.Update()
 		return true
 
 	case "End":
 		c.hoverIndex = len(c.items) - 1
 		c.ensureVisible(len(c.items) - 1)
+		c.announceHoverItem()
 		c.Update()
 		return true
 	}
 
 	return false
+}
+
+// announceHoverItem announces the currently hovered item in the popup for accessibility.
+func (c *ComboBox) announceHoverItem() {
+	if c.hoverIndex < 0 || c.hoverIndex >= len(c.items) {
+		return
+	}
+	if am := core.FindAccessibilityManager(c); am != nil {
+		am.AnnouncePolite(fmt.Sprintf("%s, %d of %d", c.items[c.hoverIndex], c.hoverIndex+1, len(c.items)))
+	}
 }
 
 // ensureVisible ensures the given index is visible in the popup.

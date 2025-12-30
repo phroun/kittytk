@@ -162,6 +162,9 @@ type Menu struct {
 	onAboutToHide func()
 	onItemPressed func() // Called when an item is pressed, signals MenuBar to enter drag mode
 	onWillTrigger func() // Called just before an item is triggered, to restore window focus
+
+	// Accessibility
+	accessibilityManager *core.AccessibilityManager
 }
 
 // parseAcceleratorTitle parses a title with & markup.
@@ -395,6 +398,11 @@ func (m *Menu) SetRequestUpdate(fn func()) {
 	m.requestUpdate = fn
 }
 
+// SetAccessibilityManager sets the accessibility manager for announcements.
+func (m *Menu) SetAccessibilityManager(am *core.AccessibilityManager) {
+	m.accessibilityManager = am
+}
+
 // stopScrollTimer stops any active scroll timer.
 func (m *Menu) stopScrollTimer() {
 	if m.scrollTimer != nil {
@@ -513,15 +521,17 @@ func (m *Menu) announceCurrentItem() {
 		return
 	}
 
-	// Find AccessibilityManager by traversing parent chain
-	var am *core.AccessibilityManager
-	current := m.Parent()
-	for current != nil {
-		if provider, ok := current.(core.AccessibilityProvider); ok {
-			am = provider.AccessibilityManager()
-			break
+	// Use stored accessibility manager, or try parent chain as fallback
+	am := m.accessibilityManager
+	if am == nil {
+		current := m.Parent()
+		for current != nil {
+			if provider, ok := current.(core.AccessibilityProvider); ok {
+				am = provider.AccessibilityManager()
+				break
+			}
+			current = current.Parent()
 		}
-		current = current.Parent()
 	}
 	if am == nil {
 		return
@@ -1022,6 +1032,8 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 	m.activeSubMenu = item.SubMenu
 	// Propagate the onItemPressed callback to submenu
 	item.SubMenu.onItemPressed = m.onItemPressed
+	// Propagate the accessibility manager to submenu
+	item.SubMenu.accessibilityManager = m.accessibilityManager
 	// Calculate available height for submenu based on screen bottom
 	if m.screenBottom > 0 {
 		availableHeight := m.screenBottom - subY
@@ -1642,7 +1654,16 @@ func (m *MenuBar) OpenMenu(index int) {
 		}
 	}
 
+	// Set up accessibility manager for menu item announcements
+	if am := core.FindAccessibilityManager(m); am != nil {
+		m.activeMenu.SetAccessibilityManager(am)
+	}
+
 	m.activeMenu.Show(x, y)
+
+	// Announce the menu for accessibility
+	m.announceCurrentMenu()
+
 	m.Update()
 }
 
