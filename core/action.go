@@ -254,7 +254,7 @@ func (s Shortcut) AccessibilityString() string {
 		modifiers = append(modifiers, "Shift")
 	}
 
-	// Build the result
+	// Build the result with spaces (for natural speech)
 	if len(modifiers) == 0 {
 		return key
 	}
@@ -262,11 +262,11 @@ func (s Shortcut) AccessibilityString() string {
 	result := ""
 	for i, mod := range modifiers {
 		if i > 0 {
-			result += "+"
+			result += " "
 		}
 		result += mod
 	}
-	result += "+" + key
+	result += " " + key
 
 	return result
 }
