@@ -55,6 +55,8 @@ type Scheme struct {
 	MenuBarInfo            *CellStyle // clock, etc.
 	ActiveMenuBarItem      *CellStyle
 	ActiveMenuBarMeta      *CellStyle // accelerator keys on active menu
+	FocusedMenuBarItem     *CellStyle // menu bar has focus but dropdown not shown, or dropdown has no selection
+	FocusedMenuBarMeta     *CellStyle // accelerator keys on focused menu bar item
 	MenuGutter             *CellStyle
 	MenuCheckIcon          *CellStyle
 	MenuRadioIcon          *CellStyle
@@ -320,6 +322,8 @@ func DefaultScheme() *Scheme {
 		MenuBarInfo:            ptr(DefaultStyle().WithFg(ColorBrightYellow).WithBg(ColorYellow)),
 		ActiveMenuBarItem:      ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue)),
 		ActiveMenuBarMeta:      ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
+		FocusedMenuBarItem:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		FocusedMenuBarMeta:     ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
 		MenuGutter:             ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
 		MenuCheckIcon:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
 		MenuRadioIcon:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
@@ -563,9 +567,11 @@ func (s *Scheme) GetNormal(active bool) CellStyle {
 func (s *Scheme) GetMenuBar() CellStyle           { return or(s.MenuBar) }
 func (s *Scheme) GetMenuBarMeta() CellStyle       { return or(s.MenuBarMeta) }
 func (s *Scheme) GetMenuBarInfo() CellStyle       { return or(s.MenuBarInfo) }
-func (s *Scheme) GetActiveMenuBarItem() CellStyle { return or(s.ActiveMenuBarItem) }
-func (s *Scheme) GetActiveMenuBarMeta() CellStyle { return or(s.ActiveMenuBarMeta) }
-func (s *Scheme) GetMenuGutter() CellStyle        { return or(s.MenuGutter) }
+func (s *Scheme) GetActiveMenuBarItem() CellStyle  { return or(s.ActiveMenuBarItem) }
+func (s *Scheme) GetActiveMenuBarMeta() CellStyle  { return or(s.ActiveMenuBarMeta) }
+func (s *Scheme) GetFocusedMenuBarItem() CellStyle { return or(s.FocusedMenuBarItem, s.FocusedMenuItemText) }
+func (s *Scheme) GetFocusedMenuBarMeta() CellStyle { return or(s.FocusedMenuBarMeta, s.FocusedMenuAccelerator) }
+func (s *Scheme) GetMenuGutter() CellStyle         { return or(s.MenuGutter) }
 func (s *Scheme) GetMenuCheckIcon() CellStyle     { return or(s.MenuCheckIcon) }
 func (s *Scheme) GetMenuRadioIcon() CellStyle     { return or(s.MenuRadioIcon) }
 func (s *Scheme) GetMenuItemText() CellStyle      { return or(s.MenuItemText) }
