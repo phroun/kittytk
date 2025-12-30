@@ -69,19 +69,20 @@ func (l *Label) SetWordWrap(wrap bool) {
 // SizeHint returns the preferred size.
 func (l *Label) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := l.EffectiveFont()
 
 	// Split text by newlines to calculate proper dimensions
 	lines := strings.Split(l.text, "\n")
-	maxWidth := 0
+	var maxWidth core.Unit
 	for _, line := range lines {
-		lineLen := len([]rune(line))
-		if lineLen > maxWidth {
-			maxWidth = lineLen
+		lineWidth := font.MeasureText(line)
+		if lineWidth > maxWidth {
+			maxWidth = lineWidth
 		}
 	}
 
 	return core.UnitSize{
-		Width:  metrics.TextWidth(maxWidth),
+		Width:  maxWidth,
 		Height: metrics.TextHeight(len(lines)),
 	}
 }

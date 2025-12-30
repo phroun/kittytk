@@ -136,8 +136,9 @@ func (c *Checkbox) SetOnToggled(handler func(checked bool)) {
 // SizeHint returns the preferred size.
 func (c *Checkbox) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
-	// [X] Text
-	width := metrics.TextWidth(len(c.text) + 4) // "[ ] " prefix
+	font := c.EffectiveFont()
+	// [X] Text - use font measurement for the full string
+	width := font.MeasureText("[ ] " + c.text)
 	return core.UnitSize{
 		Width:  width,
 		Height: metrics.TextHeight(1),

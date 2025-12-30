@@ -82,8 +82,9 @@ func (r *RadioButton) SetOnToggled(handler func(checked bool)) {
 // SizeHint returns the preferred size.
 func (r *RadioButton) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
-	// (o) Text
-	width := metrics.TextWidth(len(r.text) + 4) // "( ) " prefix
+	font := r.EffectiveFont()
+	// (o) Text - use font measurement for the full string
+	width := font.MeasureText("( ) " + r.text)
 	return core.UnitSize{
 		Width:  width,
 		Height: metrics.TextHeight(1),

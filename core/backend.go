@@ -324,15 +324,13 @@ func (p *Painter) Clear(r UnitRect, s style.CellStyle) {
 	p.FillRect(r, ' ', s)
 }
 
-// TextWidth returns the width needed for text in units.
-func (p *Painter) TextWidth(text string) Unit {
-	// For now, assume each rune is one cell.
-	// A proper implementation would handle wide characters.
-	count := 0
-	for range text {
-		count++
+// TextWidth returns the width needed for text in units using the specified font.
+// If font is nil, uses DefaultFont().
+func (p *Painter) TextWidth(text string, font *Font) Unit {
+	if font == nil {
+		font = DefaultFont()
 	}
-	return p.metrics.TextWidth(count)
+	return font.MeasureText(text)
 }
 
 // Size returns a size in units for the given cell dimensions.

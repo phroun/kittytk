@@ -197,29 +197,31 @@ func (b *Button) Click() {
 // SizeHint returns the preferred size.
 func (b *Button) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := b.EffectiveFont()
 
-	// Calculate text width
-	textLen := len([]rune(b.text))
+	// Calculate text width using font measurement
+	textWidth := font.MeasureText(b.text)
 
-	// Add icon width if present
-	iconWidth := 0
+	// Add icon width if present (icons use fixed width)
+	iconWidth := core.Unit(0)
 	if b.icon != nil {
 		if b.iconSize == style.IconSmall {
-			iconWidth = 3
+			iconWidth = metrics.TextWidth(3)
 		} else {
-			iconWidth = 5
+			iconWidth = metrics.TextWidth(5)
 		}
-		if textLen > 0 {
-			iconWidth++ // Space between icon and text
+		if len(b.text) > 0 {
+			iconWidth += metrics.CellWidth // Space between icon and text
 		}
 	}
 
-	// Add brackets/spaces: "<text>" or " text "
-	// Plus 1 for drop shadow on the right
-	totalChars := textLen + iconWidth + 2 + 1 // bracket + text + bracket + shadow
+	// Add brackets/spaces: "<text>" or " text " (use font for brackets too)
+	// Plus 1 cell for drop shadow on the right
+	bracketWidth := font.MeasureText("<>") // or "  " - same width
+	shadowWidth := metrics.CellWidth
 
 	return core.UnitSize{
-		Width:  metrics.TextWidth(totalChars),
+		Width:  textWidth + iconWidth + bracketWidth + shadowWidth,
 		Height: metrics.TextHeight(2), // 2 rows: button + shadow row
 	}
 }
