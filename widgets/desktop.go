@@ -206,6 +206,14 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	d.focusManager = core.NewGlobalFocusManager()
 	d.accessibilityManager = core.NewAccessibilityManager()
 	d.focusManager.SetAccessibilityManager(d.accessibilityManager)
+
+	// Connect each window's FocusManager to the AccessibilityManager
+	d.windowManager.SetOnWindowAdded(func(win *window.Window) {
+		if fm := win.FocusManager(); fm != nil {
+			fm.SetAccessibilityManager(d.accessibilityManager)
+		}
+	})
+
 	d.windowManager.SetDesktop(d)
 
 	// Wire up dock row integration
