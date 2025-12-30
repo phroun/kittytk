@@ -18,8 +18,9 @@ type TabWidget struct {
 	tabPosition TabPosition
 
 	// Appearance
-	movable   bool // Can tabs be reordered
-	closable  bool // Can tabs be closed
+	movable       bool // Can tabs be reordered
+	closable      bool // Can tabs be closed
+	showSeparator bool // Show separator between tab bar and content
 
 	// Tab scrolling (when tabs don't fit)
 	tabScrollOffset int  // First visible tab index
@@ -378,6 +379,19 @@ func (t *TabWidget) SetClosable(closable bool) {
 	t.Update()
 }
 
+// ShowSeparator returns whether a separator is shown between the tab bar and content.
+func (t *TabWidget) ShowSeparator() bool {
+	return t.showSeparator
+}
+
+// SetShowSeparator sets whether to show a separator between the tab bar and content.
+// For vertical tabs (TabsLeft/TabsRight), this draws a vertical line on the inside edge.
+// For horizontal tabs (TabsTop/TabsBottom), this adds an extra row in the active tab color.
+func (t *TabWidget) SetShowSeparator(show bool) {
+	t.showSeparator = show
+	t.Update()
+}
+
 // SetOnCurrentChanged sets the current changed callback.
 func (t *TabWidget) SetOnCurrentChanged(handler func(index int)) {
 	t.onCurrentChanged = handler
@@ -411,28 +425,37 @@ func (t *TabWidget) tabBarHeight() core.Unit {
 func (t *TabWidget) contentBounds() core.UnitRect {
 	bounds := t.Bounds()
 	tabHeight := t.tabBarHeight()
+	metrics := core.DefaultCellMetrics()
+
+	// Calculate separator size if enabled
+	separatorHeight := core.Unit(0)
+	separatorWidth := core.Unit(0)
+	if t.showSeparator {
+		separatorHeight = metrics.CellHeight
+		separatorWidth = metrics.CellWidth
+	}
 
 	switch t.tabPosition {
 	case TabsTop:
 		return core.UnitRect{
 			X:      0,
-			Y:      tabHeight,
+			Y:      tabHeight + separatorHeight,
 			Width:  bounds.Width,
-			Height: bounds.Height - tabHeight,
+			Height: bounds.Height - tabHeight - separatorHeight,
 		}
 	case TabsBottom:
 		return core.UnitRect{
 			X:      0,
 			Y:      0,
 			Width:  bounds.Width,
-			Height: bounds.Height - tabHeight,
+			Height: bounds.Height - tabHeight - separatorHeight,
 		}
 	case TabsLeft:
 		tabWidth := t.calculateTabBarWidth()
 		return core.UnitRect{
-			X:      tabWidth,
+			X:      tabWidth + separatorWidth,
 			Y:      0,
-			Width:  bounds.Width - tabWidth,
+			Width:  bounds.Width - tabWidth - separatorWidth,
 			Height: bounds.Height,
 		}
 	case TabsRight:
@@ -440,7 +463,7 @@ func (t *TabWidget) contentBounds() core.UnitRect {
 		return core.UnitRect{
 			X:      0,
 			Y:      0,
-			Width:  bounds.Width - tabWidth,
+			Width:  bounds.Width - tabWidth - separatorWidth,
 			Height: bounds.Height,
 		}
 	}
@@ -1106,6 +1129,17 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			p.DrawCell(buttonX+metrics.CellWidth*5, 0, ' ', disabledStyle)
 		}
 	}
+
+	// Draw separator row if enabled (in active tab color)
+	if t.showSeparator {
+		separatorStyle := scheme.GetActiveTab()
+		p.FillRect(core.UnitRect{
+			X:      0,
+			Y:      tabHeight,
+			Width:  bounds.Width,
+			Height: metrics.CellHeight,
+		}, ' ', separatorStyle)
+	}
 }
 
 func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
@@ -1428,6 +1462,18 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			p.DrawCell(buttonX+metrics.CellWidth*5, tabY, ' ', disabledStyle)
 		}
 	}
+
+	// Draw separator row if enabled (in active tab color, above the tab bar)
+	if t.showSeparator {
+		separatorStyle := scheme.GetActiveTab()
+		separatorY := tabY - metrics.CellHeight
+		p.FillRect(core.UnitRect{
+			X:      0,
+			Y:      separatorY,
+			Width:  bounds.Width,
+			Height: metrics.CellHeight,
+		}, ' ', separatorStyle)
+	}
 }
 
 func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
@@ -1475,9 +1521,11 @@ func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		y += metrics.CellHeight
 	}
 
-	// Draw separator line
-	for i := core.Unit(0); i < bounds.Height; i += metrics.CellHeight {
-		p.DrawCell(tabWidth-metrics.CellWidth, i, '│', scheme.GetNormal(true))
+	// Draw separator line if enabled
+	if t.showSeparator {
+		for i := core.Unit(0); i < bounds.Height; i += metrics.CellHeight {
+			p.DrawCell(tabWidth, i, '│', scheme.GetNormal(true))
+		}
 	}
 }
 
@@ -1525,6 +1573,14 @@ func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, scheme
 		}
 
 		y += metrics.CellHeight
+	}
+
+	// Draw separator line if enabled (on left edge of tab bar)
+	if t.showSeparator {
+		separatorX := tabX - metrics.CellWidth
+		for i := core.Unit(0); i < bounds.Height; i += metrics.CellHeight {
+			p.DrawCell(separatorX, i, '│', scheme.GetNormal(true))
+		}
 	}
 }
 
