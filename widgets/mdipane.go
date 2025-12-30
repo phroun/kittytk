@@ -61,6 +61,9 @@ type MDIPane struct {
 	lastClickY      core.Unit
 	lastClickWindow *window.Window
 
+	// Focus-without-raise: track pressed window for conditional raise on release
+	pressedWindow *window.Window
+
 	// Callbacks
 	onWindowAdded         func(*window.Window)
 	onWindowRemoved       func(*window.Window)
@@ -307,6 +310,61 @@ func (m *MDIPane) ActivateWindow(win *window.Window) {
 		handler(win)
 	}
 
+	m.Update()
+}
+
+// FocusWindow gives a window focus without raising it to the front.
+// This is used for focus-follows-click behavior where the window only
+// raises on mouse release within its bounds.
+func (m *MDIPane) FocusWindow(win *window.Window) {
+	m.mu.Lock()
+	if win == m.activeWindow {
+		m.mu.Unlock()
+		return
+	}
+
+	// Check if blocked by modal
+	if len(m.modalStack) > 0 {
+		topModal := m.modalStack[len(m.modalStack)-1]
+		if win != topModal && !m.isChildOf(win, topModal) {
+			m.mu.Unlock()
+			return
+		}
+	}
+
+	oldActive := m.activeWindow
+	m.activeWindow = win
+	// Note: bringToFront is NOT called here - window stays in current z-order
+
+	handler := m.onActiveWindowChanged
+	m.mu.Unlock()
+
+	// Update active states
+	if oldActive != nil {
+		oldActive.SetActive(false)
+	}
+	if win != nil {
+		win.SetActive(true)
+		// Focus the window's first widget if no widget is focused
+		if fm := win.FocusManager(); fm != nil {
+			if fm.FocusedWidget() == nil {
+				fm.FocusFirst()
+			}
+		}
+	}
+
+	if handler != nil {
+		handler(win)
+	}
+
+	m.Update()
+}
+
+// RaiseWindow brings a window to the front without changing focus.
+func (m *MDIPane) RaiseWindow(win *window.Window) {
+	m.mu.Lock()
+	m.bringToFront(win)
+	m.mu.Unlock()
 	m.Update()
 }
 
@@ -965,7 +1023,7 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 
 		bounds := win.Bounds()
 		if bounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
-			// Check for resize edge first
+			// Check for resize edge first - resize operations raise immediately
 			resizeEdge := m.detectResizeEdge(win, event.X, event.Y)
 			if resizeEdge != window.ResizeEdgeNone {
 				m.ActivateWindow(win)
@@ -975,11 +1033,12 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 				m.resizeStartX = event.X
 				m.resizeStartY = event.Y
 				m.resizeOriginal = bounds
+				m.pressedWindow = nil // Clear pressed window for resize
 				m.mu.Unlock()
 				return true
 			}
 
-			// Check for title bar interaction
+			// Check for title bar interaction - titlebar operations raise immediately
 			if event.Y < bounds.Y+metrics.CellHeight &&
 				win.Flags()&window.WindowFlagNoTitle == 0 {
 
@@ -996,6 +1055,7 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 					m.lastClickX = event.X
 					m.lastClickY = event.Y
 					m.lastClickWindow = win
+					m.pressedWindow = nil
 					m.mu.Unlock()
 					return true
 				}
@@ -1021,6 +1081,7 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 					}
 					m.mu.Lock()
 					m.lastClickWindow = nil
+					m.pressedWindow = nil
 					m.mu.Unlock()
 					return true
 				}
@@ -1033,13 +1094,19 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 					m.dragStartY = event.Y
 					m.dragOffsetX = event.X - bounds.X
 					m.dragOffsetY = event.Y - bounds.Y
+					m.pressedWindow = nil // Clear pressed window for drag
 					m.mu.Unlock()
 				}
 				return true
 			}
 
-			// Content area click
-			m.ActivateWindow(win)
+			// Content area click: focus without raise (raise on release within bounds)
+			m.FocusWindow(win)
+			m.mu.Lock()
+			m.pressedWindow = win
+			m.mu.Unlock()
+
+			// Pass to window
 			localEvent := event
 			localEvent.X -= bounds.X
 			localEvent.Y -= bounds.Y
@@ -1238,13 +1305,42 @@ func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	m.mu.Lock()
 	dragging := m.dragging
 	resizing := m.resizing
+	pressedWin := m.pressedWindow
 	m.dragging = nil
 	m.resizing = nil
 	m.resizeEdge = window.ResizeEdgeNone
+	m.pressedWindow = nil
 	m.mu.Unlock()
 
 	if dragging != nil || resizing != nil {
 		return true
+	}
+
+	// Check if we should raise the pressed window (focus-without-raise behavior)
+	// Only raise if release is over a non-occluded part of the window
+	if pressedWin != nil && !pressedWin.IsMinimized() {
+		bounds := pressedWin.Bounds()
+		releasePoint := core.UnitPoint{X: event.X, Y: event.Y}
+		if bounds.Contains(releasePoint) {
+			// Check that no other window is on top at this position
+			m.mu.RLock()
+			windows := m.windows
+			m.mu.RUnlock()
+
+			topmostAtPoint := (*window.Window)(nil)
+			for i := len(windows) - 1; i >= 0; i-- {
+				win := windows[i]
+				if win.IsVisible() && !win.IsMinimized() && win.Bounds().Contains(releasePoint) {
+					topmostAtPoint = win
+					break
+				}
+			}
+
+			// Only raise if the pressed window is the topmost at the release point
+			if topmostAtPoint == pressedWin {
+				m.RaiseWindow(pressedWin)
+			}
+		}
 	}
 
 	// Forward to active window
