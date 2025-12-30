@@ -823,11 +823,24 @@ func (d *Desktop) waitEventWithTimeout(timeout time.Duration) core.Event {
 }
 
 // handleShortcut checks if a key event matches a global shortcut.
+// This is called BEFORE the focus manager, so these shortcuts work even
+// when an EditBox or other input widget has focus.
 func (d *Desktop) handleShortcut(event core.KeyPressEvent) bool {
+	// Exit Desktop (M-^X)
+	for _, key := range core.DefaultKeyBindings.Keys(core.ActionExitDesktop) {
+		if event.Key == key {
+			d.Quit()
+			return true
+		}
+	}
+
+	// Standard shortcuts
 	switch event.Key {
-	case "^Q": // Ctrl+Q - Quit
-		d.Quit()
-		return true
+	case "^Q": // Ctrl+Q - Quit active app
+		if d.activeApp != nil {
+			d.quitActiveApp()
+			return true
+		}
 	case "^W": // Ctrl+W - Close window
 		d.mu.RLock()
 		wm := d.windowManager
@@ -839,6 +852,34 @@ func (d *Desktop) handleShortcut(event core.KeyPressEvent) bool {
 			}
 		}
 	}
+
+	// App-level shortcuts (only if we have an active app)
+	if d.activeApp != nil {
+		// Hide current app
+		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppHide) {
+			if event.Key == key {
+				d.hideActiveApp()
+				return true
+			}
+		}
+
+		// Hide others
+		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppHideOthers) {
+			if event.Key == key {
+				d.hideOtherApps()
+				return true
+			}
+		}
+
+		// Show all
+		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppShowAll) {
+			if event.Key == key {
+				d.showAllApps()
+				return true
+			}
+		}
+	}
+
 	return false
 }
 
@@ -1528,11 +1569,6 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
-	// Check global desktop keybindings
-	if d.handleGlobalShortcuts(event) {
-		return true
-	}
-
 	// If dock has focus, forward keys to it
 	if d.dockRow != nil && d.dockRow.HasFocus() {
 		return d.dockRow.HandleKeyPress(event)
@@ -1541,54 +1577,6 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Forward to content
 	if d.content != nil {
 		return d.content.HandleKeyPress(event)
-	}
-
-	return false
-}
-
-// handleGlobalShortcuts checks for global desktop keybindings.
-func (d *Desktop) handleGlobalShortcuts(event core.KeyPressEvent) bool {
-	// Exit Desktop
-	for _, key := range core.DefaultKeyBindings.Keys(core.ActionExitDesktop) {
-		if event.Key == key {
-			d.Quit()
-			return true
-		}
-	}
-
-	// App-level shortcuts (only if we have an active app)
-	if d.activeApp != nil {
-		// Hide current app
-		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppHide) {
-			if event.Key == key {
-				d.hideActiveApp()
-				return true
-			}
-		}
-
-		// Hide others
-		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppHideOthers) {
-			if event.Key == key {
-				d.hideOtherApps()
-				return true
-			}
-		}
-
-		// Show all
-		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppShowAll) {
-			if event.Key == key {
-				d.showAllApps()
-				return true
-			}
-		}
-
-		// Quit app
-		for _, key := range core.DefaultKeyBindings.Keys(core.ActionQuit) {
-			if event.Key == key {
-				d.quitActiveApp()
-				return true
-			}
-		}
 	}
 
 	return false
