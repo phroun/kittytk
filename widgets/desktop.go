@@ -89,6 +89,9 @@ type Desktop struct {
 	// Focus manager
 	focusManager *core.GlobalFocusManager
 
+	// Accessibility manager
+	accessibilityManager *core.AccessibilityManager
+
 	// Theme
 	theme *style.Theme
 
@@ -201,6 +204,8 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 		d.windowFocusChanged(win)
 	})
 	d.focusManager = core.NewGlobalFocusManager()
+	d.accessibilityManager = core.NewAccessibilityManager()
+	d.focusManager.SetAccessibilityManager(d.accessibilityManager)
 	d.windowManager.SetDesktop(d)
 
 	// Wire up dock row integration
@@ -250,6 +255,13 @@ func (d *Desktop) FocusManager() *core.GlobalFocusManager {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.focusManager
+}
+
+// AccessibilityManager returns the accessibility manager.
+func (d *Desktop) AccessibilityManager() *core.AccessibilityManager {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.accessibilityManager
 }
 
 // Theme returns the current theme.

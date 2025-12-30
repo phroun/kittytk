@@ -160,7 +160,7 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 	var showVisualAnnouncements, speakAnnouncements bool
 
 	updateAccessibilityHandler := func() {
-		am := application.AccessibilityManager()
+		am := desktop.AccessibilityManager()
 		if am == nil {
 			return
 		}
@@ -201,7 +201,7 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		showVisualAnnouncements = screenReaderItem.Checked
 		updateAccessibilityHandler()
 		if showVisualAnnouncements {
-			if am := application.AccessibilityManager(); am != nil {
+			if am := desktop.AccessibilityManager(); am != nil {
 				am.AnnouncePolite("Visual announcements enabled")
 			}
 		}
@@ -219,7 +219,7 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		speakAnnouncements = speakItem.Checked
 		updateAccessibilityHandler()
 		if speakAnnouncements {
-			if am := application.AccessibilityManager(); am != nil {
+			if am := desktop.AccessibilityManager(); am != nil {
 				am.AnnouncePolite("Text to speech enabled")
 			}
 		}
