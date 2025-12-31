@@ -4,7 +4,6 @@ package widgets
 import (
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
@@ -568,23 +567,32 @@ func (m *Menu) announceCurrentItem() {
 // calculateSize calculates the menu size.
 func (m *Menu) calculateSize() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := m.EffectiveFont()
 
-	maxWidth := 0
+	// Calculate max width using font for text, cells for decorative elements
+	maxWidth := core.Unit(0)
 	for _, item := range m.items {
-		width := len(item.Text)
+		// Item text uses font measurement
+		itemWidth := font.MeasureText(item.Text)
+
+		// Shortcut: spacing (3 cells) + shortcut text (font-based)
 		if item.Shortcut != "" {
-			width += 3 + len(item.Shortcut.DisplayString())
+			itemWidth += metrics.CellWidth * 3 // spacing before shortcut
+			itemWidth += font.MeasureText(item.Shortcut.DisplayString())
 		}
+
+		// Submenu arrow (3 cells) - decorative
 		if item.SubMenu != nil {
-			width += 3 // For submenu arrow
+			itemWidth += metrics.CellWidth * 3
 		}
-		if width > maxWidth {
-			maxWidth = width
+
+		if itemWidth > maxWidth {
+			maxWidth = itemWidth
 		}
 	}
 
 	// Add padding (gutter: 3 cells, content space: 1 cell, right border: 1 cell)
-	maxWidth += 5
+	maxWidth += metrics.CellWidth * 5
 
 	// Calculate visible item count
 	visibleItems := len(m.items)
@@ -599,7 +607,7 @@ func (m *Menu) calculateSize() core.UnitSize {
 	}
 
 	return core.UnitSize{
-		Width:  core.Unit(maxWidth) * metrics.CellWidth,
+		Width:  maxWidth,
 		Height: core.Unit(height) * metrics.CellHeight,
 	}
 }
@@ -1329,10 +1337,9 @@ func (m *MenuBar) SetOnMenuDismiss(callback func()) {
 
 // calculateTotalMenusWidth returns the total width needed for all menus.
 func (m *MenuBar) calculateTotalMenusWidth() core.Unit {
-	metrics := core.DefaultCellMetrics()
 	total := core.Unit(0)
 	for _, menu := range m.menus {
-		total += core.Unit(utf8.RuneCountInString(menu.title)+2) * metrics.CellWidth
+		total += m.menuTitleWidth(menu.title)
 	}
 	return total
 }
@@ -1387,7 +1394,7 @@ func (m *MenuBar) isLastMenuFullyVisible() bool {
 
 	x := leftEllipseWidth
 	for i := m.scrollOffset; i < len(m.menus); i++ {
-		menuWidth := core.Unit(utf8.RuneCountInString(m.menus[i].title)+2) * metrics.CellWidth
+		menuWidth := m.menuTitleWidth(m.menus[i].title)
 		x += menuWidth
 		if x > availableWidth {
 			return false
@@ -1423,7 +1430,7 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 	// Calculate position of the target menu
 	x := leftEllipseWidth
 	for i := m.scrollOffset; i <= index; i++ {
-		menuWidth := core.Unit(utf8.RuneCountInString(m.menus[i].title)+2) * metrics.CellWidth
+		menuWidth := m.menuTitleWidth(m.menus[i].title)
 		if i == index {
 			// Check if this menu fits
 			if x+menuWidth > availableWidth {
@@ -1434,7 +1441,7 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 					leftEllipseWidth = metrics.TextWidth(3) // "..." (always present when scrolled)
 					x = leftEllipseWidth
 					for j := m.scrollOffset; j <= index; j++ {
-						mw := core.Unit(utf8.RuneCountInString(m.menus[j].title)+2) * metrics.CellWidth
+						mw := m.menuTitleWidth(m.menus[j].title)
 						if j == index && x+mw <= availableWidth {
 							return
 						}
@@ -1486,7 +1493,7 @@ func (m *MenuBar) clampScrollOffset() {
 		x := leftEllipseWidth
 		fitsWithMoreMenus := true
 		for i := testOffset; i < len(m.menus); i++ {
-			menuWidth := core.Unit(utf8.RuneCountInString(m.menus[i].title)+2) * metrics.CellWidth
+			menuWidth := m.menuTitleWidth(m.menus[i].title)
 			// Reserve space for right ellipsis if not the last menu
 			rightEllipsisWidth := core.Unit(0)
 			if i < len(m.menus)-1 {
@@ -1746,9 +1753,9 @@ func (m *MenuBar) calculateMenuX(index int) core.Unit {
 		x = metrics.TextWidth(3) // "..."
 	}
 
-	// Calculate position from scroll offset
+	// Calculate position from scroll offset using font-aware width
 	for i := m.scrollOffset; i < index; i++ {
-		x += core.Unit(utf8.RuneCountInString(m.menus[i].title)+2) * metrics.CellWidth
+		x += m.menuTitleWidth(m.menus[i].title)
 	}
 	return x
 }
@@ -1756,10 +1763,12 @@ func (m *MenuBar) calculateMenuX(index int) core.Unit {
 // SizeHint returns the preferred size.
 func (m *MenuBar) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := m.EffectiveFont()
 
 	width := core.Unit(0)
 	for _, menu := range m.menus {
-		width += core.Unit(utf8.RuneCountInString(menu.title)+2) * metrics.CellWidth
+		// Menu width: space (1 cell) + title (font) + space (1 cell)
+		width += metrics.CellWidth*2 + font.MeasureText(menu.title)
 	}
 
 	return core.UnitSize{
@@ -1768,11 +1777,20 @@ func (m *MenuBar) SizeHint() core.UnitSize {
 	}
 }
 
+// menuTitleWidth returns the width of a menu title including surrounding spaces.
+func (m *MenuBar) menuTitleWidth(title string) core.Unit {
+	metrics := core.DefaultCellMetrics()
+	font := m.EffectiveFont()
+	// Menu width: space (1 cell) + title (font) + space (1 cell)
+	return metrics.CellWidth*2 + font.MeasureText(title)
+}
+
 // Paint renders the menu bar (without dropdown - use PaintDropdown for that).
 func (m *MenuBar) Paint(p *core.Painter) {
 	bounds := m.Bounds()
 	scheme := m.GetScheme()
 	metrics := p.Metrics()
+	font := m.EffectiveFont()
 
 	// Clamp scroll offset if container was resized and more menus can now fit
 	m.clampScrollOffset()
@@ -1842,7 +1860,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// Draw visible menus
 	for i := m.scrollOffset; i < len(m.menus); i++ {
 		menu := m.menus[i]
-		menuWidth := core.Unit(utf8.RuneCountInString(menu.title)+2) * metrics.CellWidth
+		menuWidth := m.menuTitleWidth(menu.title)
 
 		// Reserve space for right ellipsis if there are more menus after this one
 		rightEllipsisWidth := core.Unit(0)
@@ -1895,14 +1913,24 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					Height: metrics.CellHeight,
 				}, ' ', s)
 
+				// Draw title with accelerator highlighting using font-aware rendering
 				textX := x + metrics.CellWidth
-				for idx, ch := range menu.title {
-					charStyle := s
-					if showAccel && idx == menu.acceleratorPos {
-						charStyle = accelStyle
+				titleRunes := []rune(menu.title)
+				if showAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < len(titleRunes) {
+					if menu.acceleratorPos > 0 {
+						beforeAccel := string(titleRunes[:menu.acceleratorPos])
+						p.DrawText(textX, 0, beforeAccel, s, font)
+						textX += font.MeasureText(beforeAccel)
 					}
-					p.DrawCell(textX, 0, ch, charStyle)
-					textX += metrics.CellWidth
+					accelChar := string(titleRunes[menu.acceleratorPos])
+					p.DrawText(textX, 0, accelChar, accelStyle, font)
+					textX += font.MeasureText(accelChar)
+					if menu.acceleratorPos < len(titleRunes)-1 {
+						afterAccel := string(titleRunes[menu.acceleratorPos+1:])
+						p.DrawText(textX, 0, afterAccel, s, font)
+					}
+				} else {
+					p.DrawText(textX, 0, menu.title, s, font)
 				}
 
 				// Draw as much ellipsis as fits in remaining space (in normal style)
@@ -1977,8 +2005,8 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			Height: metrics.CellHeight,
 		}, ' ', s)
 
-		// Draw title with accelerator highlighting
-		textX := x + metrics.CellWidth
+		// Draw title with accelerator highlighting using font-aware rendering
+		textX := x + metrics.CellWidth // Start after leading space
 		// Accelerator style depends on whether menu is selected
 		var accelStyle style.CellStyle
 		if isSelected {
@@ -1991,13 +2019,28 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			accelStyle = scheme.GetMenuBarMeta()
 		}
 		showAccel := m.ShouldShowAccelerator(menu)
-		for idx, ch := range menu.title {
-			charStyle := s
-			if showAccel && idx == menu.acceleratorPos {
-				charStyle = accelStyle
+
+		// Draw text in parts: before accel, accel char, after accel
+		titleRunes := []rune(menu.title)
+		if showAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < len(titleRunes) {
+			// Draw before accelerator
+			if menu.acceleratorPos > 0 {
+				beforeAccel := string(titleRunes[:menu.acceleratorPos])
+				p.DrawText(textX, 0, beforeAccel, s, font)
+				textX += font.MeasureText(beforeAccel)
 			}
-			p.DrawCell(textX, 0, ch, charStyle)
-			textX += metrics.CellWidth
+			// Draw accelerator char
+			accelChar := string(titleRunes[menu.acceleratorPos])
+			p.DrawText(textX, 0, accelChar, accelStyle, font)
+			textX += font.MeasureText(accelChar)
+			// Draw after accelerator
+			if menu.acceleratorPos < len(titleRunes)-1 {
+				afterAccel := string(titleRunes[menu.acceleratorPos+1:])
+				p.DrawText(textX, 0, afterAccel, s, font)
+			}
+		} else {
+			// No accelerator - draw entire text
+			p.DrawText(textX, 0, menu.title, s, font)
 		}
 
 		x += menuWidth
@@ -2229,7 +2272,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 
 		for i := m.scrollOffset; i < len(m.menus); i++ {
 			menu := m.menus[i]
-			menuWidth := core.Unit(utf8.RuneCountInString(menu.title)+2) * metrics.CellWidth
+			menuWidth := m.menuTitleWidth(menu.title)
 			if event.X >= x && event.X < x+menuWidth {
 				// Track mouse down for potential drag
 				m.mouseDown = true
@@ -2342,7 +2385,7 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 		for i := m.scrollOffset; i < len(m.menus); i++ {
 			menu := m.menus[i]
-			menuWidth := core.Unit(utf8.RuneCountInString(menu.title)+2) * metrics.CellWidth
+			menuWidth := m.menuTitleWidth(menu.title)
 			if event.X >= x && event.X < x+menuWidth {
 				if m.activeMenu != menu {
 					m.OpenMenu(i)
