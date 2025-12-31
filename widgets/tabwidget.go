@@ -1214,6 +1214,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 					p.DrawText(x, 0, partialText, s, font)
 					x += font.MeasureText(partialText)
 					lastTextEndX = x
+					lastSlashX = -1 // Reset - no separator drawn in truncation path
 					lastTabStyle = s
 
 					// Only draw interior ellipsis if text was actually truncated
@@ -1229,7 +1230,8 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 					}
 					drewAnyText = true
 				} else {
-					// No text drawn - track style for ellipsis coloring
+					// No text drawn - reset tracking for external ellipsis
+					lastSlashX = -1
 					lastTabStyle = s
 					drewAnyText = false
 				}
@@ -1700,6 +1702,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 					p.DrawText(x, tabY, partialText, s, font)
 					x += font.MeasureText(partialText)
 					lastTextEndX = x
+					lastSlashX = -1 // Reset - no separator drawn in truncation path
+					lastTabWasSelected = false
 					lastTabStyle = s
 
 					// Only draw interior ellipsis if text was actually truncated
@@ -1715,7 +1719,9 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 					}
 					drewAnyText = true
 				} else {
-					// No text drawn - track style for ellipsis coloring
+					// No text drawn - reset tracking for external ellipsis
+					lastSlashX = -1
+					lastTabWasSelected = false
 					lastTabStyle = s
 					drewAnyText = false
 				}
