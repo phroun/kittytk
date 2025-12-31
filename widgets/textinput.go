@@ -291,10 +291,9 @@ func (t *TextInput) textChanged() {
 // ensureCursorVisible scrolls to make the cursor visible.
 func (t *TextInput) ensureCursorVisible() {
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
-	visibleChars := metrics.CharsForWidth(bounds.Width) - 2 // Account for borders
+	font := t.EffectiveFont()
 
-	if visibleChars <= 0 {
+	if bounds.Width <= 0 {
 		return
 	}
 
@@ -304,8 +303,26 @@ func (t *TextInput) ensureCursorVisible() {
 	}
 
 	// Scroll right if cursor is after visible area
-	if t.cursorPos >= t.scrollOffset+visibleChars {
-		t.scrollOffset = t.cursorPos - visibleChars + 1
+	// Calculate width of text from scrollOffset to cursor using font metrics
+	displayText := t.getDisplayText()
+	for t.cursorPos > t.scrollOffset {
+		// Calculate width from scrollOffset to cursorPos
+		start := t.scrollOffset
+		end := t.cursorPos
+		if end > len(displayText) {
+			end = len(displayText)
+		}
+		if start >= len(displayText) {
+			break
+		}
+		visibleText := string(displayText[start:end])
+		textWidth := font.MeasureText(visibleText)
+
+		if textWidth <= bounds.Width {
+			break
+		}
+		// Scroll right by one character
+		t.scrollOffset++
 	}
 }
 
@@ -330,7 +347,6 @@ func (t *TextInput) Paint(p *core.Painter) {
 	bounds := t.Bounds()
 	scheme := t.GetScheme()
 	focused := t.HasFocus()
-	metrics := p.Metrics()
 	font := t.EffectiveFont()
 
 	// Get inherited background color to determine pane type
@@ -361,13 +377,6 @@ func (t *TextInput) Paint(p *core.Painter) {
 	}
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, fillChar, fillStyle)
 
-	// Calculate visible area based on font metrics
-	// For TextInput, we still measure visible area in cells for cursor positioning
-	visibleChars := metrics.CharsForWidth(bounds.Width)
-	if visibleChars <= 0 {
-		return
-	}
-
 	// Get display text
 	var displayText []rune
 	isPlaceholder := false
@@ -386,10 +395,9 @@ func (t *TextInput) Paint(p *core.Painter) {
 		displayText = nil
 	}
 
-	// Truncate to visible area
-	if len(displayText) > visibleChars {
-		displayText = displayText[:visibleChars]
-	}
+	// Truncate to visible width using font metrics
+	visibleText := t.truncateToWidth(displayText, bounds.Width, font)
+	displayText = []rune(visibleText)
 
 	// Draw text using font-aware rendering
 	// For text without selection, use DrawText for proper font rendering
@@ -454,6 +462,48 @@ func (t *TextInput) getDisplayText() []rune {
 	default:
 		return t.text
 	}
+}
+
+// truncateToWidth truncates text to fit within the given width using font metrics.
+func (t *TextInput) truncateToWidth(text []rune, maxWidth core.Unit, font *core.Font) string {
+	if len(text) == 0 {
+		return ""
+	}
+
+	// Find how many characters fit within maxWidth
+	result := make([]rune, 0, len(text))
+	var totalWidth core.Unit
+	for _, r := range text {
+		charWidth := font.MeasureText(string(r))
+		if totalWidth+charWidth > maxWidth {
+			break
+		}
+		result = append(result, r)
+		totalWidth += charWidth
+	}
+	return string(result)
+}
+
+// findCharAtX finds the character index at the given X position using font metrics.
+func (t *TextInput) findCharAtX(x core.Unit, font *core.Font) int {
+	displayText := t.getDisplayText()
+	if t.scrollOffset > 0 && t.scrollOffset < len(displayText) {
+		displayText = displayText[t.scrollOffset:]
+	} else if t.scrollOffset >= len(displayText) {
+		return t.scrollOffset
+	}
+
+	var accumulatedWidth core.Unit
+	for i, r := range displayText {
+		charWidth := font.MeasureText(string(r))
+		// Check if x is within this character's bounds
+		if x < accumulatedWidth+charWidth/2 {
+			return t.scrollOffset + i
+		}
+		accumulatedWidth += charWidth
+	}
+	// x is past all characters
+	return t.scrollOffset + len(displayText)
 }
 
 // HandleKeyPress handles keyboard input.
@@ -580,9 +630,8 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 // HandleMousePress handles mouse clicks.
 func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.LeftButton {
-		metrics := core.DefaultCellMetrics()
-		charPos := metrics.UnitsToCellX(event.X)
-		t.cursorPos = t.scrollOffset + charPos
+		font := t.EffectiveFont()
+		t.cursorPos = t.findCharAtX(event.X, font)
 		if t.cursorPos > len(t.text) {
 			t.cursorPos = len(t.text)
 		}
