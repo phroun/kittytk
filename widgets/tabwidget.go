@@ -579,6 +579,7 @@ func (t *TabWidget) canScrollRight() bool {
 func (t *TabWidget) isLastTabFullyVisible() bool {
 	bounds := t.Bounds()
 	metrics := core.DefaultCellMetrics()
+	font := t.EffectiveFont()
 
 	scrollButtonsWidth := core.Unit(0)
 	if t.tabsNeedScrolling() {
@@ -647,7 +648,8 @@ func (t *TabWidget) isLastTabFullyVisible() bool {
 				sepWidth = 4
 			}
 		}
-		tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
+		// Prefix and separator are decorative (cell-based), text is font-based
+		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
 		x += tabSlotWidth
 
 		if x > availableWidth {
@@ -660,7 +662,7 @@ func (t *TabWidget) isLastTabFullyVisible() bool {
 					essentialSepWidth = 2 // space/bracket + backslash are essential
 				}
 				// nextIsSelected doesn't matter for last tab since there's no next tab
-				essentialWidth := core.Unit(prefixWidth+len(tab.Text)+essentialSepWidth) * metrics.CellWidth
+				essentialWidth := core.Unit(prefixWidth+essentialSepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
 				essentialX := x - tabSlotWidth + essentialWidth
 				if essentialX <= availableWidth {
 					// Only non-essential trailing content cut off
@@ -2160,6 +2162,7 @@ func (t *TabWidget) HandleMousePress(event core.MousePressEvent) bool {
 
 func (t *TabWidget) handleTabBarClick(x core.Unit) {
 	metrics := core.DefaultCellMetrics()
+	font := t.EffectiveFont()
 	bounds := t.Bounds()
 
 	// Check if clicking on left ellipse (scroll left by one and select that tab)
@@ -2270,7 +2273,9 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 				sepWidth = 4 // " \_ " or " _/ "
 			}
 		}
-		tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
+		// Prefix and separator are decorative (cell-based), text is font-based
+		textWidth := font.MeasureText(tab.Text)
+		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + textWidth
 
 		// Check if this tab doesn't fully fit (partial tab with ellipsis)
 		if tabX+tabSlotWidth > availableWidth {
@@ -2287,7 +2292,7 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 		if x >= tabX && x < tabX+tabSlotWidth {
 			// Calculate where text starts and ends
 			textStartX := tabX + core.Unit(prefixWidth)*metrics.CellWidth
-			textEndX := textStartX + core.Unit(len(tab.Text))*metrics.CellWidth
+			textEndX := textStartX + textWidth
 
 			// Check for close button (at end of text)
 			if (t.closable || tab.Closable) && x >= textEndX-metrics.CellWidth && x < textEndX {
@@ -2391,6 +2396,7 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 	// Check if tab is fully visible
 	bounds := t.Bounds()
 	metrics := core.DefaultCellMetrics()
+	font := t.EffectiveFont()
 
 	scrollButtonsWidth := core.Unit(0)
 	if t.tabsNeedScrolling() {
@@ -2463,7 +2469,8 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 					sepWidth = 4
 				}
 			}
-			tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
+			// Prefix and separator are decorative (cell-based), text is font-based
+			tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
 			x += tabSlotWidth
 
 			if i == index && x > availableWidth {
@@ -2475,7 +2482,7 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 					if isSelected {
 						essentialSepWidth = 2 // space/bracket + backslash are essential
 					}
-					essentialWidth := core.Unit(prefixWidth+len(tab.Text)+essentialSepWidth) * metrics.CellWidth
+					essentialWidth := core.Unit(prefixWidth+essentialSepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
 					essentialX := x - tabSlotWidth + essentialWidth
 					if essentialX <= availableWidth {
 						// Essential content fits - consider it as fitting
