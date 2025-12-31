@@ -764,6 +764,19 @@ func (w *Window) ChildAt(pos core.UnitPoint) core.Widget {
 // Layout implements core.Container.
 func (w *Window) Layout() {
 	w.layoutContent()
+
+	// Force content to re-layout with fresh SizeHints.
+	// This is important when parent chain changes (e.g., window added to MDIPane)
+	// since EffectiveFont may now return a different font.
+	w.mu.RLock()
+	content := w.content
+	w.mu.RUnlock()
+
+	if content != nil {
+		if container, ok := content.(core.Container); ok {
+			container.Layout()
+		}
+	}
 }
 
 // Paint renders the window.
