@@ -1283,27 +1283,67 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 	}
 
 	// Fill any gap between last tab and scroll buttons/edge
-	endX := bounds.Width - scrollButtonsWidth
-	if needsScrolling && !t.isLastTabFullyVisible() && !tabWasTruncated {
-		// Reserve space for ellipsis only if we didn't already draw it after truncated text
-		endX -= metrics.TextWidth(3)
-	}
-	// Use truncated tab's style for fill when tab was truncated (keeps ellipsis connected)
-	fillStyle := tabBarUnderlined
-	if tabWasTruncated {
-		fillStyle = truncatedTabStyle
-	}
-	for x < endX {
-		p.DrawCell(x, 0, ' ', fillStyle)
-		x += metrics.CellWidth
-	}
+	// When ellipsis is needed, ensure we leave room for it by trimming fill spaces
+	scrollAreaStart := bounds.Width - scrollButtonsWidth
+	needsEllipsis := needsScrolling && !t.isLastTabFullyVisible()
 
-	// Draw right ellipsis only if tabs need scrolling but text wasn't truncated
-	// (e.g., separator was cut off). If text was truncated, ellipsis was already drawn.
-	if needsScrolling && !t.isLastTabFullyVisible() && !tabWasTruncated {
-		ellipsisX := bounds.Width - scrollButtonsWidth - metrics.TextWidth(3)
-		for i := 0; i < 3; i++ {
-			p.DrawCell(ellipsisX+core.Unit(i)*metrics.CellWidth, 0, '.', tabBarUnderlined)
+	if needsEllipsis {
+		// Calculate where ellipsis should ideally start
+		ellipsisWidth := metrics.TextWidth(3)
+		idealEllipsisX := scrollAreaStart - ellipsisWidth
+
+		// Determine fill style
+		fillStyle := tabBarUnderlined
+		if tabWasTruncated {
+			fillStyle = truncatedTabStyle
+		}
+
+		if tabWasTruncated {
+			// Ellipsis was already drawn after truncated text
+			// Just fill remaining space to scroll buttons
+			for x < scrollAreaStart {
+				p.DrawCell(x, 0, ' ', fillStyle)
+				x += metrics.CellWidth
+			}
+		} else {
+			// Text wasn't truncated - need to draw ellipsis
+			// If current position is past ideal ellipsis start, draw ellipsis at current position
+			// (trimming trailing whitespace/separators implicitly by overwriting)
+			ellipsisX := idealEllipsisX
+			if x > idealEllipsisX {
+				// Not enough room at ideal position - draw ellipsis where we are
+				// This effectively "trims" trailing whitespace by placing ellipsis over it
+				ellipsisX = x
+			}
+
+			// Fill gap between current position and ellipsis (if any)
+			for x < ellipsisX {
+				p.DrawCell(x, 0, ' ', tabBarUnderlined)
+				x += metrics.CellWidth
+			}
+
+			// Draw as many dots as will fit before scroll buttons
+			dotsDrawn := 0
+			for i := 0; i < 3; i++ {
+				dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
+				if dotX+metrics.CellWidth <= scrollAreaStart {
+					p.DrawCell(dotX, 0, '.', tabBarUnderlined)
+					dotsDrawn++
+				}
+			}
+
+			// Fill remaining space after ellipsis (if any)
+			x = ellipsisX + core.Unit(dotsDrawn)*metrics.CellWidth
+			for x < scrollAreaStart {
+				p.DrawCell(x, 0, ' ', tabBarUnderlined)
+				x += metrics.CellWidth
+			}
+		}
+	} else {
+		// No ellipsis needed - just fill to scroll area
+		for x < scrollAreaStart {
+			p.DrawCell(x, 0, ' ', tabBarUnderlined)
+			x += metrics.CellWidth
 		}
 	}
 
@@ -1634,27 +1674,67 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 	}
 
 	// Fill any gap between last tab and scroll buttons/edge
-	endX := bounds.Width - scrollButtonsWidth
-	if needsScrolling && !t.isLastTabFullyVisible() && !tabWasTruncated {
-		// Reserve space for ellipsis only if we didn't already draw it after truncated text
-		endX -= metrics.TextWidth(3)
-	}
-	// Use truncated tab's style for fill when tab was truncated (keeps ellipsis connected)
-	fillStyle := tabBarOverlined
-	if tabWasTruncated {
-		fillStyle = truncatedTabStyle
-	}
-	for x < endX {
-		p.DrawCell(x, tabY, ' ', fillStyle)
-		x += metrics.CellWidth
-	}
+	// When ellipsis is needed, ensure we leave room for it by trimming fill spaces
+	scrollAreaStart := bounds.Width - scrollButtonsWidth
+	needsEllipsis := needsScrolling && !t.isLastTabFullyVisible()
 
-	// Draw right ellipsis only if tabs need scrolling but text wasn't truncated
-	// (e.g., separator was cut off). If text was truncated, ellipsis was already drawn.
-	if needsScrolling && !t.isLastTabFullyVisible() && !tabWasTruncated {
-		ellipsisX := bounds.Width - scrollButtonsWidth - metrics.TextWidth(3)
-		for i := 0; i < 3; i++ {
-			p.DrawCell(ellipsisX+core.Unit(i)*metrics.CellWidth, tabY, '.', tabBarOverlined)
+	if needsEllipsis {
+		// Calculate where ellipsis should ideally start
+		ellipsisWidth := metrics.TextWidth(3)
+		idealEllipsisX := scrollAreaStart - ellipsisWidth
+
+		// Determine fill style
+		fillStyle := tabBarOverlined
+		if tabWasTruncated {
+			fillStyle = truncatedTabStyle
+		}
+
+		if tabWasTruncated {
+			// Ellipsis was already drawn after truncated text
+			// Just fill remaining space to scroll buttons
+			for x < scrollAreaStart {
+				p.DrawCell(x, tabY, ' ', fillStyle)
+				x += metrics.CellWidth
+			}
+		} else {
+			// Text wasn't truncated - need to draw ellipsis
+			// If current position is past ideal ellipsis start, draw ellipsis at current position
+			// (trimming trailing whitespace/separators implicitly by overwriting)
+			ellipsisX := idealEllipsisX
+			if x > idealEllipsisX {
+				// Not enough room at ideal position - draw ellipsis where we are
+				// This effectively "trims" trailing whitespace by placing ellipsis over it
+				ellipsisX = x
+			}
+
+			// Fill gap between current position and ellipsis (if any)
+			for x < ellipsisX {
+				p.DrawCell(x, tabY, ' ', tabBarOverlined)
+				x += metrics.CellWidth
+			}
+
+			// Draw as many dots as will fit before scroll buttons
+			dotsDrawn := 0
+			for i := 0; i < 3; i++ {
+				dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
+				if dotX+metrics.CellWidth <= scrollAreaStart {
+					p.DrawCell(dotX, tabY, '.', tabBarOverlined)
+					dotsDrawn++
+				}
+			}
+
+			// Fill remaining space after ellipsis (if any)
+			x = ellipsisX + core.Unit(dotsDrawn)*metrics.CellWidth
+			for x < scrollAreaStart {
+				p.DrawCell(x, tabY, ' ', tabBarOverlined)
+				x += metrics.CellWidth
+			}
+		}
+	} else {
+		// No ellipsis needed - just fill to scroll area
+		for x < scrollAreaStart {
+			p.DrawCell(x, tabY, ' ', tabBarOverlined)
+			x += metrics.CellWidth
 		}
 	}
 
