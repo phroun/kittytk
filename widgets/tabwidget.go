@@ -877,6 +877,7 @@ func (t *TabWidget) Paint(p *core.Painter) {
 func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *style.Scheme, metrics core.CellMetrics) {
 	tabHeight := t.tabBarHeight()
 	hasFocus := t.HasFocus()
+	font := t.EffectiveFont()
 
 	// Tab bar style from scheme
 	tabBarStyle := scheme.GetTabsBar(true)
@@ -960,7 +961,8 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 		if isSelected || nextIsSelected {
 			sepWidth = 4 // " \_ " or " _/ "
 		}
-		tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
+		// Calculate tab width: prefix and separator are cell-based, text uses font measurement
+		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
 
 		// Check if this tab fits
 		if x+tabSlotWidth > availableWidth {
@@ -973,7 +975,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 				if isSelected {
 					essentialSepWidth = 2 // space/bracket + backslash are essential
 				}
-				essentialWidth := core.Unit(prefixWidth+len(tab.Text)+essentialSepWidth) * metrics.CellWidth
+				essentialWidth := core.Unit(prefixWidth+essentialSepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
 				if x+essentialWidth <= availableWidth {
 					inGraceMargin = true
 				}
@@ -1032,11 +1034,9 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 					}
 				}
 
-				// Draw full text
-				for _, ch := range tab.Text {
-					p.DrawCell(x, 0, ch, s)
-					x += metrics.CellWidth
-				}
+				// Draw full text using font-aware rendering
+				p.DrawText(x, 0, tab.Text, s, font)
+				x += font.MeasureText(tab.Text)
 
 				// Draw as much separator as fits (character by character)
 				if isSelected {
@@ -1121,20 +1121,29 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 				if needsScrolling {
 					ellipsisReserve = metrics.TextWidth(3)
 				}
-				textSpace := int((availableWidth - x - ellipsisReserve) / metrics.CellWidth)
-				if textSpace < 0 {
-					textSpace = 0
-				}
-				textRunes := []rune(tab.Text)
-				charsToShow := textSpace
-				if charsToShow > len(textRunes) {
-					charsToShow = len(textRunes)
+				maxTextWidth := availableWidth - x - ellipsisReserve
+				if maxTextWidth < 0 {
+					maxTextWidth = 0
 				}
 
-				// Draw partial text
-				for j := 0; j < charsToShow; j++ {
-					p.DrawCell(x, 0, textRunes[j], s)
-					x += metrics.CellWidth
+				// Find how many characters fit within maxTextWidth using font measurement
+				textRunes := []rune(tab.Text)
+				charsToShow := 0
+				currentWidth := core.Unit(0)
+				for j, ch := range textRunes {
+					charWidth := font.MeasureText(string(ch))
+					if currentWidth+charWidth > maxTextWidth {
+						break
+					}
+					currentWidth += charWidth
+					charsToShow = j + 1
+				}
+
+				// Draw partial text using font-aware rendering
+				if charsToShow > 0 {
+					partialText := string(textRunes[:charsToShow])
+					p.DrawText(x, 0, partialText, s, font)
+					x += font.MeasureText(partialText)
 				}
 
 				// Track that this tab was truncated and its style for ellipsis
@@ -1195,16 +1204,19 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			}
 		}
 
-		// Draw tab text
+		// Draw tab text using font-aware rendering
 		textStartX := x
-		for _, ch := range tab.Text {
-			p.DrawCell(x, 0, ch, s)
-			x += metrics.CellWidth
-		}
+		textWidth := font.MeasureText(tab.Text)
+		p.DrawText(x, 0, tab.Text, s, font)
+		x += textWidth
 
 		// Draw close button if closable (at end of text, before separator)
 		if t.closable || tab.Closable {
-			closeX := x - metrics.CellWidth
+			// Position close button at end of text
+			closeX := textStartX + textWidth - metrics.CellWidth
+			if closeX < textStartX {
+				closeX = textStartX
+			}
 			p.DrawCell(closeX, 0, '×', s)
 		}
 		_ = textStartX // May use later for close button positioning
@@ -1322,6 +1334,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 	tabHeight := t.tabBarHeight()
 	tabY := bounds.Height - tabHeight
 	hasFocus := t.HasFocus()
+	font := t.EffectiveFont()
 
 	// Tab bar style from scheme
 	tabBarStyle := scheme.GetTabsBar(true)
@@ -1403,7 +1416,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 		if isSelected || nextIsSelected {
 			sepWidth = 3 // "_/ " or " \_"
 		}
-		tabSlotWidth := core.Unit(prefixWidth+len(tab.Text)+sepWidth) * metrics.CellWidth
+		// Calculate tab width: prefix and separator are cell-based, text uses font measurement
+		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
 
 		// Check if this tab fits
 		if x+tabSlotWidth > availableWidth {
@@ -1464,20 +1478,29 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 				if needsScrolling {
 					ellipsisReserve = metrics.TextWidth(3)
 				}
-				textSpace := int((availableWidth - x - ellipsisReserve) / metrics.CellWidth)
-				if textSpace < 0 {
-					textSpace = 0
-				}
-				textRunes := []rune(tab.Text)
-				charsToShow := textSpace
-				if charsToShow > len(textRunes) {
-					charsToShow = len(textRunes)
+				maxTextWidth := availableWidth - x - ellipsisReserve
+				if maxTextWidth < 0 {
+					maxTextWidth = 0
 				}
 
-				// Draw partial text
-				for j := 0; j < charsToShow; j++ {
-					p.DrawCell(x, tabY, textRunes[j], s)
-					x += metrics.CellWidth
+				// Find how many characters fit within maxTextWidth using font measurement
+				textRunes := []rune(tab.Text)
+				charsToShow := 0
+				currentWidth := core.Unit(0)
+				for j, ch := range textRunes {
+					charWidth := font.MeasureText(string(ch))
+					if currentWidth+charWidth > maxTextWidth {
+						break
+					}
+					currentWidth += charWidth
+					charsToShow = j + 1
+				}
+
+				// Draw partial text using font-aware rendering
+				if charsToShow > 0 {
+					partialText := string(textRunes[:charsToShow])
+					p.DrawText(x, tabY, partialText, s, font)
+					x += font.MeasureText(partialText)
 				}
 
 				// Track that this tab was truncated and its style for ellipsis
@@ -1538,11 +1561,9 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			}
 		}
 
-		// Draw tab text
-		for _, ch := range tab.Text {
-			p.DrawCell(x, tabY, ch, s)
-			x += metrics.CellWidth
-		}
+		// Draw tab text using font-aware rendering
+		p.DrawText(x, tabY, tab.Text, s, font)
+		x += font.MeasureText(tab.Text)
 
 		// Draw separator after tab (inverted for bottom)
 		if isSelected {
@@ -1657,6 +1678,7 @@ func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme 
 	hasFocus := t.HasFocus()
 	needsScrolling := t.vertTabsNeedScrolling()
 	visibleCount := t.vertVisibleCount()
+	font := t.EffectiveFont()
 
 	// Tab bar style from scheme
 	tabBarStyle := scheme.GetTabsBar(true)
@@ -1697,16 +1719,26 @@ func (t *TabWidget) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		// Draw tab background
 		p.FillRect(core.UnitRect{X: contentX, Y: y, Width: tabWidth, Height: metrics.CellHeight}, ' ', s)
 
-		// Draw tab text
+		// Draw tab text using font-aware rendering
 		textX := contentX + metrics.CellWidth
-		textEndX := contentX + tabWidth - metrics.CellWidth
-		for _, ch := range tab.Text {
-			if textX >= textEndX {
-				break
+		maxTextWidth := tabWidth - metrics.CellWidth*2 // Leave padding on both sides
+
+		// Truncate text if it doesn't fit
+		displayText := tab.Text
+		if font.MeasureText(displayText) > maxTextWidth {
+			// Find how many characters fit
+			textRunes := []rune(tab.Text)
+			currentWidth := core.Unit(0)
+			for j, ch := range textRunes {
+				charWidth := font.MeasureText(string(ch))
+				if currentWidth+charWidth > maxTextWidth {
+					displayText = string(textRunes[:j])
+					break
+				}
+				currentWidth += charWidth
 			}
-			p.DrawCell(textX, y, ch, s)
-			textX += metrics.CellWidth
 		}
+		p.DrawText(textX, y, displayText, s, font)
 
 		y += metrics.CellHeight
 	}
@@ -1730,6 +1762,7 @@ func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, scheme
 	hasFocus := t.HasFocus()
 	needsScrolling := t.vertTabsNeedScrolling()
 	visibleCount := t.vertVisibleCount()
+	font := t.EffectiveFont()
 
 	// Tab bar style from scheme
 	tabBarStyle := scheme.GetTabsBar(true)
@@ -1771,16 +1804,26 @@ func (t *TabWidget) paintRightTabs(p *core.Painter, bounds core.UnitRect, scheme
 		// Draw tab background
 		p.FillRect(core.UnitRect{X: tabX, Y: y, Width: tabWidth, Height: metrics.CellHeight}, ' ', s)
 
-		// Draw tab text
+		// Draw tab text using font-aware rendering
 		textX := tabX + metrics.CellWidth
-		textEndX := tabX + tabWidth - metrics.CellWidth
-		for _, ch := range tab.Text {
-			if textX >= textEndX {
-				break
+		maxTextWidth := tabWidth - metrics.CellWidth*2 // Leave padding on both sides
+
+		// Truncate text if it doesn't fit
+		displayText := tab.Text
+		if font.MeasureText(displayText) > maxTextWidth {
+			// Find how many characters fit
+			textRunes := []rune(tab.Text)
+			currentWidth := core.Unit(0)
+			for j, ch := range textRunes {
+				charWidth := font.MeasureText(string(ch))
+				if currentWidth+charWidth > maxTextWidth {
+					displayText = string(textRunes[:j])
+					break
+				}
+				currentWidth += charWidth
 			}
-			p.DrawCell(textX, y, ch, s)
-			textX += metrics.CellWidth
 		}
+		p.DrawText(textX, y, displayText, s, font)
 
 		y += metrics.CellHeight
 	}
