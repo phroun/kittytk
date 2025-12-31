@@ -992,13 +992,27 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 		// Calculate tab width: prefix and separator are cell-based, text uses font measurement
 		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
 
-		// Check if this tab fits
-		if x+tabSlotWidth > availableWidth {
-			// Check if we're in the "grace margin" - ONLY if all essential content fits.
+		// For tabs with backslash separator when scrolling is needed, check if we can fit
+		// the minimum external ellipsis: text + space/> + backslash + at least 1 dot
+		// If not, we must force internal ellipsis (truncate the text)
+		forceInternalEllipsis := false
+		if needsScrolling && !isLastVisible && isSelected {
+			textWidth := font.MeasureText(tab.Text)
+			// Minimum: prefix + text + 3 cells (space/> + backslash + 1 dot)
+			minRequired := x + core.Unit(prefixWidth)*metrics.CellWidth + textWidth + 3*metrics.CellWidth
+			if minRequired > availableWidth {
+				forceInternalEllipsis = true
+			}
+		}
+
+		// Check if this tab fits (or if we need to force internal ellipsis)
+		if forceInternalEllipsis || x+tabSlotWidth > availableWidth {
+			// Check if we're in the "grace margin" - ONLY if all essential content fits
+			// and we're not forcing internal ellipsis.
 			// Essential = prefix + text + (space/bracket + backslash for selected)
 			// Non-essential = trailing underscore + space (or trailing spaces for unselected)
 			inGraceMargin := false
-			if isLastVisible {
+			if !forceInternalEllipsis && isLastVisible {
 				essentialSepWidth := 0
 				if isSelected {
 					essentialSepWidth = 2 // space/bracket + backslash are essential
@@ -1544,8 +1558,21 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 		// Calculate tab width: prefix and separator are cell-based, text uses font measurement
 		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
 
-		// Check if this tab fits
-		if x+tabSlotWidth > availableWidth {
+		// For selected tabs with slash separator when scrolling is needed, check if we can fit
+		// the minimum external ellipsis: text + _/> + / + at least 1 dot
+		// If not, we must force internal ellipsis (truncate the text)
+		forceInternalEllipsis := false
+		if needsScrolling && !isLastVisible && isSelected {
+			textWidth := font.MeasureText(tab.Text)
+			// Minimum: prefix + text + 3 cells (_/> + / + 1 dot)
+			minRequired := x + core.Unit(prefixWidth)*metrics.CellWidth + textWidth + 3*metrics.CellWidth
+			if minRequired > availableWidth {
+				forceInternalEllipsis = true
+			}
+		}
+
+		// Check if this tab fits (or if we need to force internal ellipsis)
+		if forceInternalEllipsis || x+tabSlotWidth > availableWidth {
 			// Try to draw partial tab (ellipsis is drawn separately after the loop)
 			remainingSpace := availableWidth - x
 			minPartialWidth := metrics.TextWidth(prefixWidth) // just prefix needed
