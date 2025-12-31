@@ -1544,9 +1544,12 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 
 	// Track positions for external ellipsis handling
 	// lastTextEndX: where the last visible tab's text ended (for interior ellipsis)
-	// lastSlashX: position of the backslash in the last separator (-1 if none)
+	// lastSlashX: position of the slash/backslash in the last separator (-1 if none)
+	// lastTabWasSelected: if true, lastSlashX is for a slash (ellipsis goes after it)
+	//                     if false, lastSlashX is for a backslash (ellipsis goes before it)
 	lastTextEndX := core.Unit(0)
 	lastSlashX := core.Unit(-1)
+	lastTabWasSelected := false
 
 	visibleTabs := t.tabs[t.tabScrollOffset:]
 	for i := 0; i < len(visibleTabs); i++ {
@@ -1772,10 +1775,11 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 		// Draw tab text using font-aware rendering
 		p.DrawText(x, tabY, tab.Text, s, font)
 		x += font.MeasureText(tab.Text)
-		lastTextEndX = x   // Track where text ends
-		lastSlashX = -1    // Reset slash tracking
-		lastTabStyle = s   // Track style for ellipsis coloring
-		drewAnyText = true // We drew complete text
+		lastTextEndX = x        // Track where text ends
+		lastSlashX = -1         // Reset slash tracking
+		lastTabWasSelected = false
+		lastTabStyle = s        // Track style for ellipsis coloring
+		drewAnyText = true      // We drew complete text
 
 		// Draw separator after tab (inverted for bottom)
 		if isSelected {
@@ -1787,8 +1791,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 				p.DrawCell(x, tabY, '_', s)
 			}
 			p.DrawCell(x+metrics.CellWidth, tabY, '/', tabBarStyle)
-			// Note: for selected tab on bottom, the / is the end of the tab inside
-			// We don't need to track it for ellipsis since trailing space can be overwritten
+			lastSlashX = x + metrics.CellWidth  // Track slash position - marks end of active tab's inside
+			lastTabWasSelected = true           // Slash for selected tab - ellipsis goes after it
 			p.DrawCell(x+metrics.CellWidth*2, tabY, ' ', tabBarOverlined)
 			x += metrics.CellWidth * 3
 		} else if nextIsSelected {
@@ -1796,7 +1800,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			// Space before \ gets overline (outside active tab)
 			p.DrawCell(x, tabY, ' ', tabBarOverlined)
 			p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
-			lastSlashX = x + metrics.CellWidth // Track backslash position - marks start of next tab's inside
+			lastSlashX = x + metrics.CellWidth  // Track backslash position - marks start of next tab's inside
+			lastTabWasSelected = false          // Backslash for nextIsSelected - ellipsis goes before it
 			if hasFocus {
 				p.DrawCell(x+metrics.CellWidth*2, tabY, '<', focusedSelectedStyle)
 			} else {
@@ -1836,23 +1841,32 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			}
 		} else {
 			// Text wasn't truncated - need to draw ellipsis
-			// The ellipsis can overwrite trailing whitespace but NOT the backslash
-			// For bottom tabs with nextIsSelected separator (` \_`), the backslash marks
-			// the start of the next tab's inside - ellipsis must be before it or interior
+			// Handle slash/backslash based on which type of tab was last
 			ellipsisX := idealEllipsisX
 			useInternalStyle := false // Whether to use tab's internal style for ellipsis
 
-			// If there's a backslash in the separator (nextIsSelected), ellipsis must be before it
 			if lastSlashX >= 0 {
-				// For bottom tabs, the backslash is at position 1 in the separator (` \_`)
-				// Only the space at position 0 can be overwritten (before the backslash)
-				// If ellipsis would touch or go past the backslash, use interior ellipsis
-				if idealEllipsisX >= lastSlashX {
-					// Use interior ellipsis - start right after the text
-					ellipsisX = lastTextEndX
-					useInternalStyle = true
+				if lastTabWasSelected {
+					// Selected tab: slash at lastSlashX, ellipsis must come AFTER it
+					// Minimum ellipsis position is right after the slash
+					minEllipsisX := lastSlashX + metrics.CellWidth
+					if idealEllipsisX < minEllipsisX {
+						ellipsisX = minEllipsisX
+					}
+					// Check if at least 1 dot would fit after the slash
+					if ellipsisX+metrics.CellWidth > scrollAreaStart {
+						// No room for even 1 dot after slash - use interior ellipsis
+						ellipsisX = lastTextEndX
+						useInternalStyle = true
+					}
+				} else {
+					// nextIsSelected tab: backslash at lastSlashX, ellipsis must be BEFORE it
+					// If ellipsis would touch or go past the backslash, use interior ellipsis
+					if idealEllipsisX >= lastSlashX {
+						ellipsisX = lastTextEndX
+						useInternalStyle = true
+					}
 				}
-				// Otherwise, ellipsis starts before the backslash which is fine
 			}
 
 			// Determine ellipsis style: use tab's internal style if no text was drawn
