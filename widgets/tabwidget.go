@@ -1171,6 +1171,19 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 					maxTextWidth = 0
 				}
 
+				// When forcing internal ellipsis, ensure we actually truncate the text
+				// (don't show complete text followed by "..." which looks like external ellipsis)
+				if forceInternalEllipsis {
+					fullTextWidth := font.MeasureText(tab.Text)
+					if maxTextWidth >= fullTextWidth {
+						// Reduce to force at least some truncation
+						maxTextWidth = fullTextWidth - metrics.CellWidth
+						if maxTextWidth < 0 {
+							maxTextWidth = 0
+						}
+					}
+				}
+
 				// Find how many characters fit within maxTextWidth using font measurement
 				textRunes := []rune(tab.Text)
 				charsToShow := 0
@@ -1633,6 +1646,19 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 				maxTextWidth := availableWidth - x - ellipsisReserve
 				if maxTextWidth < 0 {
 					maxTextWidth = 0
+				}
+
+				// When forcing internal ellipsis, ensure we actually truncate the text
+				// (don't show complete text followed by "..." which looks like external ellipsis)
+				if forceInternalEllipsis {
+					fullTextWidth := font.MeasureText(tab.Text)
+					if maxTextWidth >= fullTextWidth {
+						// Reduce to force at least some truncation
+						maxTextWidth = fullTextWidth - metrics.CellWidth
+						if maxTextWidth < 0 {
+							maxTextWidth = 0
+						}
+					}
 				}
 
 				// Find how many characters fit within maxTextWidth using font measurement
