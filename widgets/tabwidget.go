@@ -1008,7 +1008,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 				minCells = 4
 			}
 			minRequired := x + core.Unit(prefixWidth)*metrics.CellWidth + textWidth + minCells*metrics.CellWidth
-			if minRequired > availableWidth {
+			if minRequired >= availableWidth {
 				forceInternalEllipsis = true
 			}
 		}
@@ -1594,7 +1594,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			// - nextIsSelected: space + \ + 1 dot for " \."
 			minCells := core.Unit(3)
 			minRequired := x + core.Unit(prefixWidth)*metrics.CellWidth + textWidth + minCells*metrics.CellWidth
-			if minRequired > availableWidth {
+			if minRequired >= availableWidth {
 				forceInternalEllipsis = true
 			}
 		}
