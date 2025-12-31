@@ -948,7 +948,9 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 
 	// Track the style of the last tab being drawn (for ellipsis coloring)
 	var truncatedTabStyle style.CellStyle
+	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
 	tabWasTruncated := false
+	drewAnyText := false // Track if we drew at least 1 character of text for last tab
 
 	// Track positions for external ellipsis handling
 	// lastTextEndX: where the last visible tab's text ended (for interior ellipsis)
@@ -1185,6 +1187,11 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 					// Track that this tab was truncated and its style for ellipsis
 					truncatedTabStyle = s
 					tabWasTruncated = true
+					drewAnyText = true
+				} else {
+					// No text drawn - track style for ellipsis coloring
+					lastTabStyle = s
+					drewAnyText = false
 				}
 				// If charsToShow == 0, we didn't draw any text for this tab,
 				// so we don't set tabWasTruncated - let the "more tabs" ellipsis handle it
@@ -1260,9 +1267,11 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 		}
 		_ = textStartX // May use later for close button positioning
 
-		// Track text end position for ellipsis handling
+		// Track text end position and style for ellipsis handling
 		lastTextEndX = x
-		lastSlashX = -1 // Reset slash tracking
+		lastSlashX = -1    // Reset slash tracking
+		lastTabStyle = s   // Track style for ellipsis coloring
+		drewAnyText = true // We drew complete text
 
 		// Draw separator after tab
 		if isSelected {
@@ -1326,6 +1335,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			// Text wasn't truncated - need to draw ellipsis
 			// The ellipsis can overwrite trailing whitespace (underscore, space) but NOT the backslash
 			ellipsisX := idealEllipsisX
+			useInternalStyle := false // Whether to use tab's internal style for ellipsis
 
 			// If there's a backslash in the separator, ellipsis must start after it
 			minEllipsisX := core.Unit(0)
@@ -1338,12 +1348,20 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 				// Would overwrite backslash - use position right after it
 				ellipsisX = minEllipsisX
 
-				// Check if any dots would fit
-				if ellipsisX >= scrollAreaStart {
-					// No room for any dots after backslash - use interior ellipsis
-					// Clear separator and draw ellipsis right after text
+				// Check if at least 1 dot would fit after the backslash
+				if ellipsisX+metrics.CellWidth > scrollAreaStart {
+					// No room for even 1 dot after backslash - use interior ellipsis
+					// Draw ellipsis right after text, overwriting the separator
 					ellipsisX = lastTextEndX
+					useInternalStyle = true
 				}
+			}
+
+			// Determine ellipsis style: use tab's internal style if no text was drawn
+			// or if we're falling back to interior ellipsis position
+			ellipsisStyle := tabBarUnderlined
+			if !drewAnyText || useInternalStyle {
+				ellipsisStyle = lastTabStyle
 			}
 
 			// Fill gap between current position and ellipsis (only if ellipsis is after x)
@@ -1357,7 +1375,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			for i := 0; i < 3; i++ {
 				dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
 				if dotX+metrics.CellWidth <= scrollAreaStart {
-					p.DrawCell(dotX, 0, '.', tabBarUnderlined)
+					p.DrawCell(dotX, 0, '.', ellipsisStyle)
 					dotsDrawn++
 				}
 			}
@@ -1482,7 +1500,9 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 
 	// Track the style of the last tab being drawn (for ellipsis coloring)
 	var truncatedTabStyle style.CellStyle
+	var lastTabStyle style.CellStyle // Style of the last visible tab (for ellipsis when no text drawn)
 	tabWasTruncated := false
+	drewAnyText := false // Track if we drew at least 1 character of text for last tab
 
 	// Track positions for external ellipsis handling
 	// lastTextEndX: where the last visible tab's text ended (for interior ellipsis)
@@ -1618,6 +1638,11 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 					// Track that this tab was truncated and its style for ellipsis
 					truncatedTabStyle = s
 					tabWasTruncated = true
+					drewAnyText = true
+				} else {
+					// No text drawn - track style for ellipsis coloring
+					lastTabStyle = s
+					drewAnyText = false
 				}
 				// If charsToShow == 0, we didn't draw any text for this tab,
 				// so we don't set tabWasTruncated - let the "more tabs" ellipsis handle it
@@ -1679,8 +1704,10 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 		// Draw tab text using font-aware rendering
 		p.DrawText(x, tabY, tab.Text, s, font)
 		x += font.MeasureText(tab.Text)
-		lastTextEndX = x  // Track where text ends
-		lastSlashX = -1   // Reset slash tracking
+		lastTextEndX = x   // Track where text ends
+		lastSlashX = -1    // Reset slash tracking
+		lastTabStyle = s   // Track style for ellipsis coloring
+		drewAnyText = true // We drew complete text
 
 		// Draw separator after tab (inverted for bottom)
 		if isSelected {
@@ -1745,6 +1772,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			// For bottom tabs with nextIsSelected separator (` \_`), the backslash marks
 			// the start of the next tab's inside - ellipsis must be before it or interior
 			ellipsisX := idealEllipsisX
+			useInternalStyle := false // Whether to use tab's internal style for ellipsis
 
 			// If there's a backslash in the separator (nextIsSelected), ellipsis must be before it
 			if lastSlashX >= 0 {
@@ -1754,8 +1782,16 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 				if idealEllipsisX >= lastSlashX {
 					// Use interior ellipsis - start right after the text
 					ellipsisX = lastTextEndX
+					useInternalStyle = true
 				}
 				// Otherwise, ellipsis starts before the backslash which is fine
+			}
+
+			// Determine ellipsis style: use tab's internal style if no text was drawn
+			// or if we're falling back to interior ellipsis position
+			ellipsisStyle := tabBarOverlined
+			if !drewAnyText || useInternalStyle {
+				ellipsisStyle = lastTabStyle
 			}
 
 			// Fill gap between current position and ellipsis (only if ellipsis is after x)
@@ -1769,7 +1805,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			for i := 0; i < 3; i++ {
 				dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
 				if dotX+metrics.CellWidth <= scrollAreaStart {
-					p.DrawCell(dotX, tabY, '.', tabBarOverlined)
+					p.DrawCell(dotX, tabY, '.', ellipsisStyle)
 					dotsDrawn++
 				}
 			}
