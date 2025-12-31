@@ -181,9 +181,17 @@ func (s *Splitter) Layout() {
 	firstBounds, secondBounds := s.childBounds()
 	if s.first != nil {
 		s.first.SetBounds(firstBounds)
+		// Force content to re-layout with fresh SizeHints
+		if container, ok := s.first.(core.Container); ok {
+			container.Layout()
+		}
 	}
 	if s.second != nil {
 		s.second.SetBounds(secondBounds)
+		// Force content to re-layout with fresh SizeHints
+		if container, ok := s.second.(core.Container); ok {
+			container.Layout()
+		}
 	}
 }
 

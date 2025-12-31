@@ -521,6 +521,14 @@ func (s *ScrollArea) ChildAt(pos core.UnitPoint) core.Widget {
 // Layout arranges the content within the viewport.
 func (s *ScrollArea) Layout() {
 	s.updateScrollBars()
+
+	// Force content to re-layout with fresh SizeHints
+	// (important when font changes affect widget sizing)
+	if s.content != nil {
+		if container, ok := s.content.(core.Container); ok {
+			container.Layout()
+		}
+	}
 }
 
 // LayoutManager returns nil (ScrollArea manages its own layout).

@@ -248,7 +248,25 @@ func (t *TabWidget) ChildAt(pos core.UnitPoint) core.Widget {
 
 // Layout arranges the current tab content.
 func (t *TabWidget) Layout() {
-	// Content widgets are laid out based on contentBounds
+	// Update content bounds and propagate layout to current content
+	if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
+		content := t.tabs[t.currentIndex].Content
+		if content != nil {
+			contentBounds := t.contentBounds()
+			content.SetBounds(core.UnitRect{
+				X:      contentBounds.X,
+				Y:      contentBounds.Y,
+				Width:  contentBounds.Width,
+				Height: contentBounds.Height,
+			})
+
+			// Force content to re-layout with fresh SizeHints
+			// (important when font changes affect widget sizing)
+			if container, ok := content.(core.Container); ok {
+				container.Layout()
+			}
+		}
+	}
 }
 
 // LayoutManager returns nil (TabWidget manages its own layout).
