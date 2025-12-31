@@ -242,6 +242,7 @@ func (b *Button) Paint(p *core.Painter) {
 	scheme := b.GetScheme()
 	focused := b.HasFocus()
 	metrics := p.Metrics()
+	font := b.EffectiveFont()
 
 	// Determine if showing pressed visual (pressed and hovering, space held, animating, or checked)
 	// Disabled buttons should never show pressed state
@@ -282,9 +283,15 @@ func (b *Button) Paint(p *core.Painter) {
 	}
 	shadowStyle := style.DefaultStyle().WithFg(shadowFg).WithBg(inheritedBg).WithAttrs(shadowAttrs)
 
-	// Calculate button content width (excluding shadow)
-	textLen := len([]rune(b.text))
-	buttonWidth := metrics.TextWidth(textLen + 2) // brackets + text
+	// Calculate button content width using font metrics (excluding shadow)
+	leftBracket := " "
+	rightBracket := " "
+	if focused {
+		leftBracket = "<"
+		rightBracket = ">"
+	}
+	bracketWidth := font.MeasureText(leftBracket) + font.MeasureText(rightBracket)
+	textWidth := font.MeasureText(b.text)
 
 	// Icon handling
 	iconWidth := core.Unit(0)
@@ -297,9 +304,11 @@ func (b *Button) Paint(p *core.Painter) {
 		}
 		if textIcon.Width > 0 {
 			iconWidth = metrics.TextWidth(textIcon.Width + 1)
-			buttonWidth += iconWidth
 		}
 	}
+
+	// Total button width (content only, no shadow)
+	buttonWidth := bracketWidth + textWidth + iconWidth
 
 	// X offset: pressed state shifts right by 1 cell
 	xOffset := core.Unit(0)
@@ -326,9 +335,11 @@ func (b *Button) Paint(p *core.Painter) {
 		shadowX := xOffset + buttonWidth
 		p.DrawCell(shadowX, 0, '▄', shadowStyle)
 
-		// Top half blocks on second row (shifted right by 1)
+		// Top half blocks on second row (shifted right by 1 cell)
+		// Calculate number of cells needed for the button width
 		shadowY := metrics.CellHeight
-		for i := 0; i < int(buttonWidth/metrics.CellWidth); i++ {
+		numShadowCells := int((buttonWidth + metrics.CellWidth - 1) / metrics.CellWidth)
+		for i := 0; i < numShadowCells; i++ {
 			p.DrawCell(metrics.CellWidth+metrics.CellToUnitsX(i), shadowY, '▀', shadowStyle)
 		}
 	}
@@ -343,7 +354,7 @@ func (b *Button) Paint(p *core.Painter) {
 		}
 
 		if textIcon.Width > 0 {
-			x := xOffset + metrics.CellWidth
+			x := xOffset + font.MeasureText(leftBracket)
 			y := core.Unit(0)
 			for row := 0; row < textIcon.Height; row++ {
 				for col := 0; col < textIcon.Width; col++ {
@@ -355,22 +366,12 @@ func (b *Button) Paint(p *core.Painter) {
 		}
 	}
 
-	// Draw button with TUI-style brackets
-	// Focused: <text>  Normal: " text "
-	font := b.EffectiveFont()
-	leftBracket := " "
-	rightBracket := " "
-	if focused {
-		leftBracket = "<"
-		rightBracket = ">"
-	}
-
 	// Draw left bracket/space using font
-	p.DrawText(xOffset+iconWidth, 0, leftBracket, s, font)
+	p.DrawText(xOffset, 0, leftBracket, s, font)
 
 	// Draw text using font
 	if b.text != "" {
-		textX := xOffset + iconWidth + font.MeasureText(leftBracket)
+		textX := xOffset + font.MeasureText(leftBracket) + iconWidth
 		p.DrawText(textX, 0, b.text, s, font)
 	}
 

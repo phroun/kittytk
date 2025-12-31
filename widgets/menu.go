@@ -703,6 +703,7 @@ func (m *Menu) Paint(p *core.Painter) {
 	scheme := m.GetScheme()
 	theme := m.Theme() // Still needed for DefaultBorder
 	metrics := p.Metrics()
+	font := m.EffectiveFont()
 	size := m.calculateSize()
 	needsScroll := m.needsScrolling()
 
@@ -808,21 +809,37 @@ func (m *Menu) Paint(p *core.Painter) {
 		p.DrawCell(x, itemY, ' ', contentStyle)
 		x += metrics.CellWidth
 
-		// Now draw text with accelerator highlighting
+		// Now draw text with accelerator highlighting using font-aware rendering
 		var accelStyle style.CellStyle
 		if itemIndex == m.currentIndex {
 			accelStyle = scheme.GetFocusedMenuAccelerator()
 		} else {
 			accelStyle = scheme.GetMenuAccelerator()
 		}
-		for idx, ch := range item.Text {
-			charStyle := contentStyle
-			// Highlight accelerator for enabled items
-			if item.Enabled && idx == item.acceleratorPos {
-				charStyle = accelStyle
+
+		// Draw text in parts: before accel, accel char, after accel
+		textRunes := []rune(item.Text)
+		if item.Enabled && item.acceleratorPos >= 0 && item.acceleratorPos < len(textRunes) {
+			// Draw before accelerator
+			if item.acceleratorPos > 0 {
+				beforeAccel := string(textRunes[:item.acceleratorPos])
+				p.DrawText(x, itemY, beforeAccel, contentStyle, font)
+				x += font.MeasureText(beforeAccel)
 			}
-			p.DrawCell(x, itemY, ch, charStyle)
-			x += metrics.CellWidth
+			// Draw accelerator char
+			accelChar := string(textRunes[item.acceleratorPos])
+			p.DrawText(x, itemY, accelChar, accelStyle, font)
+			x += font.MeasureText(accelChar)
+			// Draw after accelerator
+			if item.acceleratorPos < len(textRunes)-1 {
+				afterAccel := string(textRunes[item.acceleratorPos+1:])
+				p.DrawText(x, itemY, afterAccel, contentStyle, font)
+				x += font.MeasureText(afterAccel)
+			}
+		} else {
+			// No accelerator or disabled - draw entire text
+			p.DrawText(x, itemY, item.Text, contentStyle, font)
+			x += font.MeasureText(item.Text)
 		}
 
 		// Draw shortcut or submenu arrow at the right (in content area)
@@ -831,15 +848,13 @@ func (m *Menu) Paint(p *core.Painter) {
 			p.DrawCell(arrowX, itemY, '▸', contentStyle)
 		} else if item.Shortcut != "" {
 			shortcutStr := item.Shortcut.DisplayString()
-			shortcutX := m.popupX + size.Width - core.Unit(len(shortcutStr)+2)*metrics.CellWidth
+			shortcutWidth := font.MeasureText(shortcutStr)
+			shortcutX := m.popupX + size.Width - shortcutWidth - metrics.CellWidth*2
 			shortcutStyle := contentStyle
 			if item.Enabled {
 				shortcutStyle = contentStyle.WithAttrs(style.StyleDim)
 			}
-			for _, ch := range shortcutStr {
-				p.DrawCell(shortcutX, itemY, ch, shortcutStyle)
-				shortcutX += metrics.CellWidth
-			}
+			p.DrawText(shortcutX, itemY, shortcutStr, shortcutStyle, font)
 		}
 
 		currentY += metrics.CellHeight
