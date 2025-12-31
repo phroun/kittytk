@@ -69,7 +69,11 @@ type Font struct {
 // Predefined fonts
 var (
 	// FontMonday12 is the standard fixed-width font (8 units per character).
-	FontMonday12 = &Font{Name: "Monday", Size: 12}
+	FontMonday12 = &Font{
+		Name:       "Monday",
+		Size:       12,
+		Foreground: DefaultFontColor(), // Use scheme colors
+	}
 
 	// FontTuesday12 is a proportional-style font (16 units for letters/digits,
 	// 8 units for punctuation and symbols).
