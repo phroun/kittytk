@@ -994,8 +994,10 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 
 		// For tabs with backslash/slash separator when scrolling is needed, check if we can fit
 		// the minimum external ellipsis. If not, we must force internal ellipsis (truncate the text)
+		// Note: we check ALL tabs with special separators, including the last visible one,
+		// because the "more tabs" ellipsis still needs room after it.
 		forceInternalEllipsis := false
-		if needsScrolling && !isLastVisible && (isSelected || nextIsSelected) {
+		if needsScrolling && (isSelected || nextIsSelected) {
 			textWidth := font.MeasureText(tab.Text)
 			var minCells core.Unit
 			if isSelected {
@@ -1579,8 +1581,10 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 
 		// For tabs with slash/backslash separator when scrolling is needed, check if we can fit
 		// the minimum external ellipsis. If not, we must force internal ellipsis (truncate the text)
+		// Note: we check ALL tabs with special separators, including the last visible one,
+		// because the "more tabs" ellipsis still needs room after it.
 		forceInternalEllipsis := false
-		if needsScrolling && !isLastVisible && (isSelected || nextIsSelected) {
+		if needsScrolling && (isSelected || nextIsSelected) {
 			textWidth := font.MeasureText(tab.Text)
 			// Both isSelected and nextIsSelected need 3 cells:
 			// - isSelected: _/> + / + 1 dot for "_/."
