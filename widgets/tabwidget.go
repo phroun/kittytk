@@ -1307,22 +1307,18 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			}
 		} else {
 			// Text wasn't truncated - need to draw ellipsis
-			// If current position is past ideal ellipsis start, draw ellipsis at current position
-			// (trimming trailing whitespace/separators implicitly by overwriting)
+			// Always draw at ideal position - this overwrites trailing whitespace/separator
+			// (underscore and space in separator count as trimmable whitespace)
 			ellipsisX := idealEllipsisX
-			if x > idealEllipsisX {
-				// Not enough room at ideal position - draw ellipsis where we are
-				// This effectively "trims" trailing whitespace by placing ellipsis over it
-				ellipsisX = x
-			}
 
-			// Fill gap between current position and ellipsis (if any)
+			// Fill gap between current position and ellipsis (only if ellipsis is after x)
 			for x < ellipsisX {
 				p.DrawCell(x, 0, ' ', tabBarUnderlined)
 				x += metrics.CellWidth
 			}
 
 			// Draw as many dots as will fit before scroll buttons
+			// Drawing at idealEllipsisX will overwrite separator chars if x > idealEllipsisX
 			dotsDrawn := 0
 			for i := 0; i < 3; i++ {
 				dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
@@ -1332,11 +1328,12 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 				}
 			}
 
-			// Fill remaining space after ellipsis (if any)
-			x = ellipsisX + core.Unit(dotsDrawn)*metrics.CellWidth
-			for x < scrollAreaStart {
-				p.DrawCell(x, 0, ' ', tabBarUnderlined)
-				x += metrics.CellWidth
+			// Fill remaining space after ellipsis to scroll buttons
+			// This also overwrites any separator chars that extend past the ellipsis
+			fillX := ellipsisX + core.Unit(dotsDrawn)*metrics.CellWidth
+			for fillX < scrollAreaStart {
+				p.DrawCell(fillX, 0, ' ', tabBarUnderlined)
+				fillX += metrics.CellWidth
 			}
 		}
 	} else {
@@ -1698,22 +1695,18 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			}
 		} else {
 			// Text wasn't truncated - need to draw ellipsis
-			// If current position is past ideal ellipsis start, draw ellipsis at current position
-			// (trimming trailing whitespace/separators implicitly by overwriting)
+			// Always draw at ideal position - this overwrites trailing whitespace/separator
+			// (underscore and space in separator count as trimmable whitespace)
 			ellipsisX := idealEllipsisX
-			if x > idealEllipsisX {
-				// Not enough room at ideal position - draw ellipsis where we are
-				// This effectively "trims" trailing whitespace by placing ellipsis over it
-				ellipsisX = x
-			}
 
-			// Fill gap between current position and ellipsis (if any)
+			// Fill gap between current position and ellipsis (only if ellipsis is after x)
 			for x < ellipsisX {
 				p.DrawCell(x, tabY, ' ', tabBarOverlined)
 				x += metrics.CellWidth
 			}
 
 			// Draw as many dots as will fit before scroll buttons
+			// Drawing at idealEllipsisX will overwrite separator chars if x > idealEllipsisX
 			dotsDrawn := 0
 			for i := 0; i < 3; i++ {
 				dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
@@ -1723,11 +1716,12 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 				}
 			}
 
-			// Fill remaining space after ellipsis (if any)
-			x = ellipsisX + core.Unit(dotsDrawn)*metrics.CellWidth
-			for x < scrollAreaStart {
-				p.DrawCell(x, tabY, ' ', tabBarOverlined)
-				x += metrics.CellWidth
+			// Fill remaining space after ellipsis to scroll buttons
+			// This also overwrites any separator chars that extend past the ellipsis
+			fillX := ellipsisX + core.Unit(dotsDrawn)*metrics.CellWidth
+			for fillX < scrollAreaStart {
+				p.DrawCell(fillX, tabY, ' ', tabBarOverlined)
+				fillX += metrics.CellWidth
 			}
 		}
 	} else {
