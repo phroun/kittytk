@@ -1019,8 +1019,11 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			// and we're not forcing internal ellipsis.
 			// Essential = prefix + text + (space/bracket + backslash for selected)
 			// Non-essential = trailing underscore + space (or trailing spaces for unselected)
+			// IMPORTANT: Grace margin only applies to the ACTUAL last tab - if there are more
+			// tabs after this, we need proper ellipsis handling, not grace margin.
 			inGraceMargin := false
-			if !forceInternalEllipsis && isLastVisible {
+			isActualLastTab := tabIndex == len(t.tabs)-1
+			if !forceInternalEllipsis && isLastVisible && isActualLastTab {
 				essentialSepWidth := 0
 				if isSelected {
 					essentialSepWidth = 2 // space/bracket + backslash are essential
