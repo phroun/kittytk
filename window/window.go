@@ -610,12 +610,10 @@ func (w *Window) EffectiveFont() *core.Font {
 	}
 	w.mu.RUnlock()
 
-	// Check parent (desktop or MDI pane)
+	// Check parent's effective font (walks up the chain through MDI pane, desktop, etc.)
 	if parent := w.Parent(); parent != nil {
-		if fp, ok := parent.(core.FontProvider); ok {
-			if f := fp.Font(); f != nil {
-				return f
-			}
+		if widget, ok := parent.(core.Widget); ok {
+			return core.FindEffectiveFont(widget)
 		}
 	}
 

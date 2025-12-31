@@ -266,6 +266,9 @@ func (m *MDIPane) AddWindow(win *window.Window) {
 	// Set window's parent to this pane
 	win.SetParent(m)
 
+	// Trigger layout now that parent is set (font inheritance works)
+	win.Layout()
+
 	// Set up request callbacks
 	win.SetOnMinimizeRequest(func() {
 		m.MinimizeWindow(win)

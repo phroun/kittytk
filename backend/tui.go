@@ -368,10 +368,23 @@ func (t *TUIBackend) SetClip(clip core.UnitRect) {
 }
 
 // isInClip checks if a cell coordinate is within the clip region.
+// A cell is considered in clip if its starting position is within bounds.
 func (t *TUIBackend) isInClip(col, row int) bool {
 	x := t.metrics.CellToUnitsX(col)
 	y := t.metrics.CellToUnitsY(row)
 	return t.clipRect.Contains(core.UnitPoint{X: x, Y: y})
+}
+
+// cellFitsInClip checks if a cell fully fits within the clip region.
+// Used for optional trailing elements like Tuesday font spacing.
+func (t *TUIBackend) cellFitsInClip(col, row int) bool {
+	x := t.metrics.CellToUnitsX(col)
+	y := t.metrics.CellToUnitsY(row)
+	// Check if cell end position is within clip (cell end = start + cell width)
+	cellEndX := x + t.metrics.CellWidth
+	cellEndY := y + t.metrics.CellHeight
+	return x >= t.clipRect.X && cellEndX <= t.clipRect.X+t.clipRect.Width &&
+		y >= t.clipRect.Y && cellEndY <= t.clipRect.Y+t.clipRect.Height
 }
 
 // setCell sets a cell in the back buffer with clipping.
@@ -431,7 +444,9 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 			}
 		} else if isTuesday && isAlphanumeric(ch) {
 			// Tuesday font: add space after alphabetic/numeric chars
-			if col < t.cols {
+			// Only add the space if the cell fully fits in the clip region,
+			// allowing "half" of a wide Tuesday character to be shown when truncated
+			if col < t.cols && t.cellFitsInClip(col, row) {
 				t.setCell(col, row, ' ', effectiveStyle)
 				col++
 			}
@@ -527,7 +542,10 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 			col++
 		} else if isTuesday && isAlphanumeric(ch) {
 			// Tuesday font: add space after alphabetic/numeric chars
-			if col < col2 && col >= col1 {
+			// Only add the space if the cell fully fits within bounds,
+			// allowing "half" of a wide Tuesday character to be shown when truncated
+			cellEndX := t.metrics.CellToUnitsX(col) + t.metrics.CellWidth
+			if col < col2 && col >= col1 && cellEndX <= bounds.X+bounds.Width {
 				t.setCell(col, row, ' ', effectiveStyle)
 			}
 			col++
