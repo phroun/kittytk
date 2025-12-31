@@ -74,12 +74,13 @@ func (s *LineSeparator) SetOrientation(o core.Orientation) {
 // SizeHint returns the preferred size.
 func (s *LineSeparator) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := s.EffectiveFont()
 	if s.orientation == core.Horizontal {
 		// Horizontal separator: 1 cell tall, width depends on title
-		titleLen := len([]rune(s.title))
-		minWidth := titleLen + 8 // ··Title·· plus some line
+		titleWidth := font.MeasureText(s.title)
+		decorWidth := font.MeasureText("····    ") // Decoration around title
 		return core.UnitSize{
-			Width:  metrics.TextWidth(minWidth),
+			Width:  titleWidth + decorWidth,
 			Height: metrics.CellHeight,
 		}
 	}

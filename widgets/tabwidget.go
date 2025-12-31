@@ -838,8 +838,9 @@ func (t *TabWidget) handleVertScrollbarClick(y core.Unit, metrics core.CellMetri
 // SizeHint returns the preferred size.
 func (t *TabWidget) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := t.EffectiveFont()
 	return core.UnitSize{
-		Width:  metrics.TextWidth(40),
+		Width:  font.MeasureRunes(40), // 40 chars wide
 		Height: metrics.TextHeight(15),
 	}
 }

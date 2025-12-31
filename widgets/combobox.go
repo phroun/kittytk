@@ -649,20 +649,23 @@ func (c *ComboBox) notifyIndexChanged() {
 // SizeHint returns the preferred size.
 func (c *ComboBox) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := c.EffectiveFont()
 
-	// Calculate width based on longest item
-	maxLen := 10 // Minimum width
+	// Calculate width based on longest item using font measurement
+	minWidth := font.MeasureText("----------") // Minimum 10 chars
+	maxWidth := minWidth
 	for _, item := range c.items {
-		if len(item) > maxLen {
-			maxLen = len(item)
+		itemWidth := font.MeasureText(item)
+		if itemWidth > maxWidth {
+			maxWidth = itemWidth
 		}
 	}
 
-	// Add space for dropdown arrow
-	width := metrics.TextWidth(maxLen + 3) // " ▼"
+	// Add space for dropdown arrow " ▼"
+	arrowWidth := font.MeasureText(" ▼")
 
 	return core.UnitSize{
-		Width:  width,
+		Width:  maxWidth + arrowWidth,
 		Height: metrics.TextHeight(1),
 	}
 }
@@ -678,7 +681,6 @@ func (c *ComboBox) Paint(p *core.Painter) {
 	bounds := c.Bounds()
 	scheme := c.GetScheme()
 	focused := c.HasFocus()
-	metrics := p.Metrics()
 
 	// Get inherited background to determine pane type
 	inheritedBg := c.EffectiveBackgroundColor()
@@ -707,23 +709,25 @@ func (c *ComboBox) Paint(p *core.Painter) {
 		s = s.WithAttrs(style.StyleDim)
 	}
 
-	// Calculate text area width (leave space for arrow)
-	textWidth := metrics.CharsForWidth(bounds.Width) - 2
+	// Get font for text measurement and rendering
+	font := c.EffectiveFont()
 
-	// Draw text
-	x := core.Unit(0)
-	for i, ch := range text {
-		if i >= textWidth {
-			break
-		}
-		p.DrawCell(x, 0, ch, s)
-		x += metrics.CellWidth
+	// Calculate text area width (leave space for arrow)
+	arrowWidth := font.MeasureText(" ▼")
+	textAreaWidth := bounds.Width - arrowWidth
+
+	// Truncate text if needed to fit in text area
+	displayText := text
+	for font.MeasureText(displayText) > textAreaWidth && len(displayText) > 0 {
+		displayText = displayText[:len(displayText)-1]
 	}
 
+	// Draw text
+	p.DrawText(0, 0, displayText, s, font)
+
 	// Draw dropdown arrow at the right
-	arrowX := bounds.Width - metrics.CellWidth*2
-	p.DrawCell(arrowX, 0, ' ', s)
-	p.DrawCell(arrowX+metrics.CellWidth, 0, '▼', s)
+	arrowX := bounds.Width - arrowWidth
+	p.DrawText(arrowX, 0, " ▼", s, font)
 
 	// Draw popup if open - only use fallback if no popup controller found
 	if c.isOpen && c.findPopupController() == nil {

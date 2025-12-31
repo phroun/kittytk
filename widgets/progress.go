@@ -171,14 +171,15 @@ func (p *ProgressBar) Advance(amount int) {
 // SizeHint returns the preferred size.
 func (p *ProgressBar) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := p.EffectiveFont()
 	if p.orientation == core.Horizontal {
 		return core.UnitSize{
-			Width:  metrics.TextWidth(20),
+			Width:  font.MeasureRunes(20), // 20 chars wide
 			Height: metrics.TextHeight(1),
 		}
 	}
 	return core.UnitSize{
-		Width:  metrics.TextWidth(2),
+		Width:  font.MeasureRunes(2), // 2 chars wide
 		Height: metrics.TextHeight(10),
 	}
 }

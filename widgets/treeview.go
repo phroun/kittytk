@@ -457,8 +457,9 @@ func (t *TreeView) ensureVisible(index int) {
 // SizeHint returns the preferred size.
 func (t *TreeView) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := t.EffectiveFont()
 	return core.UnitSize{
-		Width:  metrics.TextWidth(40), // Default width
+		Width:  font.MeasureRunes(40), // Default width for 40 chars
 		Height: metrics.TextHeight(15), // 15 items visible
 	}
 }
@@ -532,14 +533,15 @@ func (t *TreeView) Paint(p *core.Painter) {
 			x += metrics.CellWidth * 2
 		}
 
-		// Draw text
-		for _, ch := range item.Text {
-			if x >= bounds.Width {
-				break
-			}
-			p.DrawCell(x, itemY, ch, s)
-			x += metrics.CellWidth
+		// Draw text using font-aware rendering
+		font := t.EffectiveFont()
+		availableWidth := bounds.Width - x
+		displayText := item.Text
+		// Truncate if needed
+		for font.MeasureText(displayText) > availableWidth && len(displayText) > 0 {
+			displayText = displayText[:len(displayText)-1]
 		}
+		p.DrawText(x, itemY, displayText, s, font)
 	}
 
 	// Draw scrollbar if needed
