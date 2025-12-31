@@ -357,27 +357,26 @@ func (b *Button) Paint(p *core.Painter) {
 
 	// Draw button with TUI-style brackets
 	// Focused: <text>  Normal: " text "
-	leftBracket := ' '
-	rightBracket := ' '
+	font := b.EffectiveFont()
+	leftBracket := " "
+	rightBracket := " "
 	if focused {
-		leftBracket = '<'
-		rightBracket = '>'
+		leftBracket = "<"
+		rightBracket = ">"
 	}
 
-	// Draw left bracket/space
-	p.DrawCell(xOffset+iconWidth, 0, leftBracket, s)
+	// Draw left bracket/space using font
+	p.DrawText(xOffset+iconWidth, 0, leftBracket, s, font)
 
-	// Draw text
+	// Draw text using font
 	if b.text != "" {
-		textX := xOffset + iconWidth + metrics.CellWidth
-		for i, ch := range b.text {
-			p.DrawCell(textX+metrics.CellToUnitsX(i), 0, ch, s)
-		}
+		textX := xOffset + iconWidth + font.MeasureText(leftBracket)
+		p.DrawText(textX, 0, b.text, s, font)
 	}
 
-	// Draw right bracket/space
-	rightX := xOffset + buttonWidth - metrics.CellWidth
-	p.DrawCell(rightX, 0, rightBracket, s)
+	// Draw right bracket/space using font
+	rightX := xOffset + buttonWidth - font.MeasureText(rightBracket)
+	p.DrawText(rightX, 0, rightBracket, s, font)
 }
 
 // HandleKeyPress handles keyboard input.

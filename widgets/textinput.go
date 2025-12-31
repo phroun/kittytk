@@ -312,10 +312,9 @@ func (t *TextInput) ensureCursorVisible() {
 // SizeHint returns the preferred size.
 func (t *TextInput) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
-	font := t.EffectiveFont()
-	// Default width of 20 characters
+	// TextInput has a fixed size in units (160 wide x 16 tall) - does not scale with font
 	return core.UnitSize{
-		Width:  font.MeasureRunes(20),
+		Width:  metrics.TextWidth(20),
 		Height: metrics.TextHeight(1),
 	}
 }
@@ -332,6 +331,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 	scheme := t.GetScheme()
 	focused := t.HasFocus()
 	metrics := p.Metrics()
+	font := t.EffectiveFont()
 
 	// Get inherited background color to determine pane type
 	inheritedBg := t.EffectiveBackgroundColor()
@@ -361,7 +361,8 @@ func (t *TextInput) Paint(p *core.Painter) {
 	}
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, fillChar, fillStyle)
 
-	// Calculate visible area
+	// Calculate visible area based on font metrics
+	// For TextInput, we still measure visible area in cells for cursor positioning
 	visibleChars := metrics.CharsForWidth(bounds.Width)
 	if visibleChars <= 0 {
 		return
@@ -369,9 +370,11 @@ func (t *TextInput) Paint(p *core.Painter) {
 
 	// Get display text
 	var displayText []rune
+	isPlaceholder := false
 	if len(t.text) == 0 && !focused && t.placeholder != "" {
 		displayText = []rune(t.placeholder)
 		s = s.WithAttrs(style.StyleDim)
+		isPlaceholder = true
 	} else {
 		displayText = t.getDisplayText()
 	}
@@ -388,37 +391,51 @@ func (t *TextInput) Paint(p *core.Painter) {
 		displayText = displayText[:visibleChars]
 	}
 
-	// Draw text
-	x := core.Unit(0)
-	for i, r := range displayText {
-		charStyle := s
+	// Draw text using font-aware rendering
+	// For text without selection, use DrawText for proper font rendering
+	if !t.HasSelection() || isPlaceholder {
+		p.DrawText(0, 0, string(displayText), s, font)
+	} else {
+		// With selection, draw character by character to apply selection style
+		x := core.Unit(0)
+		start, end := t.selStart, t.selEnd
+		if start > end {
+			start, end = end, start
+		}
 
-		// Highlight selection
-		textPos := t.scrollOffset + i
-		if t.HasSelection() {
-			start, end := t.selStart, t.selEnd
-			if start > end {
-				start, end = end, start
-			}
+		for i, r := range displayText {
+			charStyle := s
+			textPos := t.scrollOffset + i
 			if textPos >= start && textPos < end {
 				charStyle = scheme.GetSelection()
 			}
-		}
 
-		p.DrawCell(x, 0, r, charStyle)
-		x += metrics.CellWidth
+			// Draw single character using DrawText for font rendering
+			p.DrawText(x, 0, string(r), charStyle, font)
+			x += font.MeasureText(string(r))
+		}
 	}
 
-	// Draw cursor
+	// Draw cursor - cursor position is still cell-based for consistency
 	if focused && !t.readOnly {
-		cursorX := metrics.CellToUnitsX(t.cursorPos - t.scrollOffset)
+		// Calculate cursor X position based on font metrics of text before cursor
+		cursorTextPos := t.cursorPos - t.scrollOffset
+		if cursorTextPos < 0 {
+			cursorTextPos = 0
+		}
+		var cursorX core.Unit
+		if cursorTextPos > 0 && cursorTextPos <= len(displayText) {
+			cursorX = font.MeasureText(string(displayText[:cursorTextPos]))
+		}
+
 		if cursorX >= 0 && cursorX < bounds.Width {
 			cursorStyle := scheme.GetFocusedEditBoxCursor()
 			var cursorChar rune = ' '
-			if t.cursorPos < len(displayText)+t.scrollOffset {
+			if t.cursorPos < len(t.getDisplayText()) {
 				cursorChar = t.getDisplayText()[t.cursorPos]
 			}
-			p.DrawCell(cursorX, 0, cursorChar, cursorStyle)
+			// Draw cursor character using DrawText for consistency
+			p.DrawText(cursorX, 0, string(cursorChar), cursorStyle, font)
 		}
 	}
 }

@@ -911,6 +911,27 @@ func (m *MDIPane) SetBounds(bounds core.UnitRect) {
 	}
 }
 
+// SetFont sets the font and propagates layout to all child windows.
+func (m *MDIPane) SetFont(f *core.Font) {
+	m.WidgetBase.SetFont(f)
+
+	// Propagate layout to all child windows since font affects widget sizing
+	m.mu.RLock()
+	windows := m.windows
+	content := m.content
+	m.mu.RUnlock()
+
+	for _, win := range windows {
+		win.Layout()
+	}
+	if content != nil {
+		if container, ok := content.(core.Container); ok {
+			container.Layout()
+		}
+	}
+	m.Update()
+}
+
 // Children returns all child widgets.
 func (m *MDIPane) Children() []core.Widget {
 	m.mu.RLock()
@@ -968,8 +989,19 @@ func (m *MDIPane) ChildAt(pos core.UnitPoint) core.Widget {
 }
 
 // Layout arranges children within the MDI pane.
+// This also triggers layout on all child windows since font changes
+// propagate via Layout calls from parent containers.
 func (m *MDIPane) Layout() {
 	m.layoutContent()
+
+	// Propagate layout to all child windows
+	m.mu.RLock()
+	windows := m.windows
+	m.mu.RUnlock()
+
+	for _, win := range windows {
+		win.Layout()
+	}
 }
 
 // LayoutManager returns the layout manager.

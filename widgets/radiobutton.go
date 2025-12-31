@@ -99,10 +99,8 @@ func (r *RadioButton) IsInlineWidget() bool {
 
 // Paint renders the radio button.
 func (r *RadioButton) Paint(p *core.Painter) {
-	bounds := r.Bounds()
 	scheme := r.GetScheme()
 	focused := r.HasFocus()
-	metrics := p.Metrics()
 
 	// Determine style - always use inherited background color (ColorDefault = terminal default)
 	inheritedBg := r.EffectiveBackgroundColor()
@@ -120,6 +118,7 @@ func (r *RadioButton) Paint(p *core.Painter) {
 	}
 
 	// Draw radio indicator
+	font := r.EffectiveFont()
 	var indicator string
 	if r.checked {
 		indicator = "(*)"
@@ -127,24 +126,13 @@ func (r *RadioButton) Paint(p *core.Painter) {
 		indicator = "( )"
 	}
 
+	// Draw indicator using font
 	x := core.Unit(0)
-	for _, ch := range indicator {
-		p.DrawCell(x, 0, ch, indicatorStyle)
-		x += metrics.CellWidth
-	}
+	p.DrawText(x, 0, indicator, indicatorStyle, font)
+	x += font.MeasureText(indicator)
 
-	// Draw space
-	p.DrawCell(x, 0, ' ', labelStyle)
-	x += metrics.CellWidth
-
-	// Draw text
-	for _, ch := range r.text {
-		if x >= bounds.Width {
-			break
-		}
-		p.DrawCell(x, 0, ch, labelStyle)
-		x += metrics.CellWidth
-	}
+	// Draw space and text using font
+	p.DrawText(x, 0, " "+r.text, labelStyle, font)
 }
 
 // HandleKeyPress handles keyboard input.

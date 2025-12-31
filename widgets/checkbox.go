@@ -153,10 +153,8 @@ func (c *Checkbox) IsInlineWidget() bool {
 
 // Paint renders the checkbox.
 func (c *Checkbox) Paint(p *core.Painter) {
-	bounds := c.Bounds()
 	scheme := c.GetScheme()
 	focused := c.HasFocus()
-	metrics := p.Metrics()
 
 	// Determine style - always use inherited background color (ColorDefault = terminal default)
 	inheritedBg := c.EffectiveBackgroundColor()
@@ -174,6 +172,7 @@ func (c *Checkbox) Paint(p *core.Painter) {
 	}
 
 	// Draw checkbox indicator
+	font := c.EffectiveFont()
 	var indicator string
 	switch c.checkState {
 	case Unchecked:
@@ -184,24 +183,13 @@ func (c *Checkbox) Paint(p *core.Painter) {
 		indicator = "[-]"
 	}
 
+	// Draw indicator using font
 	x := core.Unit(0)
-	for _, ch := range indicator {
-		p.DrawCell(x, 0, ch, indicatorStyle)
-		x += metrics.CellWidth
-	}
+	p.DrawText(x, 0, indicator, indicatorStyle, font)
+	x += font.MeasureText(indicator)
 
-	// Draw space
-	p.DrawCell(x, 0, ' ', labelStyle)
-	x += metrics.CellWidth
-
-	// Draw text
-	for _, ch := range c.text {
-		if x >= bounds.Width {
-			break
-		}
-		p.DrawCell(x, 0, ch, labelStyle)
-		x += metrics.CellWidth
-	}
+	// Draw space and text using font
+	p.DrawText(x, 0, " "+c.text, labelStyle, font)
 }
 
 // HandleKeyPress handles keyboard input.
