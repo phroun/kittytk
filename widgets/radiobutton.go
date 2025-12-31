@@ -83,10 +83,12 @@ func (r *RadioButton) SetOnToggled(handler func(checked bool)) {
 func (r *RadioButton) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
 	font := r.EffectiveFont()
-	// (o) Text - use font measurement for the full string
-	width := font.MeasureText("( ) " + r.text)
+	// Indicator is decorative (3 cells), space is 1 cell, text uses font
+	indicatorWidth := metrics.CellWidth * 3 // "( )" = 3 cells
+	spaceWidth := metrics.CellWidth         // " " = 1 cell
+	textWidth := font.MeasureText(r.text)
 	return core.UnitSize{
-		Width:  width,
+		Width:  indicatorWidth + spaceWidth + textWidth,
 		Height: metrics.TextHeight(1),
 	}
 }
@@ -117,22 +119,24 @@ func (r *RadioButton) Paint(p *core.Painter) {
 		labelStyle = style.DefaultStyle().WithFg(scheme.GetRadioButtonLabelFG(true)).WithBg(inheritedBg)
 	}
 
-	// Draw radio indicator
+	// Draw radio indicator (decorative - use cell-based sizing)
+	// Indicator is 3 cells: "(", "*" or " ", ")"
+	metrics := p.Metrics()
 	font := r.EffectiveFont()
-	var indicator string
+	var middle rune
 	if r.checked {
-		indicator = "(*)"
+		middle = '*'
 	} else {
-		indicator = "( )"
+		middle = ' '
 	}
+	p.DrawCell(0, 0, '(', indicatorStyle)
+	p.DrawCell(metrics.CellWidth, 0, middle, indicatorStyle)
+	p.DrawCell(metrics.CellWidth*2, 0, ')', indicatorStyle)
 
-	// Draw indicator using font
-	x := core.Unit(0)
-	p.DrawText(x, 0, indicator, indicatorStyle, font)
-	x += font.MeasureText(indicator)
-
-	// Draw space and text using font
-	p.DrawText(x, 0, " "+r.text, labelStyle, font)
+	// Draw space (decorative, 1 cell) and text (font-based)
+	p.DrawCell(metrics.CellWidth*3, 0, ' ', labelStyle) // Space after indicator
+	x := metrics.CellWidth * 4                          // After indicator + space (4 cells)
+	p.DrawText(x, 0, r.text, labelStyle, font)
 }
 
 // HandleKeyPress handles keyboard input.

@@ -404,6 +404,12 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 		font = core.DefaultFont()
 	}
 
+	// Apply font's foreground color if set (for debugging/visualization)
+	effectiveStyle := s
+	if !font.Foreground.IsDefault {
+		effectiveStyle = s.WithFg(font.Foreground.Color)
+	}
+
 	col := t.metrics.UnitsToCellX(x)
 	row := t.metrics.UnitsToCellY(y)
 
@@ -414,19 +420,19 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 		if col >= t.cols {
 			break
 		}
-		t.setCell(col, row, ch, s)
+		t.setCell(col, row, ch, effectiveStyle)
 		col++
 
 		// Handle wide characters (CJK, emoji)
 		if runeWidth(ch) > 1 {
 			if col < t.cols {
-				t.setCell(col, row, 0, s) // Placeholder for wide char
+				t.setCell(col, row, 0, effectiveStyle) // Placeholder for wide char
 				col++
 			}
 		} else if isTuesday && isAlphanumeric(ch) {
 			// Tuesday font: add space after alphabetic/numeric chars
 			if col < t.cols {
-				t.setCell(col, row, ' ', s)
+				t.setCell(col, row, ' ', effectiveStyle)
 				col++
 			}
 		}
@@ -447,6 +453,12 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 
 	if font == nil {
 		font = core.DefaultFont()
+	}
+
+	// Apply font's foreground color if set (for debugging/visualization)
+	effectiveStyle := s
+	if !font.Foreground.IsDefault {
+		effectiveStyle = s.WithFg(font.Foreground.Color)
 	}
 
 	// Convert bounds to cells
@@ -503,20 +515,20 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 			break
 		}
 		if col >= col1 {
-			t.setCell(col, row, ch, s)
+			t.setCell(col, row, ch, effectiveStyle)
 		}
 		col++
 
 		// Handle wide characters
 		if runeWidth(ch) > 1 {
 			if col < col2 && col >= col1 {
-				t.setCell(col, row, 0, s)
+				t.setCell(col, row, 0, effectiveStyle)
 			}
 			col++
 		} else if isTuesday && isAlphanumeric(ch) {
 			// Tuesday font: add space after alphabetic/numeric chars
 			if col < col2 && col >= col1 {
-				t.setCell(col, row, ' ', s)
+				t.setCell(col, row, ' ', effectiveStyle)
 			}
 			col++
 		}

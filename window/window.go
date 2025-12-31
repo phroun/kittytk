@@ -904,47 +904,82 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	}
 
 	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
+	// These are decorative buttons - use cell-based sizing (3 cells each)
+	buttonWidth := metrics.CellWidth * 3
 	controlX := core.Unit(0)
 	if flags&WindowFlagNoClose == 0 {
 		isFocused := titleFocus == TitleFocusClose
 		isPressed := pressedButton == TitleButtonClose && buttonHovered
 		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
-		p.DrawText(controlX, 0, "[x]", btnStyle, font)
-		controlX += font.MeasureText("[x]")
+		p.DrawCell(controlX, 0, '[', btnStyle)
+		p.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
+		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+		controlX += buttonWidth
 	}
 	if flags&WindowFlagNoMinimize == 0 {
 		isFocused := titleFocus == TitleFocusMinimize
 		isPressed := pressedButton == TitleButtonMinimize && buttonHovered
 		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
-		p.DrawText(controlX, 0, "[.]", btnStyle, font)
-		controlX += font.MeasureText("[.]")
+		p.DrawCell(controlX, 0, '[', btnStyle)
+		p.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
+		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+		controlX += buttonWidth
 	}
 	if flags&WindowFlagNoMaximize == 0 {
 		isFocused := titleFocus == TitleFocusMaximize
 		isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
+		var icon rune
 		if state == WindowStateMaximized {
-			p.DrawText(controlX, 0, "[o]", btnStyle, font) // Restore icon
+			icon = 'o' // Restore icon
 		} else {
-			p.DrawText(controlX, 0, "[^]", btnStyle, font) // Maximize icon
+			icon = '^' // Maximize icon
 		}
-		controlX += font.MeasureText("[^]")
+		p.DrawCell(controlX, 0, '[', btnStyle)
+		p.DrawCell(controlX+metrics.CellWidth, 0, icon, btnStyle)
+		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+		controlX += buttonWidth
 	}
 
 	// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
-	displayTitle := title
-	titleDisplayStyle := titleStyle
 	if titleFocus == TitleFocusTitle {
-		displayTitle = "< " + title + " >"
-		titleDisplayStyle = scheme.GetTitleBarButton(focused, true, false)
+		// Title has focus - draw with decorative angle brackets
+		titleDisplayStyle := scheme.GetTitleBarButton(focused, true, false)
+
+		// Calculate total width: "< " (2 cells) + title (font) + " >" (2 cells)
+		bracketWidth := metrics.CellWidth * 2 // Each side: bracket + space
+		titleTextWidth := font.MeasureText(title)
+		totalWidth := bracketWidth + titleTextWidth + bracketWidth
+
+		// Center the total width in the title area
+		startX := (titleRect.Width - totalWidth) / 2
+		x := startX
+
+		// Draw left bracket and space (decorative)
+		p.DrawCell(x, 0, '<', titleDisplayStyle)
+		p.DrawCell(x+metrics.CellWidth, 0, ' ', titleDisplayStyle)
+		x += bracketWidth
+
+		// Draw title text (font-based)
+		p.DrawText(x, 0, title, titleDisplayStyle, font)
+		x += titleTextWidth
+
+		// Draw space and right bracket (decorative)
+		p.DrawCell(x, 0, ' ', titleDisplayStyle)
+		p.DrawCell(x+metrics.CellWidth, 0, '>', titleDisplayStyle)
+	} else {
+		// Normal title - just draw centered
+		p.DrawTextAligned(titleRect, title, core.AlignCenter, core.AlignMiddle, titleStyle, font)
 	}
-	p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle, font)
 
 	// Draw blur button on far right when blur item is focused
+	// This is a decorative button - use cell-based sizing (3 cells)
 	if titleFocus == TitleFocusBlur {
 		blurBtnStyle := scheme.GetTitleBarButton(focused, true, false) // Focused button style
-		blurX := bounds.Width - font.MeasureText("[~]")                // Position at far right
-		p.DrawText(blurX, 0, "[~]", blurBtnStyle, font)
+		blurX := bounds.Width - buttonWidth                            // Position at far right
+		p.DrawCell(blurX, 0, '[', blurBtnStyle)
+		p.DrawCell(blurX+metrics.CellWidth, 0, '~', blurBtnStyle)
+		p.DrawCell(blurX+metrics.CellWidth*2, 0, ']', blurBtnStyle)
 	}
 
 	// Fill content area with background (same as normal frame)
@@ -1054,31 +1089,41 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
 		// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
+		// These are decorative buttons - use cell-based sizing (3 cells each)
+		buttonWidth := metrics.CellWidth * 3
 		controlX := metrics.CellWidth // Start after left border
 		if flags&WindowFlagNoClose == 0 {
 			isFocused := titleFocus == TitleFocusClose
 			isPressed := pressedButton == TitleButtonClose && buttonHovered
 			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
-			p.DrawText(controlX, 0, "[x]", btnStyle, font)
-			controlX += font.MeasureText("[x]")
+			p.DrawCell(controlX, 0, '[', btnStyle)
+			p.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
+			p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+			controlX += buttonWidth
 		}
 		if flags&WindowFlagNoMinimize == 0 {
 			isFocused := titleFocus == TitleFocusMinimize
 			isPressed := pressedButton == TitleButtonMinimize && buttonHovered
 			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
-			p.DrawText(controlX, 0, "[.]", btnStyle, font)
-			controlX += font.MeasureText("[.]")
+			p.DrawCell(controlX, 0, '[', btnStyle)
+			p.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
+			p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+			controlX += buttonWidth
 		}
 		if flags&WindowFlagNoMaximize == 0 {
 			isFocused := titleFocus == TitleFocusMaximize
 			isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
+			var icon rune
 			if state == WindowStateMaximized {
-				p.DrawText(controlX, 0, "[o]", btnStyle, font) // Restore icon
+				icon = 'o' // Restore icon
 			} else {
-				p.DrawText(controlX, 0, "[^]", btnStyle, font) // Maximize icon
+				icon = '^' // Maximize icon
 			}
-			controlX += font.MeasureText("[^]")
+			p.DrawCell(controlX, 0, '[', btnStyle)
+			p.DrawCell(controlX+metrics.CellWidth, 0, icon, btnStyle)
+			p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+			controlX += buttonWidth
 		}
 
 		// Calculate title area (centered on top border)
@@ -1090,28 +1135,56 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		}
 
 		// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
-		displayTitle := title
-		titleDisplayStyle := titleStyle
 		if titleFocus == TitleFocusTitle {
-			displayTitle = "< " + title + " >"
-			titleDisplayStyle = scheme.GetTitleBarButton(focused, true, false)
-		} else if titleFocus == TitleFocusBlur {
-			// Blur item focused - use inactive title style for the title text
-			titleDisplayStyle = scheme.GetWindowTitle(false)
+			// Title has focus - draw with decorative angle brackets
+			titleDisplayStyle := scheme.GetTitleBarButton(focused, true, false)
+
+			// Calculate total width: "< " (2 cells) + title (font) + " >" (2 cells)
+			bracketWidth := metrics.CellWidth * 2 // Each side: bracket + space
+			titleTextWidth := font.MeasureText(title)
+			totalWidth := bracketWidth + titleTextWidth + bracketWidth
+
+			// Center the total width in the title area
+			startX := (titleRect.Width - totalWidth) / 2
+			x := startX
+
+			// Draw left bracket and space (decorative)
+			p.DrawCell(x, 0, '<', titleDisplayStyle)
+			p.DrawCell(x+metrics.CellWidth, 0, ' ', titleDisplayStyle)
+			x += bracketWidth
+
+			// Draw title text (font-based)
+			p.DrawText(x, 0, title, titleDisplayStyle, font)
+			x += titleTextWidth
+
+			// Draw space and right bracket (decorative)
+			p.DrawCell(x, 0, ' ', titleDisplayStyle)
+			p.DrawCell(x+metrics.CellWidth, 0, '>', titleDisplayStyle)
+		} else {
+			// Normal title or blur focused - just draw centered
+			titleDisplayStyle := titleStyle
+			if titleFocus == TitleFocusBlur {
+				// Blur item focused - use inactive title style for the title text
+				titleDisplayStyle = scheme.GetWindowTitle(false)
+			}
+			// Calculate max title width - leave room for controls on both sides (use cell-based for controls)
+			controlsWidth := buttonWidth * 4 // Estimate: 4 buttons max
+			maxTitleWidth := int((bounds.Width - controlsWidth*2) / metrics.CellWidth)
+			displayTitle := title
+			if len(displayTitle) > maxTitleWidth && maxTitleWidth > 0 {
+				displayTitle = displayTitle[:maxTitleWidth-1] + "…"
+			}
+			p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle, font)
 		}
-		// Calculate max title width based on font - leave room for controls on both sides
-		controlsWidth := font.MeasureText("[x][.][^][~]") // Estimate width of all controls
-		maxTitleWidth := int((bounds.Width - controlsWidth*2) / font.MeasureText("M"))
-		if len(displayTitle) > maxTitleWidth && maxTitleWidth > 0 {
-			displayTitle = displayTitle[:maxTitleWidth-1] + "…"
-		}
-		p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle, font)
 
 		// Draw blur button on far right when blur item is focused
+		// This is a decorative button - use cell-based sizing (3 cells)
 		if titleFocus == TitleFocusBlur {
 			blurBtnStyle := scheme.GetTitleBarButton(true, true, false) // Focused button style
-			blurX := localBounds.Width - metrics.CellWidth - font.MeasureText("[~]") // Position before right border
-			p.DrawText(blurX, 0, "[~]", blurBtnStyle, font)
+			blurX := localBounds.Width - metrics.CellWidth - buttonWidth // Position before right border
+			p.DrawCell(blurX, 0, '[', blurBtnStyle)
+			p.DrawCell(blurX+metrics.CellWidth, 0, '~', blurBtnStyle)
+			p.DrawCell(blurX+metrics.CellWidth*2, 0, ']', blurBtnStyle)
 		}
 	}
 

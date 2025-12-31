@@ -215,9 +215,9 @@ func (b *Button) SizeHint() core.UnitSize {
 		}
 	}
 
-	// Add brackets/spaces: "<text>" or " text " (use font for brackets too)
+	// Brackets are decorative - use cell-based sizing (2 cells total)
 	// Plus 1 cell for drop shadow on the right
-	bracketWidth := font.MeasureText("<>") // or "  " - same width
+	bracketWidth := metrics.CellWidth * 2 // 1 cell each for left and right bracket
 	shadowWidth := metrics.CellWidth
 
 	return core.UnitSize{
@@ -283,14 +283,16 @@ func (b *Button) Paint(p *core.Painter) {
 	}
 	shadowStyle := style.DefaultStyle().WithFg(shadowFg).WithBg(inheritedBg).WithAttrs(shadowAttrs)
 
-	// Calculate button content width using font metrics (excluding shadow)
-	leftBracket := " "
-	rightBracket := " "
+	// Calculate button content width
+	// Brackets are decorative - use cell-based sizing (1 cell each)
+	// Text uses font-based sizing
+	leftBracket := ' '
+	rightBracket := ' '
 	if focused {
-		leftBracket = "<"
-		rightBracket = ">"
+		leftBracket = '<'
+		rightBracket = '>'
 	}
-	bracketWidth := font.MeasureText(leftBracket) + font.MeasureText(rightBracket)
+	bracketWidth := metrics.CellWidth * 2 // Each bracket is 1 cell
 	textWidth := font.MeasureText(b.text)
 
 	// Icon handling
@@ -354,7 +356,7 @@ func (b *Button) Paint(p *core.Painter) {
 		}
 
 		if textIcon.Width > 0 {
-			x := xOffset + font.MeasureText(leftBracket)
+			x := xOffset + metrics.CellWidth // After left bracket (1 cell)
 			y := core.Unit(0)
 			for row := 0; row < textIcon.Height; row++ {
 				for col := 0; col < textIcon.Width; col++ {
@@ -366,18 +368,18 @@ func (b *Button) Paint(p *core.Painter) {
 		}
 	}
 
-	// Draw left bracket/space using font
-	p.DrawText(xOffset, 0, leftBracket, s, font)
+	// Draw left bracket/space (decorative - use DrawCell, not DrawText)
+	p.DrawCell(xOffset, 0, leftBracket, s)
 
 	// Draw text using font
 	if b.text != "" {
-		textX := xOffset + font.MeasureText(leftBracket) + iconWidth
+		textX := xOffset + metrics.CellWidth + iconWidth // After left bracket (1 cell)
 		p.DrawText(textX, 0, b.text, s, font)
 	}
 
-	// Draw right bracket/space using font
-	rightX := xOffset + buttonWidth - font.MeasureText(rightBracket)
-	p.DrawText(rightX, 0, rightBracket, s, font)
+	// Draw right bracket/space (decorative - use DrawCell, not DrawText)
+	rightX := xOffset + buttonWidth - metrics.CellWidth // Before right edge (1 cell)
+	p.DrawCell(rightX, 0, rightBracket, s)
 }
 
 // HandleKeyPress handles keyboard input.

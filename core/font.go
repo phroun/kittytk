@@ -73,7 +73,12 @@ var (
 
 	// FontTuesday12 is a proportional-style font (16 units for letters/digits,
 	// 8 units for punctuation and symbols).
-	FontTuesday12 = &Font{Name: "Tuesday", Size: 12}
+	// DEBUG: Uses bright red foreground to distinguish text from decorative elements.
+	FontTuesday12 = &Font{
+		Name:       "Tuesday",
+		Size:       12,
+		Foreground: ExplicitFontColor(style.ColorBrightRed),
+	}
 )
 
 // DefaultFont returns the default font (Monday 12pt).

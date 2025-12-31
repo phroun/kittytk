@@ -137,10 +137,12 @@ func (c *Checkbox) SetOnToggled(handler func(checked bool)) {
 func (c *Checkbox) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
 	font := c.EffectiveFont()
-	// [X] Text - use font measurement for the full string
-	width := font.MeasureText("[ ] " + c.text)
+	// Indicator is decorative (3 cells), space is 1 cell, text uses font
+	indicatorWidth := metrics.CellWidth * 3 // "[ ]" = 3 cells
+	spaceWidth := metrics.CellWidth         // " " = 1 cell
+	textWidth := font.MeasureText(c.text)
 	return core.UnitSize{
-		Width:  width,
+		Width:  indicatorWidth + spaceWidth + textWidth,
 		Height: metrics.TextHeight(1),
 	}
 }
@@ -155,6 +157,8 @@ func (c *Checkbox) IsInlineWidget() bool {
 func (c *Checkbox) Paint(p *core.Painter) {
 	scheme := c.GetScheme()
 	focused := c.HasFocus()
+	metrics := p.Metrics()
+	font := c.EffectiveFont()
 
 	// Determine style - always use inherited background color (ColorDefault = terminal default)
 	inheritedBg := c.EffectiveBackgroundColor()
@@ -171,25 +175,25 @@ func (c *Checkbox) Paint(p *core.Painter) {
 		labelStyle = style.DefaultStyle().WithFg(scheme.GetCheckBoxLabelFG(true)).WithBg(inheritedBg)
 	}
 
-	// Draw checkbox indicator
-	font := c.EffectiveFont()
-	var indicator string
+	// Draw checkbox indicator (decorative - use cell-based sizing)
+	// Indicator is 3 cells: "[", "x" or " " or "-", "]"
+	var middle rune
 	switch c.checkState {
 	case Unchecked:
-		indicator = "[ ]"
+		middle = ' '
 	case Checked:
-		indicator = "[x]"
+		middle = 'x'
 	case PartiallyChecked:
-		indicator = "[-]"
+		middle = '-'
 	}
+	p.DrawCell(0, 0, '[', indicatorStyle)
+	p.DrawCell(metrics.CellWidth, 0, middle, indicatorStyle)
+	p.DrawCell(metrics.CellWidth*2, 0, ']', indicatorStyle)
 
-	// Draw indicator using font
-	x := core.Unit(0)
-	p.DrawText(x, 0, indicator, indicatorStyle, font)
-	x += font.MeasureText(indicator)
-
-	// Draw space and text using font
-	p.DrawText(x, 0, " "+c.text, labelStyle, font)
+	// Draw space (decorative, 1 cell) and text (font-based)
+	p.DrawCell(metrics.CellWidth*3, 0, ' ', labelStyle) // Space after indicator
+	x := metrics.CellWidth * 4                          // After indicator + space (4 cells)
+	p.DrawText(x, 0, c.text, labelStyle, font)
 }
 
 // HandleKeyPress handles keyboard input.
