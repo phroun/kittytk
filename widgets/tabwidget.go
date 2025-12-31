@@ -518,6 +518,7 @@ func (t *TabWidget) calculateTabBarWidth() core.Unit {
 // - Separator: 4 chars if adjacent to selected (" \_ " or " _/ "), else 2 ("  ")
 func (t *TabWidget) calculateTotalTabsWidth() core.Unit {
 	metrics := core.DefaultCellMetrics()
+	font := t.EffectiveFont()
 	if len(t.tabs) == 0 {
 		return 0
 	}
@@ -530,8 +531,8 @@ func (t *TabWidget) calculateTotalTabsWidth() core.Unit {
 	total := core.Unit(prefixWidth) * metrics.CellWidth
 
 	for i, tab := range t.tabs {
-		// Tab text
-		total += core.Unit(len(tab.Text)) * metrics.CellWidth
+		// Tab text - use font measurement for accurate width
+		total += font.MeasureText(tab.Text)
 
 		// Separator after tab: 4 if this or next tab is selected, else 2
 		sepWidth := 2
