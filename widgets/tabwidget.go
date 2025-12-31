@@ -1164,19 +1164,21 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 					partialText := string(textRunes[:charsToShow])
 					p.DrawText(x, 0, partialText, s, font)
 					x += font.MeasureText(partialText)
-				}
 
-				// Draw ellipsis immediately after truncated text (connected to label)
-				if needsScrolling {
-					for i := 0; i < 3; i++ {
-						p.DrawCell(x+core.Unit(i)*metrics.CellWidth, 0, '.', s)
+					// Draw ellipsis immediately after truncated text (connected to label)
+					if needsScrolling {
+						for i := 0; i < 3; i++ {
+							p.DrawCell(x+core.Unit(i)*metrics.CellWidth, 0, '.', s)
+						}
+						x += metrics.TextWidth(3)
 					}
-					x += metrics.TextWidth(3)
-				}
 
-				// Track that this tab was truncated and its style for ellipsis
-				truncatedTabStyle = s
-				tabWasTruncated = true
+					// Track that this tab was truncated and its style for ellipsis
+					truncatedTabStyle = s
+					tabWasTruncated = true
+				}
+				// If charsToShow == 0, we didn't draw any text for this tab,
+				// so we don't set tabWasTruncated - let the "more tabs" ellipsis handle it
 			}
 			break
 		}
@@ -1567,19 +1569,21 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 					partialText := string(textRunes[:charsToShow])
 					p.DrawText(x, tabY, partialText, s, font)
 					x += font.MeasureText(partialText)
-				}
 
-				// Draw ellipsis immediately after truncated text (connected to label)
-				if needsScrolling {
-					for i := 0; i < 3; i++ {
-						p.DrawCell(x+core.Unit(i)*metrics.CellWidth, tabY, '.', s)
+					// Draw ellipsis immediately after truncated text (connected to label)
+					if needsScrolling {
+						for i := 0; i < 3; i++ {
+							p.DrawCell(x+core.Unit(i)*metrics.CellWidth, tabY, '.', s)
+						}
+						x += metrics.TextWidth(3)
 					}
-					x += metrics.TextWidth(3)
-				}
 
-				// Track that this tab was truncated and its style for ellipsis
-				truncatedTabStyle = s
-				tabWasTruncated = true
+					// Track that this tab was truncated and its style for ellipsis
+					truncatedTabStyle = s
+					tabWasTruncated = true
+				}
+				// If charsToShow == 0, we didn't draw any text for this tab,
+				// so we don't set tabWasTruncated - let the "more tabs" ellipsis handle it
 			}
 			break
 		}
