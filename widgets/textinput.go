@@ -292,6 +292,7 @@ func (t *TextInput) textChanged() {
 func (t *TextInput) ensureCursorVisible() {
 	bounds := t.Bounds()
 	font := t.EffectiveFont()
+	metrics := core.DefaultCellMetrics()
 
 	if bounds.Width <= 0 {
 		return
@@ -305,6 +306,15 @@ func (t *TextInput) ensureCursorVisible() {
 	// Scroll right if cursor is after visible area
 	// Calculate width of text from scrollOffset to cursor using font metrics
 	displayText := t.getDisplayText()
+
+	// Calculate cursor character width (space if at end, otherwise char under cursor)
+	var cursorWidth core.Unit
+	if t.cursorPos < len(displayText) {
+		cursorWidth = font.MeasureText(string(displayText[t.cursorPos]))
+	} else {
+		cursorWidth = metrics.CellWidth // Space for cursor at end of text
+	}
+
 	for t.cursorPos > t.scrollOffset {
 		// Calculate width from scrollOffset to cursorPos
 		start := t.scrollOffset
@@ -318,7 +328,8 @@ func (t *TextInput) ensureCursorVisible() {
 		visibleText := string(displayText[start:end])
 		textWidth := font.MeasureText(visibleText)
 
-		if textWidth <= bounds.Width {
+		// Need room for text before cursor PLUS the cursor character itself
+		if textWidth+cursorWidth <= bounds.Width {
 			break
 		}
 		// Scroll right by one character
