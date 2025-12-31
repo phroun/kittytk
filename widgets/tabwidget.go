@@ -2704,8 +2704,10 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 	// Tab format varies by position
 	isBottomTabs := t.tabPosition == TabsBottom
 
-	// Try scrolling right until the tab is fully visible
-	for t.tabScrollOffset < index {
+	// Try scrolling right until the tab is fully visible.
+	// Use <= to also verify fit when current tab becomes the first visible tab,
+	// since the left ellipsis ("...") will appear and take up space.
+	for t.tabScrollOffset <= index {
 		leftEllipseWidth := core.Unit(0)
 		if t.tabScrollOffset > 0 {
 			leftEllipseWidth = metrics.TextWidth(3)
@@ -2793,6 +2795,10 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 		}
 
 		if fits {
+			break
+		}
+		// Can't scroll further when current tab is already the first visible
+		if t.tabScrollOffset >= index {
 			break
 		}
 		t.tabScrollOffset++
