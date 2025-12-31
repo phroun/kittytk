@@ -950,6 +950,12 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 	var truncatedTabStyle style.CellStyle
 	tabWasTruncated := false
 
+	// Track positions for external ellipsis handling
+	// lastTextEndX: where the last visible tab's text ended (for interior ellipsis)
+	// lastSlashX: position of the backslash in the last separator (-1 if none)
+	lastTextEndX := core.Unit(0)
+	lastSlashX := core.Unit(-1)
+
 	visibleTabs := t.tabs[t.tabScrollOffset:]
 	for i := 0; i < len(visibleTabs); i++ {
 		tabIndex := t.tabScrollOffset + i
@@ -1057,6 +1063,8 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 				// Draw full text using font-aware rendering
 				p.DrawText(x, 0, tab.Text, s, font)
 				x += font.MeasureText(tab.Text)
+				lastTextEndX = x  // Track where text ends
+				lastSlashX = -1   // Reset slash tracking
 
 				// Draw as much separator as fits (character by character)
 				if isSelected {
@@ -1071,6 +1079,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 					}
 					if x < availableWidth {
 						p.DrawCell(x, 0, '\\', tabBarStyle)
+						lastSlashX = x  // Track backslash position
 						x += metrics.CellWidth
 					}
 					if x < availableWidth {
@@ -1251,6 +1260,10 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 		}
 		_ = textStartX // May use later for close button positioning
 
+		// Track text end position for ellipsis handling
+		lastTextEndX = x
+		lastSlashX = -1 // Reset slash tracking
+
 		// Draw separator after tab
 		if isSelected {
 			// ">\_ " (4 chars) when focused, " \_ " when not focused
@@ -1261,6 +1274,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 				p.DrawCell(x, 0, ' ', s)
 			}
 			p.DrawCell(x+metrics.CellWidth, 0, '\\', tabBarStyle) // backslash not underlined (like slash)
+			lastSlashX = x + metrics.CellWidth                   // Track backslash position
 			p.DrawCell(x+metrics.CellWidth*2, 0, '_', tabBarUnderlined)
 			p.DrawCell(x+metrics.CellWidth*3, 0, ' ', tabBarUnderlined)
 			x += metrics.CellWidth * 4
@@ -1270,6 +1284,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			p.DrawCell(x, 0, ' ', tabBarUnderlined)
 			p.DrawCell(x+metrics.CellWidth, 0, '_', tabBarUnderlined)
 			p.DrawCell(x+metrics.CellWidth*2, 0, '/', tabBarStyle) // slash not underlined
+			lastSlashX = x + metrics.CellWidth*2                   // Track slash position
 			if hasFocus {
 				p.DrawCell(x+metrics.CellWidth*3, 0, '<', focusedSelectedStyle)
 			} else {
@@ -1309,9 +1324,27 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			}
 		} else {
 			// Text wasn't truncated - need to draw ellipsis
-			// Always draw at ideal position - this overwrites trailing whitespace/separator
-			// (underscore and space in separator count as trimmable whitespace)
+			// The ellipsis can overwrite trailing whitespace (underscore, space) but NOT the backslash
 			ellipsisX := idealEllipsisX
+
+			// If there's a backslash in the separator, ellipsis must start after it
+			minEllipsisX := core.Unit(0)
+			if lastSlashX >= 0 {
+				minEllipsisX = lastSlashX + metrics.CellWidth // Right after the backslash
+			}
+
+			// Check if ideal position would overwrite the backslash
+			if lastSlashX >= 0 && idealEllipsisX <= lastSlashX {
+				// Would overwrite backslash - use position right after it
+				ellipsisX = minEllipsisX
+
+				// Check if any dots would fit
+				if ellipsisX >= scrollAreaStart {
+					// No room for any dots after backslash - use interior ellipsis
+					// Clear separator and draw ellipsis right after text
+					ellipsisX = lastTextEndX
+				}
+			}
 
 			// Fill gap between current position and ellipsis (only if ellipsis is after x)
 			for x < ellipsisX {
@@ -1320,7 +1353,6 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			}
 
 			// Draw as many dots as will fit before scroll buttons
-			// Drawing at idealEllipsisX will overwrite separator chars if x > idealEllipsisX
 			dotsDrawn := 0
 			for i := 0; i < 3; i++ {
 				dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
@@ -1331,7 +1363,6 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			}
 
 			// Fill remaining space after ellipsis to scroll buttons
-			// This also overwrites any separator chars that extend past the ellipsis
 			fillX := ellipsisX + core.Unit(dotsDrawn)*metrics.CellWidth
 			for fillX < scrollAreaStart {
 				p.DrawCell(fillX, 0, ' ', tabBarUnderlined)
@@ -1452,6 +1483,12 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 	// Track the style of the last tab being drawn (for ellipsis coloring)
 	var truncatedTabStyle style.CellStyle
 	tabWasTruncated := false
+
+	// Track positions for external ellipsis handling
+	// lastTextEndX: where the last visible tab's text ended (for interior ellipsis)
+	// lastSlashX: position of the backslash in the last separator (-1 if none)
+	lastTextEndX := core.Unit(0)
+	lastSlashX := core.Unit(-1)
 
 	visibleTabs := t.tabs[t.tabScrollOffset:]
 	for i := 0; i < len(visibleTabs); i++ {
@@ -1642,6 +1679,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 		// Draw tab text using font-aware rendering
 		p.DrawText(x, tabY, tab.Text, s, font)
 		x += font.MeasureText(tab.Text)
+		lastTextEndX = x  // Track where text ends
+		lastSlashX = -1   // Reset slash tracking
 
 		// Draw separator after tab (inverted for bottom)
 		if isSelected {
@@ -1653,6 +1692,8 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 				p.DrawCell(x, tabY, '_', s)
 			}
 			p.DrawCell(x+metrics.CellWidth, tabY, '/', tabBarStyle)
+			// Note: for selected tab on bottom, the / is the end of the tab inside
+			// We don't need to track it for ellipsis since trailing space can be overwritten
 			p.DrawCell(x+metrics.CellWidth*2, tabY, ' ', tabBarOverlined)
 			x += metrics.CellWidth * 3
 		} else if nextIsSelected {
@@ -1660,6 +1701,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			// Space before \ gets overline (outside active tab)
 			p.DrawCell(x, tabY, ' ', tabBarOverlined)
 			p.DrawCell(x+metrics.CellWidth, tabY, '\\', tabBarStyle)
+			lastSlashX = x + metrics.CellWidth // Track backslash position - marks start of next tab's inside
 			if hasFocus {
 				p.DrawCell(x+metrics.CellWidth*2, tabY, '<', focusedSelectedStyle)
 			} else {
@@ -1699,9 +1741,22 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			}
 		} else {
 			// Text wasn't truncated - need to draw ellipsis
-			// Always draw at ideal position - this overwrites trailing whitespace/separator
-			// (underscore and space in separator count as trimmable whitespace)
+			// The ellipsis can overwrite trailing whitespace but NOT the backslash
+			// For bottom tabs with nextIsSelected separator (` \_`), the backslash marks
+			// the start of the next tab's inside - ellipsis must be before it or interior
 			ellipsisX := idealEllipsisX
+
+			// If there's a backslash in the separator (nextIsSelected), ellipsis must be before it
+			if lastSlashX >= 0 {
+				// For bottom tabs, the backslash is at position 1 in the separator (` \_`)
+				// Only the space at position 0 can be overwritten (before the backslash)
+				// If ellipsis would touch or go past the backslash, use interior ellipsis
+				if idealEllipsisX >= lastSlashX {
+					// Use interior ellipsis - start right after the text
+					ellipsisX = lastTextEndX
+				}
+				// Otherwise, ellipsis starts before the backslash which is fine
+			}
 
 			// Fill gap between current position and ellipsis (only if ellipsis is after x)
 			for x < ellipsisX {
@@ -1710,7 +1765,6 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			}
 
 			// Draw as many dots as will fit before scroll buttons
-			// Drawing at idealEllipsisX will overwrite separator chars if x > idealEllipsisX
 			dotsDrawn := 0
 			for i := 0; i < 3; i++ {
 				dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
@@ -1721,7 +1775,6 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			}
 
 			// Fill remaining space after ellipsis to scroll buttons
-			// This also overwrites any separator chars that extend past the ellipsis
 			fillX := ellipsisX + core.Unit(dotsDrawn)*metrics.CellWidth
 			for fillX < scrollAreaStart {
 				p.DrawCell(fillX, tabY, ' ', tabBarOverlined)
