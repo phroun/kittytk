@@ -79,14 +79,10 @@ func NewTabWidget() *TabWidget {
 
 // SetBounds sets the widget's bounds and updates content layout.
 func (t *TabWidget) SetBounds(bounds core.UnitRect) {
-	oldSize := t.Bounds().Size()
 	t.WidgetBase.SetBounds(bounds)
-	newSize := bounds.Size()
-
-	// Manually call our HandleResize since embedded SetBounds won't do it
-	if oldSize != newSize {
-		t.HandleResize(oldSize, newSize)
-	}
+	// Always relayout when bounds are set
+	// (font changes may require relayout even if size unchanged)
+	t.Layout()
 }
 
 // AddTab adds a tab with the given text and content widget.

@@ -938,12 +938,10 @@ func (s *ScrollArea) HandleKeyPress(event core.KeyPressEvent) bool {
 
 // SetBounds sets the scroll area bounds and triggers layout.
 func (s *ScrollArea) SetBounds(bounds core.UnitRect) {
-	oldSize := s.Bounds().Size()
 	s.WidgetBase.SetBounds(bounds)
-	newSize := bounds.Size()
-	if oldSize != newSize {
-		s.HandleResize(oldSize, newSize)
-	}
+	// Always relayout when bounds are set
+	// (font changes may require relayout even if size unchanged)
+	s.Layout()
 }
 
 // HandleResize is called when the scroll area is resized.

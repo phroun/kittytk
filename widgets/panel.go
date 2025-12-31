@@ -270,12 +270,10 @@ func (p *Panel) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 // SetBounds sets the panel bounds and triggers layout.
 func (p *Panel) SetBounds(bounds core.UnitRect) {
-	oldSize := p.Bounds().Size()
 	p.WidgetBase.SetBounds(bounds)
-	newSize := bounds.Size()
-	if oldSize != newSize {
-		p.HandleResize(oldSize, newSize)
-	}
+	// Always relayout children when bounds are set
+	// (font changes may require relayout even if size unchanged)
+	p.Layout()
 }
 
 // HandleResize is called when the panel is resized.
