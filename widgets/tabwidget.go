@@ -996,16 +996,17 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 		// the minimum external ellipsis. If not, we must force internal ellipsis (truncate the text)
 		// Note: we check ALL tabs with special separators, including the last visible one,
 		// because the "more tabs" ellipsis still needs room after it.
+		// We add 1 cell safety margin for boundary cases.
 		forceInternalEllipsis := false
 		if needsScrolling && (isSelected || nextIsSelected) {
 			textWidth := font.MeasureText(tab.Text)
 			var minCells core.Unit
 			if isSelected {
-				// Selected tabs: need 3 cells (space/> + backslash + 1 dot) for ">\.."
-				minCells = 3
-			} else {
-				// nextIsSelected tabs: need 4 cells (space + _ + / + 1 dot) for " _/."
+				// Selected tabs: need 4 cells (space/> + backslash + 1 dot + margin) for ">\.."
 				minCells = 4
+			} else {
+				// nextIsSelected tabs: need 5 cells (space + _ + / + 1 dot + margin) for " _/."
+				minCells = 5
 			}
 			minRequired := x + core.Unit(prefixWidth)*metrics.CellWidth + textWidth + minCells*metrics.CellWidth
 			if minRequired >= availableWidth {
@@ -1593,13 +1594,14 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 		// the minimum external ellipsis. If not, we must force internal ellipsis (truncate the text)
 		// Note: we check ALL tabs with special separators, including the last visible one,
 		// because the "more tabs" ellipsis still needs room after it.
+		// We use minCells = 4 to give a 1-cell safety margin for boundary cases.
 		forceInternalEllipsis := false
 		if needsScrolling && (isSelected || nextIsSelected) {
 			textWidth := font.MeasureText(tab.Text)
-			// Both isSelected and nextIsSelected need 3 cells:
-			// - isSelected: _/> + / + 1 dot for "_/."
-			// - nextIsSelected: space + \ + 1 dot for " \."
-			minCells := core.Unit(3)
+			// Need separator char + slash/backslash + at least 1 dot + safety margin
+			// isSelected: _ + / + 1 dot + margin = 4
+			// nextIsSelected: space + \ + 1 dot + margin = 4
+			minCells := core.Unit(4)
 			minRequired := x + core.Unit(prefixWidth)*metrics.CellWidth + textWidth + minCells*metrics.CellWidth
 			if minRequired >= availableWidth {
 				forceInternalEllipsis = true
