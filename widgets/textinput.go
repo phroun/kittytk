@@ -312,9 +312,10 @@ func (t *TextInput) ensureCursorVisible() {
 // SizeHint returns the preferred size.
 func (t *TextInput) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := t.EffectiveFont()
 	// Default width of 20 characters
 	return core.UnitSize{
-		Width:  metrics.TextWidth(20),
+		Width:  font.MeasureRunes(20),
 		Height: metrics.TextHeight(1),
 	}
 }

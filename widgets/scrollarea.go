@@ -819,8 +819,9 @@ func (s *ScrollArea) updateScrollBars() {
 // SizeHint returns the preferred size.
 func (s *ScrollArea) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
+	font := s.EffectiveFont()
 	return core.UnitSize{
-		Width:  metrics.TextWidth(30),
+		Width:  font.MeasureRunes(30), // 30 chars wide
 		Height: metrics.TextHeight(10),
 	}
 }

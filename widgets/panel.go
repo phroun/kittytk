@@ -152,8 +152,9 @@ func (p *Panel) SizeHint() core.UnitSize {
 		return p.layoutManager.SizeHint(p)
 	}
 	metrics := core.DefaultCellMetrics()
+	font := p.EffectiveFont()
 	return core.UnitSize{
-		Width:  metrics.TextWidth(20),
+		Width:  font.MeasureRunes(20), // 20 chars wide
 		Height: metrics.TextHeight(10),
 	}
 }
