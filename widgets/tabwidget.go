@@ -1213,18 +1213,20 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 					partialText := string(textRunes[:charsToShow])
 					p.DrawText(x, 0, partialText, s, font)
 					x += font.MeasureText(partialText)
+					lastTextEndX = x
+					lastTabStyle = s
 
-					// Draw ellipsis immediately after truncated text (connected to label)
-					if needsScrolling {
+					// Only draw interior ellipsis if text was actually truncated
+					// If text is complete, let the "more tabs" ellipsis handle it (external style)
+					actuallyTruncated := charsToShow < len(textRunes)
+					if actuallyTruncated && needsScrolling {
 						for i := 0; i < 3; i++ {
 							p.DrawCell(x+core.Unit(i)*metrics.CellWidth, 0, '.', s)
 						}
 						x += metrics.TextWidth(3)
+						truncatedTabStyle = s
+						tabWasTruncated = true
 					}
-
-					// Track that this tab was truncated and its style for ellipsis
-					truncatedTabStyle = s
-					tabWasTruncated = true
 					drewAnyText = true
 				} else {
 					// No text drawn - track style for ellipsis coloring
@@ -1697,18 +1699,20 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 					partialText := string(textRunes[:charsToShow])
 					p.DrawText(x, tabY, partialText, s, font)
 					x += font.MeasureText(partialText)
+					lastTextEndX = x
+					lastTabStyle = s
 
-					// Draw ellipsis immediately after truncated text (connected to label)
-					if needsScrolling {
+					// Only draw interior ellipsis if text was actually truncated
+					// If text is complete, let the "more tabs" ellipsis handle it (external style)
+					actuallyTruncated := charsToShow < len(textRunes)
+					if actuallyTruncated && needsScrolling {
 						for i := 0; i < 3; i++ {
 							p.DrawCell(x+core.Unit(i)*metrics.CellWidth, tabY, '.', s)
 						}
 						x += metrics.TextWidth(3)
+						truncatedTabStyle = s
+						tabWasTruncated = true
 					}
-
-					// Track that this tab was truncated and its style for ellipsis
-					truncatedTabStyle = s
-					tabWasTruncated = true
 					drewAnyText = true
 				} else {
 					// No text drawn - track style for ellipsis coloring
