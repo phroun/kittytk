@@ -855,7 +855,26 @@ func (d *Desktop) processEvents() {
 			}
 		}
 
-		// Run through event filters first
+		// Check pass-next-key-to-widget mode FIRST, before any event filters.
+		// This ensures the key goes directly to the widget without any interception.
+		if keyEvent, isKey := event.(core.KeyPressEvent); isKey {
+			d.mu.RLock()
+			activeApp := d.activeApp
+			d.mu.RUnlock()
+			if activeApp != nil && activeApp.PassNextKeyToWidget() {
+				activeApp.ClearPassNextKeyToWidget()
+				// Skip ALL shortcut handling - send key directly to the active window's
+				// focused widget, bypassing WindowManager's menu accelerator interception
+				if wm != nil {
+					if activeWin := wm.ActiveWindow(); activeWin != nil {
+						activeWin.HandleKeyPress(keyEvent)
+					}
+				}
+				continue
+			}
+		}
+
+		// Run through event filters
 		if d.filterEvent(event) {
 			continue
 		}
@@ -870,23 +889,7 @@ func (d *Desktop) processEvents() {
 			return
 
 		case core.KeyPressEvent:
-			// Check pass-next-key-to-widget mode on active app: if set, clear it and skip
-			// all global shortcut handling, passing the key directly to widgets.
-			// This allows terminal emulators to receive keys like ^Q, ^W, etc.
-			d.mu.RLock()
-			activeApp := d.activeApp
-			d.mu.RUnlock()
-			if activeApp != nil && activeApp.PassNextKeyToWidget() {
-				activeApp.ClearPassNextKeyToWidget()
-				// Skip ALL shortcut handling - send key directly to the active window's
-				// focused widget, bypassing WindowManager's menu accelerator interception
-				if wm != nil {
-					if activeWin := wm.ActiveWindow(); activeWin != nil {
-						activeWin.HandleKeyPress(e)
-					}
-				}
-				continue
-			}
+			// Pass-next-key mode is handled above, before event filters.
 			// Check global shortcuts first
 			if d.handleShortcut(e) {
 				continue
