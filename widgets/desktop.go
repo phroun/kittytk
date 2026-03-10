@@ -936,17 +936,6 @@ func (d *Desktop) waitEventWithTimeout(timeout time.Duration) core.Event {
 // This is called BEFORE the focus manager, so these shortcuts work even
 // when an EditBox or other input widget has focus.
 func (d *Desktop) handleShortcut(event core.KeyPressEvent) bool {
-	// Pass-next-key-to-widget mode (Ctrl+Backslash)
-	// When pressed, the NEXT keypress bypasses all global shortcuts and
-	// goes directly to the focused widget. This allows terminal emulators
-	// to receive keys that would normally be intercepted by the desktop.
-	for _, key := range core.DefaultKeyBindings.Keys(core.ActionPassNextKeyToWidget) {
-		if event.Key == key {
-			d.setPassNextKeyToWidget(true)
-			return true
-		}
-	}
-
 	// Exit Desktop (M-^X)
 	for _, key := range core.DefaultKeyBindings.Keys(core.ActionExitDesktop) {
 		if event.Key == key {
@@ -1001,6 +990,60 @@ func (d *Desktop) handleShortcut(event core.KeyPressEvent) bool {
 		}
 	}
 
+	// Check global menu shortcuts from active app's menus
+	if d.handleMenuShortcut(event) {
+		return true
+	}
+
+	return false
+}
+
+// handleMenuShortcut checks if a key event matches any menu item shortcut.
+// This allows menu shortcuts to work globally even when menus are closed.
+func (d *Desktop) handleMenuShortcut(event core.KeyPressEvent) bool {
+	d.mu.RLock()
+	activeApp := d.activeApp
+	d.mu.RUnlock()
+
+	if activeApp == nil {
+		return false
+	}
+
+	// Check all menus from the active app
+	for _, menu := range activeApp.MenuBarContent() {
+		if d.checkMenuItemShortcuts(menu, event) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkMenuItemShortcuts recursively checks menu items for matching shortcuts.
+func (d *Desktop) checkMenuItemShortcuts(menu *Menu, event core.KeyPressEvent) bool {
+	if menu == nil {
+		return false
+	}
+
+	for _, item := range menu.Items() {
+		if item == nil || item.Separator || !item.Enabled {
+			continue
+		}
+
+		// Check if this item's shortcut matches
+		if item.Shortcut != "" && item.Shortcut.Matches(event) {
+			if item.OnTriggered != nil {
+				item.OnTriggered()
+				return true
+			}
+		}
+
+		// Recursively check submenus
+		if item.SubMenu != nil {
+			if d.checkMenuItemShortcuts(item.SubMenu, event) {
+				return true
+			}
+		}
+	}
 	return false
 }
 
