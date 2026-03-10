@@ -1472,6 +1472,31 @@ func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application
 	// Note: Hide, Hide Others, Show All, and Quit are added automatically
 	menus = append(menus, appMenu)
 
+	// Edit menu (for testing Raw Key Input in secondary apps)
+	editMenu := widgets.NewMenu("&Edit")
+	cutItem := widgets.NewMenuItem("Cu&t")
+	cutItem.SetShortcut(core.NewShortcut("^X"))
+	editMenu.AddItem(cutItem)
+
+	copyItem := widgets.NewMenuItem("&Copy")
+	copyItem.SetShortcut(core.NewShortcut("^C"))
+	editMenu.AddItem(copyItem)
+
+	pasteItem := widgets.NewMenuItem("&Paste")
+	pasteItem.SetShortcut(core.NewShortcut("^V"))
+	editMenu.AddItem(pasteItem)
+
+	editMenu.AddSeparator()
+
+	// Raw Key Input - passes the next keypress directly to the focused widget
+	rawKeyItem := widgets.NewMenuItem("&Raw Key Input")
+	rawKeyItem.SetShortcut(core.NewShortcut("^\\"))
+	rawKeyItem.SetOnTriggered(func() {
+		desktop.ActivatePassNextKeyToWidget()
+	})
+	editMenu.AddItem(rawKeyItem)
+	menus = append(menus, editMenu)
+
 	// Info menu (app-specific)
 	infoMenu := widgets.NewMenu("&Info")
 	infoItem := widgets.NewMenuItem("&About This App")
