@@ -120,6 +120,13 @@ type Desktop struct {
 
 	// Exit code
 	exitCode int
+
+	// Pass-next-key-to-widget mode: when true, the next keypress bypasses
+	// all global shortcut handling and goes directly to the focused widget.
+	// This allows terminal emulators and nested tuitk instances to receive
+	// keys that would otherwise be handled by the desktop (like ^Q, ^W, etc.).
+	// Activated by pressing Ctrl+Backslash (^\).
+	passNextKeyToWidget bool
 }
 
 // DesktopTimer represents a scheduled timer callback.
@@ -843,6 +850,18 @@ func (d *Desktop) processEvents() {
 			return
 
 		case core.KeyPressEvent:
+			// Check pass-next-key-to-widget mode: if set, clear it and skip
+			// all global shortcut handling, passing the key directly to widgets.
+			// This allows terminal emulators to receive keys like ^Q, ^W, etc.
+			if d.passNextKeyToWidget {
+				d.passNextKeyToWidget = false
+				// Skip shortcut handling - go directly to focus manager/windows
+				if fm != nil && fm.HandleKeyPress(e) {
+					continue
+				}
+				wm.HandleKeyPress(e)
+				continue
+			}
 			// Check global shortcuts first
 			if d.handleShortcut(e) {
 				continue
@@ -887,6 +906,17 @@ func (d *Desktop) waitEventWithTimeout(timeout time.Duration) core.Event {
 // This is called BEFORE the focus manager, so these shortcuts work even
 // when an EditBox or other input widget has focus.
 func (d *Desktop) handleShortcut(event core.KeyPressEvent) bool {
+	// Pass-next-key-to-widget mode (Ctrl+Backslash)
+	// When pressed, the NEXT keypress bypasses all global shortcuts and
+	// goes directly to the focused widget. This allows terminal emulators
+	// to receive keys that would normally be intercepted by the desktop.
+	for _, key := range core.DefaultKeyBindings.Keys(core.ActionPassNextKeyToWidget) {
+		if event.Key == key {
+			d.passNextKeyToWidget = true
+			return true
+		}
+	}
+
 	// Exit Desktop (M-^X)
 	for _, key := range core.DefaultKeyBindings.Keys(core.ActionExitDesktop) {
 		if event.Key == key {
