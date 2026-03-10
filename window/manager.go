@@ -89,6 +89,10 @@ type WindowManager struct {
 
 	// Popup overlays (painted on top of everything)
 	popups []*PopupOverlay
+
+	// Cycle order for M-Tab: tracks activation order of windows and dock.
+	// Items are *Window or nil (nil represents the dock).
+	cycleOrder []interface{}
 }
 
 // PopupOverlay represents a popup that should be painted on top of all windows.
@@ -245,6 +249,8 @@ func (m *WindowManager) AddWindow(win *Window) {
 		}
 	}
 	m.windows = append(m.windows, win)
+	// Add to cycle order (for M-Tab cycling)
+	m.cycleOrder = append(m.cycleOrder, win)
 	handler := m.onWindowAdded
 	desktop := m.desktop
 	m.mu.Unlock()
@@ -316,6 +322,14 @@ func (m *WindowManager) RemoveWindow(win *Window) {
 	for i, w := range m.windows {
 		if w == win {
 			m.windows = append(m.windows[:i], m.windows[i+1:]...)
+			break
+		}
+	}
+
+	// Remove from cycle order
+	for i, it := range m.cycleOrder {
+		if it == win {
+			m.cycleOrder = append(m.cycleOrder[:i], m.cycleOrder[i+1:]...)
 			break
 		}
 	}
@@ -412,6 +426,9 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 
 	// Move to top of z-order
 	m.bringToFront(win)
+
+	// Move to front of cycle order (for M-Tab cycling)
+	m.bringToCycleFront(win)
 
 	handler := m.onActiveChanged
 	desktop := m.desktop
@@ -543,6 +560,20 @@ func (m *WindowManager) bringToFront(win *Window) {
 			return
 		}
 	}
+}
+
+// bringToCycleFront moves an item to the front (end) of the cycle order.
+// item should be *Window or nil (nil represents the dock).
+func (m *WindowManager) bringToCycleFront(item interface{}) {
+	// Remove existing occurrence
+	for i, it := range m.cycleOrder {
+		if it == item {
+			m.cycleOrder = append(m.cycleOrder[:i], m.cycleOrder[i+1:]...)
+			break
+		}
+	}
+	// Add to end (most recently activated)
+	m.cycleOrder = append(m.cycleOrder, item)
 }
 
 // isChildOf checks if child is a descendant of parent.
@@ -1450,12 +1481,13 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 }
 
 // CycleWindows cycles through windows and the dock (if it has entries).
-// The dock is treated as a stable position at the end of the cycle,
-// so window z-order changes don't affect the cycling behavior.
+// Uses activation order: most recently activated item is at the end.
+// The dock participates in this order like a window (nil in cycleOrder).
 func (m *WindowManager) CycleWindows(forward bool) {
 	m.mu.Lock()
 	desktop := m.desktop
-	windows := m.windows
+	cycleOrder := make([]interface{}, len(m.cycleOrder))
+	copy(cycleOrder, m.cycleOrder)
 	activeWindow := m.activeWindow
 	m.mu.Unlock()
 
@@ -1471,62 +1503,91 @@ func (m *WindowManager) CycleWindows(forward bool) {
 		}
 	}
 
-	// Collect non-minimized windows
-	var nonMinimized []*Window
-	for _, w := range windows {
-		if !w.IsMinimized() {
-			nonMinimized = append(nonMinimized, w)
+	// Build effective cycle list: non-minimized windows + dock (if has entries)
+	// Filter cycleOrder to only include valid items
+	var effectiveCycle []interface{}
+	for _, item := range cycleOrder {
+		if item == nil {
+			// Dock - include only if it has entries
+			if hasDock {
+				effectiveCycle = append(effectiveCycle, nil)
+			}
+		} else if win, ok := item.(*Window); ok {
+			// Window - include only if not minimized
+			if !win.IsMinimized() {
+				effectiveCycle = append(effectiveCycle, win)
+			}
+		}
+	}
+
+	// Add dock to cycle if it has entries but isn't in the order yet
+	if hasDock {
+		hasDockInCycle := false
+		for _, item := range effectiveCycle {
+			if item == nil {
+				hasDockInCycle = true
+				break
+			}
+		}
+		if !hasDockInCycle {
+			effectiveCycle = append(effectiveCycle, nil)
 		}
 	}
 
 	// Nothing to cycle to
-	if len(nonMinimized) == 0 && !hasDock {
+	if len(effectiveCycle) == 0 {
 		return
 	}
 
-	// Calculate cycle length: windows + dock (if present)
-	// The dock is conceptually at a stable position at the end
-	cycleLen := len(nonMinimized)
-	dockIndex := -1
-	if hasDock {
-		dockIndex = cycleLen // dock is always at the end
-		cycleLen++
-	}
-
 	// Find current position in cycle
-	currentIdx := 0
-	if isDockFocused && dockIndex >= 0 {
-		currentIdx = dockIndex
+	currentIdx := -1
+	if isDockFocused {
+		for i, item := range effectiveCycle {
+			if item == nil {
+				currentIdx = i
+				break
+			}
+		}
 	} else {
-		for i, w := range nonMinimized {
-			if w == activeWindow {
+		for i, item := range effectiveCycle {
+			if item == activeWindow {
 				currentIdx = i
 				break
 			}
 		}
 	}
 
+	// Default to end if not found
+	if currentIdx < 0 {
+		currentIdx = len(effectiveCycle) - 1
+	}
+
 	// Calculate next index with wrapping
 	var nextIdx int
 	if forward {
-		nextIdx = (currentIdx + 1) % cycleLen
+		nextIdx = (currentIdx + 1) % len(effectiveCycle)
 	} else {
-		nextIdx = (currentIdx - 1 + cycleLen) % cycleLen
+		nextIdx = (currentIdx - 1 + len(effectiveCycle)) % len(effectiveCycle)
 	}
 
 	// Activate the target
-	if hasDock && nextIdx == dockIndex {
+	nextItem := effectiveCycle[nextIdx]
+	if nextItem == nil {
 		// Moving to dock
-		dockProvider.FocusDock()
+		if dockProvider != nil {
+			dockProvider.FocusDock()
+			// Bring dock to front of cycle order
+			m.mu.Lock()
+			m.bringToCycleFront(nil)
+			m.mu.Unlock()
+		}
 		m.RequestRepaint()
-	} else {
+	} else if win, ok := nextItem.(*Window); ok {
 		// Moving to a window
 		if isDockFocused && dockProvider != nil {
 			dockProvider.UnfocusDock()
 		}
-		if nextIdx >= 0 && nextIdx < len(nonMinimized) {
-			m.ActivateWindow(nonMinimized[nextIdx])
-		}
+		m.ActivateWindow(win)
 	}
 }
 
