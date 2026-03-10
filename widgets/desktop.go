@@ -127,6 +127,9 @@ type Desktop struct {
 	// keys that would otherwise be handled by the desktop (like ^Q, ^W, etc.).
 	// Activated by pressing Ctrl+Backslash (^\).
 	passNextKeyToWidget bool
+
+	// Callback for pass-next-key-to-widget mode changes
+	onPassNextKeyChanged func(active bool)
 }
 
 // DesktopTimer represents a scheduled timer callback.
@@ -723,6 +726,33 @@ func (d *Desktop) SetOnShutdown(handler func()) {
 	d.mu.Unlock()
 }
 
+// SetOnPassNextKeyChanged sets a callback for when pass-next-key-to-widget mode changes.
+// The callback receives true when the mode is activated, false when deactivated.
+// This allows applications to update their UI (e.g., status bar) to indicate the mode.
+func (d *Desktop) SetOnPassNextKeyChanged(handler func(active bool)) {
+	d.mu.Lock()
+	d.onPassNextKeyChanged = handler
+	d.mu.Unlock()
+}
+
+// ActivatePassNextKeyToWidget activates pass-next-key-to-widget mode.
+// The next keypress will bypass all global shortcut handling and go directly
+// to the focused widget. This can be called from menu items or other UI elements.
+func (d *Desktop) ActivatePassNextKeyToWidget() {
+	d.setPassNextKeyToWidget(true)
+}
+
+// setPassNextKeyToWidget sets the pass-next-key-to-widget mode and calls the callback.
+func (d *Desktop) setPassNextKeyToWidget(active bool) {
+	d.passNextKeyToWidget = active
+	d.mu.RLock()
+	callback := d.onPassNextKeyChanged
+	d.mu.RUnlock()
+	if callback != nil {
+		callback(active)
+	}
+}
+
 // AddEventFilter adds an event filter.
 // Filters are called before normal event handling and can consume events.
 // Return true to consume the event, false to let it propagate.
@@ -854,7 +884,7 @@ func (d *Desktop) processEvents() {
 			// all global shortcut handling, passing the key directly to widgets.
 			// This allows terminal emulators to receive keys like ^Q, ^W, etc.
 			if d.passNextKeyToWidget {
-				d.passNextKeyToWidget = false
+				d.setPassNextKeyToWidget(false)
 				// Skip shortcut handling - go directly to focus manager/windows
 				if fm != nil && fm.HandleKeyPress(e) {
 					continue
@@ -912,7 +942,7 @@ func (d *Desktop) handleShortcut(event core.KeyPressEvent) bool {
 	// to receive keys that would normally be intercepted by the desktop.
 	for _, key := range core.DefaultKeyBindings.Keys(core.ActionPassNextKeyToWidget) {
 		if event.Key == key {
-			d.passNextKeyToWidget = true
+			d.setPassNextKeyToWidget(true)
 			return true
 		}
 	}

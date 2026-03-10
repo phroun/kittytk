@@ -34,7 +34,7 @@ func main() {
 
 	// Set up application's status bar content
 	redStyle := style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
-	application.SetStatusBarContent([]widgets.StatusSection{
+	normalStatusContent := []widgets.StatusSection{
 		{Spans: []widgets.StatusTextSpan{
 			{Text: "Ready - Press "},
 			{Text: "F10", Style: &redStyle},
@@ -42,6 +42,20 @@ func main() {
 			{Text: "Ctrl+Q", Style: &redStyle},
 			{Text: " to quit"},
 		}},
+	}
+	application.SetStatusBarContent(normalStatusContent)
+
+	// Set up callback for pass-next-key-to-widget mode changes
+	desktop.SetOnPassNextKeyChanged(func(active bool) {
+		if active {
+			// Show the raw key input message
+			application.SetStatusBarContent([]widgets.StatusSection{
+				{Text: "The next key pressed will be passed directly to the focused widget."},
+			})
+		} else {
+			// Restore normal status bar content
+			application.SetStatusBarContent(normalStatusContent)
+		}
 	})
 
 	// Register application with desktop
@@ -141,6 +155,17 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 	pasteItem := widgets.NewMenuItem("&Paste")
 	pasteItem.SetShortcut(core.NewShortcut("^V"))
 	editMenu.AddItem(pasteItem)
+
+	editMenu.AddSeparator()
+
+	// Raw Key Input - passes the next keypress directly to the focused widget
+	rawKeyItem := widgets.NewMenuItem("&Raw Key Input")
+	rawKeyItem.SetShortcut(core.NewShortcut("^\\"))
+	rawKeyItem.SetOnTriggered(func() {
+		desktop.ActivatePassNextKeyToWidget()
+	})
+	editMenu.AddItem(rawKeyItem)
+
 	menus = append(menus, editMenu)
 
 	// View menu
