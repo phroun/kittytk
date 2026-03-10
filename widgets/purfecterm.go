@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"fmt"
+
 	"github.com/phroun/purfecterm"
 	"github.com/phroun/purfecterm/cli"
 	"github.com/phroun/tuitk/core"
@@ -264,13 +266,120 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	return true
 }
 
-// HandleMousePress handles mouse clicks to focus the terminal.
+// HandleMousePress handles mouse clicks to focus the terminal and forward to CLI.
 func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
-	if event.Button == core.LeftButton {
-		t.SetFocus()
+	t.SetFocus()
+	if t.terminal == nil {
 		return true
 	}
-	return false
+
+	// Convert unit coordinates to 1-based cell coordinates for CLI adapter
+	metrics := core.DefaultCellMetrics()
+	cellX := int(event.X/metrics.CellWidth) + 1
+	cellY := int(event.Y/metrics.CellHeight) + 1
+
+	// Send position update first
+	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
+
+	// Send button press
+	var buttonStr string
+	switch event.Button {
+	case core.LeftButton:
+		buttonStr = "MouseLeftPress"
+	case core.MiddleButton:
+		buttonStr = "MouseMiddlePress"
+	case core.RightButton:
+		buttonStr = "MouseRightPress"
+	default:
+		return true
+	}
+	t.terminal.HandleKeyString(buttonStr)
+	t.Update()
+	return true
+}
+
+// HandleMouseRelease handles mouse button releases.
+func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	if t.terminal == nil {
+		return false
+	}
+
+	// Convert unit coordinates to 1-based cell coordinates
+	metrics := core.DefaultCellMetrics()
+	cellX := int(event.X/metrics.CellWidth) + 1
+	cellY := int(event.Y/metrics.CellHeight) + 1
+
+	// Send position update first
+	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
+
+	// Send button release
+	var buttonStr string
+	switch event.Button {
+	case core.LeftButton:
+		buttonStr = "MouseLeftRelease"
+	case core.MiddleButton:
+		buttonStr = "MouseMiddleRelease"
+	case core.RightButton:
+		buttonStr = "MouseRightRelease"
+	default:
+		return false
+	}
+	t.terminal.HandleKeyString(buttonStr)
+	t.Update()
+	return true
+}
+
+// HandleMouseMove handles mouse movement/drag events.
+func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
+	if t.terminal == nil {
+		return false
+	}
+
+	// Convert unit coordinates to 1-based cell coordinates
+	metrics := core.DefaultCellMetrics()
+	cellX := int(event.X/metrics.CellWidth) + 1
+	cellY := int(event.Y/metrics.CellHeight) + 1
+
+	// Check if any button is held for drag events
+	if event.Buttons&core.LeftButton != 0 {
+		t.terminal.HandleKeyString(fmt.Sprintf("MouseLeftDrag@%d,%d", cellX, cellY))
+		t.Update()
+		return true
+	}
+	if event.Buttons&core.RightButton != 0 {
+		t.terminal.HandleKeyString(fmt.Sprintf("MouseRightDrag@%d,%d", cellX, cellY))
+		t.Update()
+		return true
+	}
+
+	// Plain movement (for mouse tracking modes)
+	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
+	t.Update()
+	return true
+}
+
+// HandleMouseWheel handles scroll wheel events.
+func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	if t.terminal == nil {
+		return false
+	}
+
+	// Convert unit coordinates to 1-based cell coordinates
+	metrics := core.DefaultCellMetrics()
+	cellX := int(event.X/metrics.CellWidth) + 1
+	cellY := int(event.Y/metrics.CellHeight) + 1
+
+	// Send position update first
+	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
+
+	// Send scroll event based on direction
+	if event.DeltaY < 0 {
+		t.terminal.HandleKeyString("MouseScrollUp")
+	} else if event.DeltaY > 0 {
+		t.terminal.HandleKeyString("MouseScrollDown")
+	}
+	t.Update()
+	return true
 }
 
 // HandleFocusIn is called when the widget gains focus.
