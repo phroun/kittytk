@@ -935,72 +935,25 @@ func (d *Desktop) waitEventWithTimeout(timeout time.Duration) core.Event {
 // handleShortcut checks if a key event matches a global shortcut.
 // This is called BEFORE the focus manager, so these shortcuts work even
 // when an EditBox or other input widget has focus.
+//
+// All shortcuts are now handled through menu items - this method delegates
+// to handleMenuShortcut which checks both the system menu and app menus.
 func (d *Desktop) handleShortcut(event core.KeyPressEvent) bool {
-	// Exit Desktop (M-^X)
-	for _, key := range core.DefaultKeyBindings.Keys(core.ActionExitDesktop) {
-		if event.Key == key {
-			d.Quit()
-			return true
-		}
-	}
-
-	// Standard shortcuts
-	switch event.Key {
-	case "^Q": // Ctrl+Q - Quit active app
-		if d.activeApp != nil {
-			d.quitActiveApp()
-			return true
-		}
-	case "^W": // Ctrl+W - Close window
-		d.mu.RLock()
-		wm := d.windowManager
-		d.mu.RUnlock()
-		if wm != nil {
-			if active := wm.ActiveWindow(); active != nil {
-				active.Close()
-				return true
-			}
-		}
-	}
-
-	// App-level shortcuts (only if we have an active app)
-	if d.activeApp != nil {
-		// Hide current app
-		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppHide) {
-			if event.Key == key {
-				d.hideActiveApp()
-				return true
-			}
-		}
-
-		// Hide others
-		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppHideOthers) {
-			if event.Key == key {
-				d.hideOtherApps()
-				return true
-			}
-		}
-
-		// Show all
-		for _, key := range core.DefaultKeyBindings.Keys(core.ActionAppShowAll) {
-			if event.Key == key {
-				d.showAllApps()
-				return true
-			}
-		}
-	}
-
-	// Check global menu shortcuts from active app's menus
-	if d.handleMenuShortcut(event) {
-		return true
-	}
-
-	return false
+	// Check global menu shortcuts (system menu + active app's menus)
+	return d.handleMenuShortcut(event)
 }
 
 // handleMenuShortcut checks if a key event matches any menu item shortcut.
 // This allows menu shortcuts to work globally even when menus are closed.
+// Checks both the system menu and the active application's menus.
 func (d *Desktop) handleMenuShortcut(event core.KeyPressEvent) bool {
+	// Check system menu first (contains Exit Desktop, etc.)
+	if d.systemMenu != nil {
+		if d.checkMenuItemShortcuts(d.systemMenu, event) {
+			return true
+		}
+	}
+
 	d.mu.RLock()
 	activeApp := d.activeApp
 	d.mu.RUnlock()
@@ -1009,12 +962,28 @@ func (d *Desktop) handleMenuShortcut(event core.KeyPressEvent) bool {
 		return false
 	}
 
-	// Check all menus from the active app
+	// Check all menus from the active app (includes standard items like Quit, Hide, etc.)
 	for _, menu := range activeApp.MenuBarContent() {
 		if d.checkMenuItemShortcuts(menu, event) {
 			return true
 		}
 	}
+
+	// Also check the merged menu (which includes standard app items added by Desktop)
+	// This is needed because MenuBarContent() returns the app's original menus,
+	// but appendStandardAppItems adds Quit, Hide, etc. to a merged copy
+	if d.menuBar != nil {
+		for _, menu := range d.menuBar.Menus() {
+			// Skip system menu (already checked above)
+			if menu == d.systemMenu {
+				continue
+			}
+			if d.checkMenuItemShortcuts(menu, event) {
+				return true
+			}
+		}
+	}
+
 	return false
 }
 
