@@ -177,7 +177,8 @@ func NewDesktop() *Desktop {
 
 	// Wire up Tab navigation between dock and menu bar
 	d.dockRow.SetOnFocusMenuBar(func() {
-		d.ActivateMenuBar()
+		d.UnfocusDock()
+		d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
 	})
 	d.menuBar.SetOnFocusDock(func() {
 		if !d.dockRow.IsEmpty() {

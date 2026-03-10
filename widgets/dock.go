@@ -301,7 +301,7 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case "Tab":
-		if event.Shift {
+		if event.Modifiers&core.ShiftModifier != 0 {
 			// Shift+Tab: move to previous item, or to menu bar if at start
 			if d.selectedIndex > 0 {
 				d.selectedIndex--
