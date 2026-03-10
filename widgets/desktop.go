@@ -44,6 +44,15 @@ type ApplicationProvider interface {
 	// SetDesktop sets the desktop that owns this application.
 	// Called by Desktop.AddApplication().
 	SetDesktop(desktop core.Widget)
+
+	// PassNextKeyToWidget returns whether pass-next-key mode is active for this app.
+	PassNextKeyToWidget() bool
+
+	// ActivatePassNextKeyToWidget activates pass-next-key mode for this app.
+	ActivatePassNextKeyToWidget()
+
+	// ClearPassNextKeyToWidget clears pass-next-key mode for this app.
+	ClearPassNextKeyToWidget()
 }
 
 // Desktop represents the application desktop (background behind windows).
@@ -120,16 +129,6 @@ type Desktop struct {
 
 	// Exit code
 	exitCode int
-
-	// Pass-next-key-to-widget mode: when true, the next keypress bypasses
-	// all global shortcut handling and goes directly to the focused widget.
-	// This allows terminal emulators and nested tuitk instances to receive
-	// keys that would otherwise be handled by the desktop (like ^Q, ^W, etc.).
-	// Activated by pressing Ctrl+Backslash (^\).
-	passNextKeyToWidget bool
-
-	// Callback for pass-next-key-to-widget mode changes
-	onPassNextKeyChanged func(active bool)
 }
 
 // DesktopTimer represents a scheduled timer callback.
@@ -701,14 +700,6 @@ func (d *Desktop) updateStatusBarContent() {
 		return
 	}
 
-	// If in pass-next-key mode, show special message regardless of active app
-	if d.passNextKeyToWidget {
-		d.statusBar.SetSections([]StatusSection{
-			{Text: "Raw Key Input: The next key pressed will be passed directly to the focused widget."},
-		})
-		return
-	}
-
 	d.mu.RLock()
 	activeApp := d.activeApp
 	d.mu.RUnlock()
@@ -718,6 +709,12 @@ func (d *Desktop) updateStatusBarContent() {
 	} else {
 		d.statusBar.SetSections(nil)
 	}
+}
+
+// RefreshStatusBar refreshes the status bar from the active app's content.
+// This is called by applications when their status bar content changes.
+func (d *Desktop) RefreshStatusBar() {
+	d.updateStatusBarContent()
 }
 
 // SetOnStartup sets the startup callback.
@@ -734,33 +731,16 @@ func (d *Desktop) SetOnShutdown(handler func()) {
 	d.mu.Unlock()
 }
 
-// SetOnPassNextKeyChanged sets a callback for when pass-next-key-to-widget mode changes.
-// The callback receives true when the mode is activated, false when deactivated.
-// This allows applications to update their UI (e.g., status bar) to indicate the mode.
-func (d *Desktop) SetOnPassNextKeyChanged(handler func(active bool)) {
-	d.mu.Lock()
-	d.onPassNextKeyChanged = handler
-	d.mu.Unlock()
-}
-
-// ActivatePassNextKeyToWidget activates pass-next-key-to-widget mode.
+// ActivatePassNextKeyToWidget activates pass-next-key-to-widget mode for the active app.
 // The next keypress will bypass all global shortcut handling and go directly
 // to the focused widget. This can be called from menu items or other UI elements.
 func (d *Desktop) ActivatePassNextKeyToWidget() {
-	d.setPassNextKeyToWidget(true)
-}
-
-// setPassNextKeyToWidget sets the pass-next-key-to-widget mode and calls the callback.
-func (d *Desktop) setPassNextKeyToWidget(active bool) {
-	d.passNextKeyToWidget = active
 	d.mu.RLock()
-	callback := d.onPassNextKeyChanged
+	activeApp := d.activeApp
 	d.mu.RUnlock()
-	if callback != nil {
-		callback(active)
+	if activeApp != nil {
+		activeApp.ActivatePassNextKeyToWidget()
 	}
-	// Always refresh status bar - it shows special message in pass-next-key mode
-	d.updateStatusBarContent()
 }
 
 // AddEventFilter adds an event filter.
@@ -890,11 +870,14 @@ func (d *Desktop) processEvents() {
 			return
 
 		case core.KeyPressEvent:
-			// Check pass-next-key-to-widget mode: if set, clear it and skip
+			// Check pass-next-key-to-widget mode on active app: if set, clear it and skip
 			// all global shortcut handling, passing the key directly to widgets.
 			// This allows terminal emulators to receive keys like ^Q, ^W, etc.
-			if d.passNextKeyToWidget {
-				d.setPassNextKeyToWidget(false)
+			d.mu.RLock()
+			activeApp := d.activeApp
+			d.mu.RUnlock()
+			if activeApp != nil && activeApp.PassNextKeyToWidget() {
+				activeApp.ClearPassNextKeyToWidget()
 				// Skip shortcut handling - go directly to focus manager/windows
 				if fm != nil && fm.HandleKeyPress(e) {
 					continue

@@ -77,6 +77,12 @@ type Application struct {
 
 	// Status bar content for this application
 	statusBarContent []widgets.StatusSection
+
+	// Pass-next-key-to-widget mode for this application
+	passNextKeyToWidget bool
+
+	// Saved status bar content to restore after pass-next-key mode
+	savedStatusBarContent []widgets.StatusSection
 }
 
 // EventFilter is a function that can intercept events before they reach widgets.
@@ -845,4 +851,60 @@ func (app *Application) SetOnDeactivate(handler func()) {
 	app.mu.Lock()
 	app.onDeactivate = handler
 	app.mu.Unlock()
+}
+
+// PassNextKeyToWidget returns whether pass-next-key mode is active.
+func (app *Application) PassNextKeyToWidget() bool {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.passNextKeyToWidget
+}
+
+// ActivatePassNextKeyToWidget activates pass-next-key-to-widget mode.
+// The next keypress will bypass all global shortcut handling and go directly
+// to the focused widget. The status bar shows a message while active.
+func (app *Application) ActivatePassNextKeyToWidget() {
+	app.mu.Lock()
+	if app.passNextKeyToWidget {
+		app.mu.Unlock()
+		return // Already active
+	}
+	app.passNextKeyToWidget = true
+	// Save current status bar content
+	app.savedStatusBarContent = app.statusBarContent
+	// Show pass-next-key message
+	app.statusBarContent = []widgets.StatusSection{
+		{Text: "Raw Key Input: The next key pressed will be passed directly to the focused widget."},
+	}
+	desktop := app.desktop
+	app.mu.Unlock()
+
+	// Refresh desktop status bar
+	if desktop != nil {
+		if d, ok := desktop.(*widgets.Desktop); ok {
+			d.RefreshStatusBar()
+		}
+	}
+}
+
+// ClearPassNextKeyToWidget clears pass-next-key-to-widget mode.
+func (app *Application) ClearPassNextKeyToWidget() {
+	app.mu.Lock()
+	if !app.passNextKeyToWidget {
+		app.mu.Unlock()
+		return // Not active
+	}
+	app.passNextKeyToWidget = false
+	// Restore saved status bar content
+	app.statusBarContent = app.savedStatusBarContent
+	app.savedStatusBarContent = nil
+	desktop := app.desktop
+	app.mu.Unlock()
+
+	// Refresh desktop status bar
+	if desktop != nil {
+		if d, ok := desktop.(*widgets.Desktop); ok {
+			d.RefreshStatusBar()
+		}
+	}
 }

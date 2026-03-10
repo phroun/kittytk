@@ -45,19 +45,6 @@ func main() {
 	}
 	application.SetStatusBarContent(normalStatusContent)
 
-	// Set up callback for pass-next-key-to-widget mode changes
-	desktop.SetOnPassNextKeyChanged(func(active bool) {
-		if active {
-			// Show the raw key input message
-			application.SetStatusBarContent([]widgets.StatusSection{
-				{Text: "The next key pressed will be passed directly to the focused widget."},
-			})
-		} else {
-			// Restore normal status bar content
-			application.SetStatusBarContent(normalStatusContent)
-		}
-	})
-
 	// Register application with desktop
 	desktop.AddApplication(application)
 
