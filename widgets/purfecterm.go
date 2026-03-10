@@ -160,8 +160,9 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 		}
 	}
 
-	// Draw cursor if focused
-	if t.HasFocus() {
+	// Draw cursor if focused AND the terminal hasn't hidden its cursor
+	// (some apps like vim/emacs manage their own cursor display)
+	if t.HasFocus() && t.terminal.Buffer().IsCursorVisible() {
 		cursorCol, cursorRow := t.terminal.Buffer().GetCursor()
 		if cursorRow < len(cells) && cursorCol < t.cols {
 			cursorX := metrics.CellToUnitsX(cursorCol)
