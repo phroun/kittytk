@@ -701,6 +701,14 @@ func (d *Desktop) updateStatusBarContent() {
 		return
 	}
 
+	// If in pass-next-key mode, show special message regardless of active app
+	if d.passNextKeyToWidget {
+		d.statusBar.SetSections([]StatusSection{
+			{Text: "Raw Key Input: The next key pressed will be passed directly to the focused widget."},
+		})
+		return
+	}
+
 	d.mu.RLock()
 	activeApp := d.activeApp
 	d.mu.RUnlock()
@@ -750,9 +758,9 @@ func (d *Desktop) setPassNextKeyToWidget(active bool) {
 	d.mu.RUnlock()
 	if callback != nil {
 		callback(active)
-		// Refresh status bar in case the callback updated the app's status bar content
-		d.updateStatusBarContent()
 	}
+	// Always refresh status bar - it shows special message in pass-next-key mode
+	d.updateStatusBarContent()
 }
 
 // AddEventFilter adds an event filter.
