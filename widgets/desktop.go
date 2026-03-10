@@ -878,11 +878,13 @@ func (d *Desktop) processEvents() {
 			d.mu.RUnlock()
 			if activeApp != nil && activeApp.PassNextKeyToWidget() {
 				activeApp.ClearPassNextKeyToWidget()
-				// Skip shortcut handling - go directly to focus manager/windows
-				if fm != nil && fm.HandleKeyPress(e) {
-					continue
+				// Skip ALL shortcut handling - send key directly to the active window's
+				// focused widget, bypassing WindowManager's menu accelerator interception
+				if wm != nil {
+					if activeWin := wm.ActiveWindow(); activeWin != nil {
+						activeWin.HandleKeyPress(e)
+					}
 				}
-				wm.HandleKeyPress(e)
 				continue
 			}
 			// Check global shortcuts first
