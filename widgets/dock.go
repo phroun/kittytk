@@ -24,6 +24,9 @@ type DockRow struct {
 
 	// Keyboard navigation
 	selectedIndex int // Currently selected entry when focused (-1 = none)
+
+	// Focus transfer callback (called when Tab falls off either end)
+	onFocusMenuBar func()
 }
 
 // NewDockRow creates a new dock row.
@@ -102,6 +105,22 @@ func (d *DockRow) IsEmpty() bool {
 func (d *DockRow) SetEntryWidth(width int) {
 	d.entryWidth = width
 	d.Update()
+}
+
+// SetOnFocusMenuBar sets the callback for when Tab navigation should transfer to the menu bar.
+func (d *DockRow) SetOnFocusMenuBar(callback func()) {
+	d.onFocusMenuBar = callback
+}
+
+// entriesPerRow returns how many entries fit per row based on current bounds.
+func (d *DockRow) entriesPerRow() int {
+	bounds := d.Bounds()
+	metrics := core.DefaultCellMetrics()
+	entriesPerRow := int(bounds.Width / (core.Unit(d.entryWidth) * metrics.CellWidth))
+	if entriesPerRow < 1 {
+		entriesPerRow = 1
+	}
+	return entriesPerRow
 }
 
 // RowCount returns the number of rows needed to display all entries.
@@ -247,6 +266,8 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 		return false
 	}
 
+	entriesPerRow := d.entriesPerRow()
+
 	switch event.Key {
 	case "Left":
 		if d.selectedIndex > 0 {
@@ -259,6 +280,43 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 		if d.selectedIndex < len(d.entries)-1 {
 			d.selectedIndex++
 			d.Update()
+		}
+		return true
+
+	case "Up":
+		// Move to same column in previous row
+		if d.selectedIndex >= entriesPerRow {
+			d.selectedIndex -= entriesPerRow
+			d.Update()
+		}
+		return true
+
+	case "Down":
+		// Move to same column in next row
+		newIndex := d.selectedIndex + entriesPerRow
+		if newIndex < len(d.entries) {
+			d.selectedIndex = newIndex
+			d.Update()
+		}
+		return true
+
+	case "Tab":
+		if event.Shift {
+			// Shift+Tab: move to previous item, or to menu bar if at start
+			if d.selectedIndex > 0 {
+				d.selectedIndex--
+				d.Update()
+			} else if d.onFocusMenuBar != nil {
+				d.onFocusMenuBar()
+			}
+		} else {
+			// Tab: move to next item, or to menu bar if at end
+			if d.selectedIndex < len(d.entries)-1 {
+				d.selectedIndex++
+				d.Update()
+			} else if d.onFocusMenuBar != nil {
+				d.onFocusMenuBar()
+			}
 		}
 		return true
 

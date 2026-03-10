@@ -175,6 +175,16 @@ func NewDesktop() *Desktop {
 	d.statusBar = NewStatusBar()
 	d.statusBar.SetParent(d)
 
+	// Wire up Tab navigation between dock and menu bar
+	d.dockRow.SetOnFocusMenuBar(func() {
+		d.ActivateMenuBar()
+	})
+	d.menuBar.SetOnFocusDock(func() {
+		if !d.dockRow.IsEmpty() {
+			d.FocusDock()
+		}
+	})
+
 	return d
 }
 

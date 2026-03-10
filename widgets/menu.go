@@ -1310,6 +1310,9 @@ type MenuBar struct {
 
 	// Callback when menu bar is dismissed without action (e.g., Escape)
 	onMenuDismiss func()
+
+	// Callback when Tab navigation should transfer to the dock
+	onFocusDock func()
 }
 
 // NewMenuBar creates a new menu bar.
@@ -1333,6 +1336,11 @@ func (m *MenuBar) SetOnMenuOpen(callback func()) {
 // SetOnMenuDismiss sets a callback that is called when the menu bar is dismissed without action.
 func (m *MenuBar) SetOnMenuDismiss(callback func()) {
 	m.onMenuDismiss = callback
+}
+
+// SetOnFocusDock sets a callback for when Tab navigation should transfer to the dock.
+func (m *MenuBar) SetOnFocusDock(callback func()) {
+	m.onFocusDock = callback
 }
 
 // calculateTotalMenusWidth returns the total width needed for all menus.
@@ -2157,6 +2165,13 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		m.Update()
 		return true
+
+	case "Tab":
+		// Tab/Shift+Tab: transfer focus to dock (if available and no menu is open)
+		if m.activeMenu == nil && m.onFocusDock != nil {
+			m.onFocusDock()
+			return true
+		}
 	}
 
 	// Check Alt+key shortcuts (M-<letter> format, lowercase only - no shift)
