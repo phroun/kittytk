@@ -434,10 +434,13 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 	desktop := m.desktop
 	m.mu.Unlock()
 
-	// Deactivate menu bar when a window becomes active
+	// Deactivate menu bar and dock when a window becomes active
 	if desktop != nil {
 		if deactivator, ok := desktop.(interface{ DeactivateMenuBar() }); ok {
 			deactivator.DeactivateMenuBar()
+		}
+		if dockProvider, ok := desktop.(DockProvider); ok {
+			dockProvider.UnfocusDock()
 		}
 	}
 
