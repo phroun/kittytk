@@ -6,6 +6,8 @@ github.com/phroun/purfecterm v0.2.17 h1:ov8tmE3NjtbzAYcT+2lDqVNkqhwJssbgW7E3XprV
 github.com/phroun/purfecterm v0.2.17/go.mod h1:9tZ5sV6a8trOv+AZ9syWw4o6EREti1gxrLW9E7eyeVA=
 github.com/phroun/purfecterm v0.2.18 h1:OUmrsqkFgL3FiQSAkqaXEQHelDQ38HqX13KVCMFyAyQ=
 github.com/phroun/purfecterm v0.2.18/go.mod h1:9tZ5sV6a8trOv+AZ9syWw4o6EREti1gxrLW9E7eyeVA=
+github.com/phroun/purfecterm v0.2.19 h1:nWs6su3MV4213W0meZdVgRKtMbI5oxfpNRbpoyb67D4=
+github.com/phroun/purfecterm v0.2.19/go.mod h1:9tZ5sV6a8trOv+AZ9syWw4o6EREti1gxrLW9E7eyeVA=
 golang.org/x/sys v0.39.0 h1:CvCKL8MeisomCi6qNZ+wbb0DN9E5AATixKsvNtMoMFk=
 golang.org/x/sys v0.39.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
 golang.org/x/sys v0.42.0 h1:omrd2nAlyT5ESRdCLYdm3+fMfNFE/+Rf4bDIQImRJeo=

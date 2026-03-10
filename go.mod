@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/phroun/direct-key-handler v0.3.3
-	github.com/phroun/purfecterm v0.2.18
+	github.com/phroun/purfecterm v0.2.19
 	golang.org/x/term v0.40.0
 )
 
