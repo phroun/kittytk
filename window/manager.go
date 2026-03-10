@@ -1573,13 +1573,16 @@ func (m *WindowManager) CycleWindows(forward bool) {
 	// Activate the target
 	nextItem := effectiveCycle[nextIdx]
 	if nextItem == nil {
-		// Moving to dock
+		// Moving to dock - deactivate current window first
+		if activeWindow != nil {
+			activeWindow.SetActive(false)
+		}
+		m.mu.Lock()
+		m.activeWindow = nil
+		m.bringToCycleFront(nil)
+		m.mu.Unlock()
 		if dockProvider != nil {
 			dockProvider.FocusDock()
-			// Bring dock to front of cycle order
-			m.mu.Lock()
-			m.bringToCycleFront(nil)
-			m.mu.Unlock()
 		}
 		m.RequestRepaint()
 	} else if win, ok := nextItem.(*Window); ok {
