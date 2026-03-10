@@ -21,6 +21,9 @@ type PurfecTerm struct {
 
 	// Cached size in cells
 	cols, rows int
+
+	// Track which mouse button is currently held for drag events
+	heldButton core.MouseButton
 }
 
 // NewPurfecTerm creates a new terminal emulator widget.
@@ -273,6 +276,9 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 		return true
 	}
 
+	// Track held button for drag events
+	t.heldButton = event.Button
+
 	// Convert unit coordinates to 1-based cell coordinates for CLI adapter
 	metrics := core.DefaultCellMetrics()
 	cellX := int(event.X/metrics.CellWidth) + 1
@@ -302,6 +308,11 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if t.terminal == nil {
 		return false
+	}
+
+	// Clear held button
+	if t.heldButton == event.Button {
+		t.heldButton = core.NoButton
 	}
 
 	// Convert unit coordinates to 1-based cell coordinates
@@ -340,20 +351,18 @@ func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
 	cellX := int(event.X/metrics.CellWidth) + 1
 	cellY := int(event.Y/metrics.CellHeight) + 1
 
-	// Check if any button is held for drag events
-	if event.Buttons&core.LeftButton != 0 {
+	// Use tracked button state for drag events (since event.Buttons may not be set)
+	switch t.heldButton {
+	case core.LeftButton:
 		t.terminal.HandleKeyString(fmt.Sprintf("MouseLeftDrag@%d,%d", cellX, cellY))
-		t.Update()
-		return true
-	}
-	if event.Buttons&core.RightButton != 0 {
+	case core.MiddleButton:
+		t.terminal.HandleKeyString(fmt.Sprintf("MouseMiddleDrag@%d,%d", cellX, cellY))
+	case core.RightButton:
 		t.terminal.HandleKeyString(fmt.Sprintf("MouseRightDrag@%d,%d", cellX, cellY))
-		t.Update()
-		return true
+	default:
+		// Plain movement (for mouse tracking modes)
+		t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
 	}
-
-	// Plain movement (for mouse tracking modes)
-	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
 	t.Update()
 	return true
 }

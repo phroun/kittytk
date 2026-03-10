@@ -4,9 +4,21 @@
 
 Added mouse event forwarding from tuitk to embedded PurfecTerm CLI instances.
 
-**Commit:** `a7b29ed` - "Add mouse event forwarding to PurfecTerm widget"
+**Initial Commit:** `a7b29ed` - "Add mouse event forwarding to PurfecTerm widget"
+**Drag Fix Commit:** (pending) - "Fix mouse drag events by tracking held button state"
 **Date:** 2026-03-10
 **Branch:** `claude/document-menu-colors-Dd2pR`
+
+## Bug Fix: Drag Events
+
+The initial implementation used `event.Buttons & core.LeftButton` to detect drag events,
+but this doesn't work because:
+1. `MouseButton` is defined with `iota` (sequential integers 0,1,2,3...), not bit flags
+2. The backend doesn't populate the `Buttons` field in `MouseMoveEvent` for drag events
+
+**Fix:** Added `heldButton` field to `PurfecTerm` struct to track which button is held
+between press and release events. `HandleMouseMove` now uses this tracked state instead
+of relying on the event's `Buttons` field.
 
 ## Changes Made
 
