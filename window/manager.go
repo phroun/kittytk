@@ -1450,6 +1450,8 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 }
 
 // CycleWindows cycles through windows and the dock (if it has entries).
+// The dock is treated as a stable position at the end of the cycle,
+// so window z-order changes don't affect the cycling behavior.
 func (m *WindowManager) CycleWindows(forward bool) {
 	m.mu.Lock()
 	desktop := m.desktop
@@ -1477,65 +1479,53 @@ func (m *WindowManager) CycleWindows(forward bool) {
 		}
 	}
 
-	// If dock is currently focused
-	if isDockFocused && dockProvider != nil {
-		dockProvider.UnfocusDock()
-		if len(nonMinimized) > 0 {
-			if forward {
-				// Move to first non-minimized window
-				m.ActivateWindow(nonMinimized[0])
-			} else {
-				// Move to last non-minimized window
-				m.ActivateWindow(nonMinimized[len(nonMinimized)-1])
-			}
-		}
+	// Nothing to cycle to
+	if len(nonMinimized) == 0 && !hasDock {
 		return
 	}
 
-	// If no non-minimized windows, focus dock if available
-	if len(nonMinimized) == 0 {
-		if hasDock && dockProvider != nil {
-			dockProvider.FocusDock()
-			m.RequestRepaint()
-		}
-		return
+	// Calculate cycle length: windows + dock (if present)
+	// The dock is conceptually at a stable position at the end
+	cycleLen := len(nonMinimized)
+	dockIndex := -1
+	if hasDock {
+		dockIndex = cycleLen // dock is always at the end
+		cycleLen++
 	}
 
-	// Find current window index in non-minimized list
-	currentIdx := -1
-	for i, w := range nonMinimized {
-		if w == activeWindow {
-			currentIdx = i
-			break
-		}
-	}
-
-	// Calculate next index
-	if forward {
-		if currentIdx == len(nonMinimized)-1 {
-			// At last window - go to dock if available
-			if hasDock && dockProvider != nil {
-				dockProvider.FocusDock()
-				m.RequestRepaint()
-				return
-			}
-			// Otherwise wrap to first window
-			m.ActivateWindow(nonMinimized[0])
-		} else {
-			m.ActivateWindow(nonMinimized[currentIdx+1])
-		}
+	// Find current position in cycle
+	currentIdx := 0
+	if isDockFocused && dockIndex >= 0 {
+		currentIdx = dockIndex
 	} else {
-		if currentIdx <= 0 {
-			// At first window (or no active window) - go to dock if available
-			if hasDock && dockProvider != nil {
-				dockProvider.FocusDock()
-				m.RequestRepaint()
-				return
+		for i, w := range nonMinimized {
+			if w == activeWindow {
+				currentIdx = i
+				break
 			}
-			// Otherwise wrap to last window
-			m.ActivateWindow(nonMinimized[len(nonMinimized)-1])
-		} else {
-			m.ActivateWindow(nonMinimized[currentIdx-1])
+		}
+	}
+
+	// Calculate next index with wrapping
+	var nextIdx int
+	if forward {
+		nextIdx = (currentIdx + 1) % cycleLen
+	} else {
+		nextIdx = (currentIdx - 1 + cycleLen) % cycleLen
+	}
+
+	// Activate the target
+	if hasDock && nextIdx == dockIndex {
+		// Moving to dock
+		dockProvider.FocusDock()
+		m.RequestRepaint()
+	} else {
+		// Moving to a window
+		if isDockFocused && dockProvider != nil {
+			dockProvider.UnfocusDock()
+		}
+		if nextIdx >= 0 && nextIdx < len(nonMinimized) {
+			m.ActivateWindow(nonMinimized[nextIdx])
 		}
 	}
 }
