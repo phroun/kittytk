@@ -39,16 +39,25 @@ func NewDockRow() *DockRow {
 }
 
 // AddEntry adds a minimized window entry to the dock.
+// The newly added entry becomes the selected item.
 func (d *DockRow) AddEntry(entry *DockEntry) {
 	d.entries = append(d.entries, entry)
+	d.selectedIndex = len(d.entries) - 1
 	d.Update()
 }
 
 // RemoveEntry removes an entry from the dock.
+// After removal, the selection moves to the most recently added entry (last in list).
 func (d *DockRow) RemoveEntry(entry *DockEntry) {
 	for i, e := range d.entries {
 		if e == entry {
 			d.entries = append(d.entries[:i], d.entries[i+1:]...)
+			// Select the last entry (most recently added)
+			if len(d.entries) > 0 {
+				d.selectedIndex = len(d.entries) - 1
+			} else {
+				d.selectedIndex = -1
+			}
 			d.Update()
 			return
 		}
@@ -56,10 +65,17 @@ func (d *DockRow) RemoveEntry(entry *DockEntry) {
 }
 
 // RemoveEntryByTitle removes an entry by its title.
+// After removal, the selection moves to the most recently added entry (last in list).
 func (d *DockRow) RemoveEntryByTitle(title string) {
 	for i, e := range d.entries {
 		if e.Title == title {
 			d.entries = append(d.entries[:i], d.entries[i+1:]...)
+			// Select the last entry (most recently added)
+			if len(d.entries) > 0 {
+				d.selectedIndex = len(d.entries) - 1
+			} else {
+				d.selectedIndex = -1
+			}
 			d.Update()
 			return
 		}
