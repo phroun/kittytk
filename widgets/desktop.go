@@ -750,6 +750,8 @@ func (d *Desktop) setPassNextKeyToWidget(active bool) {
 	d.mu.RUnlock()
 	if callback != nil {
 		callback(active)
+		// Refresh status bar in case the callback updated the app's status bar content
+		d.updateStatusBarContent()
 	}
 }
 
