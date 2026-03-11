@@ -1429,22 +1429,13 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 
 	// Debug callback - show clicked cell info in status bar
 	terminal.SetOnCellClicked(func(info widgets.CellDebugInfo) {
-		// Format attributes
+		// Format attributes (B=bold, U=underline, R=reverse)
 		attrs := ""
 		if info.Bold {
 			attrs += "B"
 		}
-		if info.Dim {
-			attrs += "D"
-		}
-		if info.Italic {
-			attrs += "I"
-		}
 		if info.Underline {
 			attrs += "U"
-		}
-		if info.Blink {
-			attrs += "K"
 		}
 		if info.Reverse {
 			attrs += "R"

@@ -42,9 +42,6 @@ type CellDebugInfo struct {
 	Bold      bool
 	Underline bool
 	Reverse   bool
-	Italic    bool
-	Dim       bool
-	Blink     bool
 }
 
 // NewPurfecTerm creates a new terminal emulator widget.
@@ -324,9 +321,6 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 				Bold:      cell.Bold,
 				Underline: cell.Underline,
 				Reverse:   cell.Reverse,
-				Italic:    cell.Italic,
-				Dim:       cell.Dim,
-				Blink:     cell.Blink,
 			}
 			// Extract foreground color info
 			switch cell.Fg.Type {
