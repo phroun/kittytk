@@ -1426,6 +1426,68 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 
 	// Bottom panel with PurfecTerm terminal
 	terminal := widgets.NewPurfecTerm()
+
+	// Debug callback - show clicked cell info in status bar
+	terminal.SetOnCellClicked(func(info widgets.CellDebugInfo) {
+		// Format attributes
+		attrs := ""
+		if info.Bold {
+			attrs += "B"
+		}
+		if info.Dim {
+			attrs += "D"
+		}
+		if info.Italic {
+			attrs += "I"
+		}
+		if info.Underline {
+			attrs += "U"
+		}
+		if info.Blink {
+			attrs += "K"
+		}
+		if info.Reverse {
+			attrs += "R"
+		}
+		if attrs == "" {
+			attrs = "-"
+		}
+
+		// Format colors
+		var fg, bg string
+		switch info.FgType {
+		case "RGB":
+			fg = fmt.Sprintf("RGB(%d,%d,%d)", info.FgR, info.FgG, info.FgB)
+		case "256":
+			fg = fmt.Sprintf("256[%d]", info.FgIndex)
+		case "Std":
+			fg = fmt.Sprintf("Std[%d]", info.FgIndex)
+		default:
+			fg = "Def"
+		}
+		switch info.BgType {
+		case "RGB":
+			bg = fmt.Sprintf("RGB(%d,%d,%d)", info.BgR, info.BgG, info.BgB)
+		case "256":
+			bg = fmt.Sprintf("256[%d]", info.BgIndex)
+		case "Std":
+			bg = fmt.Sprintf("Std[%d]", info.BgIndex)
+		default:
+			bg = "Def"
+		}
+
+		// Format character (handle non-printable)
+		charStr := fmt.Sprintf("'%c'", info.Char)
+		if info.Char < 32 || info.Char == 127 {
+			charStr = fmt.Sprintf("0x%02X", info.Char)
+		}
+
+		newApp.SetStatusBarContent([]widgets.StatusSection{
+			{Text: fmt.Sprintf("[%d,%d] %s Fg:%s Bg:%s Attr:%s",
+				info.Col, info.Row, charStr, fg, bg, attrs)},
+		})
+	})
+
 	splitter.SetSecond(terminal)
 
 	// Start the terminal shell
