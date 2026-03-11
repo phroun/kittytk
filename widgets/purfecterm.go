@@ -24,6 +24,27 @@ type PurfecTerm struct {
 
 	// Track which mouse button is currently held for drag events
 	heldButton core.MouseButton
+
+	// Debug callback for cell inspection
+	onCellClicked func(info CellDebugInfo)
+}
+
+// CellDebugInfo contains debug information about a clicked cell.
+type CellDebugInfo struct {
+	Col, Row  int
+	Char      rune
+	FgType    string
+	FgR, FgG, FgB uint8
+	FgIndex   uint8
+	BgType    string
+	BgR, BgG, BgB uint8
+	BgIndex   uint8
+	Bold      bool
+	Underline bool
+	Reverse   bool
+	Italic    bool
+	Dim       bool
+	Blink     bool
 }
 
 // NewPurfecTerm creates a new terminal emulator widget.
@@ -64,6 +85,12 @@ func (t *PurfecTerm) Start() error {
 		return nil
 	}
 	return t.terminal.RunShell()
+}
+
+// SetOnCellClicked sets a callback for cell debug inspection.
+// The callback receives detailed info about the clicked cell.
+func (t *PurfecTerm) SetOnCellClicked(callback func(info CellDebugInfo)) {
+	t.onCellClicked = callback
 }
 
 // StartCommand starts the terminal with a specific command.
@@ -280,10 +307,62 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 	// Track held button for drag events
 	t.heldButton = event.Button
 
-	// Convert unit coordinates to 1-based cell coordinates for CLI adapter
+	// Convert unit coordinates to cell coordinates
 	metrics := core.DefaultCellMetrics()
-	cellX := int(event.X/metrics.CellWidth) + 1
-	cellY := int(event.Y/metrics.CellHeight) + 1
+	cellCol := int(event.X / metrics.CellWidth)  // 0-based for internal use
+	cellRow := int(event.Y / metrics.CellHeight) // 0-based for internal use
+
+	// Debug callback - extract cell info
+	if t.onCellClicked != nil {
+		cells := t.terminal.GetCells()
+		if cellRow < len(cells) && cellCol < len(cells[cellRow]) {
+			cell := cells[cellRow][cellCol]
+			info := CellDebugInfo{
+				Col:       cellCol,
+				Row:       cellRow,
+				Char:      cell.Char,
+				Bold:      cell.Bold,
+				Underline: cell.Underline,
+				Reverse:   cell.Reverse,
+				Italic:    cell.Italic,
+				Dim:       cell.Dim,
+				Blink:     cell.Blink,
+			}
+			// Extract foreground color info
+			switch cell.Fg.Type {
+			case purfecterm.ColorTypeTrueColor:
+				info.FgType = "RGB"
+				info.FgR, info.FgG, info.FgB = cell.Fg.R, cell.Fg.G, cell.Fg.B
+			case purfecterm.ColorTypePalette:
+				info.FgType = "256"
+				info.FgIndex = cell.Fg.Index
+			case purfecterm.ColorTypeStandard:
+				info.FgType = "Std"
+				info.FgIndex = cell.Fg.Index
+			default:
+				info.FgType = "Def"
+			}
+			// Extract background color info
+			switch cell.Bg.Type {
+			case purfecterm.ColorTypeTrueColor:
+				info.BgType = "RGB"
+				info.BgR, info.BgG, info.BgB = cell.Bg.R, cell.Bg.G, cell.Bg.B
+			case purfecterm.ColorTypePalette:
+				info.BgType = "256"
+				info.BgIndex = cell.Bg.Index
+			case purfecterm.ColorTypeStandard:
+				info.BgType = "Std"
+				info.BgIndex = cell.Bg.Index
+			default:
+				info.BgType = "Def"
+			}
+			t.onCellClicked(info)
+		}
+	}
+
+	// Convert to 1-based coordinates for CLI adapter
+	cellX := cellCol + 1
+	cellY := cellRow + 1
 
 	// Send position update first
 	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
