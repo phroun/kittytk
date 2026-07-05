@@ -146,7 +146,7 @@ func (s *ScrollBar) SetOnValueChanged(handler func(value int)) {
 
 // SizeHint returns the preferred size.
 func (s *ScrollBar) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 	if s.orientation == core.Horizontal {
 		return core.UnitSize{
 			Width:  metrics.CellWidth * 20,
@@ -163,7 +163,7 @@ func (s *ScrollBar) SizeHint() core.UnitSize {
 func (s *ScrollBar) Paint(p *core.Painter) {
 	bounds := s.Bounds()
 	scheme := s.GetScheme()
-	metrics := p.Metrics()
+	metrics := s.EffectiveCellMetrics()
 
 	if s.orientation == core.Horizontal {
 		s.paintHorizontal(p, bounds, scheme, metrics)
@@ -258,7 +258,7 @@ func (s *ScrollBar) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 	bounds := s.Bounds()
 
 	if s.orientation == core.Horizontal {
@@ -326,7 +326,7 @@ func (s *ScrollBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 	bounds := s.Bounds()
 
 	if s.orientation == core.Horizontal {
@@ -582,7 +582,7 @@ func (s *ScrollArea) EnsureVisible(x, y core.Unit) {
 // Prioritizes showing the left/top edge of the rectangle.
 func (s *ScrollArea) EnsureRectVisible(rect core.UnitRect) {
 	viewport := s.viewportBounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 
 	// Calculate cell positions
 	cellX := metrics.UnitsToCellX(rect.X)
@@ -723,7 +723,7 @@ func (s *ScrollArea) SetWidgetResizable(resizable bool) {
 // viewportBounds returns the viewport bounds (excluding scrollbars).
 func (s *ScrollArea) viewportBounds() core.UnitRect {
 	bounds := s.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 
 	width := bounds.Width
 	height := bounds.Height
@@ -745,7 +745,7 @@ func (s *ScrollArea) viewportBounds() core.UnitRect {
 // Returns (needsVertical, needsHorizontal).
 func (s *ScrollArea) calculateScrollBarNeeds() (bool, bool) {
 	bounds := s.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 
 	// First pass: check if scrollbars needed with full bounds
 	needsV := false
@@ -800,7 +800,7 @@ func (s *ScrollArea) updateScrollBars() {
 	s.contentHeight = hint.Height
 
 	viewport := s.viewportBounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 
 	// Update horizontal scrollbar using ListView-style calculation
 	// visible = viewport cells, total = content cells
@@ -826,7 +826,7 @@ func (s *ScrollArea) updateScrollBars() {
 
 // SizeHint returns the preferred size.
 func (s *ScrollArea) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 	font := s.EffectiveFont()
 	return core.UnitSize{
 		Width:  font.MeasureRunes(30), // 30 chars wide
@@ -838,7 +838,7 @@ func (s *ScrollArea) SizeHint() core.UnitSize {
 func (s *ScrollArea) Paint(p *core.Painter) {
 	bounds := s.Bounds()
 	scheme := s.GetScheme()
-	metrics := p.Metrics()
+	metrics := s.EffectiveCellMetrics()
 
 	// Draw background using inherited background color
 	inheritedBg := s.EffectiveBackgroundColor()
@@ -991,7 +991,7 @@ func (s *ScrollArea) HandleMousePress(event core.MousePressEvent) bool {
 
 	// Pass to content
 	if s.content != nil {
-		metrics := core.DefaultCellMetrics()
+		metrics := s.EffectiveCellMetrics()
 		scrollOffsetX := core.Unit(s.scrollX) * metrics.CellWidth
 		scrollOffsetY := core.Unit(s.scrollY) * metrics.CellHeight
 
@@ -1026,7 +1026,7 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Forward to content widget
 	if s.content != nil {
-		metrics := core.DefaultCellMetrics()
+		metrics := s.EffectiveCellMetrics()
 		scrollOffsetX := core.Unit(s.scrollX) * metrics.CellWidth
 		scrollOffsetY := core.Unit(s.scrollY) * metrics.CellHeight
 
@@ -1062,7 +1062,7 @@ func (s *ScrollArea) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 	// Forward to content widget
 	if s.content != nil {
-		metrics := core.DefaultCellMetrics()
+		metrics := s.EffectiveCellMetrics()
 		scrollOffsetX := core.Unit(s.scrollX) * metrics.CellWidth
 		scrollOffsetY := core.Unit(s.scrollY) * metrics.CellHeight
 

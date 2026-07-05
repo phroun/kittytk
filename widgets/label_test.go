@@ -148,6 +148,33 @@ func TestEffectiveCellMetricsInheritance(t *testing.T) {
 	}
 }
 
+func TestDenominationInvariance(t *testing.T) {
+	c := NewCheckbox("hi")
+	p := NewPanel()
+	p.AddChild(c)
+	p.SetLayoutManager(layout.NewBoxLayout(core.Vertical))
+
+	// Baseline: one row, expressed in the default 16-unit denomination.
+	base := p.SizeHint().Height
+	if base != 16 {
+		t.Fatalf("baseline: got %d, want 16", base)
+	}
+
+	// Re-denominate the panel's interior: one row = 32 units. The
+	// checkbox still occupies exactly one row, so the panel's hint in
+	// its OUTER currency must not change — re-denomination is visually
+	// invariant; only the numbers inside the panel change meaning.
+	dense := core.CellMetrics{CellWidth: 8, CellHeight: 32}
+	p.SetCellMetrics(&dense)
+
+	if got := c.SizeHint().Height; got != 32 {
+		t.Errorf("interior hint: got %d, want 32 (one 32-unit row)", got)
+	}
+	if got := p.SizeHint().Height; got != base {
+		t.Errorf("outer hint changed under re-denomination: got %d, want %d", got, base)
+	}
+}
+
 func TestPanelPropagatesHeightForWidth(t *testing.T) {
 	l := NewLabel("hello world again")
 	l.SetWordWrap(true)

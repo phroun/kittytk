@@ -292,7 +292,7 @@ func (t *TextInput) textChanged() {
 func (t *TextInput) ensureCursorVisible() {
 	bounds := t.Bounds()
 	font := t.EffectiveFont()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 
 	if bounds.Width <= 0 {
 		return
@@ -339,7 +339,7 @@ func (t *TextInput) ensureCursorVisible() {
 
 // SizeHint returns the preferred size.
 func (t *TextInput) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	// TextInput has a fixed size in units (160 wide x 16 tall) - does not scale with font
 	return core.UnitSize{
 		Width:  metrics.TextWidth(20),

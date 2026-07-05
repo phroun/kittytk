@@ -73,7 +73,7 @@ func (s *LineSeparator) SetOrientation(o core.Orientation) {
 
 // SizeHint returns the preferred size.
 func (s *LineSeparator) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 	font := s.EffectiveFont()
 	if s.orientation == core.Horizontal {
 		// Horizontal separator: 1 cell tall, width depends on title
@@ -95,7 +95,7 @@ func (s *LineSeparator) SizeHint() core.UnitSize {
 func (s *LineSeparator) Paint(p *core.Painter) {
 	bounds := s.Bounds()
 	theme := s.Theme()
-	metrics := p.Metrics()
+	metrics := s.EffectiveCellMetrics()
 
 	// Use a subtle style for the separator
 	lineStyle := theme.Normal

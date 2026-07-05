@@ -124,7 +124,7 @@ func (r *RadioButton) HeightForWidth(width core.Unit) core.Unit {
 	if lineCount < 1 {
 		lineCount = 1
 	}
-	return core.Unit(lineCount) * font.LineHeight()
+	return core.Unit(lineCount) * metrics.CellHeight
 }
 
 // IsInlineWidget returns true to indicate this is a text-style widget
@@ -155,7 +155,7 @@ func (r *RadioButton) Paint(p *core.Painter) {
 
 	// Draw radio indicator (decorative - use cell-based sizing)
 	// Indicator is 3 cells: "(", "*" or " ", ")"
-	metrics := p.Metrics()
+	metrics := r.EffectiveCellMetrics()
 	font := r.EffectiveFont()
 	var middle rune
 	if r.checked {

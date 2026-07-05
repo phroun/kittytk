@@ -184,7 +184,7 @@ func (t *TreeView) SetCurrentIndex(index int) {
 	// a ScrollArea and the selected item moves outside the visible area.
 	// For mouse clicks, SetFocusWithoutScroll() prevents unwanted scrolling.
 	if index >= 0 {
-		metrics := core.DefaultCellMetrics()
+		metrics := t.EffectiveCellMetrics()
 		item := t.flatList[index]
 		level := item.Level()
 
@@ -413,7 +413,7 @@ func (t *TreeView) clampScrollOffset() {
 	}
 
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	visibleCount := int(bounds.Height / metrics.CellHeight)
 
 	maxScroll := len(t.flatList) - visibleCount
@@ -444,7 +444,7 @@ func (t *TreeView) ensureVisible(index int) {
 	}
 
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	visibleCount := int(bounds.Height / metrics.CellHeight)
 
 	if index < t.scrollOffset {
@@ -456,7 +456,7 @@ func (t *TreeView) ensureVisible(index int) {
 
 // SizeHint returns the preferred size.
 func (t *TreeView) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	font := t.EffectiveFont()
 	return core.UnitSize{
 		Width:  font.MeasureRunes(40), // Default width for 40 chars
@@ -469,7 +469,7 @@ func (t *TreeView) Paint(p *core.Painter) {
 	bounds := t.Bounds()
 	scheme := t.GetScheme()
 	focused := t.HasFocus()
-	metrics := p.Metrics()
+	metrics := t.EffectiveCellMetrics()
 
 	// Draw background using list colors
 	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
@@ -553,7 +553,7 @@ func (t *TreeView) Paint(p *core.Painter) {
 // visibleCount returns the number of visible rows.
 func (t *TreeView) visibleCount() int {
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	return int(bounds.Height / metrics.CellHeight)
 }
 
@@ -561,7 +561,7 @@ func (t *TreeView) visibleCount() int {
 // Returns: scrollbarX, thumbStart, thumbHeight, trackHeight (all in rows)
 func (t *TreeView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	totalItems := len(t.flatList)
 
 	scrollbarX = bounds.Width - metrics.CellWidth
@@ -605,7 +605,7 @@ func (t *TreeView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 // paintScrollbar draws a vertical scrollbar.
 func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 	scheme := t.GetScheme()
-	metrics := p.Metrics()
+	metrics := t.EffectiveCellMetrics()
 
 	scrollbarX, thumbStart, thumbHeight, trackHeight := t.scrollbarGeometry(visibleCount)
 
@@ -718,7 +718,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	case "PageUp":
 		bounds := t.Bounds()
-		metrics := core.DefaultCellMetrics()
+		metrics := t.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.CellHeight)
 		newIndex := t.currentIndex - pageSize
 		if newIndex < 0 {
@@ -729,7 +729,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	case "PageDown":
 		bounds := t.Bounds()
-		metrics := core.DefaultCellMetrics()
+		metrics := t.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.CellHeight)
 		newIndex := t.currentIndex + pageSize
 		if newIndex >= len(t.flatList) {
@@ -789,7 +789,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	t.SetFocusWithoutScroll() // Use without-scroll variant since click proves visibility
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 
 	// Check if click is on scrollbar
 	scrollbarX, thumbStart, thumbHeight, _ := t.scrollbarGeometry(t.visibleCount())
@@ -894,7 +894,7 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 
 	// Handle scrollbar thumb drag
 	// Note: Once drag is captured on press, we don't check horizontal bounds during drag

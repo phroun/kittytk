@@ -112,7 +112,7 @@ func (t *PurfecTerm) Close() {
 
 // SizeHint returns the preferred size based on terminal dimensions.
 func (t *PurfecTerm) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	return core.UnitSize{
 		Width:  metrics.TextWidth(t.cols),
 		Height: metrics.TextHeight(t.rows),
@@ -131,7 +131,7 @@ func (t *PurfecTerm) updateTerminalSize() {
 		return
 	}
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 
 	newCols := int(bounds.Width / metrics.CellWidth)
 	newRows := int(bounds.Height / metrics.CellHeight)
@@ -146,7 +146,7 @@ func (t *PurfecTerm) updateTerminalSize() {
 // Paint renders the terminal content.
 func (t *PurfecTerm) Paint(p *core.Painter) {
 	bounds := t.Bounds()
-	metrics := p.Metrics()
+	metrics := t.EffectiveCellMetrics()
 	theme := t.Theme()
 
 	if t.terminal == nil {
@@ -305,7 +305,7 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 	t.heldButton = event.Button
 
 	// Convert unit coordinates to cell coordinates
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	cellCol := int(event.X / metrics.CellWidth)  // 0-based for internal use
 	cellRow := int(event.Y / metrics.CellHeight) // 0-based for internal use
 
@@ -390,7 +390,7 @@ func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	}
 
 	// Convert unit coordinates to 1-based cell coordinates
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	cellX := int(event.X/metrics.CellWidth) + 1
 	cellY := int(event.Y/metrics.CellHeight) + 1
 
@@ -421,7 +421,7 @@ func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 
 	// Convert unit coordinates to 1-based cell coordinates
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	cellX := int(event.X/metrics.CellWidth) + 1
 	cellY := int(event.Y/metrics.CellHeight) + 1
 
@@ -448,7 +448,7 @@ func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	}
 
 	// Convert unit coordinates to 1-based cell coordinates
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	cellX := int(event.X/metrics.CellWidth) + 1
 	cellY := int(event.Y/metrics.CellHeight) + 1
 

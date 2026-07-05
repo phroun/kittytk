@@ -1232,7 +1232,7 @@ func (d *Desktop) RemoveChild(child core.Widget) {
 
 // ChildAt returns the child at the given position.
 func (d *Desktop) ChildAt(pos core.UnitPoint) core.Widget {
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 	bounds := d.Bounds()
 
 	// Check menu bar
@@ -1432,7 +1432,7 @@ func (d *Desktop) SetBounds(bounds core.UnitRect) {
 // layoutChildren updates the bounds of menu bar, status bar, dock row, and content.
 func (d *Desktop) layoutChildren() {
 	bounds := d.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 
 	// Menu bar at top
 	if d.menuBar != nil {
@@ -1495,7 +1495,7 @@ func (d *Desktop) layoutChildren() {
 // ClientArea returns the area available for windows (excluding menu/status/dock bars).
 func (d *Desktop) ClientArea() core.UnitRect {
 	bounds := d.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 
 	top := core.Unit(0)
 	bottom := bounds.Height
@@ -1526,7 +1526,7 @@ func (d *Desktop) MenuBarHeight() core.Unit {
 	if d.menuBar == nil {
 		return 0
 	}
-	return core.DefaultCellMetrics().CellHeight
+	return d.EffectiveCellMetrics().CellHeight
 }
 
 // StatusBarHeight returns the height of the status bar area (0 if no status bar).
@@ -1534,7 +1534,7 @@ func (d *Desktop) StatusBarHeight() core.Unit {
 	if d.statusBar == nil {
 		return 0
 	}
-	return core.DefaultCellMetrics().CellHeight
+	return d.EffectiveCellMetrics().CellHeight
 }
 
 // StatusBarBounds returns the bounds of the status bar area (empty rect if no status bar).
@@ -1543,7 +1543,7 @@ func (d *Desktop) StatusBarBounds() core.UnitRect {
 		return core.UnitRect{}
 	}
 	bounds := d.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 	return core.UnitRect{
 		X:      0,
 		Y:      bounds.Height - metrics.CellHeight,
@@ -1571,7 +1571,7 @@ func (d *Desktop) DockBounds() core.UnitRect {
 		return core.UnitRect{}
 	}
 	bounds := d.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 	dockHeight := d.dockRow.RequiredHeight()
 	dockY := bounds.Height - dockHeight
 	if d.statusBar != nil {
@@ -1625,7 +1625,7 @@ func (d *Desktop) SizeHint() core.UnitSize {
 func (d *Desktop) Paint(p *core.Painter) {
 	bounds := d.Bounds()
 	scheme := d.GetScheme()
-	metrics := p.Metrics()
+	metrics := d.EffectiveCellMetrics()
 
 	// Draw background pattern
 	bgStyle := scheme.GetDesktopFill()
@@ -1740,7 +1740,7 @@ func (d *Desktop) PaintMenuDropdown(p *core.Painter) {
 
 // HandleMousePress handles mouse clicks.
 func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 	bounds := d.Bounds()
 
 	// Helper to cancel drag state on a widget
@@ -1923,7 +1923,7 @@ func (s *StatusBar) Sections() []StatusSection {
 
 // SizeHint returns the preferred size.
 func (s *StatusBar) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 	return core.UnitSize{
 		Width:  0, // Will stretch to fill
 		Height: metrics.CellHeight,
@@ -1934,7 +1934,7 @@ func (s *StatusBar) SizeHint() core.UnitSize {
 func (s *StatusBar) Paint(p *core.Painter) {
 	bounds := s.Bounds()
 	scheme := s.GetScheme()
-	metrics := p.Metrics()
+	metrics := s.EffectiveCellMetrics()
 
 	statusBarStyle := scheme.GetStatusBar()
 

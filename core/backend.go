@@ -214,14 +214,34 @@ func (p *Painter) Metrics() CellMetrics {
 	return p.metrics
 }
 
-// WithTransform returns a new Painter with an additional transform applied.
+// WithTransform returns a new Painter with an additional transform
+// applied. The new transform maps into the current local space: local
+// coordinates pass through t first, then the existing transform. (With
+// translations only the order is immaterial; once scales are involved
+// it is not.)
 func (p *Painter) WithTransform(t Transform) *Painter {
 	return &Painter{
 		backend:   p.backend,
-		transform: p.transform.Compose(t),
+		transform: t.Compose(p.transform),
 		clip:      p.clip,
 		metrics:   p.metrics,
 	}
+}
+
+// WithDenomination returns a Painter whose local coordinates are
+// denominated in `child` metrics, given the current space is
+// denominated in `parent` metrics. Used when descending into a
+// container that carries a grid-metrics override: the same number of
+// rows/columns, re-expressed, so re-denomination is visually invariant.
+// Identity when the denominations match.
+func (p *Painter) WithDenomination(parent, child CellMetrics) *Painter {
+	if parent == child || child.CellWidth <= 0 || child.CellHeight <= 0 {
+		return p
+	}
+	return p.WithTransform(Transform{
+		ScaleX: float64(parent.CellWidth) / float64(child.CellWidth),
+		ScaleY: float64(parent.CellHeight) / float64(child.CellHeight),
+	})
 }
 
 // WithOffset returns a new Painter offset by the given amount.

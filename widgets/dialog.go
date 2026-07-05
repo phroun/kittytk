@@ -176,7 +176,7 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 
 // calculateSize sets the dialog size based on content.
 func (m *MessageBox) calculateSize() {
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 
 	// Calculate width and height based on text content
 	lines := strings.Split(m.content.text, "\n")
@@ -249,7 +249,7 @@ func (m *MessageBox) done(result DialogResult) {
 func (c *messageBoxContent) Paint(p *core.Painter) {
 	bounds := c.Bounds()
 	scheme := c.GetScheme()
-	metrics := p.Metrics()
+	metrics := c.EffectiveCellMetrics()
 	inheritedBG := c.EffectiveBackgroundColor()
 
 	// Build style from scheme with inherited background
@@ -448,7 +448,7 @@ func NewFileDialog(mode FileDialogMode) *FileDialog {
 
 // setupUI creates the file dialog UI.
 func (f *FileDialog) setupUI() {
-	metrics := core.DefaultCellMetrics()
+	metrics := f.EffectiveCellMetrics()
 
 	// Path input
 	f.pathInput = NewTextInput()
@@ -703,7 +703,7 @@ func (f *FileDialog) Paint(p *core.Painter) {
 	f.Window.Paint(p)
 
 	bounds := f.Bounds()
-	metrics := p.Metrics()
+	metrics := f.EffectiveCellMetrics()
 
 	// Layout widgets manually
 	y := metrics.CellHeight * 2
@@ -838,7 +838,7 @@ func NewInputDialog(title, label, defaultValue string) *InputDialog {
 	d.Window = *window.NewWindow(title)
 	d.SetFlags(window.WindowFlagModal | window.WindowFlagNoResize)
 
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 
 	d.input = NewTextInput()
 	d.input.SetText(defaultValue)
@@ -891,7 +891,7 @@ func (d *InputDialog) Paint(p *core.Painter) {
 	d.Window.Paint(p)
 
 	bounds := d.Bounds()
-	metrics := p.Metrics()
+	metrics := d.EffectiveCellMetrics()
 	theme := d.Theme()
 
 	// Label

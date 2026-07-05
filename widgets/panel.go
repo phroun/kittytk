@@ -70,8 +70,36 @@ func (p *Panel) RemoveChild(child core.Widget) {
 	p.Update()
 }
 
-// ChildAt returns the child at the given position.
+// denominations returns the grid-metrics currency of this panel's own
+// coordinate space (outer: the parent's, in which bounds live) and of
+// its interior (honoring a per-panel override). Equal unless an
+// override is set on this panel.
+func (p *Panel) denominations() (outer, interior core.CellMetrics) {
+	interior = p.EffectiveCellMetrics()
+	if p.CellMetricsOverride() == nil {
+		return interior, interior
+	}
+	return core.ParentCellMetrics(p.Self()), interior
+}
+
+// toInterior converts a point from the panel's outer currency into its
+// interior currency.
+func (p *Panel) toInterior(pos core.UnitPoint) core.UnitPoint {
+	outer, interior := p.denominations()
+	return core.UnitPoint{
+		X: core.ExchangeX(pos.X, outer, interior),
+		Y: core.ExchangeY(pos.Y, outer, interior),
+	}
+}
+
+// ChildAt returns the child at the given position (in the panel's
+// outer currency).
 func (p *Panel) ChildAt(pos core.UnitPoint) core.Widget {
+	return p.childAtInterior(p.toInterior(pos))
+}
+
+// childAtInterior hit-tests a point already in the interior currency.
+func (p *Panel) childAtInterior(pos core.UnitPoint) core.Widget {
 	for _, child := range p.children {
 		if !child.IsVisible() {
 			continue
@@ -89,20 +117,21 @@ func (p *Panel) ChildAt(pos core.UnitPoint) core.Widget {
 func (p *Panel) Layout() {
 	if p.layoutManager != nil {
 		bounds := p.Bounds()
-		// Use local coordinates - children are positioned relative to this container
+		// Use local coordinates - children are positioned relative to
+		// this container, denominated in the interior currency.
+		outer, interior := p.denominations()
 		contentBounds := core.UnitRect{
 			X:      0,
 			Y:      0,
-			Width:  bounds.Width,
-			Height: bounds.Height,
+			Width:  core.ExchangeX(bounds.Width, outer, interior),
+			Height: core.ExchangeY(bounds.Height, outer, interior),
 		}
 		if p.border {
-			metrics := p.EffectiveCellMetrics()
 			contentBounds = core.UnitRect{
-				X:      metrics.CellWidth,
-				Y:      metrics.CellHeight,
-				Width:  bounds.Width - 2*metrics.CellWidth,
-				Height: bounds.Height - 2*metrics.CellHeight,
+				X:      interior.CellWidth,
+				Y:      interior.CellHeight,
+				Width:  contentBounds.Width - 2*interior.CellWidth,
+				Height: contentBounds.Height - 2*interior.CellHeight,
 			}
 		}
 		p.layoutManager.Layout(p, contentBounds)
@@ -151,23 +180,26 @@ func (p *Panel) SetBackground(s style.CellStyle) {
 	p.Update()
 }
 
-// SizeHint returns the preferred size.
+// SizeHint returns the preferred size, denominated in the panel's
+// outer currency (interior needs are computed in interior units and
+// exchanged at the boundary).
 func (p *Panel) SizeHint() core.UnitSize {
+	outer, interior := p.denominations()
 	if p.layoutManager != nil {
-		return p.layoutManager.SizeHint(p)
+		return core.ExchangeSize(p.layoutManager.SizeHint(p), interior, outer)
 	}
-	metrics := p.EffectiveCellMetrics()
 	font := p.EffectiveFont()
-	return core.UnitSize{
+	return core.ExchangeSize(core.UnitSize{
 		Width:  font.MeasureRunes(20), // 20 chars wide
-		Height: metrics.TextHeight(10),
-	}
+		Height: interior.TextHeight(10),
+	}, interior, outer)
 }
 
-// MinimumSize returns the minimum size.
+// MinimumSize returns the minimum size in the outer currency.
 func (p *Panel) MinimumSize() core.UnitSize {
 	if p.layoutManager != nil {
-		return p.layoutManager.MinimumSize(p)
+		outer, interior := p.denominations()
+		return core.ExchangeSize(p.layoutManager.MinimumSize(p), interior, outer)
 	}
 	return core.UnitSize{Width: 16, Height: 16}
 }
@@ -180,21 +212,23 @@ func (p *Panel) HasHeightForWidth() bool {
 }
 
 // HeightForWidth returns the height this panel requires at the given
-// width, accounting for the border inset.
+// width (both in the outer currency), accounting for the border inset.
 func (p *Panel) HeightForWidth(width core.Unit) core.Unit {
 	hfw, ok := p.layoutManager.(core.HeightForWidther)
 	if !ok || !hfw.HasHeightForWidth() {
 		return p.SizeHint().Height
 	}
+	outer, interior := p.denominations()
+	inner := core.ExchangeX(width, outer, interior)
+	var chrome core.Unit
 	if p.border {
-		metrics := p.EffectiveCellMetrics()
-		inner := width - 2*metrics.CellWidth
+		inner -= 2 * interior.CellWidth
 		if inner < 0 {
 			inner = 0
 		}
-		return hfw.HeightForWidth(inner) + 2*metrics.CellHeight
+		chrome = 2 * interior.CellHeight
 	}
-	return hfw.HeightForWidth(width)
+	return core.ExchangeY(hfw.HeightForWidth(inner)+chrome, interior, outer)
 }
 
 // Paint renders the panel.
@@ -215,11 +249,13 @@ func (p *Panel) Paint(painter *core.Painter) {
 		painter.DrawRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, p.borderStyle, bgStyle)
 	}
 
-	// Paint children
+	// Paint children (in the interior denomination)
+	outer, interior := p.denominations()
+	interiorPainter := painter.WithDenomination(outer, interior)
 	for _, child := range p.children {
 		if child.IsVisible() {
 			childBounds := child.Bounds()
-			childPainter := painter.WithOffset(childBounds.X, childBounds.Y)
+			childPainter := interiorPainter.WithOffset(childBounds.X, childBounds.Y)
 			child.Paint(childPainter)
 		}
 	}
@@ -233,8 +269,13 @@ func (p *Panel) HandleKeyPress(event core.KeyPressEvent) bool {
 
 // HandleMousePress handles mouse clicks.
 func (p *Panel) HandleMousePress(event core.MousePressEvent) bool {
+	// Convert into the interior denomination once; child bounds are
+	// interior-denominated.
+	interiorPos := p.toInterior(core.UnitPoint{X: event.X, Y: event.Y})
+	event.X, event.Y = interiorPos.X, interiorPos.Y
+
 	// Find child under mouse and forward event
-	targetChild := p.ChildAt(core.UnitPoint{X: event.X, Y: event.Y})
+	targetChild := p.childAtInterior(interiorPos)
 
 	// Cancel drags on all OTHER children since a new press is happening
 	for _, child := range p.children {
@@ -263,6 +304,9 @@ func (p *Panel) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement.
 func (p *Panel) HandleMouseMove(event core.MouseMoveEvent) bool {
+	interiorPos := p.toInterior(core.UnitPoint{X: event.X, Y: event.Y})
+	event.X, event.Y = interiorPos.X, interiorPos.Y
+
 	// Forward to all children (needed for drag operations)
 	for _, child := range p.children {
 		if handler, ok := child.(interface {
@@ -282,6 +326,9 @@ func (p *Panel) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 // HandleMouseRelease handles mouse button release.
 func (p *Panel) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	interiorPos := p.toInterior(core.UnitPoint{X: event.X, Y: event.Y})
+	event.X, event.Y = interiorPos.X, interiorPos.Y
+
 	// Forward to all children (needed for drag operations)
 	for _, child := range p.children {
 		if handler, ok := child.(interface {

@@ -508,12 +508,11 @@ func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window
 	checkPanel.AddChild(desktopFontCheck)
 
 	// Grid-metrics denomination toggle: re-denominates this window's
-	// units (32 per row instead of 16). Per the denomination model
-	// (docs/g1-metrics-audit.md), this SHOULD be a visual no-op for
-	// row-denominated content - until boundary scaling lands in the
-	// paint/input path, it instead exposes the denomination leak as
-	// double spacing in converted widgets. Acceptance test for that
-	// future work.
+	// interior units (32 per row instead of 16). With the boundary
+	// exchange in place this is a visual no-op for row-denominated
+	// content - the same rows, re-expressed. Only explicit unit values
+	// change meaning. Known residual: popup placement (MapToScreen) is
+	// not yet denomination-aware.
 	gridCheck := widgets.NewCheckbox("Window: 32-unit rows (denomination test)")
 	gridCheck.SetOnToggled(func(checked bool) {
 		if checked {

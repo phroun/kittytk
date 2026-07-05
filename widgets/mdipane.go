@@ -605,7 +605,7 @@ func (m *MDIPane) TileWindows() {
 	}
 
 	clientArea := m.ClientArea()
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 
 	// Calculate grid dimensions
 	cols := 1
@@ -651,7 +651,7 @@ func (m *MDIPane) CascadeWindows() {
 	}
 
 	clientArea := m.ClientArea()
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	offset := metrics.CellWidth * 2
 
 	// Standard size for cascaded windows
@@ -801,7 +801,7 @@ func (m *MDIPane) positionWindow(win *window.Window) {
 	m.mu.RUnlock()
 
 	clientArea := m.ClientArea()
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 
 	// Use the window's current size if set, otherwise use SizeHint
 	bounds := win.Bounds()
@@ -866,7 +866,7 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, localX, localY core.Unit)
 	}
 
 	bounds := win.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 
 	// Convert local coordinates to global (within MDI pane)
 	x := localX
@@ -1080,7 +1080,7 @@ func (m *MDIPane) CollectFocusChain(collector func(core.Widget)) {
 func (m *MDIPane) Paint(p *core.Painter) {
 	bounds := m.Bounds()
 	scheme := m.GetScheme()
-	metrics := p.Metrics()
+	metrics := m.EffectiveCellMetrics()
 
 	m.mu.RLock()
 	bgChar := m.bgChar
@@ -1192,7 +1192,7 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 	content := m.content
 	m.mu.RUnlock()
 
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 
 	// Check windows from top to bottom
 	for i := len(windows) - 1; i >= 0; i-- {
@@ -1320,7 +1320,7 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle resize
 	if resizing != nil {
-		metrics := core.DefaultCellMetrics()
+		metrics := m.EffectiveCellMetrics()
 
 		deltaX := event.X - resizeStartX
 		deltaY := event.Y - resizeStartY
@@ -1384,7 +1384,7 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if dragging != nil {
 		justRestored := false
 		clientArea := m.ClientArea()
-		metrics := core.DefaultCellMetrics()
+		metrics := m.EffectiveCellMetrics()
 
 		// Handle restore from maximized
 		if dragging.IsMaximized() {

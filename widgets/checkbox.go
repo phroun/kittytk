@@ -178,7 +178,7 @@ func (c *Checkbox) HeightForWidth(width core.Unit) core.Unit {
 	if lineCount < 1 {
 		lineCount = 1
 	}
-	return core.Unit(lineCount) * font.LineHeight()
+	return core.Unit(lineCount) * metrics.CellHeight
 }
 
 // IsInlineWidget returns true to indicate this is a text-style widget
@@ -191,7 +191,7 @@ func (c *Checkbox) IsInlineWidget() bool {
 func (c *Checkbox) Paint(p *core.Painter) {
 	scheme := c.GetScheme()
 	focused := c.HasFocus()
-	metrics := p.Metrics()
+	metrics := c.EffectiveCellMetrics()
 	font := c.EffectiveFont()
 
 	// Determine style - always use inherited background color (ColorDefault = terminal default)

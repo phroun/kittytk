@@ -110,7 +110,8 @@ func (l *Label) HeightForWidth(width core.Unit) core.Unit {
 	if lineCount < 1 {
 		lineCount = 1
 	}
-	return core.Unit(lineCount) * font.LineHeight()
+	// A text line occupies one grid row, in the container's denomination.
+	return core.Unit(lineCount) * l.EffectiveCellMetrics().CellHeight
 }
 
 // Paint renders the label.
@@ -147,7 +148,7 @@ func (l *Label) Paint(p *core.Painter) {
 
 // paintLines renders text with newline support (no word wrapping).
 func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellStyle) {
-	metrics := p.Metrics()
+	metrics := l.EffectiveCellMetrics()
 	lines := strings.Split(l.text, "\n")
 	maxLines := metrics.LinesForHeight(bounds.Height)
 
@@ -183,7 +184,7 @@ func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellSt
 
 // paintWrapped renders word-wrapped text.
 func (l *Label) paintWrapped(p *core.Painter, bounds core.UnitRect, s style.CellStyle) {
-	metrics := p.Metrics()
+	metrics := l.EffectiveCellMetrics()
 	maxLines := metrics.LinesForHeight(bounds.Height)
 
 	if bounds.Width <= 0 || maxLines <= 0 {

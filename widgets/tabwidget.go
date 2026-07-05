@@ -452,7 +452,7 @@ func (t *TabWidget) BackgroundColor() *style.Color {
 
 // tabBarHeight returns the height of the tab bar.
 func (t *TabWidget) tabBarHeight() core.Unit {
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	return metrics.CellHeight
 }
 
@@ -460,7 +460,7 @@ func (t *TabWidget) tabBarHeight() core.Unit {
 func (t *TabWidget) contentBounds() core.UnitRect {
 	bounds := t.Bounds()
 	tabHeight := t.tabBarHeight()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 
 	// Calculate separator size if enabled
 	separatorHeight := core.Unit(0)
@@ -508,7 +508,7 @@ func (t *TabWidget) contentBounds() core.UnitRect {
 }
 
 func (t *TabWidget) calculateTabBarWidth() core.Unit {
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	maxLen := 10
 	for _, tab := range t.tabs {
 		if len(tab.Text) > maxLen {
@@ -523,7 +523,7 @@ func (t *TabWidget) calculateTabBarWidth() core.Unit {
 // - Prefix: 4 chars if first tab selected (" _/ "), else 2 ("  ")
 // - Separator: 4 chars if adjacent to selected (" \_ " or " _/ "), else 2 ("  ")
 func (t *TabWidget) calculateTotalTabsWidth() core.Unit {
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	font := t.EffectiveFont()
 	if len(t.tabs) == 0 {
 		return 0
@@ -560,7 +560,7 @@ func (t *TabWidget) tabsNeedScrolling() bool {
 
 // scrollButtonWidth returns the width of each scroll button.
 func (t *TabWidget) scrollButtonWidth() core.Unit {
-	return core.DefaultCellMetrics().TextWidth(3) // [<] or [>]
+	return t.EffectiveCellMetrics().TextWidth(3) // [<] or [>]
 }
 
 // ensureCurrentTabVisible adjusts scroll offset to make current tab visible.
@@ -603,7 +603,7 @@ func (t *TabWidget) canScrollRight() bool {
 // after the last separator's backslash, as these are non-essential filler content.
 func (t *TabWidget) isLastTabFullyVisible() bool {
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	font := t.EffectiveFont()
 
 	scrollButtonsWidth := core.Unit(0)
@@ -705,7 +705,7 @@ func (t *TabWidget) isLastTabFullyVisible() bool {
 // vertVisibleCount returns how many tabs can fit in the vertical tab bar.
 func (t *TabWidget) vertVisibleCount() int {
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	return int(bounds.Height / metrics.CellHeight)
 }
 
@@ -753,7 +753,7 @@ func (t *TabWidget) vertEnsureVisible(index int) {
 // thumbStart, thumbHeight, trackHeight (all in rows)
 func (t *TabWidget) vertScrollbarGeometry() (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	totalTabs := len(t.tabs)
 	visibleCount := t.vertVisibleCount()
 
@@ -801,7 +801,7 @@ func (t *TabWidget) vertScrollbarGeometry() (scrollbarX core.Unit, thumbStart, t
 // paintVertScrollbar draws the vertical scrollbar for vertical tabs.
 func (t *TabWidget) paintVertScrollbar(p *core.Painter, scrollbarX core.Unit) {
 	scheme := t.GetScheme()
-	metrics := p.Metrics()
+	metrics := t.EffectiveCellMetrics()
 
 	_, thumbStart, thumbHeight, trackHeight := t.vertScrollbarGeometry()
 
@@ -864,7 +864,7 @@ func (t *TabWidget) handleVertScrollbarClick(y core.Unit, metrics core.CellMetri
 
 // SizeHint returns the preferred size.
 func (t *TabWidget) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	font := t.EffectiveFont()
 	return core.UnitSize{
 		Width:  font.MeasureRunes(40), // 40 chars wide
@@ -876,7 +876,7 @@ func (t *TabWidget) SizeHint() core.UnitSize {
 func (t *TabWidget) Paint(p *core.Painter) {
 	bounds := t.Bounds()
 	scheme := t.GetScheme()
-	metrics := p.Metrics()
+	metrics := t.EffectiveCellMetrics()
 
 	// Draw background using TabWidget's background color if set
 	bgStyle := style.DefaultStyle()
@@ -2387,7 +2387,7 @@ func (t *TabWidget) HandleMousePress(event core.MousePressEvent) bool {
 	// TabWidget focus is for keyboard tab order navigation only,
 	// not for mouse interaction.
 
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	tabHeight := t.tabBarHeight()
 
 	// Check if click is in tab bar
@@ -2465,7 +2465,7 @@ func (t *TabWidget) HandleMousePress(event core.MousePressEvent) bool {
 }
 
 func (t *TabWidget) handleTabBarClick(x core.Unit) {
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	font := t.EffectiveFont()
 	bounds := t.Bounds()
 
@@ -2699,7 +2699,7 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 
 	// Check if tab is fully visible
 	bounds := t.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := t.EffectiveCellMetrics()
 	font := t.EffectiveFont()
 
 	scrollButtonsWidth := core.Unit(0)
@@ -2828,7 +2828,7 @@ func (t *TabWidget) HandleFocusOut() {
 func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Handle vertical scrollbar thumb drag
 	if t.scrollbarDragging {
-		metrics := core.DefaultCellMetrics()
+		metrics := t.EffectiveCellMetrics()
 		currentRow := int(event.Y / metrics.CellHeight)
 		rowDelta := currentRow - t.scrollbarDragStart
 
@@ -2864,7 +2864,7 @@ func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle vertical tab sweep drag (select tabs as mouse moves over them)
 	if t.vertTabDragging {
-		metrics := core.DefaultCellMetrics()
+		metrics := t.EffectiveCellMetrics()
 		bounds := t.Bounds()
 		tabWidth := t.calculateTabBarWidth()
 
@@ -2893,7 +2893,7 @@ func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// If tracking scroll button press, update hover state
 	if t.scrollButtonPressed != 0 {
-		metrics := core.DefaultCellMetrics()
+		metrics := t.EffectiveCellMetrics()
 		bounds := t.Bounds()
 		scrollButtonsWidth := metrics.TextWidth(6)
 		buttonX := bounds.Width - scrollButtonsWidth

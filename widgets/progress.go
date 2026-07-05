@@ -170,7 +170,7 @@ func (p *ProgressBar) Advance(amount int) {
 
 // SizeHint returns the preferred size.
 func (p *ProgressBar) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := p.EffectiveCellMetrics()
 	// ProgressBar draws block characters (░▓), not text - use cell-based sizing
 	if p.orientation == core.Horizontal {
 		return core.UnitSize{
@@ -194,7 +194,7 @@ func (p *ProgressBar) IsInlineWidget() bool {
 func (p *ProgressBar) Paint(painter *core.Painter) {
 	bounds := p.Bounds()
 	scheme := p.GetScheme()
-	metrics := painter.Metrics()
+	metrics := p.EffectiveCellMetrics()
 
 	if p.orientation == core.Horizontal {
 		p.paintHorizontal(painter, bounds, scheme, metrics)

@@ -685,6 +685,18 @@ func (w *Window) ClientAreaOffset() core.UnitPoint {
 	return core.UnitPoint{X: cb.X, Y: cb.Y}
 }
 
+// denominations returns the grid-metrics currency of the window's own
+// coordinate space (outer: the parent's, in which bounds and chrome
+// live) and of its content area (interior: honoring a per-window
+// override). Equal unless an override is set on this window.
+func (w *Window) denominations() (outer, interior core.CellMetrics) {
+	interior = w.EffectiveCellMetrics()
+	if w.CellMetricsOverride() == nil {
+		return interior, interior
+	}
+	return core.ParentCellMetrics(w.Self()), interior
+}
+
 // layoutContent lays out the content widget.
 func (w *Window) layoutContent() {
 	w.mu.RLock()
@@ -700,11 +712,14 @@ func (w *Window) layoutContent() {
 
 	// Content bounds should be relative to the content area (0,0), not the window.
 	// The window's Paint method handles the offset translation.
+	// The content area is denominated in the window's interior currency:
+	// the same physical area, re-expressed in interior units.
+	outer, interior := w.denominations()
 	localContentRect := core.UnitRect{
 		X:      0,
 		Y:      0,
-		Width:  contentRect.Width,
-		Height: contentRect.Height,
+		Width:  core.ExchangeX(contentRect.Width, outer, interior),
+		Height: core.ExchangeY(contentRect.Height, outer, interior),
 	}
 
 	if layout != nil {
@@ -750,9 +765,10 @@ func (w *Window) ChildAt(pos core.UnitPoint) core.Widget {
 	}
 
 	contentRect := w.contentBounds()
+	outer, interior := w.denominations()
 	localPos := core.UnitPoint{
-		X: pos.X - contentRect.X,
-		Y: pos.Y - contentRect.Y,
+		X: core.ExchangeX(pos.X-contentRect.X, outer, interior),
+		Y: core.ExchangeY(pos.Y-contentRect.Y, outer, interior),
 	}
 
 	if content.Bounds().Contains(localPos) {
@@ -846,11 +862,13 @@ func (w *Window) Paint(p *core.Painter) {
 		w.paintNormalFrame(p, bounds, metrics, title, titleStyle, frameStyle, frameBorder, flags)
 	}
 
-	// Paint content
+	// Paint content (in the window's interior denomination)
+	outer, interior := w.denominations()
 	if content != nil {
 		contentBounds := w.contentBounds()
 		contentPainter := p.WithOffset(contentBounds.X, contentBounds.Y).
-			WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height})
+			WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height}).
+			WithDenomination(outer, interior)
 		content.Paint(contentPainter)
 	}
 
@@ -859,7 +877,8 @@ func (w *Window) Paint(p *core.Painter) {
 		contentBounds := w.contentBounds()
 		// Create a painter clipped to the content area
 		contentPainter := p.WithOffset(contentBounds.X, contentBounds.Y).
-			WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height})
+			WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height}).
+			WithDenomination(outer, interior)
 
 		for _, child := range w.ChildWindows() {
 			if child.IsVisible() && !child.IsMinimized() {
@@ -1879,12 +1898,13 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
-	// Pass to content
+	// Pass to content (converted into the interior denomination)
 	if content != nil {
 		contentBounds := w.contentBounds()
+		outer, interior := w.denominations()
 		localEvent := event
-		localEvent.X -= contentBounds.X
-		localEvent.Y -= contentBounds.Y
+		localEvent.X = core.ExchangeX(event.X-contentBounds.X, outer, interior)
+		localEvent.Y = core.ExchangeY(event.Y-contentBounds.Y, outer, interior)
 		if content.HandleMousePress(localEvent) {
 			return true
 		}
@@ -1922,9 +1942,10 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {
 			contentBounds := w.contentBounds()
+			outer, interior := w.denominations()
 			localEvent := event
-			localEvent.X -= contentBounds.X
-			localEvent.Y -= contentBounds.Y
+			localEvent.X = core.ExchangeX(event.X-contentBounds.X, outer, interior)
+			localEvent.Y = core.ExchangeY(event.Y-contentBounds.Y, outer, interior)
 			if handler.HandleMouseMove(localEvent) {
 				return true
 			}
@@ -1983,9 +2004,10 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 			HandleMouseRelease(core.MouseReleaseEvent) bool
 		}); ok {
 			contentBounds := w.contentBounds()
+			outer, interior := w.denominations()
 			localEvent := event
-			localEvent.X -= contentBounds.X
-			localEvent.Y -= contentBounds.Y
+			localEvent.X = core.ExchangeX(event.X-contentBounds.X, outer, interior)
+			localEvent.Y = core.ExchangeY(event.Y-contentBounds.Y, outer, interior)
 			if handler.HandleMouseRelease(localEvent) {
 				return true
 			}
@@ -2031,7 +2053,10 @@ func (w *Window) SizeHint() core.UnitSize {
 	var width, height core.Unit
 
 	if content != nil {
-		hint := content.SizeHint()
+		// Content hints are denominated in the interior currency;
+		// convert to the window's own (outer) currency.
+		outer, interior := w.denominations()
+		hint := core.ExchangeSize(content.SizeHint(), interior, outer)
 		width = hint.Width
 		height = hint.Height
 	}

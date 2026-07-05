@@ -231,7 +231,7 @@ func (m *Menu) SetMaxVisible(max int) {
 // This should be called before Show() to ensure proper scrolling behavior.
 // The menuY parameter is the Y position where the menu will be shown.
 func (m *Menu) SetAvailableHeight(availableHeight core.Unit) {
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	// Calculate how many items can fit, leaving room for scroll indicators if needed
 	maxRows := int(availableHeight / metrics.CellHeight)
 	if maxRows < 3 {
@@ -566,7 +566,7 @@ func (m *Menu) announceCurrentItem() {
 
 // calculateSize calculates the menu size.
 func (m *Menu) calculateSize() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	font := m.EffectiveFont()
 
 	// Calculate max width using font for text, cells for decorative elements
@@ -710,7 +710,7 @@ func (m *Menu) Paint(p *core.Painter) {
 
 	scheme := m.GetScheme()
 	theme := m.Theme() // Still needed for DefaultBorder
-	metrics := p.Metrics()
+	metrics := m.EffectiveCellMetrics()
 	font := m.EffectiveFont()
 	size := m.calculateSize()
 	needsScroll := m.needsScrolling()
@@ -1030,7 +1030,7 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 
 	m.closeSubMenu()
 
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	size := m.calculateSize()
 	needsScroll := m.needsScrolling()
 
@@ -1103,7 +1103,7 @@ func (m *Menu) HandleMousePress(event core.MousePressEvent) bool {
 		return true
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	size := m.calculateSize()
 	needsScroll := m.needsScrolling()
 
@@ -1175,7 +1175,7 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	size := m.calculateSize()
 
 	// Check if mouse is in menu bounds
@@ -1354,14 +1354,14 @@ func (m *MenuBar) calculateTotalMenusWidth() core.Unit {
 
 // dateTimeWidth returns the width reserved for the date/time display.
 func (m *MenuBar) dateTimeWidth() core.Unit {
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	// " Mon Jan 02 15:04 " = 18 chars
 	return 18 * metrics.CellWidth
 }
 
 // scrollButtonWidth returns the width of each scroll button.
 func (m *MenuBar) scrollButtonWidth() core.Unit {
-	return core.DefaultCellMetrics().TextWidth(3) // [<] or [>]
+	return m.EffectiveCellMetrics().TextWidth(3) // [<] or [>]
 }
 
 // menusNeedScrolling returns true if menus don't fit and need scroll buttons.
@@ -1387,7 +1387,7 @@ func (m *MenuBar) canScrollRight() bool {
 // isLastMenuFullyVisible returns true if the last menu is completely visible.
 func (m *MenuBar) isLastMenuFullyVisible() bool {
 	bounds := m.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 
 	scrollButtonsWidth := core.Unit(0)
 	if m.menusNeedScrolling() {
@@ -1425,7 +1425,7 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 
 	// Check if menu is visible from current scroll position
 	bounds := m.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 
 	scrollButtonsWidth := m.scrollButtonWidth() * 2
 	leftEllipseWidth := core.Unit(0)
@@ -1485,7 +1485,7 @@ func (m *MenuBar) clampScrollOffset() {
 
 	// Calculate how much space we have for menus
 	bounds := m.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	scrollButtonsWidth := m.scrollButtonWidth() * 2
 	availableWidth := bounds.Width - m.dateTimeWidth() - scrollButtonsWidth
 
@@ -1658,7 +1658,7 @@ func (m *MenuBar) OpenMenu(index int) {
 	}
 
 	// Calculate position (after scrolling so position is correct)
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	x := m.calculateMenuX(index)
 	y := metrics.CellHeight
 
@@ -1753,7 +1753,7 @@ func (m *MenuBar) CloseMenuWithoutRestore() {
 
 // calculateMenuX calculates the x position of a menu (accounting for scroll offset).
 func (m *MenuBar) calculateMenuX(index int) core.Unit {
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 
 	// Start after left ellipsis if scrolled
 	x := core.Unit(0)
@@ -1770,7 +1770,7 @@ func (m *MenuBar) calculateMenuX(index int) core.Unit {
 
 // SizeHint returns the preferred size.
 func (m *MenuBar) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	font := m.EffectiveFont()
 
 	width := core.Unit(0)
@@ -1787,7 +1787,7 @@ func (m *MenuBar) SizeHint() core.UnitSize {
 
 // menuTitleWidth returns the width of a menu title including surrounding spaces.
 func (m *MenuBar) menuTitleWidth(title string) core.Unit {
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	font := m.EffectiveFont()
 	// Menu width: space (1 cell) + title (font) + space (1 cell)
 	return metrics.CellWidth*2 + font.MeasureText(title)
@@ -1797,7 +1797,7 @@ func (m *MenuBar) menuTitleWidth(title string) core.Unit {
 func (m *MenuBar) Paint(p *core.Painter) {
 	bounds := m.Bounds()
 	scheme := m.GetScheme()
-	metrics := p.Metrics()
+	metrics := m.EffectiveCellMetrics()
 	font := m.EffectiveFont()
 
 	// Clamp scroll offset if container was resized and more menus can now fit
@@ -2222,7 +2222,7 @@ func (m *MenuBar) findMenuByAccelerator(key rune) int {
 
 // HandleMousePress handles mouse clicks.
 func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 	bounds := m.Bounds()
 
 	// Check active menu first - if clicking on an item in the dropdown
@@ -2364,7 +2364,7 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false // Don't consume - we're not in drag mode
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 
 	// Detect if we've started dragging (moved enough from initial click)
 	if !m.dragging {
@@ -2441,7 +2441,7 @@ func (m *MenuBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		return true // Consume the release event but don't dismiss
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := m.EffectiveCellMetrics()
 
 	// Check if release is on a dropdown menu item - trigger it
 	if m.activeMenu != nil && m.activeMenu.visible {

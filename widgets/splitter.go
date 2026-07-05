@@ -208,7 +208,7 @@ func (s *Splitter) SetLayoutManager(layout core.LayoutManager) {
 // dividerBounds returns the bounds of the divider bar.
 func (s *Splitter) dividerBounds() core.UnitRect {
 	bounds := s.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := s.EffectiveCellMetrics()
 
 	if s.orientation == core.Horizontal {
 		// Horizontal splitter has a vertical divider bar (use cell width)
@@ -283,7 +283,7 @@ func (s *Splitter) SizeHint() core.UnitSize {
 func (sp *Splitter) Paint(p *core.Painter) {
 	bounds := sp.Bounds()
 	scheme := sp.GetScheme()
-	metrics := p.Metrics()
+	metrics := sp.EffectiveCellMetrics()
 
 	// Only draw background if explicitly set (allows parent backgrounds to show through)
 	if sp.backgroundSet {
@@ -455,7 +455,7 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if s.dragging {
 		bounds := s.Bounds()
-		metrics := core.DefaultCellMetrics()
+		metrics := s.EffectiveCellMetrics()
 
 		if s.orientation == core.Horizontal {
 			dividerSize := metrics.CellWidth
@@ -570,7 +570,7 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 	// If the splitter itself has focus, handle arrow keys for divider adjustment
 	if s.HasFocus() {
 		bounds := s.Bounds()
-		metrics := core.DefaultCellMetrics()
+		metrics := s.EffectiveCellMetrics()
 
 		// Calculate step sizes
 		// Normal: small step (1 cell equivalent in position terms)

@@ -220,9 +220,37 @@ with no exchange at the border. Work required to close it:
    list), while an explicitly-sized element visibly changes. Today the
    toggle exposes the leak; that is its current documentation value.
 
-Until (1) and (2) land, per-container overrides are mechanically
-supported but semantically incomplete — do not treat the current
-override behavior as a spacing feature.
+**Status 2026-07-05 — boundary exchange implemented.**
+
+- `Painter.WithDenomination(parent, child)` composes the scale
+  transform; `Painter.WithTransform` composition order fixed (new
+  transform applies first — immaterial for translations, essential for
+  scales). `core.ExchangeX/Y/Size` convert values between
+  denominations; `core.ParentCellMetrics` resolves a widget's outer
+  currency.
+- Boundaries live where overrides can: **Window** content (layout,
+  paint, ChildAt, mouse press/move/release, SizeHint) and **Panel**
+  (layout, paint, ChildAt, mouse, SizeHint/MinimumSize/
+  HeightForWidth). A container's bounds/chrome stay in the parent's
+  currency; its interior is denominated by its override.
+- A text line occupies one grid row in the container's denomination
+  (Label/Checkbox/RadioButton HeightForWidth use `metrics.CellHeight`,
+  not `font.LineHeight`).
+- Invariance is tested: `TestDenominationInvariance` (interior hint
+  changes, outer hint does not).
+
+Known residuals:
+
+- `MapToScreen` (popup placement — combobox dropdowns in an overridden
+  window; text-input cursor positioning) is not denomination-aware.
+- Desktop paints its own children without boundary logic — correct
+  while the desktop's root override equals `DefaultCellMetrics`; needs
+  the same treatment if a backend ever reports different metrics.
+- MDIPane has no boundary machinery yet (overrides on MDI child
+  windows inside a pane).
+- FileDialog/InputDialog paint content manually on the window painter
+  (outer space) with interior metrics — harmless until a dialog
+  carries an override; normalize when dialogs are reworked.
 
 ## Adjacent layout/sizing-contract findings
 
@@ -285,15 +313,24 @@ rely on hand-tuning around these:
    **Pilot conversions:** layout/box.go (Layout + HeightForWidth),
    widgets/panel.go (all 3 sites), label.go, checkbox.go,
    radiobutton.go — all now use `EffectiveCellMetrics()`.
-2. Resolve the remaining D-sites: desktop.go's 8 chrome sites read the
-   desktop's stored override (now exists) instead of the global
-   constructor; tui.go keeps its 2.
-3. Rewrite the remaining ~95 B-sites onto the walk (mechanical;
-   the combobox.go:973 A-site as a warm-up; spacer.go lazily).
-4. Fix the remaining 13 C-sites onto text measurement (the two ★
-   sites first — still live bugs under Tuesday; label.go `wrapText`
-   is done).
-5. Route the 6 E-sites (PurfecTerm) onto its own font/container.
-6. Verify: demo renders byte-identical cell buffers before/after
-   (except deliberate C-site bug fixes, verified via the Selection-tab
-   wrap row under Tuesday).
+2. ✅ **Done 2026-07-05** — desktop.go's chrome sites (including
+   StatusBar) read effective metrics rooted at the stored override;
+   tui.go keeps its 2 as the root source.
+3. ✅ **Done 2026-07-05** — widgets/ B-sites swept onto
+   `EffectiveCellMetrics()` (including paint-time `p.Metrics()`
+   layout math, which is interior-currency). Deliberately NOT
+   converted: window/window.go and window/manager.go sites (window
+   chrome and manager geometry are outer/desktop currency — equal to
+   the default today; route via the desktop's stored metrics when the
+   desktop boundary is generalized) and spacer.go's constructor
+   dead-end (needs lazy sizing).
+4. Remaining C-sites: the two ★ sites (tabwidget.go
+   `calculateTabBarWidth`, menu.go `dateTimeWidth`) still compute
+   text width as charCount × CellWidth — live bugs under Tuesday.
+   `DrawBox` title truncation and the other font-adjacent sites
+   remain. (label.go `wrapText` is done.)
+5. ✅ PurfecTerm E-sites now use its effective (container) metrics —
+   its cell grid follows the container's denomination.
+6. Verify: demo renders byte-identical cell buffers with no overrides
+   set; with the Selection-tab denomination toggle, rendering must be
+   visually invariant (known popup/cursor residuals aside).

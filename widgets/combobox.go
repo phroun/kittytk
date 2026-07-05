@@ -512,7 +512,7 @@ func (c *ComboBox) popupID() string {
 // registerPopupOverlay registers the popup with the popup controller.
 func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	bounds := c.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 
 	// Get screen bounds to calculate available space
 	screenBounds := pc.ScreenBounds()
@@ -648,7 +648,7 @@ func (c *ComboBox) notifyIndexChanged() {
 
 // SizeHint returns the preferred size.
 func (c *ComboBox) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 	font := c.EffectiveFont()
 
 	// Calculate width based on longest item using font measurement
@@ -739,7 +739,7 @@ func (c *ComboBox) Paint(p *core.Painter) {
 func (c *ComboBox) paintPopup(p *core.Painter) {
 	bounds := c.Bounds()
 	scheme := c.GetScheme()
-	metrics := p.Metrics()
+	metrics := c.EffectiveCellMetrics()
 
 	// Calculate popup bounds
 	maxVis := c.effectiveMaxVisible()
@@ -812,7 +812,7 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 // The popup is rendered at its screen position.
 func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect) {
 	scheme := c.GetScheme()
-	metrics := p.Metrics()
+	metrics := c.EffectiveCellMetrics()
 
 	// Use a painter offset to the popup position
 	popupPainter := p.WithOffset(popupBounds.X, popupBounds.Y)
@@ -920,7 +920,7 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 // scrollbarGeometry returns scrollbar dimensions and thumb position.
 // Returns: scrollbarX, thumbStart, thumbHeight, trackHeight (all in rows)
 func (c *ComboBox) scrollbarGeometry(popupWidth core.Unit, visibleCount int) (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 	totalItems := len(c.items)
 
 	scrollbarX = popupWidth - metrics.CellWidth
@@ -970,7 +970,7 @@ func (c *ComboBox) scrollbarGeometry(popupWidth core.Unit, visibleCount int) (sc
 // paintScrollbar draws a vertical scrollbar for the popup.
 func (c *ComboBox) paintScrollbar(p *core.Painter, popupWidth core.Unit, visibleCount int) {
 	scheme := c.GetScheme()
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 
 	scrollbarX, thumbStart, thumbHeight, trackHeight := c.scrollbarGeometry(popupWidth, visibleCount)
 
@@ -996,7 +996,7 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 		return false
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 
 	// Check if the click is within the popup bounds
 	if event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
@@ -1083,7 +1083,7 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 
 // handlePopupMouseMove handles mouse movement on the popup overlay.
 func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds core.UnitRect) bool {
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 	maxVis := c.effectiveMaxVisible()
 	popupHeight := maxVis
 	if popupHeight > len(c.items) {
@@ -1272,7 +1272,7 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 		return true
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 
 	// Check if the release is within the popup bounds
 	inPopup := event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
@@ -1523,7 +1523,7 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	c.SetFocus()
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 	bounds := c.Bounds()
 
 	// Check if click is on the main combobox area (first row)
@@ -1593,7 +1593,7 @@ func (c *ComboBox) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 	bounds := c.Bounds()
 
 	// Detect if we've started dragging
@@ -1693,7 +1693,7 @@ func (c *ComboBox) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	c.mouseDown = false
 	c.dragging = false
 
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 	bounds := c.Bounds()
 
 	// Calculate popup bounds

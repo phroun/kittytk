@@ -273,6 +273,47 @@ func FindEffectiveCellMetrics(w Widget) CellMetrics {
 	return DefaultCellMetrics()
 }
 
+// ExchangeX converts an X-axis value denominated in `from` metrics into
+// `to` metrics: the same number of columns, re-expressed. Identity when
+// the denominations match.
+func ExchangeX(v Unit, from, to CellMetrics) Unit {
+	if from.CellWidth == to.CellWidth || from.CellWidth <= 0 || to.CellWidth <= 0 {
+		return v
+	}
+	return Unit(float64(v) * float64(to.CellWidth) / float64(from.CellWidth))
+}
+
+// ExchangeY converts a Y-axis value denominated in `from` metrics into
+// `to` metrics: the same number of rows, re-expressed.
+func ExchangeY(v Unit, from, to CellMetrics) Unit {
+	if from.CellHeight == to.CellHeight || from.CellHeight <= 0 || to.CellHeight <= 0 {
+		return v
+	}
+	return Unit(float64(v) * float64(to.CellHeight) / float64(from.CellHeight))
+}
+
+// ExchangeSize converts a size between denominations.
+func ExchangeSize(s UnitSize, from, to CellMetrics) UnitSize {
+	return UnitSize{
+		Width:  ExchangeX(s.Width, from, to),
+		Height: ExchangeY(s.Height, from, to),
+	}
+}
+
+// ParentCellMetrics returns the effective metrics of w's parent context
+// — the denomination in which w's bounds are expressed. A widget with a
+// metrics override denominates its interior; its own bounds live in the
+// parent's currency.
+func ParentCellMetrics(w Widget) CellMetrics {
+	if w == nil {
+		return DefaultCellMetrics()
+	}
+	if pw, ok := w.Parent().(Widget); ok && pw != nil {
+		return FindEffectiveCellMetrics(pw)
+	}
+	return DefaultCellMetrics()
+}
+
 // Transform handles coordinate transformation between different coordinate spaces.
 type Transform struct {
 	// Offset added to coordinates

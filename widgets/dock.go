@@ -115,7 +115,7 @@ func (d *DockRow) SetOnFocusMenuBar(callback func()) {
 // entriesPerRow returns how many entries fit per row based on current bounds.
 func (d *DockRow) entriesPerRow() int {
 	bounds := d.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 	entriesPerRow := int(bounds.Width / (core.Unit(d.entryWidth) * metrics.CellWidth))
 	if entriesPerRow < 1 {
 		entriesPerRow = 1
@@ -130,7 +130,7 @@ func (d *DockRow) RowCount() int {
 	}
 
 	bounds := d.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 
 	// How many entries fit per row?
 	entriesPerRow := int(bounds.Width / (core.Unit(d.entryWidth) * metrics.CellWidth))
@@ -149,7 +149,7 @@ func (d *DockRow) RequiredHeight() core.Unit {
 	if rows == 0 {
 		return 0
 	}
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 	return core.Unit(rows) * metrics.CellHeight
 }
 
@@ -168,7 +168,7 @@ func (d *DockRow) Paint(p *core.Painter) {
 	}
 
 	bounds := d.Bounds()
-	metrics := p.Metrics()
+	metrics := d.EffectiveCellMetrics()
 	focused := d.HasFocus()
 	scheme := d.GetScheme()
 
@@ -350,7 +350,7 @@ func (d *DockRow) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := d.EffectiveCellMetrics()
 	bounds := d.Bounds()
 
 	// Calculate which entry was clicked

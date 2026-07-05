@@ -196,7 +196,7 @@ func (b *Button) Click() {
 
 // SizeHint returns the preferred size.
 func (b *Button) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := b.EffectiveCellMetrics()
 	font := b.EffectiveFont()
 
 	// Calculate text width using font measurement
@@ -241,7 +241,7 @@ func (b *Button) Paint(p *core.Painter) {
 	bounds := b.Bounds()
 	scheme := b.GetScheme()
 	focused := b.HasFocus()
-	metrics := p.Metrics()
+	metrics := b.EffectiveCellMetrics()
 	font := b.EffectiveFont()
 
 	// Determine if showing pressed visual (pressed and hovering, space held, animating, or checked)
@@ -455,7 +455,7 @@ func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Check if mouse is still inside button area
 	bounds := b.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := b.EffectiveCellMetrics()
 
 	// Simple bounds check for first row (button area, not shadow)
 	newHovered := event.X >= 0 && event.X < bounds.Width &&

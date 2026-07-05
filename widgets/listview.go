@@ -202,7 +202,7 @@ func (l *ListView) SetCurrentIndex(index int) {
 	// a ScrollArea and the selected item moves outside the visible area.
 	// For mouse clicks, SetFocusWithoutScroll() prevents unwanted scrolling.
 	if index >= 0 {
-		metrics := core.DefaultCellMetrics()
+		metrics := l.EffectiveCellMetrics()
 
 		// Calculate the visual Y position of this item (after internal scrolling)
 		// This is where the item appears on screen, relative to the ListView's bounds
@@ -359,7 +359,7 @@ func (l *ListView) ensureVisible(index int) {
 	}
 
 	bounds := l.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := l.EffectiveCellMetrics()
 	visibleCount := int(bounds.Height / metrics.CellHeight)
 
 	if index < l.scrollOffset {
@@ -371,7 +371,7 @@ func (l *ListView) ensureVisible(index int) {
 
 // SizeHint returns the preferred size.
 func (l *ListView) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := l.EffectiveCellMetrics()
 	font := l.EffectiveFont()
 	return core.UnitSize{
 		Width:  font.MeasureRunes(30), // Default width for 30 chars
@@ -384,7 +384,7 @@ func (l *ListView) Paint(p *core.Painter) {
 	bounds := l.Bounds()
 	scheme := l.GetScheme()
 	focused := l.HasFocus()
-	metrics := p.Metrics()
+	metrics := l.EffectiveCellMetrics()
 
 	// Draw background using list colors
 	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
@@ -466,7 +466,7 @@ func (l *ListView) Paint(p *core.Painter) {
 // Returns: scrollbarX, thumbStart, thumbHeight, trackHeight (all in rows)
 func (l *ListView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
 	bounds := l.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := l.EffectiveCellMetrics()
 	totalItems := len(l.items)
 
 	scrollbarX = bounds.Width - metrics.CellWidth
@@ -510,7 +510,7 @@ func (l *ListView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 // paintScrollbar draws a vertical scrollbar.
 func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 	scheme := l.GetScheme()
-	metrics := p.Metrics()
+	metrics := l.EffectiveCellMetrics()
 
 	scrollbarX, thumbStart, thumbHeight, trackHeight := l.scrollbarGeometry(visibleCount)
 
@@ -601,7 +601,7 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	case "PageUp":
 		bounds := l.Bounds()
-		metrics := core.DefaultCellMetrics()
+		metrics := l.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.CellHeight)
 		newIndex := l.currentIndex - pageSize
 		if newIndex < 0 {
@@ -612,7 +612,7 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	case "PageDown":
 		bounds := l.Bounds()
-		metrics := core.DefaultCellMetrics()
+		metrics := l.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.CellHeight)
 		newIndex := l.currentIndex + pageSize
 		if newIndex >= len(l.items) {
@@ -638,7 +638,7 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 // visibleCount returns the number of visible rows.
 func (l *ListView) visibleCount() int {
 	bounds := l.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := l.EffectiveCellMetrics()
 	return int(bounds.Height / metrics.CellHeight)
 }
 
@@ -660,7 +660,7 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	l.SetFocusWithoutScroll() // Use without-scroll variant since click proves visibility
-	metrics := core.DefaultCellMetrics()
+	metrics := l.EffectiveCellMetrics()
 
 	// Check if click is on scrollbar
 	scrollbarX, thumbStart, thumbHeight, _ := l.scrollbarGeometry(l.visibleCount())
@@ -730,7 +730,7 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := l.EffectiveCellMetrics()
 
 	// Handle scrollbar thumb drag
 	// Note: Once drag is captured on press, we don't check horizontal bounds during drag
