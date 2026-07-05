@@ -180,27 +180,49 @@ By file (line: enclosing method):
   785 `positionWindow`, 839 `TileWindows`, 883 `CascadeWindows`, 1016
   `HandleMousePress`, 1133/1209 `HandleMouseMove`.
 
-## Semantics sharpened by the per-window override (2026-07-05)
+## Denomination model — corrected semantics (2026-07-05)
 
-Observed live via the demo's "double-height grid" toggle:
+An earlier note here misread the per-window override's double-spacing
+as intended behavior. Corrected model (per D8's author):
 
-- **Three metrics sources now coexist, answering different questions.**
-  `EffectiveCellMetrics()` is the *layout grid* (container-defined,
-  overridable). `Painter.Metrics()` is the *backend's device cell
-  geometry* (physical 8×16 terminal cells). Font line height is a
-  *text* metric. Glyph placement must follow device cells; widget
-  sizing/spacing follows the grid; text-line stacking follows the
-  font. Consequence for the sweep: paint-time `p.Metrics()` uses are
-  fine only when they are device questions (where to stamp a rune);
-  any layout-ish math inside Paint must be re-classified against the
-  grid, since the two now genuinely diverge under an override.
-- **Implicit choice to ratify (or revisit): wrapped text stacks by
-  font line height, single-line widgets size by grid row.** Under a
-  32-unit grid, checkbox lists double-space (TextHeight(1) = one grid
-  row) while wrapped paragraphs stay at 16/line (HeightForWidth uses
-  font.LineHeight). Coherent under the D8 split — paragraph stacking
-  is a text question, row rhythm is a grid question — but currently
-  implicit.
+**CellMetrics is a coordinate denomination, not a spacing knob.** It
+defines the exchange rate between abstract units and rows/columns per
+container — like DPI. Changing a container's metrics changes what the
+numbers *mean*, never how big things *look*:
+
+- Sizes expressed in rows/columns (`TextHeight(1)`, "one column of
+  chrome") are denominated in the container's units and are **visually
+  invariant** under re-denomination: one row is one row whether it is
+  represented by 8, 16, or 32 units.
+- Only **explicit numeric unit values** (SetSize/SetBounds literals,
+  explicit hints) change interpretation: `Height: 64` is 2 rows in a
+  32-unit window, 4 rows in a 16-unit one. Apps choose their own
+  addressing resolution — that is the feature.
+
+The double spacing observed via the demo toggle is therefore a
+**denomination leak**: widgets produce values in the window's currency
+while the render path converts to screen cells at the backend's rate,
+with no exchange at the border. Work required to close it:
+
+1. **Boundary scaling in the paint/input path.** Entering a subtree
+   whose metrics differ, the painter composes a scale transform (ratio
+   of denominations per axis; `core.Transform` already carries unused
+   `ScaleX/ScaleY` — built for this). Input events apply the inverse
+   on descent; a rounding policy is defined once at the device edge.
+2. **Text metrics are denominated too.** `Font.MeasureText`'s
+   hardcoded 8 and `LineHeight`'s 16 are `DefaultCellMetrics` values
+   in disguise: a Monday character is "one column" = the asking
+   container's `CellWidth`. Measurement must answer in the caller's
+   denomination; then text and grid scale together and no
+   wrapped-vs-row inconsistency exists.
+3. **Acceptance test:** the demo's "double-height grid" toggle must
+   become a visual no-op for row-denominated content (the selection
+   list), while an explicitly-sized element visibly changes. Today the
+   toggle exposes the leak; that is its current documentation value.
+
+Until (1) and (2) land, per-container overrides are mechanically
+supported but semantically incomplete — do not treat the current
+override behavior as a spacing feature.
 
 ## Adjacent layout/sizing-contract findings
 

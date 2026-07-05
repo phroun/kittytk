@@ -507,11 +507,14 @@ func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window
 	})
 	checkPanel.AddChild(desktopFontCheck)
 
-	// Grid-metrics override demo: double-spaced rows for this window
-	// only. Widgets converted to EffectiveCellMetrics (labels,
-	// checkboxes, radios, panels, box layouts) honor it; unconverted
-	// ones still use the default grid until the G1 sweep reaches them.
-	gridCheck := widgets.NewCheckbox("Window: Double-height grid (32-unit rows)")
+	// Grid-metrics denomination toggle: re-denominates this window's
+	// units (32 per row instead of 16). Per the denomination model
+	// (docs/g1-metrics-audit.md), this SHOULD be a visual no-op for
+	// row-denominated content - until boundary scaling lands in the
+	// paint/input path, it instead exposes the denomination leak as
+	// double spacing in converted widgets. Acceptance test for that
+	// future work.
+	gridCheck := widgets.NewCheckbox("Window: 32-unit rows (denomination test)")
 	gridCheck.SetOnToggled(func(checked bool) {
 		if checked {
 			mainWindow.SetCellMetrics(&core.CellMetrics{CellWidth: 8, CellHeight: 32})
