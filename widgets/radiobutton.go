@@ -15,6 +15,7 @@ type RadioButton struct {
 
 	text     string
 	checked  bool
+	wordWrap bool
 	group    *RadioGroup
 
 	// Callbacks
@@ -79,6 +80,19 @@ func (r *RadioButton) SetOnToggled(handler func(checked bool)) {
 	r.onToggled = handler
 }
 
+// WordWrap returns whether the label text wraps onto multiple lines.
+func (r *RadioButton) WordWrap() bool {
+	return r.wordWrap
+}
+
+// SetWordWrap enables or disables word wrapping of the label text.
+// The indicator is chrome, not text: it stays on the top line and
+// wrapped lines hang under the text, not under the indicator.
+func (r *RadioButton) SetWordWrap(wrap bool) {
+	r.wordWrap = wrap
+	r.Update()
+}
+
 // SizeHint returns the preferred size.
 func (r *RadioButton) SizeHint() core.UnitSize {
 	metrics := core.DefaultCellMetrics()
@@ -91,6 +105,26 @@ func (r *RadioButton) SizeHint() core.UnitSize {
 		Width:  indicatorWidth + spaceWidth + textWidth,
 		Height: metrics.TextHeight(1),
 	}
+}
+
+// HasHeightForWidth returns true when word wrap is enabled.
+func (r *RadioButton) HasHeightForWidth() bool {
+	return r.wordWrap
+}
+
+// HeightForWidth returns the height needed at the given width: the
+// text wraps within the width remaining after the indicator chrome.
+func (r *RadioButton) HeightForWidth(width core.Unit) core.Unit {
+	if !r.wordWrap {
+		return r.SizeHint().Height
+	}
+	metrics := core.DefaultCellMetrics()
+	font := r.EffectiveFont()
+	lineCount := len(wrapText(r.text, width-metrics.CellWidth*4, font))
+	if lineCount < 1 {
+		lineCount = 1
+	}
+	return core.Unit(lineCount) * font.LineHeight()
 }
 
 // IsInlineWidget returns true to indicate this is a text-style widget
@@ -136,7 +170,20 @@ func (r *RadioButton) Paint(p *core.Painter) {
 	// Draw space (decorative, 1 cell) and text (font-based)
 	p.DrawCell(metrics.CellWidth*3, 0, ' ', labelStyle) // Space after indicator
 	x := metrics.CellWidth * 4                          // After indicator + space (4 cells)
-	p.DrawText(x, 0, r.text, labelStyle, font)
+
+	if !r.wordWrap {
+		p.DrawText(x, 0, r.text, labelStyle, font)
+		return
+	}
+
+	// Word wrap: the indicator is chrome anchored to the top line;
+	// wrapped lines hang under the text column.
+	textWidth := r.Bounds().Width - x
+	y := core.Unit(0)
+	for _, line := range wrapText(r.text, textWidth, font) {
+		p.DrawText(x, y, line, labelStyle, font)
+		y += metrics.CellHeight
+	}
 }
 
 // HandleKeyPress handles keyboard input.

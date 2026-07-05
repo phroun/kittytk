@@ -16,17 +16,19 @@ import (
 	"github.com/phroun/tuitk/window"
 )
 
-// fixedSizeBox is a bordered panel whose SizeHint is pinned, so its
+// fixedWidthBox is a bordered panel whose width is pinned, so its
 // content width does not grow when the font changes. Word wrap only
 // happens when width is genuinely constrained; an unconstrained label's
 // SizeHint scales with the font and simply widens instead of wrapping.
-type fixedSizeBox struct {
+// Height is NOT pinned: it flows from the content via height-for-width,
+// so wrapping onto more lines makes the box taller.
+type fixedWidthBox struct {
 	*widgets.Panel
-	hint core.UnitSize
+	width core.Unit
 }
 
-func newFixedSizeBox(width, height core.Unit, content core.Widget) *fixedSizeBox {
-	f := &fixedSizeBox{Panel: widgets.NewPanel(), hint: core.UnitSize{Width: width, Height: height}}
+func newFixedWidthBox(width core.Unit, content core.Widget) *fixedWidthBox {
+	f := &fixedWidthBox{Panel: widgets.NewPanel(), width: width}
 	f.SetBorder(true)
 	f.SetBorderStyle(style.BorderSingle) // zero-value BorderStyle renders invisibly
 
@@ -37,7 +39,9 @@ func newFixedSizeBox(width, height core.Unit, content core.Widget) *fixedSizeBox
 	return f
 }
 
-func (f *fixedSizeBox) SizeHint() core.UnitSize { return f.hint }
+func (f *fixedWidthBox) SizeHint() core.UnitSize {
+	return core.UnitSize{Width: f.width, Height: f.Panel.SizeHint().Height}
+}
 
 func main() {
 	// Create the TUI backend
@@ -423,24 +427,36 @@ func createBasicWidgetsDemo(desktop *widgets.Desktop) core.Widget {
 
 // createSelectionDemo creates a panel with selection widgets using a draggable splitter.
 func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window, desktop *widgets.Desktop) core.Widget {
-	// Word-wrap test row: two word-wrapped labels in fixed-width bordered
-	// boxes. The boxes pin the width (Label.SizeHint scales with the font,
-	// so an unconstrained label just grows instead of wrapping). Wrapping
-	// measures via the effective font: toggling Tuesday should re-wrap the
-	// text at word boundaries into more, shorter lines inside the border.
+	// Word-wrap test row: word-wrapped widgets in fixed-WIDTH bordered
+	// boxes (Label.SizeHint scales with the font, so an unconstrained
+	// label just grows instead of wrapping). Box heights flow from the
+	// content via height-for-width: toggling Tuesday re-wraps the text
+	// into more lines and the whole row grows taller.
 	wrapPanel := widgets.NewPanel()
 	wrapLayout := layout.NewBoxLayout(core.Horizontal)
 	wrapLayout.SetSpacing(8)
 
 	wrapLeft := widgets.NewLabel("The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence")
 	wrapLeft.SetWordWrap(true)
-	wrapLeft.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizeExpanding))
-	wrapPanel.AddChild(newFixedSizeBox(8*32, 16*7, wrapLeft))
+	wrapPanel.AddChild(newFixedWidthBox(8*32, wrapLeft))
 
 	wrapRight := widgets.NewLabel("Pack my box with five dozen liquor jugs before the Tuesday checkbox below doubles every letter")
 	wrapRight.SetWordWrap(true)
-	wrapRight.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizeExpanding))
-	wrapPanel.AddChild(newFixedSizeBox(8*32, 16*7, wrapRight))
+	wrapPanel.AddChild(newFixedWidthBox(8*32, wrapRight))
+
+	// Third box: opt-in word wrap on Checkbox and RadioButton. The
+	// [x]/(*) indicator is chrome anchored to the top line; wrapped
+	// lines hang under the text column.
+	wrapOptions := widgets.NewPanel()
+	wrapOptionsLayout := layout.NewBoxLayout(core.Vertical)
+	wrapCheck := widgets.NewCheckbox("Enable the experimental feature that reticulates splines while the moon is full")
+	wrapCheck.SetWordWrap(true)
+	wrapOptions.AddChild(wrapCheck)
+	wrapRadio := widgets.NewRadioButton("Prefer the long-form explanation whenever the assistant answers a question")
+	wrapRadio.SetWordWrap(true)
+	wrapOptions.AddChild(wrapRadio)
+	wrapOptions.SetLayoutManager(wrapOptionsLayout)
+	wrapPanel.AddChild(newFixedWidthBox(8*36, wrapOptions))
 
 	wrapPanel.SetLayoutManager(wrapLayout)
 

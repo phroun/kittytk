@@ -93,6 +93,26 @@ func (l *Label) IsInlineWidget() bool {
 	return true
 }
 
+// HasHeightForWidth returns true when word wrap is enabled, since the
+// wrapped height depends on the allocated width.
+func (l *Label) HasHeightForWidth() bool {
+	return l.wordWrap
+}
+
+// HeightForWidth returns the height needed to show the wrapped text at
+// the given width.
+func (l *Label) HeightForWidth(width core.Unit) core.Unit {
+	if !l.wordWrap {
+		return l.SizeHint().Height
+	}
+	font := l.EffectiveFont()
+	lineCount := len(wrapText(l.text, width, font))
+	if lineCount < 1 {
+		lineCount = 1
+	}
+	return core.Unit(lineCount) * font.LineHeight()
+}
+
 // Paint renders the label.
 func (l *Label) Paint(p *core.Painter) {
 	bounds := l.Bounds()

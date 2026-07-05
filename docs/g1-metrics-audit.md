@@ -201,6 +201,15 @@ rely on hand-tuning around these:
 4. **Label has no height-for-width** — a wrapped label's true height
    depends on the width it is given, but `SizeHint()` is
    width-independent, so nothing can size a wrapped label correctly.
+   **Fixed 2026-07-05 (D9)**: `core.HeightForWidther` interface;
+   implemented by Label and opt-in wrapped Checkbox/RadioButton,
+   consulted by BoxLayout, propagated by Panel. DockRow deliberately
+   not migrated (D9); MessageBox pending. Tests in
+   `widgets/label_test.go`. Note the new HFW code paths add a few
+   `DefaultCellMetrics()` call sites (checkbox/radiobutton
+   HeightForWidth, Panel border inset, BoxLayout.HeightForWidth) —
+   deliberate parity with their existing siblings; the G1 sweep
+   collects them all together.
 5. **Font-dependent SizeHints reshape the whole layout on font change**
    — sometimes wanted (buttons fitting text), sometimes not (a fixed
    design grid); there is currently no way for a widget to declare

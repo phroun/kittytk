@@ -167,6 +167,31 @@ func (p *Panel) MinimumSize() core.UnitSize {
 	return core.UnitSize{Width: 16, Height: 16}
 }
 
+// HasHeightForWidth reports whether this panel's content height depends
+// on its width (i.e. its layout contains height-for-width widgets).
+func (p *Panel) HasHeightForWidth() bool {
+	hfw, ok := p.layoutManager.(core.HeightForWidther)
+	return ok && hfw.HasHeightForWidth()
+}
+
+// HeightForWidth returns the height this panel requires at the given
+// width, accounting for the border inset.
+func (p *Panel) HeightForWidth(width core.Unit) core.Unit {
+	hfw, ok := p.layoutManager.(core.HeightForWidther)
+	if !ok || !hfw.HasHeightForWidth() {
+		return p.SizeHint().Height
+	}
+	if p.border {
+		metrics := core.DefaultCellMetrics()
+		inner := width - 2*metrics.CellWidth
+		if inner < 0 {
+			inner = 0
+		}
+		return hfw.HeightForWidth(inner) + 2*metrics.CellHeight
+	}
+	return hfw.HeightForWidth(width)
+}
+
 // Paint renders the panel.
 func (p *Panel) Paint(painter *core.Painter) {
 	bounds := p.Bounds()

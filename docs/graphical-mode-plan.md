@@ -307,6 +307,35 @@ Design questions to answer when it is built (noted now, not decided):
 - Behavior in TUI mode (unavailable? degraded cell rendering? app's
   choice?).
 
+### D9 — Height-for-width protocol; text-flow tiers; chrome vs text  *(decided 2026-07-05)*
+
+A `core.HeightForWidther` optional interface (HasHeightForWidth /
+HeightForWidth) lets widgets whose height depends on allocated width
+(wrapped text) report their real height during layout, when widths are
+known. `SizeHint` remains the width-independent preference. BoxLayout
+consults it; Panel propagates it upward; ScrollArea/Splitter/Window are
+absorbers where propagation stops. (A WidthForHeight transpose is
+acknowledged but not built — nothing needs it.)
+
+Text-flow tiers (which widgets flow text is a toolkit design decision,
+and under D2 it is protocol surface):
+
+- **Label** — wrap is core purpose; wraps + height-for-width.
+- **Checkbox / RadioButton** — wrap is **opt-in** (`SetWordWrap`),
+  default single-line. **The `[x]`/`(*)` indicator is CHROME, not
+  text**: it stays anchored to the top line, and wrapped lines hang
+  under the text column, never under the indicator.
+- **Button, tabs, list rows, menu items** — deliberately single-line
+  for now; overflow handled by other means (ellipsis, scrolling).
+- **DockRow** — already a hand-rolled height-for-width widget
+  (RequiredHeight); deliberately NOT migrated to the interface —
+  it is specific for other reasons and will be considered separately
+  rather than replaced on confidence alone.
+- **MessageBox** — future adopter (wrap message via Label, auto-size
+  height); pending, ties to the dialog.go:179 C-site.
+
+### Context: PurfecTerm is already multi-frontend  *(noted 2026-07-05)*
+
 PurfecTerm predates tuitk as an independent project and already has
 **three working frontends in a single codebase: this TUI implementation,
 GTK, and Qt.** Consequences for this plan:
@@ -550,6 +579,7 @@ milestone for whole windows.
 | — | 2026-07-05 | Context: PurfecTerm is an independent pre-existing project with TUI, GTK, and Qt frontends in one codebase — proof of the D1 pattern, source of graphical cell-grid rendering, input to O1. |
 | D7 | 2026-07-05 | A Canvas widget (HTML5-canvas-like: PurfecTerm pattern, but for images/drawing) is the pixel escape hatch. Committed to exist; development deferred to a future widget. Likely command-based + pixel-buffer modes, command-based first. |
 | D8 | 2026-07-05 | Grid-metrics model: CellMetrics is a per-container layout vocabulary (app chooses units per virtual row/column for placement density), inherited through the container chain like fonts, overridable per window in all modes including TUI, rooted at the display service's default derived from its system default font size. Text measurement is a separate, per-render-target question. G1 implements this model; call-site audit in `g1-metrics-audit.md`. |
+| D9 | 2026-07-05 | Height-for-width: `core.HeightForWidther` optional interface, consulted by layouts at layout time, propagated by containers, absorbed by ScrollArea/Splitter/Window. Text-flow tiers: Label wraps; Checkbox/RadioButton wrap opt-in with the indicator as top-line-anchored chrome and lines hanging under the text; buttons/tabs/list rows/menu items stay single-line; DockRow deliberately not migrated (considered separately); MessageBox a future adopter. Implemented same day (slices 1+2). |
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
 | D4 | 2026-07-05 | X-direction rendezvous: the display service listens on a well-known endpoint, apps dial in. Sessions are first-class protocol objects separable from connections (enables reattach/multi-viewer without inverting topology). Reverse attachment is a possible later mode. Naming: "display service" and "apps". |
 | D5 | 2026-07-05 | Two graphical substrates, Gio and SDL, behind one neutral Platform interface (PurfecTerm-style discipline). Mandatory condition: one shared tuitk-owned text engine (shaping/measurement/rasterization) outside the substrates, so layout is substrate-independent; it doubles as the server-side TextMeasurer. Substrates land serially; second lands before the interface is declared stable. |

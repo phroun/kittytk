@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/layout"
 )
 
 func TestWrapTextMondayWordBoundaries(t *testing.T) {
@@ -62,5 +63,71 @@ func TestWrapTextPreservesExplicitNewlines(t *testing.T) {
 func TestWrapTextZeroWidth(t *testing.T) {
 	if got := wrapText("anything", 0, core.FontMonday12); got != nil {
 		t.Errorf("got %q, want nil", got)
+	}
+}
+
+func TestLabelHeightForWidth(t *testing.T) {
+	l := NewLabel("hello world again")
+
+	if l.HasHeightForWidth() {
+		t.Fatal("HasHeightForWidth should be false without word wrap")
+	}
+	l.SetWordWrap(true)
+	if !l.HasHeightForWidth() {
+		t.Fatal("HasHeightForWidth should be true with word wrap")
+	}
+
+	// Monday at 160 units: "hello world again" fits on one line (136).
+	if got := l.HeightForWidth(160); got != 16 {
+		t.Errorf("Monday at 160: got %d, want 16", got)
+	}
+	// Monday at 80 units: wraps to three lines.
+	if got := l.HeightForWidth(80); got != 48 {
+		t.Errorf("Monday at 80: got %d, want 48", got)
+	}
+
+	// Tuesday at 160 units: letters are double width, three lines.
+	l.SetFont(core.FontTuesday12)
+	if got := l.HeightForWidth(160); got != 48 {
+		t.Errorf("Tuesday at 160: got %d, want 48", got)
+	}
+}
+
+func TestCheckboxHeightForWidth(t *testing.T) {
+	c := NewCheckbox("hello world")
+
+	if c.HasHeightForWidth() {
+		t.Fatal("HasHeightForWidth should be false without word wrap")
+	}
+	c.SetWordWrap(true)
+
+	// Indicator chrome is 4 cells (32 units). At width 120 the text
+	// area is 88 units: "hello world" (88) fits on one line.
+	if got := c.HeightForWidth(120); got != 16 {
+		t.Errorf("at 120: got %d, want 16", got)
+	}
+	// At width 112 the text area is 80 units: wraps to two lines.
+	if got := c.HeightForWidth(112); got != 32 {
+		t.Errorf("at 112: got %d, want 32", got)
+	}
+}
+
+func TestPanelPropagatesHeightForWidth(t *testing.T) {
+	l := NewLabel("hello world again")
+	l.SetWordWrap(true)
+
+	p := NewPanel()
+	p.AddChild(l)
+	p.SetLayoutManager(layout.NewBoxLayout(core.Vertical))
+
+	if !p.HasHeightForWidth() {
+		t.Fatal("panel should propagate HasHeightForWidth from wrapped label")
+	}
+
+	// Labels are inline widgets: a vertical box insets them one cell
+	// (8 units) per side, so at panel width 96 the label gets 80 and
+	// wraps to three lines.
+	if got := p.HeightForWidth(96); got != 48 {
+		t.Errorf("got %d, want 48", got)
 	}
 }

@@ -158,64 +158,41 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 		}
 	}
 
-	// Collect size hints and stretch factors
-	stretchItems := make([]stretchItem, len(l.items))
-
-	// Calculate total spacing between items
-	// For horizontal layouts, inline spacing replaces base spacing (not adds to it)
-	var totalSpacing core.Unit
+	// Calculate sizes along the primary axis
+	var sizes []core.Unit
 	if l.orientation == core.Horizontal {
-		// For inline gaps, use inline spacing; for container gaps, use base spacing
-		totalSpacing = inlineSpacingTotal
-		for i := 0; i < len(l.items)-1; i++ {
-			if !isInlineWidget(l.items[i].Widget) && !isInlineWidget(l.items[i+1].Widget) {
-				// Both are containers, use base spacing
-				totalSpacing += spacing
-			}
-		}
+		sizes = l.horizontalItemWidths(rect.Width, metrics, spacing, inlineSpacingTotal)
 	} else {
-		totalSpacing = spacing * core.Unit(len(l.items)-1)
-	}
+		totalSpacing := spacing * core.Unit(len(l.items)-1)
+		stretchItems := make([]stretchItem, len(l.items))
 
-	var availablePrimary core.Unit
-	if l.orientation == core.Horizontal {
-		availablePrimary = rect.Width - totalSpacing
-	} else {
-		availablePrimary = rect.Height - totalSpacing
-	}
+		for i, item := range l.items {
+			hint := item.Widget.SizeHint()
+			policy := item.Widget.SizePolicy()
 
-	for i, item := range l.items {
-		hint := item.Widget.SizeHint()
-		policy := item.Widget.SizePolicy()
-
-		var minSize, stretch int
-
-		if l.orientation == core.Horizontal {
-			minSize = int(hint.Width)
-			if policy.Horizontal == core.SizeExpanding || item.Stretch > 0 {
-				stretch = item.Stretch
-				if stretch == 0 {
-					stretch = 1
-				}
+			minSize := hint.Height
+			// Height-for-width widgets (e.g. wrapped text) report their
+			// real height at the width they will actually receive.
+			if h := itemHeightForWidth(item.Widget, l.verticalItemWidth(rect.Width, item, metrics)); h > 0 {
+				minSize = h
 			}
-		} else {
-			minSize = int(hint.Height)
+
+			stretch := 0
 			if policy.Vertical == core.SizeExpanding || item.Stretch > 0 {
 				stretch = item.Stretch
 				if stretch == 0 {
 					stretch = 1
 				}
 			}
+
+			stretchItems[i] = stretchItem{
+				minimum: minSize,
+				stretch: stretch,
+			}
 		}
 
-		stretchItems[i] = stretchItem{
-			minimum: core.Unit(minSize),
-			stretch: stretch,
-		}
+		sizes = calculateStretch(rect.Height-totalSpacing, stretchItems)
 	}
-
-	// Calculate sizes
-	sizes := calculateStretch(availablePrimary, stretchItems)
 
 	// Position widgets
 	var pos core.Unit
@@ -322,6 +299,132 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 	}
 
 	return bounds
+}
+
+// horizontalItemWidths computes item widths for the horizontal
+// orientation given the content width (margins already removed),
+// mirroring Layout's spacing rules.
+func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.CellMetrics, baseSpacing, inlineSpacingTotal core.Unit) []core.Unit {
+	// For inline gaps, use inline spacing; for container gaps, use base spacing
+	totalSpacing := inlineSpacingTotal
+	for i := 0; i < len(l.items)-1; i++ {
+		if !isInlineWidget(l.items[i].Widget) && !isInlineWidget(l.items[i+1].Widget) {
+			totalSpacing += baseSpacing
+		}
+	}
+
+	stretchItems := make([]stretchItem, len(l.items))
+	for i, item := range l.items {
+		hint := item.Widget.SizeHint()
+		policy := item.Widget.SizePolicy()
+
+		stretch := 0
+		if policy.Horizontal == core.SizeExpanding || item.Stretch > 0 {
+			stretch = item.Stretch
+			if stretch == 0 {
+				stretch = 1
+			}
+		}
+
+		stretchItems[i] = stretchItem{
+			minimum: hint.Width,
+			stretch: stretch,
+		}
+	}
+
+	return calculateStretch(contentWidth-totalSpacing, stretchItems)
+}
+
+// verticalItemWidth returns the width an item will receive in a
+// vertical layout (inline widgets are inset one cell per side).
+func (l *BoxLayout) verticalItemWidth(contentWidth core.Unit, item *LayoutItem, metrics core.CellMetrics) core.Unit {
+	if isInlineWidget(item.Widget) {
+		contentWidth -= metrics.CellWidth * 2
+	}
+	if contentWidth < 0 {
+		contentWidth = 0
+	}
+	return contentWidth
+}
+
+// itemHeightForWidth returns a widget's height at the given width,
+// consulting core.HeightForWidther when implemented and falling back
+// to the size hint.
+func itemHeightForWidth(w core.Widget, width core.Unit) core.Unit {
+	if hfw, ok := w.(core.HeightForWidther); ok && hfw.HasHeightForWidth() {
+		if h := hfw.HeightForWidth(width); h > 0 {
+			return h
+		}
+	}
+	return w.SizeHint().Height
+}
+
+// inlineSpacingForItems computes the extra horizontal spacing inline
+// widgets receive in a horizontal layout (mirrors Layout).
+func (l *BoxLayout) inlineSpacingForItems(metrics core.CellMetrics) core.Unit {
+	var total core.Unit
+	if len(l.items) == 0 {
+		return 0
+	}
+	if isInlineWidget(l.items[0].Widget) {
+		total += metrics.CellWidth
+	}
+	for i := 0; i < len(l.items)-1; i++ {
+		if isInlineWidget(l.items[i].Widget) || isInlineWidget(l.items[i+1].Widget) {
+			total += metrics.CellWidth
+		}
+	}
+	if isInlineWidget(l.items[len(l.items)-1].Widget) {
+		total += metrics.CellWidth
+	}
+	return total
+}
+
+// HasHeightForWidth reports whether any item in this layout has
+// width-dependent height. Together with HeightForWidth this lets
+// containers (Panel) propagate core.HeightForWidther upward.
+func (l *BoxLayout) HasHeightForWidth() bool {
+	for _, item := range l.items {
+		if hfw, ok := item.Widget.(core.HeightForWidther); ok && hfw.HasHeightForWidth() {
+			return true
+		}
+	}
+	return false
+}
+
+// HeightForWidth returns the height this layout requires at the given
+// container width.
+func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
+	if len(l.items) == 0 {
+		return 0
+	}
+
+	metrics := core.DefaultCellMetrics()
+	contentWidth := width - l.margins.Horizontal()
+	if contentWidth < 0 {
+		contentWidth = 0
+	}
+
+	var height core.Unit
+	if l.orientation == core.Vertical {
+		spacing := core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.CellHeight
+		for i, item := range l.items {
+			height += itemHeightForWidth(item.Widget, l.verticalItemWidth(contentWidth, item, metrics))
+			if i < len(l.items)-1 {
+				height += spacing
+			}
+		}
+	} else {
+		spacing := core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.CellWidth
+		widths := l.horizontalItemWidths(contentWidth, metrics, spacing, l.inlineSpacingForItems(metrics))
+		for i, item := range l.items {
+			if h := itemHeightForWidth(item.Widget, widths[i]); h > height {
+				height = h
+			}
+		}
+	}
+
+	return height + l.margins.Vertical()
 }
 
 // SizeHint returns the preferred size for the container.

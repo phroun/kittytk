@@ -228,6 +228,22 @@ type InlineWidget interface {
 	IsInlineWidget() bool
 }
 
+// HeightForWidther is an optional interface for widgets whose required
+// height depends on the width they are allocated (e.g. word-wrapped
+// text). Layouts consult it during layout, when actual widths are
+// known; SizeHint remains the width-independent preference. Containers
+// whose content includes such widgets should propagate it upward.
+// (A WidthForHeight transpose may be added if vertical flow is ever
+// needed; nothing requires it today.)
+type HeightForWidther interface {
+	// HasHeightForWidth returns true when the widget's height currently
+	// depends on its allocated width.
+	HasHeightForWidth() bool
+
+	// HeightForWidth returns the height required at the given width.
+	HeightForWidth(width Unit) Unit
+}
+
 // PopupRequest contains information about a popup to be shown.
 type PopupRequest struct {
 	// Unique identifier for the popup
