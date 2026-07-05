@@ -511,10 +511,26 @@ milestone for whole windows.
 
 ### O6 — Display-protocol sub-decisions (under D2)
 
-- **Wire format:** custom binary framing vs protobuf/flatbuffers vs gob.
-  Requirements: compact property/event messages, cheap cell-diff
-  encoding for surface widgets, pipelined (no round-trips in hot
-  paths), capability/version negotiation at connect.
+- **Wire format — direction set by D10 (2026-07-05):** self-describing
+  **named-property records** (nothing positional), text-oriented, with
+  **sender-declared alias dictionaries** for wire efficiency. Sketch
+  (syntax illustrative, not final):
+
+  ```
+  new button caption="Caption Here" action="action_id_here"
+  alias c="caption" a="action"
+  new button c/Caption Here/ a/other_action/ some_float_prop=4.2
+  ```
+
+  Design notes recorded with it: alias tables are
+  **connection-scoped, not session-scoped** (encoding state resets on
+  reattach; session replay stays purely semantic, per D4), and
+  **independent per direction** (each sender declares its own
+  outbound aliases). Named properties + additive-only evolution +
+  capability advertisement is the versioning story. Likely needs a
+  length-prefixed bulk/binary escape within the text framing for
+  cell-diff streams (PurfecTerm) — TBD. Remaining open: exact syntax,
+  framing, quoting/escaping, the bulk escape, negotiation handshake.
 - **Protocol versioning discipline:** how widget properties/events are
   declared and evolved (additive-only? feature flags per widget?), so
   server and app binaries of different vintages interoperate.
@@ -588,6 +604,7 @@ milestone for whole windows.
 | D7 | 2026-07-05 | A Canvas widget (HTML5-canvas-like: PurfecTerm pattern, but for images/drawing) is the pixel escape hatch. Committed to exist; development deferred to a future widget. Likely command-based + pixel-buffer modes, command-based first. |
 | D8 | 2026-07-05 | Grid-metrics model: CellMetrics is a per-container layout vocabulary (app chooses units per virtual row/column for placement density), inherited through the container chain like fonts, overridable per window in all modes including TUI, rooted at the display service's default derived from its system default font size. Text measurement is a separate, per-render-target question. G1 implements this model; call-site audit in `g1-metrics-audit.md`. |
 | D9 | 2026-07-05 | Height-for-width: `core.HeightForWidther` optional interface, consulted by layouts at layout time, propagated by containers, absorbed by ScrollArea/Splitter/Window. Text-flow tiers: Label wraps; Checkbox/RadioButton wrap opt-in with the indicator as top-line-anchored chrome and lines hanging under the text; buttons/tabs/list rows/menu items stay single-line; DockRow deliberately not migrated (considered separately); MessageBox a future adopter. Implemented same day (slices 1+2). |
+| D10 | 2026-07-05 | Wire discipline: **nothing positional — every value travels under a property name**, with sender-declared, connection-scoped alias dictionaries for efficiency (HPACK-style, but explicit). Text-oriented spirit; exact syntax deliberately open. Consequence: property/event names formalized during the D2 API-shape phase ARE wire vocabulary — maintained deliberately from slice 3 onward. |
 | D8′ | 2026-07-05 | **D8 clarified:** CellMetrics is a coordinate *denomination* (units per row/column, like DPI), not a spacing knob. Row/column-denominated sizes are visually invariant under re-denomination; only explicit numeric unit values reinterpret. Implies denomination scaling at container boundaries (paint + input; `Transform.ScaleX/Y` was built for this) and container-denominated text metrics (font.go's 8/16 are DefaultCellMetrics in disguise). Demo's grid toggle is the acceptance test: must become a visual no-op for row-denominated content. |
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
 | D4 | 2026-07-05 | X-direction rendezvous: the display service listens on a well-known endpoint, apps dial in. Sessions are first-class protocol objects separable from connections (enables reattach/multi-viewer without inverting topology). Reverse attachment is a possible later mode. Naming: "display service" and "apps". |

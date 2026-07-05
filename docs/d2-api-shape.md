@@ -25,9 +25,15 @@ sessions separable from connections.
    as replica-safe (served from app-side cached state) or
    server-authoritative; restructure the exceptions.
 
-The protocol's wire shape is deliberately NOT decided here (the
-project owner has ideas to bring to that discussion — record them as
-O6 inputs when the transport phase opens).
+The protocol's wire shape is deliberately NOT decided here, with one
+principle now fixed (D10, 2026-07-05): **nothing positional — every
+value travels under a property name**, with sender-declared,
+connection-scoped alias dictionaries for wire efficiency. Consequence
+for this phase: the property and event names formalized in slices 3–4
+are wire vocabulary — choose them deliberately and keep a vocabulary
+list. (Also validated by the D10 sketch: buttons bind to command IDs
+via an `action` property — slice 1's registry extends to buttons in
+slice 3.)
 
 ## Slice 1 — Menu command identity & dispatch  *(done 2026-07-05)*
 
