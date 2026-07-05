@@ -402,23 +402,22 @@ func createBasicWidgetsDemo(desktop *widgets.Desktop) core.Widget {
 func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window, desktop *widgets.Desktop) core.Widget {
 	// Word-wrap test row: two wrapped labels side by side. Wrapping breaks
 	// lines by rune count, so toggling Tuesday (double-width letters) below
-	// makes lines break too late and clip at the label edge.
+	// makes lines break too late and clip at the label edge. The embedded
+	// newlines give the labels a multi-row SizeHint (a wrapped label cannot
+	// predict its own wrapped height yet).
 	wrapPanel := widgets.NewPanel()
 	wrapLayout := layout.NewBoxLayout(core.Horizontal)
 	wrapLayout.SetSpacing(8)
 
-	wrapLeft := widgets.NewLabel("The quick brown fox jumps over the lazy dog while wrapping onto several lines")
+	wrapLeft := widgets.NewLabel("The quick brown fox jumps over the lazy dog while wrapping\nonto several lines to demonstrate proportional measurement\nbehavior in both fonts")
 	wrapLeft.SetWordWrap(true)
-	wrapLeft.SetMinimumSize(core.UnitSize{Width: 8 * 12, Height: 16 * 3})
 	wrapPanel.AddChild(wrapLeft)
 
-	wrapRight := widgets.NewLabel("Pack my box with five dozen liquor jugs and watch letters double in Tuesday")
+	wrapRight := widgets.NewLabel("Pack my box with five dozen liquor jugs and watch letters\ndouble their width when the Tuesday font checkbox below\nis toggled on")
 	wrapRight.SetWordWrap(true)
-	wrapRight.SetMinimumSize(core.UnitSize{Width: 8 * 12, Height: 16 * 3})
 	wrapPanel.AddChild(wrapRight)
 
 	wrapPanel.SetLayoutManager(wrapLayout)
-	wrapPanel.SetMinimumSize(core.UnitSize{Width: 8 * 24, Height: 16 * 3})
 
 	// Use a vertical splitter to divide checkboxes from radio buttons
 	splitter := widgets.NewVSplitter()
@@ -553,6 +552,11 @@ func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window
 
 	radioPanel.SetLayoutManager(radioLayout)
 	splitter.SetSecond(radioPanel)
+
+	// The splitter's SizeHint is its current bounds (zero before first
+	// layout), so it must be marked expanding to claim the space below
+	// the wrap row.
+	splitter.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizeExpanding))
 
 	outer := widgets.NewPanel()
 	outerLayout := layout.NewBoxLayout(core.Vertical)
