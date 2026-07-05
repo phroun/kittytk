@@ -409,12 +409,14 @@ func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window
 	wrapLayout := layout.NewBoxLayout(core.Horizontal)
 	wrapLayout.SetSpacing(8)
 
-	wrapLeft := widgets.NewLabel("The quick brown fox jumps over the lazy dog while wrapping\nonto several lines to demonstrate proportional measurement\nbehavior in both fonts")
+	wrapLeft := widgets.NewLabel("The quick brown fox jumps over\nthe lazy dog while measuring\nwidths in the selected font")
 	wrapLeft.SetWordWrap(true)
+	wrapLeft.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizePreferred))
 	wrapPanel.AddChild(wrapLeft)
 
-	wrapRight := widgets.NewLabel("Pack my box with five dozen liquor jugs and watch letters\ndouble their width when the Tuesday font checkbox below\nis toggled on")
+	wrapRight := widgets.NewLabel("Pack my box with five dozen\nliquor jugs then toggle the\nTuesday font checkbox below")
 	wrapRight.SetWordWrap(true)
+	wrapRight.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizePreferred))
 	wrapPanel.AddChild(wrapRight)
 
 	wrapPanel.SetLayoutManager(wrapLayout)
@@ -564,6 +566,13 @@ func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window
 	outer.AddChild(wrapPanel)
 	outer.AddChild(splitter)
 	outer.SetLayoutManager(outerLayout)
+
+	// Layout items default to AlignLeft, which in a vertical box forces
+	// each item's width to its SizeHint width. The splitter's hint is its
+	// current bounds (zero before first layout), so without AlignFill it
+	// collapses to zero width even after receiving stretch height.
+	outerLayout.ItemAt(0).WithAlign(core.AlignFill)
+	outerLayout.ItemAt(1).WithAlign(core.AlignFill)
 
 	return outer
 }
