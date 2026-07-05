@@ -219,14 +219,32 @@ target; Gio is the nicer pure-Go distribution story.
 
 Each substrate sits behind its own build tag (interacts with O3).
 
-### D6 — The text engine is Pango-class, with the interface at shaped-paragraph altitude  *(decided 2026-07-05)*
+### D6 — Pango-class text is an available capability, at shaped-paragraph altitude  *(decided 2026-07-05, scope clarified same day)*
 
-The shared text engine (D5) must support the full modern text model —
-full Unicode, OpenType shaping (ligatures via GSUB, combining-mark
-positioning via GPOS — e.g. Hebrew niqqud), bidirectional text (UAX #9,
-e.g. mixed Hebrew/Latin), font fallback, and standard line/grapheme
-segmentation (UAX #14/#29). We are building the architectural role
-Pango plays; a crippled string-width text model is explicitly rejected.
+The shared text engine (D5) must make the full modern text model
+**available to any widget that needs it** — full Unicode, OpenType
+shaping (ligatures via GSUB, combining-mark positioning via GPOS — e.g.
+Hebrew niqqud), bidirectional text (UAX #9, e.g. mixed Hebrew/Latin),
+font fallback, and standard line/grapheme segmentation (UAX #14/#29).
+We are building the architectural role Pango plays; a text model that
+*cannot* express this is explicitly rejected.
+
+**Scope clarification — capability, not mandate:**
+
+- Not all UI text must go through the full pipeline. The engine exposes
+  tiers behind one roof: a **fast simple path** (single-font,
+  single-direction glyph runs — button labels, menu items, titles) and
+  the **full shaped-paragraph path**, chosen per widget need. Same
+  engine, same fonts, same metrics source, so D5's substrate-
+  independence and D2's layout determinism hold on both tiers.
+- **Terminal-style regions are a carve-out: PurfecTerm keeps its own
+  text handling.** PurfecTerm's graphical text rendering is already
+  sophisticated, customized, and proven in its GTK/Qt frontends, and it
+  is retained for all terminal-style regions tuitk incorporates. The
+  shared engine has no jurisdiction inside those regions; the boundary
+  is the widget border. A terminal region's external layout contract
+  (columns × cell size) is trivially deterministic, satisfying D2/D5
+  without touching the shared engine.
 
 **The protective decision is the interface altitude.** The engine's
 contract is the shaped paragraph, not the measured string:
@@ -483,4 +501,4 @@ milestone for whole windows.
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
 | D4 | 2026-07-05 | X-direction rendezvous: the display service listens on a well-known endpoint, apps dial in. Sessions are first-class protocol objects separable from connections (enables reattach/multi-viewer without inverting topology). Reverse attachment is a possible later mode. Naming: "display service" and "apps". |
 | D5 | 2026-07-05 | Two graphical substrates, Gio and SDL, behind one neutral Platform interface (PurfecTerm-style discipline). Mandatory condition: one shared tuitk-owned text engine (shaping/measurement/rasterization) outside the substrates, so layout is substrate-independent; it doubles as the server-side TextMeasurer. Substrates land serially; second lands before the interface is declared stable. |
-| D6 | 2026-07-05 | The text engine is Pango-class: full Unicode, OpenType shaping (ligatures, mark positioning/niqqud), bidi, font fallback, UAX segmentation. Interface fixed at shaped-paragraph altitude (attributed text in → shaped glyph runs + cluster maps out); go-text/typesetting as reference implementation, cgo HarfBuzz/Pango swappable behind the same interface. TUI mode's terminal-limited text fidelity is an accepted asymmetry. |
+| D6 | 2026-07-05 | Pango-class text (full Unicode, OpenType shaping incl. ligatures and niqqud mark positioning, bidi, fallback, UAX segmentation) is an **available capability**, not a universal mandate: the engine offers a fast simple-run tier and a full shaped-paragraph tier, chosen per widget need. Interface at shaped-paragraph altitude (attributed text in → shaped runs + cluster maps out); go-text/typesetting reference, cgo HarfBuzz/Pango swappable. Terminal-style regions are a carve-out: PurfecTerm keeps its own proven graphical text handling. TUI-mode fidelity limits remain an accepted asymmetry. |
