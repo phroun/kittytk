@@ -20,6 +20,21 @@ type Factory interface {
 	New(typeName string) (Object, error)
 }
 
+// EventControl is an optional Factory capability: the session's
+// sub/unsub verbs configure event flow through it, and Suppressed
+// wraps wire-initiated property application so mutations never echo
+// back as events (D20). RegistryFactory implements it.
+type EventControl interface {
+	Subscribe(widgetID uint64, eventType string)
+	Unsubscribe(widgetID uint64, eventType string)
+	Suppressed(f func())
+}
+
+// destroyer is an optional Object capability backing the destroy verb.
+type destroyer interface {
+	Destroy() error
+}
+
 // Reply reports server-assigned IDs for a request: top-level
 // correlation keys plus explicitly surfaced names (D11/D15).
 type Reply struct {
@@ -27,11 +42,17 @@ type Reply struct {
 }
 
 // Session holds connection-scoped interpretation state: alias and
-// template dictionaries (D10/D14). Correlation keys are request-scoped
-// and live only for the duration of one Execute call (D11).
+// template dictionaries (D10/D14), plus — since D19's verbs — the
+// persistent key table and object table. Keys registered by one
+// Execute remain addressable by later ones (`set root.status ...` in
+// a follow-up batch); each Reply still reports only the keys and
+// surfacings of its own request. Re-registering a key shadows the
+// old binding.
 type Session struct {
 	aliases   map[string]string
 	templates map[string]*templateDef
+	keys      map[string]uint64
+	objects   map[uint64]Object
 }
 
 type templateDef struct {
@@ -44,6 +65,8 @@ func NewSession() *Session {
 	return &Session{
 		aliases:   make(map[string]string),
 		templates: make(map[string]*templateDef),
+		keys:      make(map[string]uint64),
+		objects:   make(map[uint64]Object),
 	}
 }
 
@@ -55,19 +78,17 @@ func isLowerInitial(name string) bool {
 	return name != "" && (name[0] >= 'a' && name[0] <= 'z' || name[0] == '_')
 }
 
-// execState is the per-request state: the key table (hierarchical
-// paths -> ids) and the reply under construction.
+// execState is the per-request state: the reply under construction.
+// (The key table became session-persistent with D19.)
 type execState struct {
-	keys  map[string]uint64
 	reply *Reply
 }
 
 // Execute runs a parsed script against the factory, applying and
-// updating session state (aliases, templates) and returning the
-// request's reply (top-level keys + surfaced names).
+// updating session state (aliases, templates, keys, objects) and
+// returning the request's reply (top-level keys + surfaced names).
 func (s *Session) Execute(script *Script, f Factory) (*Reply, error) {
 	st := &execState{
-		keys:  make(map[string]uint64),
 		reply: &Reply{IDs: make(map[string]uint64)},
 	}
 
@@ -80,13 +101,16 @@ func (s *Session) Execute(script *Script, f Factory) (*Reply, error) {
 }
 
 func (s *Session) executeTopLevel(stmt *Statement, f Factory, st *execState) error {
-	// Surfacing reference: key=path (D15)
+	// Surfacing reference: key=path (D15). Also registers the surfaced
+	// name as a session key, so later verbs can use the short name
+	// (`wcb=root.cb` then `sub wcb toggle`).
 	if stmt.Verb == "" {
-		id, ok := st.keys[stmt.Ref]
+		id, ok := s.keys[stmt.Ref]
 		if !ok {
 			return fmt.Errorf("surfacing %s=%s: unknown key path %q", stmt.Key, stmt.Ref, stmt.Ref)
 		}
 		st.reply.IDs[stmt.Key] = id
+		s.keys[stmt.Key] = id
 		return nil
 	}
 
@@ -102,18 +126,153 @@ func (s *Session) executeTopLevel(stmt *Statement, f Factory, st *execState) err
 		}
 		return s.declareTemplate(stmt.Args)
 	case "new":
-		obj, err := s.instantiate(stmt.Args, f, st, stmt.Key)
+		var obj Object
+		err := s.suppressed(f, func() error {
+			var e error
+			obj, e = s.instantiate(stmt.Args, f, st, stmt.Key)
+			return e
+		})
 		if err != nil {
 			return err
 		}
 		if stmt.Key != "" {
-			st.keys[stmt.Key] = obj.ID()
+			s.keys[stmt.Key] = obj.ID()
 			st.reply.IDs[stmt.Key] = obj.ID()
 		}
 		return nil
+	case "set":
+		obj, keyPath, rest, err := s.resolveTarget("set", stmt.Args)
+		if err != nil {
+			return err
+		}
+		return s.suppressed(f, func() error {
+			return s.applyArgs(obj, rest, f, st, keyPath)
+		})
+	case "destroy":
+		obj, _, rest, err := s.resolveTarget("destroy", stmt.Args)
+		if err != nil {
+			return err
+		}
+		if len(rest) != 0 {
+			return fmt.Errorf("destroy: takes only a target")
+		}
+		d, ok := obj.(destroyer)
+		if !ok {
+			return fmt.Errorf("destroy: object does not support destroy")
+		}
+		if err := d.Destroy(); err != nil {
+			return err
+		}
+		s.forget(obj.ID())
+		return nil
+	case "sub", "unsub":
+		return s.subscribe(stmt.Verb, stmt.Args, f)
 	default:
 		return fmt.Errorf("unknown verb %q", stmt.Verb)
 	}
+}
+
+// suppressed runs fn with the connection's event emission suppressed
+// when the factory supports it (D20: wire-initiated mutations never
+// echo). Factories without EventControl run fn directly.
+func (s *Session) suppressed(f Factory, fn func() error) error {
+	ec, ok := f.(EventControl)
+	if !ok {
+		return fn()
+	}
+	var err error
+	ec.Suppressed(func() { err = fn() })
+	return err
+}
+
+// resolveTarget interprets a verb's leading argument as an object
+// reference (D19): a key path (`set root.status ...`) or a bare
+// numeric ID (`set 1042 ...`). Returns the object, the key path when
+// referenced by key ("" for numeric), and the remaining args.
+func (s *Session) resolveTarget(verb string, args []*Arg) (Object, string, []*Arg, error) {
+	if len(args) == 0 {
+		return nil, "", nil, fmt.Errorf("%s: expected a target (key path or object id)", verb)
+	}
+	head := args[0]
+
+	var id uint64
+	keyPath := ""
+	switch {
+	case head.Name == "" && head.Value != nil && head.Value.Kind == NumberValue && head.Value.IsInt:
+		id = uint64(head.Value.Number)
+	case head.Name != "" && head.Value == nil && head.Flag == FlagTrue:
+		known, ok := s.keys[head.Name]
+		if !ok {
+			return nil, "", nil, fmt.Errorf("%s: unknown key path %q", verb, head.Name)
+		}
+		id = known
+		keyPath = head.Name
+	default:
+		return nil, "", nil, fmt.Errorf("%s: target must be a key path or object id", verb)
+	}
+
+	obj, ok := s.objects[id]
+	if !ok {
+		return nil, "", nil, fmt.Errorf("%s: no object with id %d in this session", verb, id)
+	}
+	return obj, keyPath, args[1:], nil
+}
+
+// forget drops an object and every key that referenced it.
+func (s *Session) forget(id uint64) {
+	delete(s.objects, id)
+	for k, v := range s.keys {
+		if v == id {
+			delete(s.keys, k)
+		}
+	}
+}
+
+// subscribe handles sub/unsub (D20): `sub <target>|all [events...]`.
+// Event names are bare flags; none means all events of the target.
+// `command` events flow unconditionally and need no subscription.
+func (s *Session) subscribe(verb string, args []*Arg, f Factory) error {
+	ec, ok := f.(EventControl)
+	if !ok {
+		return fmt.Errorf("%s: this connection does not support event subscriptions", verb)
+	}
+	if len(args) == 0 {
+		return fmt.Errorf("%s: expected a target (key path, object id, or all)", verb)
+	}
+
+	var id uint64 // 0 = all widgets
+	head := args[0]
+	switch {
+	case head.Name == "all" && head.Value == nil && head.Flag == FlagTrue:
+		id = 0
+	default:
+		obj, _, _, err := s.resolveTarget(verb, args[:1])
+		if err != nil {
+			return err
+		}
+		id = obj.ID()
+	}
+
+	events := args[1:]
+	if len(events) == 0 {
+		if verb == "sub" {
+			ec.Subscribe(id, "")
+		} else {
+			ec.Unsubscribe(id, "")
+		}
+		return nil
+	}
+	for _, ev := range events {
+		if ev.Value != nil || ev.Flag != FlagTrue || ev.Name == "" {
+			return fmt.Errorf("%s: event names are bare words", verb)
+		}
+		if verb == "sub" {
+			ec.Subscribe(id, ev.Name)
+		} else {
+			ec.Unsubscribe(id, ev.Name)
+		}
+	}
+	return nil
 }
 
 // declareAliases handles `alias C="caption" ...`: targets are strings
@@ -211,6 +370,7 @@ func (s *Session) instantiate(args []*Arg, f Factory, st *execState, keyPath str
 	if err != nil {
 		return nil, err
 	}
+	s.objects[obj.ID()] = obj
 
 	// Template properties first, instance properties after: later Set
 	// calls override earlier ones (scalars), and children concatenate
@@ -228,6 +388,10 @@ func (s *Session) instantiate(args []*Arg, f Factory, st *execState, keyPath str
 func (s *Session) applyArgs(obj Object, args []*Arg, f Factory, st *execState, keyPath string) error {
 	for _, a := range args {
 		name := a.Name
+		if name == "" {
+			// Anonymous numbers exist only for verb targets (D19).
+			return fmt.Errorf("unnamed value: properties must be named (name=value)")
+		}
 		// Alias substitution (lexical, property-name position, D10/D18):
 		// uppercase-initial names must be declared aliases.
 		if isUpperInitial(name) {
@@ -284,7 +448,7 @@ func (s *Session) buildChildren(parent Object, block *Script, f Factory, st *exe
 			return err
 		}
 		if childPath != "" {
-			st.keys[childPath] = child.ID()
+			s.keys[childPath] = child.ID()
 		}
 		if err := parent.Append(child); err != nil {
 			return err
@@ -308,4 +472,3 @@ func (s *Session) HasTemplate(name string) bool {
 	_, ok := s.templates[name]
 	return ok
 }
-

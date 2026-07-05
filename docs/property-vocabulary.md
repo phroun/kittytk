@@ -60,7 +60,25 @@ is frozen; naming questions are collected at the end.
   identifier.
 - Key nomenclature is D3 throughout, carried as strings:
   `shortcut="^N"`, `key="M-Tab"`.
-- Color literal form is TBD (identifier names vs `"#rrggbb"` strings).
+- **Colors (answered 2026-07-05):** named colors are bare enum words
+  (`fg=red`, `bg=bright_blue`; the 16 ANSI names with `bright_`
+  prefixes, plus `default`); RGB is a quoted string `bg="#3366ff"`
+  (bare `#` starts a comment, and quoting-is-for-text loses nothing
+  here since an RGB literal is data, not a reference). Implemented as
+  common `fg=`/`bg=` properties over the widget style override.
+- **Verbs (D19, answered 2026-07-05):** `new`, `set`, `destroy`,
+  `sub`, `unsub` (+ declarations `alias`, `template`). Targets are
+  key paths or bare numeric ObjectIDs — `set root.status
+  caption="…"`, `destroy 1042`, `sub wcb toggle change`, `unsub all`.
+  Keys are session-persistent (D11 refined); surfacing also registers
+  the surfaced name as a key. `set` accepts everything `new` accepts
+  including `children={}` (appends).
+- **Event flow (D20, answered 2026-07-05):** default-closed except
+  `command`. `sub <target>|all [events…]` opens flows (no events
+  listed = all from that target); `unsub` closes them; `command`
+  events and registry dispatch are unconditional. Wire-initiated
+  mutations (`new`, `set`) never echo — no state events, no action
+  firing.
 - **Structure encoding (D13):** subtrees build with inline children
   blocks — `new panel children={new button; new button}` — and the
   same construct encodes every list-like structure: combo `items`,
@@ -154,18 +172,25 @@ is frozen; naming questions are collected at the end.
 ### combobox
 | Property | Type | Notes |
 |---|---|---|
-| `items` | {} | Children block of items (D13) |
+| children of `item` | {} | Children block of shared `item`s (D13); items cannot nest here |
 | `selected` | numeric | Selected index (−1 = none) |
 | `editable` | flag | |
 | `placeholder` | string | |
 | `max_visible` | numeric | Dropdown row cap |
 
-### listview / treeview
+### listview / treeview *(registered 2026-07-05)*
 | Property | Type | Notes |
 |---|---|---|
-| `items` / `nodes` | {} | Children block (D13); tree nodes carry `caption`, `expanded`, children |
-| `selected` | numeric | Selection |
+| children of `item` | {} | Children block (D13); the shared virtual `item` carries `caption` + `expanded` and nests for trees — one type serves combobox rows, list rows, and tree nodes |
+| `selected` | numeric | Selection (visible-row index for trees) |
+| `alternate_rows` | flag | listview |
+| `indent_width` | numeric | treeview |
 | `multi_select` | flag | (future) |
+
+Events: `change selected=` on selection move, `activate selected=` on
+Enter/double-activation. v1 limitation: tree items are not
+addressable wire objects yet, so tree events also carry `text=` (the
+item caption); item-level identity joins a later slice.
 
 ### progress
 | Property | Type | Notes |
@@ -173,12 +198,15 @@ is frozen; naming questions are collected at the end.
 | `value`, `minimum`, `maximum` | numeric | |
 | `caption` | string | Optional overlay text |
 
-### tabwidget
+### tabs *(registered 2026-07-05; type name `tabs`)*
 | Property | Type | Notes |
 |---|---|---|
-| `tabs` | {} | Each tab: `caption`, content `id` |
-| `selected` | numeric | Active tab |
-| `tab_position` | enum | `top`, `bottom`, `left`, `right` |
+| children of `tab` | {} | Virtual `tab`: `caption` + exactly one content child widget |
+| `selected` | numeric | Active tab (after the tabs exist) |
+| `position` | enum | `top`, `bottom`, `left`, `right` |
+| `movable`, `closable` | flag | |
+
+Events: `change selected=`.
 
 ### splitter
 | Property | Type | Notes |
@@ -187,12 +215,13 @@ is frozen; naming questions are collected at the end.
 | `position` | numeric | 0.0–1.0 ratio (denomination-free by design) |
 | `caption` | string | Optional divider title |
 
-### scrollarea
+### scrollarea *(registered 2026-07-05)*
 | Property | Type | Notes |
 |---|---|---|
-| `scroll_x`, `scroll_y` | numeric | Scroll offsets (cells of own denomination) |
-| `h_bar`, `v_bar` | enum | `auto`, `always`, `never` |
-| `content` | identifier | Scrolled child |
+| children | {} | Exactly one content widget (wrap several in a panel) |
+| `scroll_x`, `scroll_y` | numeric | Scroll offsets |
+| `resizable` | flag | Content tracks viewport width |
+| `h_bar`, `v_bar` | enum | `auto`, `always`, `never` (future) |
 
 ### panel
 | Property | Type | Notes |
@@ -221,16 +250,22 @@ when the widget is built.
 
 ## Window properties
 
+*(registered 2026-07-05 — `window` type in the window package)*
+
 | Property | Type | Notes |
 |---|---|---|
 | `title` | string | |
 | `x`, `y`, `width`, `height` | numeric (units) | Desktop denomination |
-| `state` | enum | `normal`, `minimized`, `maximized` |
-| `frameless`, `no_title`, `no_resize`, `modal`, `passive` | flag | Individual flags per D12 — no bitsets on the wire (`new window frameless modal`) |
-| `content` | identifier | Content widget |
-| `min_width`, `min_height` | numeric (units) | |
+| `state` | enum | `normal`, `minimized`, `maximized` (future) |
+| `frameless`, `no_title`, `no_resize`, `no_move`, `no_close`, `no_minimize`, `no_maximize`, `modal`, `stays_on_top`, `tool` | flag | Individual flags per D12 — no bitsets on the wire (`new window frameless modal`) |
+| children | {} | Exactly one content widget (wrap several in a panel) |
+| `min_width`, `min_height` | numeric (units) | Via common properties |
 | `font`, `column_units`, `row_units` | | Per-window overrides (D8) |
-| `native` | flag | G4 dual-mode: request an OS window when available |
+| `native` | flag | G4 dual-mode: request an OS window when available (future) |
+
+Events: `window_closed window=<id>` (after close completes); moved/
+resized/state events land when the window grows those callbacks.
+`destroy` on a window closes it.
 
 ## Menu structures
 
@@ -274,9 +309,13 @@ source where applicable. Apps subscribe per widget/event (slice 3).
    (combobox, tabs, lists, trees) — standardized throughout this doc.
    (The Go API's `CurrentIndex` naming may be aligned later; the wire
    name is settled.)
-3. Should layout-item properties (`stretch`, `align`) live on the
-   child (as here) or as arguments of an attach/add operation?
-   *(left open by owner for now)*
+3. ✅ **Answered (2026-07-05):** layout-item properties (`stretch`,
+   `align`) live **on the child** — `new spacer stretch=1`,
+   `new button caption="OK" align=right`. The hints travel with the
+   widget (`WidgetBase.SetLayoutStretch`/`SetLayoutAlignment`) and
+   the parent's layout manager consults them at attach time; also
+   fixed generally: a widget whose cross-axis policy is Expanding
+   fills its allocation regardless of default alignment.
 4. ✅ **Answered:** `column_units` / `row_units` — the names state the
    denomination relationship directly (`row_units=32` reads "a row is
    represented by 32 units", matching D8′'s language).

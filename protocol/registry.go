@@ -28,15 +28,122 @@ type BindContext struct {
 	// EmitEvent, which is nil-safe.
 	Emit func(*Event)
 
-	mu      sync.Mutex
-	actions map[uint64]string
+	mu       sync.Mutex
+	actions  map[uint64]string
+	subs     map[uint64]map[string]bool // widgetID -> event types ("" = all; ID 0 = all widgets)
+	suppress int
+	stash    map[string]any
 }
 
-// EmitEvent delivers an event if the connection consumes events.
-func (c *BindContext) EmitEvent(ev *Event) {
-	if c.Emit != nil {
-		c.Emit(ev)
+// Stash returns the connection-scoped value under key, creating it
+// with create on first use. Widget registrations use this for shared
+// per-connection state (e.g. named radio groups) without the protocol
+// package knowing the types involved.
+func (c *BindContext) Stash(key string, create func() any) any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stash == nil {
+		c.stash = make(map[string]any)
 	}
+	v, ok := c.stash[key]
+	if !ok {
+		v = create()
+		c.stash[key] = v
+	}
+	return v
+}
+
+// EmitEvent delivers an event if the connection consumes events AND
+// the event passes the subscription filter (D20): `command` events
+// always flow; state events flow only where a subscription exists.
+// Nothing flows while emissions are suppressed (wire-initiated
+// mutations never echo).
+func (c *BindContext) EmitEvent(ev *Event) {
+	if c.Emit == nil || ev == nil {
+		return
+	}
+	c.mu.Lock()
+	suppressed := c.suppress > 0
+	pass := ev.Type == "command" || c.subscribedLocked(ev)
+	c.mu.Unlock()
+	if suppressed || !pass {
+		return
+	}
+	c.Emit(ev)
+}
+
+// subscribedLocked checks the subscription table. Caller holds c.mu.
+func (c *BindContext) subscribedLocked(ev *Event) bool {
+	if c.subs == nil {
+		return false
+	}
+	id, _ := ev.Widget() // 0 when the event names no widget
+	for _, wid := range [2]uint64{id, 0} {
+		if types, ok := c.subs[wid]; ok {
+			if types[""] || types[ev.Type] {
+				return true
+			}
+		}
+		if id == 0 {
+			break
+		}
+	}
+	return false
+}
+
+// Subscribe opens event flow for (widgetID, eventType). widgetID 0
+// means all widgets; eventType "" means all types.
+func (c *BindContext) Subscribe(widgetID uint64, eventType string) {
+	c.mu.Lock()
+	if c.subs == nil {
+		c.subs = make(map[uint64]map[string]bool)
+	}
+	if c.subs[widgetID] == nil {
+		c.subs[widgetID] = make(map[string]bool)
+	}
+	c.subs[widgetID][eventType] = true
+	c.mu.Unlock()
+}
+
+// Unsubscribe removes subscriptions. eventType "" removes all of the
+// widget's subscriptions; widgetID 0 with eventType "" clears the
+// whole table.
+func (c *BindContext) Unsubscribe(widgetID uint64, eventType string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.subs == nil {
+		return
+	}
+	if widgetID == 0 && eventType == "" {
+		c.subs = nil
+		return
+	}
+	if eventType == "" {
+		delete(c.subs, widgetID)
+		return
+	}
+	if types, ok := c.subs[widgetID]; ok {
+		delete(types, eventType)
+		if len(types) == 0 {
+			delete(c.subs, widgetID)
+		}
+	}
+}
+
+// Suppressed runs f with all emission AND action dispatch disabled.
+// The session wraps wire-initiated property application (new, set) in
+// this: mutations arriving over the wire neither echo back as events
+// nor fire the app's command handlers (D20).
+func (c *BindContext) Suppressed(f func()) {
+	c.mu.Lock()
+	c.suppress++
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.suppress--
+		c.mu.Unlock()
+	}()
+	f()
 }
 
 // SetAction records the command bound to a widget (action=). The
@@ -60,8 +167,16 @@ func (c *BindContext) Action(widgetID uint64) string {
 
 // FireAction dispatches a widget's bound command (if any) and emits
 // the corresponding command event. Called from widget activation
-// wiring.
+// wiring. Inert while emissions are suppressed: a wire-initiated
+// state change (set checked, construction defaults) must not fire
+// app command handlers (D20).
 func (c *BindContext) FireAction(widgetID uint64) {
+	c.mu.Lock()
+	suppressed := c.suppress > 0
+	c.mu.Unlock()
+	if suppressed {
+		return
+	}
 	id := c.Action(widgetID)
 	if id == "" {
 		return
@@ -97,6 +212,11 @@ type TypeSpec struct {
 	// ID returns the target's stable object identity. Nil for Virtual
 	// types, which get factory-assigned virtual IDs.
 	ID func(target any) uint64
+
+	// Destroy tears the target down (D19's destroy verb): detach from
+	// its parent, release resources. Nil means the type cannot be
+	// destroyed over the wire.
+	Destroy func(target any) error
 
 	// Virtual marks pseudo-object types (e.g. combobox items): they
 	// skip common properties and widget identity.
@@ -249,6 +369,25 @@ func (o *registryObject) ID() uint64 {
 	}
 	return o.spec.ID(o.target)
 }
+
+// Destroy implements the session's optional destroyer interface.
+func (o *registryObject) Destroy() error {
+	if o.spec.Destroy == nil {
+		return fmt.Errorf("this type does not support destroy")
+	}
+	return o.spec.Destroy(o.target)
+}
+
+// EventControl is implemented by RegistryFactory so the session's
+// sub/unsub verbs and echo suppression reach the connection's
+// BindContext without the session knowing about widgets.
+func (f *RegistryFactory) Subscribe(widgetID uint64, eventType string) {
+	f.ctx.Subscribe(widgetID, eventType)
+}
+func (f *RegistryFactory) Unsubscribe(widgetID uint64, eventType string) {
+	f.ctx.Unsubscribe(widgetID, eventType)
+}
+func (f *RegistryFactory) Suppressed(fn func()) { f.ctx.Suppressed(fn) }
 
 // --- D17 typed-conversion helpers for property appliers ---
 

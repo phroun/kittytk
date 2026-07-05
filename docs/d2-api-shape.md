@@ -135,9 +135,43 @@ as real protocol records, no sockets yet. Steps:
 **Milestone P0 complete (2026-07-05):** tuitk and its demo run on the
 D10–D18 protocol basis in-process — UI built from protocol text,
 interactions delivered as protocol event records, commands dispatched
-by stable ID. Next big rocks: the verb inventory (`set`/`destroy`/
-`sub` — owner decision, O6), the Go client-library veneer, and then
-the transport phase.
+by stable ID.
+
+## Post-P0: verbs + vocabulary completion *(done 2026-07-05)*
+
+Owner decisions D19/D20 (see graphical-mode-plan.md) implemented in
+one slice:
+
+- **Verbs**: `set` (mutate by key path or numeric ID; accepts
+  everything `new` does incl. `children={}` appends), `destroy`
+  (detaches via per-type Destroy hooks — a window closes, a widget
+  leaves its parent — and releases keys), `sub`/`unsub`
+  (`sub <target>|all [events…]`). Correlation keys became
+  session-persistent; surfacing registers the surfaced name as a key.
+  Bare numbers are legal ONLY as verb targets (parser emits anonymous
+  args; the session rejects them in property position).
+- **Event flow (D20)**: default-closed except `command` —
+  `BindContext` holds the per-connection subscription table;
+  `EmitEvent` filters; `command` events and registry dispatch always
+  flow. Wire-initiated mutation (`new`, `set`) runs under
+  `BindContext.Suppressed`: no state-event echo, no action firing.
+  `EventControl` is the optional Factory capability carrying
+  sub/unsub/suppression; wrappers must forward it.
+- **Vocabulary registered**: `tabs`+virtual `tab` (position enum,
+  selected, change events), `listview`, `treeview` (both consuming
+  the now-shared virtual `item`, which nests for trees; change/
+  activate events), `scrollarea` (single content), `window` (title,
+  bounds, D12 behavior flags, window_closed event, destroy=close; in
+  the window package per widget-owned registration), radiobutton
+  `group=` (connection-stash groups — no container widget), common
+  `stretch`/`align` (layout hints on the child, consulted by
+  BoxLayout at attach), common `fg`/`bg` colors (named words +
+  quoted "#rrggbb").
+
+Remaining before the full demo conversion: menus as protocol data
+(G6 trees), tree-item wire identity, `state` window property,
+progress/scrollbar polish — none block converting the demo's
+protocol-friendly tabs.
 
 ## Slice 1 — Menu command identity & dispatch  *(done 2026-07-05)*
 

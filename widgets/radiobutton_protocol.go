@@ -6,8 +6,10 @@ import (
 )
 
 // Wire registration for RadioButton (see docs/property-vocabulary.md).
-// `group` membership over the wire arrives with a later slice (radio
-// groups need identity of their own).
+// Group membership is a plain named property: buttons sharing a
+// group= word on the same connection exclude each other. The groups
+// themselves live in the connection's stash - no container widget,
+// no positional coupling.
 func init() {
 	regWidget("radiobutton",
 		func() core.Widget { return NewRadioButton("") },
@@ -15,6 +17,15 @@ func init() {
 			"caption": stringProp("caption", (*RadioButton).SetText),
 			"checked": boolProp("checked", (*RadioButton).SetChecked),
 			"wrap":    boolProp("wrap", (*RadioButton).SetWordWrap),
+			"group": wprop("group", func(ctx *protocol.BindContext, r *RadioButton, v *protocol.Value, f protocol.FlagState) error {
+				word, err := protocol.AsWord("group", v, f)
+				if err != nil {
+					return err
+				}
+				g := ctx.Stash("radiogroup:"+word, func() any { return NewRadioGroup() }).(*RadioGroup)
+				g.AddButton(r)
+				return nil
+			}),
 		},
 		nil,
 		func(ctx *protocol.BindContext, w core.Widget) {

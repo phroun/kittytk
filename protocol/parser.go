@@ -348,6 +348,17 @@ func (p *parser) parseArgs(inBlock bool) ([]*Arg, error) {
 			} else {
 				args = append(args, &Arg{Name: name, Flag: FlagTrue})
 			}
+		case isNumberStart(ch):
+			// A bare number is an anonymous argument. The only legal
+			// use is as a verb's target reference (D19: `set 1042
+			// caption=...`); interpreters reject it anywhere else, so
+			// D10's nothing-positional rule still holds for
+			// properties.
+			val, err := p.parseNumber()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, &Arg{Value: val})
 		default:
 			// D10: nothing positional - bare values are not allowed.
 			return nil, p.errf("unexpected %q: values must be named (name=value)", ch)

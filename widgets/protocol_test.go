@@ -26,6 +26,26 @@ func (f *captureFactory) New(typeName string) (protocol.Object, error) {
 	return o, nil
 }
 
+// Forward EventControl so sub/unsub and echo suppression reach the
+// wrapped RegistryFactory (a wrapper must not hide the capability).
+func (f *captureFactory) Subscribe(id uint64, typ string) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Subscribe(id, typ)
+	}
+}
+func (f *captureFactory) Unsubscribe(id uint64, typ string) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Unsubscribe(id, typ)
+	}
+}
+func (f *captureFactory) Suppressed(fn func()) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Suppressed(fn)
+		return
+	}
+	fn()
+}
+
 func buildUI(t *testing.T, commands *core.CommandRegistry, src string) (*captureFactory, *protocol.Reply) {
 	t.Helper()
 	ctx := &protocol.BindContext{}

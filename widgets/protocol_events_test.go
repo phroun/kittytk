@@ -1,13 +1,15 @@
 package widgets
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
 )
 
-// buildWithEvents builds protocol UI with an event-collecting context.
+// buildWithEvents builds protocol UI with an event-collecting context,
+// subscribed wildcard (D20 default-closed: tests opt into everything).
 func buildWithEvents(t *testing.T, commands *core.CommandRegistry, src string) (*captureFactory, *[]*protocol.Event) {
 	t.Helper()
 	events := &[]*protocol.Event{}
@@ -17,6 +19,7 @@ func buildWithEvents(t *testing.T, commands *core.CommandRegistry, src string) (
 	if commands != nil {
 		ctx.Dispatch = func(id string) { commands.Dispatch(id) }
 	}
+	ctx.Subscribe(0, "")
 	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
 	script, err := protocol.Parse(src)
 	if err != nil {
@@ -94,13 +97,12 @@ func TestTextInputChangeEvents(t *testing.T) {
 	f, events := buildWithEvents(t, nil, `new textinput text="start"`)
 	ti := f.targets[0].(*TextInput)
 
-	// Construction applied text="start" through the wire - that
-	// emission is expected (suppression policy is a later decision).
-	if built := eventsOfType(*events, "change"); len(built) != 1 {
-		t.Fatalf("construction change events = %d, want 1", len(built))
+	// D20: wire-initiated property application never echoes - even
+	// with a wildcard subscription, construction emits nothing.
+	if built := eventsOfType(*events, "change"); len(built) != 0 {
+		t.Fatalf("construction change events = %d, want 0 (D20 no echo)", len(built))
 	}
 
-	*events = nil
 	ti.SetText("edited")
 
 	got := eventsOfType(*events, "change")
@@ -131,14 +133,18 @@ new combobox children={new item caption="A"; new item caption="B"} selected=1
 }
 
 func TestEventsRouteThroughDispatcher(t *testing.T) {
-	// The full loop: protocol-built widget -> event record ->
-	// dispatcher -> app handler keyed by ObjectID.
+	// The full loop: protocol-built widget + sub verb -> event record
+	// -> dispatcher -> app handler keyed by ObjectID. The sub verb is
+	// what opens the flow (D20 default-closed).
 	dispatcher := protocol.NewEventDispatcher()
 	ctx := &protocol.BindContext{
 		Emit: func(ev *protocol.Event) { dispatcher.Dispatch(ev) },
 	}
 	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
-	script, err := protocol.Parse(`new checkbox caption="c"`)
+	script, err := protocol.Parse(`
+cb=new checkbox caption="c"
+sub cb toggle
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,5 +163,119 @@ func TestEventsRouteThroughDispatcher(t *testing.T) {
 	cb.Toggle()
 	if toggled != 1 {
 		t.Errorf("handler toggled = %d, want 1", toggled)
+	}
+}
+
+func TestDefaultClosedExceptCommand(t *testing.T) {
+	// No sub statements at all: state events are filtered, but a
+	// button's action still dispatches and its command event flows.
+	commands := core.NewCommandRegistry()
+	fired := 0
+	commands.Register("go.go", func() { fired++ })
+
+	events := &[]*protocol.Event{}
+	ctx := &protocol.BindContext{
+		Emit:     func(ev *protocol.Event) { *events = append(*events, ev) },
+		Dispatch: func(id string) { commands.Dispatch(id) },
+	}
+	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
+	script, _ := protocol.Parse(`
+cb=new checkbox caption="c"
+btn=new button caption="b" action=go.go
+`)
+	if _, err := protocol.NewSession().Execute(script, f); err != nil {
+		t.Fatal(err)
+	}
+
+	f.targets[0].(*Checkbox).Toggle()
+	f.targets[1].(*Button).Click()
+
+	if fired != 1 {
+		t.Errorf("registry fired = %d, want 1", fired)
+	}
+	if got := eventsOfType(*events, "toggle"); len(got) != 0 {
+		t.Errorf("unsubscribed toggle events = %d, want 0", len(got))
+	}
+	if got := eventsOfType(*events, "command"); len(got) != 1 {
+		t.Errorf("command events = %d, want 1 (command always flows)", len(got))
+	}
+}
+
+func TestSetVerbMutatesWithoutEcho(t *testing.T) {
+	session := protocol.NewSession()
+	events := &[]*protocol.Event{}
+	ctx := &protocol.BindContext{
+		Emit: func(ev *protocol.Event) { *events = append(*events, ev) },
+	}
+	ctx.Subscribe(0, "") // even wildcard-subscribed: set must not echo
+	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
+
+	script, _ := protocol.Parse(`inp=new textinput text="one"`)
+	reply, err := session.Execute(script, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ti := f.targets[0].(*TextInput)
+
+	// Mutate by key in a LATER batch (D19: session-persistent keys).
+	setByKey, _ := protocol.Parse(`set inp text="two"`)
+	if _, err := session.Execute(setByKey, f); err != nil {
+		t.Fatalf("set by key: %v", err)
+	}
+	if ti.Text() != "two" {
+		t.Errorf("after set by key: text = %q", ti.Text())
+	}
+
+	// Mutate by numeric ID.
+	setByID, _ := protocol.Parse(fmt.Sprintf(`set %d text="three"`, reply.IDs["inp"]))
+	if _, err := session.Execute(setByID, f); err != nil {
+		t.Fatalf("set by id: %v", err)
+	}
+	if ti.Text() != "three" {
+		t.Errorf("after set by id: text = %q", ti.Text())
+	}
+
+	if got := eventsOfType(*events, "change"); len(got) != 0 {
+		t.Errorf("set echoed %d change events, want 0 (D20)", len(got))
+	}
+
+	// A real user edit still flows.
+	ti.SetText("typed")
+	if got := eventsOfType(*events, "change"); len(got) != 1 {
+		t.Errorf("user change events = %d, want 1", len(got))
+	}
+}
+
+func TestDestroyVerbRemovesFromParent(t *testing.T) {
+	session := protocol.NewSession()
+	ctx := &protocol.BindContext{}
+	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
+
+	script, _ := protocol.Parse(`
+root=new panel layout=vbox children={
+	a=new label caption="a"
+	b=new label caption="b"
+}
+`)
+	if _, err := session.Execute(script, f); err != nil {
+		t.Fatal(err)
+	}
+	panel := f.targets[0].(*Panel)
+	if n := len(panel.Children()); n != 2 {
+		t.Fatalf("children before destroy = %d, want 2", n)
+	}
+
+	destroy, _ := protocol.Parse(`destroy root.a`)
+	if _, err := session.Execute(destroy, f); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if n := len(panel.Children()); n != 1 {
+		t.Errorf("children after destroy = %d, want 1", n)
+	}
+
+	// The key is gone with the object.
+	again, _ := protocol.Parse(`set root.a caption="x"`)
+	if _, err := session.Execute(again, f); err == nil {
+		t.Error("set on destroyed key should fail")
 	}
 }

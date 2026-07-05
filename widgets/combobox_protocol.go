@@ -7,36 +7,16 @@ import (
 	"github.com/phroun/tuitk/protocol"
 )
 
-// Wire registration for ComboBox and the virtual `item` type
-// (see docs/property-vocabulary.md). Per D13's unification, combobox
-// entries are children of type item:
+// Wire registration for ComboBox (see docs/property-vocabulary.md).
+// Per D13's unification, combobox entries are children of the shared
+// virtual `item` type (items_protocol.go):
 //
 //	new combobox children={new item caption="A"; new item caption="B"} selected=1
 //
 // Note: selected must follow the items that make it valid (properties
 // apply in order).
 
-// comboItem is the virtual item target: a record, not a widget.
-type comboItem struct {
-	caption string
-}
-
 func init() {
-	protocol.RegisterType("item", &protocol.TypeSpec{
-		Virtual: true,
-		New:     func() any { return &comboItem{} },
-		Props: map[string]protocol.PropertyApplier{
-			"caption": wprop("caption", func(_ *protocol.BindContext, it *comboItem, v *protocol.Value, f protocol.FlagState) error {
-				s, err := protocol.AsString("caption", v, f)
-				if err != nil {
-					return err
-				}
-				it.caption = s
-				return nil
-			}),
-		},
-	})
-
 	protocol.RegisterType("combobox", &protocol.TypeSpec{
 		New: func() any { return NewComboBox() },
 		ID: func(t any) uint64 {
@@ -61,9 +41,12 @@ func init() {
 			if !ok {
 				return fmt.Errorf("combobox: wrong parent type %T", parent)
 			}
-			it, ok := child.(*comboItem)
+			it, ok := child.(*wireItem)
 			if !ok {
 				return fmt.Errorf("combobox: children must be items, got %T", child)
+			}
+			if len(it.children) != 0 {
+				return fmt.Errorf("combobox: items cannot nest")
 			}
 			c.AddItem(it.caption)
 			return nil

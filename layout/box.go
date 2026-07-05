@@ -60,9 +60,21 @@ func (l *BoxLayout) SetOrientation(o core.Orientation) {
 	l.orientation = o
 }
 
-// AddWidget adds a widget to the layout.
+// AddWidget adds a widget to the layout, honoring the widget's own
+// layout hints (stretch/align travel with the child).
 func (l *BoxLayout) AddWidget(widget core.Widget) {
-	l.items = append(l.items, NewLayoutItem(widget))
+	item := NewLayoutItem(widget)
+	if h, ok := widget.(interface{ LayoutStretch() int }); ok {
+		if s := h.LayoutStretch(); s > 0 {
+			item.Stretch = s
+		}
+	}
+	if h, ok := widget.(interface{ LayoutAlignment() (core.Alignment, bool) }); ok {
+		if a, set := h.LayoutAlignment(); set {
+			item.Align = a
+		}
+	}
+	l.items = append(l.items, item)
 }
 
 // AddWidgetWithStretch adds a widget with a stretch factor.

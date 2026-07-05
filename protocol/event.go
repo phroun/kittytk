@@ -115,7 +115,12 @@ func (e *Event) Flag(name string) FlagState {
 
 // Widget reads the conventional widget-identity field.
 func (e *Event) Widget() (uint64, bool) {
-	return e.Uint("widget")
+	if id, ok := e.Uint("widget"); ok {
+		return id, ok
+	}
+	// Window events name their source window= rather than widget=;
+	// both are ObjectIDs, and subscriptions key on the source.
+	return e.Uint("window")
 }
 
 // Encode renders the event as protocol text: a parseable statement.

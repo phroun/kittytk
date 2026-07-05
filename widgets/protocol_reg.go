@@ -11,6 +11,7 @@ import (
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/tuitk/style"
 )
 
 // wprop adapts a widget-typed applier to protocol.PropertyApplier.
@@ -78,6 +79,20 @@ func actionProp(name string) protocol.PropertyApplier {
 	})
 }
 
+// destroyWidget is the standard destroy: detach the widget from its
+// parent container.
+func destroyWidget(w core.Widget) error {
+	parent := w.Parent()
+	if parent == nil {
+		return nil // never attached; nothing to detach
+	}
+	if remover, ok := parent.(interface{ RemoveChild(core.Widget) }); ok {
+		remover.RemoveChild(w)
+		return nil
+	}
+	return fmt.Errorf("destroy: parent %T does not support child removal", parent)
+}
+
 // widgetID returns a widget's stable object identity as a wire ID.
 func widgetID(w core.Widget) uint64 {
 	if iw, ok := w.(interface{ ObjectID() core.ObjectID }); ok {
@@ -98,6 +113,15 @@ func regWidget(name string, construct func() core.Widget, props map[string]proto
 				return uint64(w.ObjectID())
 			}
 			return 0
+		},
+		// Default destroy: detach from the parent container. Types
+		// with richer teardown override via their own TypeSpec.
+		Destroy: func(t any) error {
+			w, ok := t.(core.Widget)
+			if !ok {
+				return fmt.Errorf("%s: not a widget", name)
+			}
+			return destroyWidget(w)
 		},
 	}
 	if appendFn != nil {
@@ -169,6 +193,126 @@ func init() {
 		}
 		return fmt.Errorf("acc_name: not supported by this type")
 	}))
+
+	// Layout hints live on the child (vocabulary decision 2026-07-05):
+	// the parent's layout manager consults them at attach time, so in
+	// scripts they must precede the widget's placement in children={}
+	// (property application order already guarantees that).
+	protocol.RegisterCommonProperty("stretch", wprop("stretch", func(_ *protocol.BindContext, w core.Widget, v *protocol.Value, f protocol.FlagState) error {
+		n, err := protocol.AsInt("stretch", v, f)
+		if err != nil {
+			return err
+		}
+		if h, ok := w.(interface{ SetLayoutStretch(int) }); ok {
+			h.SetLayoutStretch(n)
+			return nil
+		}
+		return fmt.Errorf("stretch: not supported by this type")
+	}))
+
+	protocol.RegisterCommonProperty("align", wprop("align", func(_ *protocol.BindContext, w core.Widget, v *protocol.Value, f protocol.FlagState) error {
+		word, err := protocol.AsWord("align", v, f)
+		if err != nil {
+			return err
+		}
+		a, ok := map[string]core.Alignment{
+			"fill":   core.AlignFill,
+			"left":   core.AlignLeft,
+			"center": core.AlignCenter,
+			"right":  core.AlignRight,
+			"top":    core.AlignTop,
+			"middle": core.AlignMiddle,
+			"bottom": core.AlignBottom,
+		}[word]
+		if !ok {
+			return fmt.Errorf("align: unknown value %q", word)
+		}
+		if h, ok := w.(interface{ SetLayoutAlignment(core.Alignment) }); ok {
+			h.SetLayoutAlignment(a)
+			return nil
+		}
+		return fmt.Errorf("align: not supported by this type")
+	}))
+
+	// Colors (vocabulary decision 2026-07-05): named colors as bare
+	// words, RGB as quoted "#rrggbb". fg/bg build on the widget's
+	// custom style override.
+	protocol.RegisterCommonProperty("fg", colorProp("fg", true))
+	protocol.RegisterCommonProperty("bg", colorProp("bg", false))
+}
+
+// parseColor interprets a wire color value: a bare named-color word
+// (color=red, color=bright_blue) or a quoted "#rrggbb" string.
+func parseColor(name string, v *protocol.Value, f protocol.FlagState) (style.Color, error) {
+	if f != protocol.FlagNone || v == nil {
+		return 0, fmt.Errorf("%s: expected a color (word or \"#rrggbb\")", name)
+	}
+	switch v.Kind {
+	case protocol.WordValue:
+		c, ok := map[string]style.Color{
+			"default":        style.ColorDefault,
+			"black":          style.ColorBlack,
+			"red":            style.ColorRed,
+			"green":          style.ColorGreen,
+			"yellow":         style.ColorYellow,
+			"blue":           style.ColorBlue,
+			"magenta":        style.ColorMagenta,
+			"cyan":           style.ColorCyan,
+			"white":          style.ColorWhite,
+			"bright_black":   style.ColorBrightBlack,
+			"bright_red":     style.ColorBrightRed,
+			"bright_green":   style.ColorBrightGreen,
+			"bright_yellow":  style.ColorBrightYellow,
+			"bright_blue":    style.ColorBrightBlue,
+			"bright_magenta": style.ColorBrightMagenta,
+			"bright_cyan":    style.ColorBrightCyan,
+			"bright_white":   style.ColorBrightWhite,
+		}[v.Word]
+		if !ok {
+			return 0, fmt.Errorf("%s: unknown color %q", name, v.Word)
+		}
+		return c, nil
+	case protocol.StringValue:
+		s := v.Str
+		if len(s) != 7 || s[0] != '#' {
+			return 0, fmt.Errorf("%s: RGB colors are \"#rrggbb\"", name)
+		}
+		var r, g, b int
+		if _, err := fmt.Sscanf(s[1:], "%02x%02x%02x", &r, &g, &b); err != nil {
+			return 0, fmt.Errorf("%s: malformed RGB color %q", name, s)
+		}
+		return style.RGB(r, g, b), nil
+	default:
+		return 0, fmt.Errorf("%s: expected a color (word or \"#rrggbb\")", name)
+	}
+}
+
+// colorProp applies fg=/bg= through the widget's custom style.
+func colorProp(name string, isFg bool) protocol.PropertyApplier {
+	return wprop(name, func(_ *protocol.BindContext, w core.Widget, v *protocol.Value, f protocol.FlagState) error {
+		c, err := parseColor(name, v, f)
+		if err != nil {
+			return err
+		}
+		styler, ok := w.(interface {
+			Style() *style.CellStyle
+			SetStyle(*style.CellStyle)
+		})
+		if !ok {
+			return fmt.Errorf("%s: not supported by this type", name)
+		}
+		s := style.DefaultStyle()
+		if cur := styler.Style(); cur != nil {
+			s = *cur
+		}
+		if isFg {
+			s = s.WithFg(c)
+		} else {
+			s = s.WithBg(c)
+		}
+		styler.SetStyle(&s)
+		return nil
+	})
 }
 
 func sizeProp(name string, min, isWidth bool) protocol.PropertyApplier {

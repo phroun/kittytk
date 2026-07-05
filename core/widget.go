@@ -335,11 +335,15 @@ type WidgetBase struct {
 	parent Container
 	app    *Application
 
-	bounds      UnitRect
-	minSize     UnitSize
-	maxSize     UnitSize
-	sizePolicy  SizePolicyPair
-	margins     UnitMargins
+	bounds     UnitRect
+	minSize    UnitSize
+	maxSize    UnitSize
+	sizePolicy SizePolicyPair
+	margins    UnitMargins
+
+	layoutStretch  int
+	layoutAlign    Alignment
+	layoutAlignSet bool
 
 	visible bool
 	enabled bool
@@ -541,6 +545,40 @@ func (w *WidgetBase) SetSizePolicy(policy SizePolicyPair) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.sizePolicy = policy
+}
+
+// Layout hints travel with the widget (wire vocabulary decision,
+// 2026-07-05: stretch/align live on the child, not on an attach
+// operation). Layout managers consult them when the widget is added.
+
+// LayoutStretch returns the widget's stretch factor hint (0 = none).
+func (w *WidgetBase) LayoutStretch() int {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.layoutStretch
+}
+
+// SetLayoutStretch sets the stretch factor hint.
+func (w *WidgetBase) SetLayoutStretch(stretch int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.layoutStretch = stretch
+}
+
+// LayoutAlignment returns the widget's alignment hint and whether one
+// was explicitly set (layouts keep their own default otherwise).
+func (w *WidgetBase) LayoutAlignment() (Alignment, bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.layoutAlign, w.layoutAlignSet
+}
+
+// SetLayoutAlignment sets the alignment hint.
+func (w *WidgetBase) SetLayoutAlignment(a Alignment) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.layoutAlign = a
+	w.layoutAlignSet = true
 }
 
 // Margins returns the margins.
@@ -793,61 +831,65 @@ type scrollRectProxy struct {
 	parent Container
 }
 
-func (p *scrollRectProxy) Bounds() UnitRect                       { return p.rect }
-func (p *scrollRectProxy) Parent() Container                      { return p.parent }
-func (p *scrollRectProxy) Name() string                           { return "" }
-func (p *scrollRectProxy) SetName(string)                         {}
-func (p *scrollRectProxy) SetParent(Container)                    {}
-func (p *scrollRectProxy) SetBounds(UnitRect)                     {}
-func (p *scrollRectProxy) Pos() UnitPoint                         { return UnitPoint{X: p.rect.X, Y: p.rect.Y} }
-func (p *scrollRectProxy) Size() UnitSize                         { return UnitSize{Width: p.rect.Width, Height: p.rect.Height} }
-func (p *scrollRectProxy) SetPos(UnitPoint)                       {}
-func (p *scrollRectProxy) SetSize(UnitSize)                       {}
-func (p *scrollRectProxy) MinimumSize() UnitSize                  { return UnitSize{} }
-func (p *scrollRectProxy) MaximumSize() UnitSize                  { return UnitSize{} }
-func (p *scrollRectProxy) SetMinimumSize(UnitSize)                {}
-func (p *scrollRectProxy) SetMaximumSize(UnitSize)                {}
-func (p *scrollRectProxy) SizeHint() UnitSize                     { return p.Size() }
-func (p *scrollRectProxy) SizePolicy() SizePolicyPair             { return SizePolicyPair{} }
-func (p *scrollRectProxy) SetSizePolicy(SizePolicyPair)           {}
-func (p *scrollRectProxy) Margins() UnitMargins                   { return UnitMargins{} }
-func (p *scrollRectProxy) SetMargins(UnitMargins)                 {}
-func (p *scrollRectProxy) IsVisible() bool                        { return true }
-func (p *scrollRectProxy) SetVisible(bool)                        {}
-func (p *scrollRectProxy) Show()                                  {}
-func (p *scrollRectProxy) Hide()                                  {}
-func (p *scrollRectProxy) IsEnabled() bool                        { return true }
-func (p *scrollRectProxy) SetEnabled(bool)                        {}
-func (p *scrollRectProxy) FocusPolicy() FocusPolicy               { return NoFocus }
-func (p *scrollRectProxy) SetFocusPolicy(FocusPolicy)             {}
-func (p *scrollRectProxy) HasFocus() bool                         { return false }
-func (p *scrollRectProxy) SetFocus()                              {}
-func (p *scrollRectProxy) SetFocusWithoutScroll()                 {}
-func (p *scrollRectProxy) ClearFocus()                            {}
-func (p *scrollRectProxy) Furtive() bool                          { return false }
-func (p *scrollRectProxy) SetFurtive(bool)                        {}
-func (p *scrollRectProxy) Style() *style.CellStyle                { return nil }
-func (p *scrollRectProxy) SetStyle(*style.CellStyle)              {}
-func (p *scrollRectProxy) Theme() *style.Theme                    { return nil }
-func (p *scrollRectProxy) Scheme() style.SchemeID                 { return style.SchemeInherit }
-func (p *scrollRectProxy) SetScheme(style.SchemeID)               {}
-func (p *scrollRectProxy) EffectiveScheme() style.SchemeID        { return style.SchemeDefault }
-func (p *scrollRectProxy) GetScheme() *style.Scheme               { return style.GlobalSchemeRegistry().Get(style.SchemeDefault) }
-func (p *scrollRectProxy) Paint(*Painter)                         {}
-func (p *scrollRectProxy) Update()                                {}
-func (p *scrollRectProxy) NeedsRepaint() bool                     { return false }
-func (p *scrollRectProxy) HandleKeyPress(KeyPressEvent) bool      { return false }
-func (p *scrollRectProxy) HandleKeyRelease(KeyReleaseEvent) bool  { return false }
-func (p *scrollRectProxy) HandleMousePress(MousePressEvent) bool  { return false }
+func (p *scrollRectProxy) Bounds() UnitRect    { return p.rect }
+func (p *scrollRectProxy) Parent() Container   { return p.parent }
+func (p *scrollRectProxy) Name() string        { return "" }
+func (p *scrollRectProxy) SetName(string)      {}
+func (p *scrollRectProxy) SetParent(Container) {}
+func (p *scrollRectProxy) SetBounds(UnitRect)  {}
+func (p *scrollRectProxy) Pos() UnitPoint      { return UnitPoint{X: p.rect.X, Y: p.rect.Y} }
+func (p *scrollRectProxy) Size() UnitSize {
+	return UnitSize{Width: p.rect.Width, Height: p.rect.Height}
+}
+func (p *scrollRectProxy) SetPos(UnitPoint)                {}
+func (p *scrollRectProxy) SetSize(UnitSize)                {}
+func (p *scrollRectProxy) MinimumSize() UnitSize           { return UnitSize{} }
+func (p *scrollRectProxy) MaximumSize() UnitSize           { return UnitSize{} }
+func (p *scrollRectProxy) SetMinimumSize(UnitSize)         {}
+func (p *scrollRectProxy) SetMaximumSize(UnitSize)         {}
+func (p *scrollRectProxy) SizeHint() UnitSize              { return p.Size() }
+func (p *scrollRectProxy) SizePolicy() SizePolicyPair      { return SizePolicyPair{} }
+func (p *scrollRectProxy) SetSizePolicy(SizePolicyPair)    {}
+func (p *scrollRectProxy) Margins() UnitMargins            { return UnitMargins{} }
+func (p *scrollRectProxy) SetMargins(UnitMargins)          {}
+func (p *scrollRectProxy) IsVisible() bool                 { return true }
+func (p *scrollRectProxy) SetVisible(bool)                 {}
+func (p *scrollRectProxy) Show()                           {}
+func (p *scrollRectProxy) Hide()                           {}
+func (p *scrollRectProxy) IsEnabled() bool                 { return true }
+func (p *scrollRectProxy) SetEnabled(bool)                 {}
+func (p *scrollRectProxy) FocusPolicy() FocusPolicy        { return NoFocus }
+func (p *scrollRectProxy) SetFocusPolicy(FocusPolicy)      {}
+func (p *scrollRectProxy) HasFocus() bool                  { return false }
+func (p *scrollRectProxy) SetFocus()                       {}
+func (p *scrollRectProxy) SetFocusWithoutScroll()          {}
+func (p *scrollRectProxy) ClearFocus()                     {}
+func (p *scrollRectProxy) Furtive() bool                   { return false }
+func (p *scrollRectProxy) SetFurtive(bool)                 {}
+func (p *scrollRectProxy) Style() *style.CellStyle         { return nil }
+func (p *scrollRectProxy) SetStyle(*style.CellStyle)       {}
+func (p *scrollRectProxy) Theme() *style.Theme             { return nil }
+func (p *scrollRectProxy) Scheme() style.SchemeID          { return style.SchemeInherit }
+func (p *scrollRectProxy) SetScheme(style.SchemeID)        {}
+func (p *scrollRectProxy) EffectiveScheme() style.SchemeID { return style.SchemeDefault }
+func (p *scrollRectProxy) GetScheme() *style.Scheme {
+	return style.GlobalSchemeRegistry().Get(style.SchemeDefault)
+}
+func (p *scrollRectProxy) Paint(*Painter)                            {}
+func (p *scrollRectProxy) Update()                                   {}
+func (p *scrollRectProxy) NeedsRepaint() bool                        { return false }
+func (p *scrollRectProxy) HandleKeyPress(KeyPressEvent) bool         { return false }
+func (p *scrollRectProxy) HandleKeyRelease(KeyReleaseEvent) bool     { return false }
+func (p *scrollRectProxy) HandleMousePress(MousePressEvent) bool     { return false }
 func (p *scrollRectProxy) HandleMouseRelease(MouseReleaseEvent) bool { return false }
-func (p *scrollRectProxy) HandleMouseMove(MouseMoveEvent) bool    { return false }
-func (p *scrollRectProxy) HandleMouseWheel(MouseWheelEvent) bool  { return false }
-func (p *scrollRectProxy) HandleFocusIn()                         {}
-func (p *scrollRectProxy) HandleFocusOut()                        {}
-func (p *scrollRectProxy) HandleResize(oldSize, newSize UnitSize) {}
-func (p *scrollRectProxy) EffectiveBackgroundColor() style.Color  { return style.ColorDefault }
-func (p *scrollRectProxy) SetBackgroundColor(*style.Color)        {}
-func (p *scrollRectProxy) Application() *Application              { return nil }
+func (p *scrollRectProxy) HandleMouseMove(MouseMoveEvent) bool       { return false }
+func (p *scrollRectProxy) HandleMouseWheel(MouseWheelEvent) bool     { return false }
+func (p *scrollRectProxy) HandleFocusIn()                            {}
+func (p *scrollRectProxy) HandleFocusOut()                           {}
+func (p *scrollRectProxy) HandleResize(oldSize, newSize UnitSize)    {}
+func (p *scrollRectProxy) EffectiveBackgroundColor() style.Color     { return style.ColorDefault }
+func (p *scrollRectProxy) SetBackgroundColor(*style.Color)           {}
+func (p *scrollRectProxy) Application() *Application                 { return nil }
 
 // ClearFocus removes focus from this widget.
 func (w *WidgetBase) ClearFocus() {

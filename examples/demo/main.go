@@ -66,6 +66,26 @@ func (f *idCaptureFactory) New(typeName string) (protocol.Object, error) {
 	return o, nil
 }
 
+// Forward EventControl so the script's sub statements and D20 echo
+// suppression reach the wrapped RegistryFactory.
+func (f *idCaptureFactory) Subscribe(id uint64, typ string) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Subscribe(id, typ)
+	}
+}
+func (f *idCaptureFactory) Unsubscribe(id uint64, typ string) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Unsubscribe(id, typ)
+	}
+}
+func (f *idCaptureFactory) Suppressed(fn func()) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Suppressed(fn)
+		return
+	}
+	fn()
+}
+
 // protocolWindowScript is the Protocol Demo window's entire content,
 // expressed in the display-protocol command language (D10-D18).
 const protocolWindowScript = `
@@ -84,6 +104,12 @@ watch=root.status
 wcb=root.cb
 winp=root.inp
 wcombo=root.combo
+
+# D20 default-closed: open the event flows this window listens to
+# (command events need no sub - the button works regardless).
+sub wcb toggle
+sub winp change
+sub wcombo change
 `
 
 // createProtocolWindow builds the P0 step-4 window: content

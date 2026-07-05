@@ -37,10 +37,10 @@ func (g *gridBackend) Metrics() core.CellMetrics {
 func (g *gridBackend) Size() core.UnitSize {
 	return core.UnitSize{Width: core.Unit(g.w * 8), Height: core.Unit(g.h * 16)}
 }
-func (g *gridBackend) BeginFrame()               {}
-func (g *gridBackend) EndFrame()                 {}
-func (g *gridBackend) Clear(style.CellStyle)     {}
-func (g *gridBackend) SetClip(c core.UnitRect)   { g.clip = c }
+func (g *gridBackend) BeginFrame()             {}
+func (g *gridBackend) EndFrame()               {}
+func (g *gridBackend) Clear(style.CellStyle)   {}
+func (g *gridBackend) SetClip(c core.UnitRect) { g.clip = c }
 func (g *gridBackend) put(x, y core.Unit, ch rune) {
 	cx, cy := int(x/8), int(y/16)
 	if cx < 0 || cy < 0 || cx >= g.w || cy >= g.h {
@@ -98,17 +98,17 @@ func (g *gridBackend) DrawVLine(x, y, h core.Unit, ch rune, _ style.CellStyle) {
 func (g *gridBackend) DrawBox(r core.UnitRect, b style.BorderStyle, _ string, s style.CellStyle) {
 	g.DrawRect(r, b, s)
 }
-func (g *gridBackend) PollEvent() core.Event          { return nil }
-func (g *gridBackend) WaitEvent() core.Event          { return nil }
-func (g *gridBackend) SetCursorVisible(bool)          {}
+func (g *gridBackend) PollEvent() core.Event                  { return nil }
+func (g *gridBackend) WaitEvent() core.Event                  { return nil }
+func (g *gridBackend) SetCursorVisible(bool)                  {}
 func (g *gridBackend) SetCursorPosition(core.Unit, core.Unit) {}
-func (g *gridBackend) SupportsColor() bool            { return true }
-func (g *gridBackend) SupportsMouse() bool            { return false }
-func (g *gridBackend) SupportsUnicode() bool          { return true }
-func (g *gridBackend) ColorDepth() int                { return 256 }
-func (g *gridBackend) GetClipboard() string           { return "" }
-func (g *gridBackend) SetClipboard(string)            {}
-func (g *gridBackend) Beep()                          {}
+func (g *gridBackend) SupportsColor() bool                    { return true }
+func (g *gridBackend) SupportsMouse() bool                    { return false }
+func (g *gridBackend) SupportsUnicode() bool                  { return true }
+func (g *gridBackend) ColorDepth() int                        { return 256 }
+func (g *gridBackend) GetClipboard() string                   { return "" }
+func (g *gridBackend) SetClipboard(string)                    {}
+func (g *gridBackend) Beep()                                  {}
 
 func (g *gridBackend) dump() string {
 	var sb strings.Builder

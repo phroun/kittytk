@@ -1,0 +1,108 @@
+package widgets
+
+import (
+	"fmt"
+
+	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/protocol"
+)
+
+// Wire registration for TabWidget and the virtual `tab` type. A tab
+// is a caption plus exactly one content child:
+//
+//	new tabs position=bottom children={
+//	    new tab caption="First" children={new panel layout=vbox children={...}}
+//	    new tab caption="Second" children={new label caption="hi"}
+//	} selected=0
+//
+// Note: selected must follow the tabs that make it valid.
+
+// wireTab is the virtual tab target: caption + content widget.
+type wireTab struct {
+	caption string
+	content core.Widget
+}
+
+func init() {
+	protocol.RegisterType("tab", &protocol.TypeSpec{
+		Virtual: true,
+		New:     func() any { return &wireTab{} },
+		Props: map[string]protocol.PropertyApplier{
+			"caption": wprop("caption", func(_ *protocol.BindContext, t *wireTab, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("caption", v, f)
+				if err != nil {
+					return err
+				}
+				t.caption = s
+				return nil
+			}),
+		},
+		Append: func(parent, child any) error {
+			t := parent.(*wireTab)
+			w, ok := child.(core.Widget)
+			if !ok {
+				return fmt.Errorf("tab: content must be a widget, got %T", child)
+			}
+			if t.content != nil {
+				return fmt.Errorf("tab: only one content widget (wrap several in a panel)")
+			}
+			t.content = w
+			return nil
+		},
+	})
+
+	protocol.RegisterType("tabs", &protocol.TypeSpec{
+		New: func() any { return NewTabWidget() },
+		ID: func(t any) uint64 {
+			return uint64(t.(*TabWidget).ObjectID())
+		},
+		Bind: func(ctx *protocol.BindContext, target any) {
+			tw := target.(*TabWidget)
+			id := uint64(tw.ObjectID())
+			tw.SetOnCurrentChanged(func(index int) {
+				ctx.EmitEvent(protocol.NewEvent("change").
+					WithUint("widget", id).WithInt("selected", index))
+			})
+		},
+		Props: map[string]protocol.PropertyApplier{
+			"selected": intProp("selected", (*TabWidget).SetCurrentIndex),
+			"movable":  boolProp("movable", (*TabWidget).SetMovable),
+			"closable": boolProp("closable", (*TabWidget).SetClosable),
+			"position": wprop("position", func(_ *protocol.BindContext, tw *TabWidget, v *protocol.Value, f protocol.FlagState) error {
+				w, err := protocol.AsWord("position", v, f)
+				if err != nil {
+					return err
+				}
+				pos, ok := map[string]TabPosition{
+					"top":    TabsTop,
+					"bottom": TabsBottom,
+					"left":   TabsLeft,
+					"right":  TabsRight,
+				}[w]
+				if !ok {
+					return fmt.Errorf("position: unknown value %q", w)
+				}
+				tw.SetTabPosition(pos)
+				return nil
+			}),
+		},
+		Append: func(parent, child any) error {
+			tw, ok := parent.(*TabWidget)
+			if !ok {
+				return fmt.Errorf("tabs: wrong parent type %T", parent)
+			}
+			t, ok := child.(*wireTab)
+			if !ok {
+				return fmt.Errorf("tabs: children must be tab, got %T", child)
+			}
+			if t.content == nil {
+				return fmt.Errorf("tabs: tab %q has no content", t.caption)
+			}
+			tw.AddTab(t.caption, t.content)
+			return nil
+		},
+		Destroy: func(t any) error {
+			return destroyWidget(t.(*TabWidget))
+		},
+	})
+}
