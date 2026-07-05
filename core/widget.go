@@ -978,7 +978,15 @@ func (w *WidgetBase) SetCellMetrics(m *CellMetrics) {
 	parent := w.parent
 	w.mu.Unlock()
 
-	// Trigger parent container's layout since grid metrics affect sizing
+	// Re-denomination changes what every stored unit value inside this
+	// container means: relayout the widget's own subtree so geometry is
+	// re-expressed in the new currency immediately (not on next resize).
+	if self, ok := w.Self().(Container); ok && self != nil {
+		self.Layout()
+	}
+
+	// Outer-currency sizes are invariant under re-denomination, but let
+	// the parent refresh in case it caches child geometry.
 	if parent != nil {
 		parent.Layout()
 	}
