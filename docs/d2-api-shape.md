@@ -68,11 +68,29 @@ as real protocol records, no sockets yet. Steps:
      registration with explicit surfacing, D18 case enforcement,
      correlation replies (surfaced names + top-level keys only). Ten
      tests with a mock factory cover the D10–D18 semantics corpus.
-   - **2b. Widget binder** — implements `protocol.Factory` against
-     real widgets: the machine-readable property registry (twin of
-     `property-vocabulary.md`) mapping names to typed setters per
-     widget type. (Introduces the `set` verb and friends — verb
-     inventory is a small O6 item to settle with the owner.)
+   - ✅ **2b. Widget-owned wire registration** (2026-07-05).
+     Architecture per owner directive: **each widget's own codebase
+     registers its type and property mappings** in a sibling
+     `*_protocol.go` file — no central binding table. The registry
+     machinery lives in `protocol` (`RegisterType` /
+     `RegisterCommonProperty` / `RegistryFactory` / `BindContext` +
+     the D17 typed-conversion helpers); `widgets/protocol_reg.go`
+     provides shared applier helpers and registers the common
+     properties (enabled, visible, name, min/max sizes,
+     column_units/row_units, font, acc_name). Registered v1 types:
+     button, label, checkbox (tri-capable `checked`), radiobutton,
+     textinput, combobox + virtual `item` (D13 children unification),
+     panel (border/border_style/layout/spacing), splitter, spacer,
+     separator, progress. `action=` wires into the connection's
+     command dispatcher via `BindContext` (instance-scoped per the
+     multi-display guardrail). Also fixed audit finding #7 for real:
+     `Panel.SetBorder(true)` now defaults to a visible single-line
+     style. Six end-to-end tests build real widget trees from
+     protocol text (aliases, templates, tri-state, surfacing to real
+     ObjectIDs, live command dispatch on click). Deferred: window/
+     tabs/lists/trees/menus types; `set` verb and friends (verb
+     inventory — O6 item for the owner); radio `group`; items={}
+     spelling reconciliation (v1 uses children per D13).
 3. **Event records + subscriptions** (absorbs slice 3) — events
    emitted as protocol records (`event change widget=17 selected=3`)
    through an in-process channel; app-side dispatch by ObjectID.

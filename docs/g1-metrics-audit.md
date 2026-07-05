@@ -309,9 +309,10 @@ rely on hand-tuning around these:
    via the font (character fallback for overlong words); tests in
    `widgets/label_test.go`. Will re-route from `font.MeasureText` to
    the TextMeasurer when G1 lands.
-7. **`Panel.SetBorder(true)` with the zero-value `BorderStyle` draws an
-   invisible border** (NUL runes) — SetBorder should default to a
-   visible style or warn.
+7. **`Panel.SetBorder(true)` with the zero-value `BorderStyle` drew an
+   invisible border** (NUL runes). **Fixed 2026-07-05** (during the
+   protocol widget-binding work): enabling the border defaults the
+   style to single lines when none was set.
 
 ## Suggested G1 execution order
 

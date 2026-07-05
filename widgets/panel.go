@@ -161,9 +161,14 @@ func (p *Panel) SetLayoutManager(layout core.LayoutManager) {
 	p.Update()
 }
 
-// SetBorder enables or disables the border.
+// SetBorder enables or disables the border. Enabling defaults the
+// border style to single lines if none was set (the zero-value
+// BorderStyle would render invisibly).
 func (p *Panel) SetBorder(enabled bool) {
 	p.border = enabled
+	if enabled && p.borderStyle == (style.BorderStyle{}) {
+		p.borderStyle = style.BorderSingle
+	}
 	p.Update()
 }
 
