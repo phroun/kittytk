@@ -24,6 +24,14 @@ is frozen; naming questions are collected at the end.
   Flags/enums/identifiers are lexically similar bare tokens typed per
   property, so the tokenizer is schema-free; only interpretation
   consults the vocabulary.
+- **Case namespaces (D18):** system names (properties, widget types,
+  verbs, enum values) begin lowercase; **user-defined templates and
+  aliases MUST begin uppercase**. The two namespaces are disjoint by
+  construction, so the system vocabulary can grow forever without
+  colliding with any client's definitions (the HTML custom-elements
+  move, done with case). Correlation keys are unconstrained: they
+  occupy statement-key/value positions, never property-name position.
+  Enforcement is the interpreter's job; the parser stays schema-free.
 - Names are `lower_snake_case`, singular where sensible.
 - All coordinates/sizes are units in the **container's denomination**
   (D8/D8′); rows/columns appear only where the concept is genuinely
