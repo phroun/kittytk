@@ -102,7 +102,7 @@ is frozen; naming questions are collected at the end.
 | `stretch` | numeric | Layout-item stretch factor |
 | `align` | enum | Layout-item alignment: `fill`, `left`, `center`, `right`, `top`, `middle`, `bottom` |
 | `font` | string | Family name; `font_size` (int), `font_style` (flags: `bold`, `italic`, `underline`, …) |
-| `grid_width`, `grid_height` | numeric (units) | CellMetrics override: units per column/row (D8); unset = inherit |
+| `column_units`, `row_units` | numeric (units) | CellMetrics override (D8): how many units one column/row represents; unset = inherit |
 | `scheme` | identifier | Color scheme selector |
 | `background` | color | Explicit background; unset = inherit |
 | `acc_name`, `acc_role`, `acc_description` | string | Accessibility |
@@ -229,7 +229,7 @@ when the widget is built.
 | `frameless`, `no_title`, `no_resize`, `modal`, `passive` | flag | Individual flags per D12 — no bitsets on the wire (`new window frameless modal`) |
 | `content` | identifier | Content widget |
 | `min_width`, `min_height` | numeric (units) | |
-| `font`, `grid_width`, `grid_height` | | Per-window overrides (D8) |
+| `font`, `column_units`, `row_units` | | Per-window overrides (D8) |
 | `native` | flag | G4 dual-mode: request an OS window when available |
 
 ## Menu structures
@@ -277,9 +277,9 @@ source where applicable. Apps subscribe per widget/event (slice 3).
 3. Should layout-item properties (`stretch`, `align`) live on the
    child (as here) or as arguments of an attach/add operation?
    *(left open by owner for now)*
-4. `grid_width`/`grid_height` naming for the CellMetrics override —
-   or `units_per_column`/`units_per_row` (more literal, longer)?
-   *(left open by owner for now)*
+4. ✅ **Answered:** `column_units` / `row_units` — the names state the
+   denomination relationship directly (`row_units=32` reads "a row is
+   represented by 32 units", matching D8′'s language).
 5. Forward references from correlation keys within a batch (D11
    extension) — approve? *(left open by owner for now)*
 6. ✅ **Answered:** keep `change` as the event name; no split.
