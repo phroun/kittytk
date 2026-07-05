@@ -58,13 +58,21 @@ as real protocol records, no sockets yet. Steps:
    application and template expansion belong to the layers above.
    Provisional pending O6: `#` comments; string escapes `\\ \" \n \t
    \r`. Eight tests cover the canonical corpus from D10–D17.
-2. **Vocabulary binding + builder** — machine-readable property
-   registry (the twin of `property-vocabulary.md`) mapping names to
-   typed setters per widget type; interpreter executing
-   `new`/`alias`/`template` against real widgets; scoped-key
-   resolution and correlation replies. (Introduces the `set` verb and
-   friends — verb inventory is a small O6 item to settle with the
-   owner.)
+2. **Vocabulary binding + builder** — split in two:
+   - ✅ **2a. Protocol semantics** (`protocol.Session`, 2026-07-05):
+     executes scripts against a `Factory`/`Object` interface pair —
+     alias declaration/substitution (uppercase-required, string
+     targets), template declaration/expansion (macro semantics,
+     transitive with cycle guard, children components, instance
+     overrides incl. flag un-set), children blocks, hierarchical key
+     registration with explicit surfacing, D18 case enforcement,
+     correlation replies (surfaced names + top-level keys only). Ten
+     tests with a mock factory cover the D10–D18 semantics corpus.
+   - **2b. Widget binder** — implements `protocol.Factory` against
+     real widgets: the machine-readable property registry (twin of
+     `property-vocabulary.md`) mapping names to typed setters per
+     widget type. (Introduces the `set` verb and friends — verb
+     inventory is a small O6 item to settle with the owner.)
 3. **Event records + subscriptions** (absorbs slice 3) — events
    emitted as protocol records (`event change widget=17 selected=3`)
    through an in-process channel; app-side dispatch by ObjectID.
