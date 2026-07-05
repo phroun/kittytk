@@ -71,7 +71,7 @@ func (f *idCaptureFactory) New(typeName string) (protocol.Object, error) {
 const protocolWindowScript = `
 alias C="caption"
 
-root=new panel layout=vbox border children={
+root=new panel layout=vbox children={
 	new label C="This window's content was built from protocol text." wrap
 	status=new label C="Interact below; events appear here."
 	new separator

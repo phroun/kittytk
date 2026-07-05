@@ -279,8 +279,16 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 // alignItem adjusts item bounds based on alignment.
 func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitRect {
 	hint := item.Widget.SizeHint()
+	policy := item.Widget.SizePolicy()
 
 	if l.orientation == core.Horizontal {
+		// A widget whose cross-axis policy is Expanding fills the
+		// allocation; alignment clamps only widgets that don't want
+		// to grow (separators, text inputs vs. buttons, etc.).
+		if policy.Vertical == core.SizeExpanding {
+			return bounds
+		}
+
 		// Height-for-width widgets flow within their allocated width;
 		// align them using their real height, not the hint.
 		height := hint.Height
@@ -306,6 +314,11 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 			}
 		}
 	} else {
+		// Cross-axis Expanding fills the allocation (see above).
+		if policy.Horizontal == core.SizeExpanding {
+			return bounds
+		}
+
 		// Height-for-width widgets must receive their allocated width —
 		// clamping them to the (unwrapped) hint width would defeat
 		// wrapping entirely. Alignment keeps its vertical meaning only.

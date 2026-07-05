@@ -26,7 +26,18 @@ func NewLineSeparator() *LineSeparator {
 	s.Init(s)
 	s.SetFocusPolicy(core.NoFocus)
 	s.SetAccessibleRole(core.RoleSeparator)
+	s.applyOrientationPolicy()
 	return s
+}
+
+// applyOrientationPolicy makes the separator span its container along
+// the line axis while staying one cell thick across it.
+func (s *LineSeparator) applyOrientationPolicy() {
+	if s.orientation == core.Horizontal {
+		s.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizeFixed))
+	} else {
+		s.SetSizePolicy(core.NewSizePolicy(core.SizeFixed, core.SizeExpanding))
+	}
 }
 
 // NewHSeparator creates a new horizontal separator with optional title.
@@ -68,6 +79,7 @@ func (s *LineSeparator) Orientation() core.Orientation {
 // SetOrientation sets the separator orientation.
 func (s *LineSeparator) SetOrientation(o core.Orientation) {
 	s.orientation = o
+	s.applyOrientationPolicy()
 	s.Update()
 }
 
