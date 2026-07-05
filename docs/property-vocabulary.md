@@ -252,7 +252,7 @@ Events: `change selected=`.
 ### terminal (PurfecTerm surface) *(registered 2026-07-05)*
 | Property | Type | Notes |
 |---|---|---|
-| `feed` | string (stream) | **Pseudo-property**: every application APPENDS bytes to the terminal — a channel, not state; never read back. Arbitrary bytes travel via the `\xNN` string escape (+ `\e` for ESC), so `set term feed="\e[1mhi\r\n"` works today; the O6 bulk frame arrives with transport as a more efficient encoding of the same statement. |
+| `feed` | string (stream) | **Pseudo-property**: every application APPENDS bytes to the terminal **display** — parsed into the screen buffer as if program output (`Terminal.Feed`, NOT `Write`, which is keyboard input to the child PTY). A channel, not state; never read back. Arbitrary bytes travel via the `\xNN` string escape (+ `\e` for ESC), so `set term feed="\e[1mhi\r\n"` works today; the O6 bulk frame arrives with transport as a more efficient encoding of the same statement. |
 | `shell` | flag | In-process convenience: starts the widget's own local shell. Under the display-protocol split the PTY belongs to the APP, which pumps bytes through `feed=`. |
 | `columns`, `rows` | numeric | (future — currently bounds-driven) |
 

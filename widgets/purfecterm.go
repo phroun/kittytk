@@ -491,6 +491,19 @@ func (t *PurfecTerm) Write(data []byte) (int, error) {
 	return t.terminal.Write(data)
 }
 
+// Feed writes bytes directly to the terminal DISPLAY (parsed into the
+// screen buffer as if they were program output), bypassing the PTY.
+// This is the display-direction sink behind the wire's feed=
+// pseudo-property; Write, by contrast, is keyboard input to the child
+// process.
+func (t *PurfecTerm) Feed(data []byte) {
+	if t.terminal == nil {
+		return
+	}
+	t.terminal.Feed(data)
+	t.Update()
+}
+
 // ScrollUp scrolls the terminal view up by n lines.
 func (t *PurfecTerm) ScrollUp(n int) {
 	if t.terminal != nil {

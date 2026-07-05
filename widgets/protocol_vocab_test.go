@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/phroun/tuitk/core"
@@ -316,12 +317,25 @@ func TestTerminalFeedOverWire(t *testing.T) {
 		t.Fatalf("target is %T", f.targets[0])
 	}
 
-	// Feed with escaped control bytes in a later batch. (Content
-	// verification is the parser round-trip test's job; here the
-	// wire->widget path must accept the stream.)
+	// Feed with escaped control bytes in a later batch, then verify
+	// the text LANDED IN THE DISPLAY buffer (feed is the display
+	// direction - bytes parsed as program output, not PTY input).
 	feed, _ := protocol.Parse(`set term feed="\e[1;32mwire bytes\e[0m\r\n\x07"`)
 	if _, err := session.Execute(feed, f); err != nil {
 		t.Fatalf("feed: %v", err)
+	}
+
+	term := f.targets[0].(*PurfecTerm)
+	cells := term.Terminal().GetCells()
+	if len(cells) == 0 {
+		t.Fatal("no cells")
+	}
+	var row0 []rune
+	for _, c := range cells[0] {
+		row0 = append(row0, c.Char)
+	}
+	if got := string(row0); !strings.Contains(got, "wire bytes") {
+		t.Errorf("display row 0 = %q, want it to contain \"wire bytes\"", got)
 	}
 }
 

@@ -33,9 +33,11 @@ func init() {
 				if err != nil {
 					return err
 				}
-				if _, err := t.Write([]byte(s)); err != nil {
-					return fmt.Errorf("feed: %w", err)
-				}
+				// Display direction: parsed into the screen buffer
+				// like program output. (Terminal.Write would be
+				// keyboard input to the child process - and silently
+				// dropped with no PTY running.)
+				t.Feed([]byte(s))
 				return nil
 			}),
 			"shell": wprop("shell", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
