@@ -261,24 +261,38 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 	hint := item.Widget.SizeHint()
 
 	if l.orientation == core.Horizontal {
+		// Height-for-width widgets flow within their allocated width;
+		// align them using their real height, not the hint.
+		height := hint.Height
+		if hasHeightForWidth(item.Widget) {
+			height = itemHeightForWidth(item.Widget, bounds.Width)
+		}
+
 		// Vertical alignment in horizontal layout
 		switch item.Align {
 		case core.AlignFill:
 			// Fill available space - no adjustment needed
 		case core.AlignTop:
-			bounds.Height = hint.Height
+			bounds.Height = height
 		case core.AlignMiddle:
-			if hint.Height < bounds.Height {
-				bounds.Y += (bounds.Height - hint.Height) / 2
-				bounds.Height = hint.Height
+			if height < bounds.Height {
+				bounds.Y += (bounds.Height - height) / 2
+				bounds.Height = height
 			}
 		case core.AlignBottom:
-			if hint.Height < bounds.Height {
-				bounds.Y += bounds.Height - hint.Height
-				bounds.Height = hint.Height
+			if height < bounds.Height {
+				bounds.Y += bounds.Height - height
+				bounds.Height = height
 			}
 		}
 	} else {
+		// Height-for-width widgets must receive their allocated width —
+		// clamping them to the (unwrapped) hint width would defeat
+		// wrapping entirely. Alignment keeps its vertical meaning only.
+		if hasHeightForWidth(item.Widget) {
+			return bounds
+		}
+
 		// Horizontal alignment in vertical layout
 		switch item.Align {
 		case core.AlignFill:
@@ -299,6 +313,13 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 	}
 
 	return bounds
+}
+
+// hasHeightForWidth reports whether the widget currently has
+// width-dependent height.
+func hasHeightForWidth(w core.Widget) bool {
+	hfw, ok := w.(core.HeightForWidther)
+	return ok && hfw.HasHeightForWidth()
 }
 
 // horizontalItemWidths computes item widths for the horizontal
