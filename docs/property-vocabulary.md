@@ -48,6 +48,8 @@ is frozen; naming questions are collected at the end.
 | Parent | `parent=<id or key>` | Containment at creation or reparent |
 | Correlation key (D11) | `key1=new button …` → reply `key1=<id>` | Request-scoped temporary names; only requests that need IDs back carry keys; many creates batch into one request |
 | Forward reference (D11 proposal) | `key1=new window …` / `new button parent=key1 …` | Later lines in the same batch may reference earlier keys — whole trees in one burst; **pending owner review** |
+| Scoped keys (D15) | `k1=new thing children={sk1=new subthing}` → path `k1.sk1` | Keys inside a block are block-local, addressable externally as paths through the enclosing key; unkeyed parents keep child keys internal |
+| Surfacing (D15) | `mine=k1.sk1` → reply `mine=<id>` | Reply reports surfaced names + top-level keys only — reply size is app-controlled. Template-instantiated children are addressed this way (`k1.input`) |
 
 ## Common properties (all widgets)
 
@@ -244,9 +246,10 @@ source where applicable. Apps subscribe per widget/event (slice 3).
    extension) — approve?
 6. Event names: is `change` too generic — split into `text_changed`,
    `value_changed`, `selection_changed`?
-7. **Addressing template-instantiated children (D14):** when
-   `new LabeledInput` instantiates a template containing children, how
-   does the app get the children's IDs? (a) role-based — template
-   children carry `name=` roles and the instantiation reply includes
-   `key1.input=<id>` per role (leaning); (b) events-only — learn IDs
-   from events as they arrive, query when needed. Pick one (or both).
+7. ~~Addressing template-instantiated children~~ — **resolved by D15**
+   (hierarchical key scoping): template-body keys are namespaced by
+   the instance key (`k1.input`, `k2.input`); surface explicitly to
+   get IDs in the reply. Remaining syntax-phase item (O6):
+   distinguishing key paths from dotted string values in value
+   position (type-directed resolution vs a reference sigil like
+   `parent=@k1.sk1`).
