@@ -16,6 +16,27 @@ import (
 	"github.com/phroun/tuitk/window"
 )
 
+// fixedSizeBox is a bordered panel whose SizeHint is pinned, so its
+// content width does not grow when the font changes. Word wrap only
+// happens when width is genuinely constrained; an unconstrained label's
+// SizeHint scales with the font and simply widens instead of wrapping.
+type fixedSizeBox struct {
+	*widgets.Panel
+	hint core.UnitSize
+}
+
+func newFixedSizeBox(width, height core.Unit, content core.Widget) *fixedSizeBox {
+	f := &fixedSizeBox{Panel: widgets.NewPanel(), hint: core.UnitSize{Width: width, Height: height}}
+	f.SetBorder(true)
+	boxLayout := layout.NewBoxLayout(core.Vertical)
+	f.AddChild(content)
+	f.SetLayoutManager(boxLayout)
+	boxLayout.ItemAt(0).WithAlign(core.AlignFill)
+	return f
+}
+
+func (f *fixedSizeBox) SizeHint() core.UnitSize { return f.hint }
+
 func main() {
 	// Create the TUI backend
 	opts := backend.DefaultTUIOptions()
@@ -400,24 +421,25 @@ func createBasicWidgetsDemo(desktop *widgets.Desktop) core.Widget {
 
 // createSelectionDemo creates a panel with selection widgets using a draggable splitter.
 func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window, desktop *widgets.Desktop) core.Widget {
-	// Word-wrap test row: two wrapped labels side by side. Wrapping breaks
-	// lines by rune count, so toggling Tuesday (double-width letters) below
-	// makes lines break too late and clip at the label edge. The embedded
-	// newlines give the labels a multi-row SizeHint (a wrapped label cannot
-	// predict its own wrapped height yet).
+	// Word-wrap test row: two word-wrapped labels in fixed-width bordered
+	// boxes. The boxes pin the width (Label.SizeHint scales with the font,
+	// so an unconstrained label just grows instead of wrapping). In Monday
+	// the text wraps neatly inside the borders; in Tuesday wrapText still
+	// breaks by rune count, so each line is ~twice too wide and spills
+	// past the border.
 	wrapPanel := widgets.NewPanel()
 	wrapLayout := layout.NewBoxLayout(core.Horizontal)
 	wrapLayout.SetSpacing(8)
 
-	wrapLeft := widgets.NewLabel("The quick brown fox jumps over\nthe lazy dog while measuring\nwidths in the selected font")
+	wrapLeft := widgets.NewLabel("The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence")
 	wrapLeft.SetWordWrap(true)
-	wrapLeft.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizePreferred))
-	wrapPanel.AddChild(wrapLeft)
+	wrapLeft.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizeExpanding))
+	wrapPanel.AddChild(newFixedSizeBox(8*32, 16*7, wrapLeft))
 
-	wrapRight := widgets.NewLabel("Pack my box with five dozen\nliquor jugs then toggle the\nTuesday font checkbox below")
+	wrapRight := widgets.NewLabel("Pack my box with five dozen liquor jugs before the Tuesday checkbox below doubles every letter")
 	wrapRight.SetWordWrap(true)
-	wrapRight.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizePreferred))
-	wrapPanel.AddChild(wrapRight)
+	wrapRight.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizeExpanding))
+	wrapPanel.AddChild(newFixedSizeBox(8*32, 16*7, wrapRight))
 
 	wrapPanel.SetLayoutManager(wrapLayout)
 
