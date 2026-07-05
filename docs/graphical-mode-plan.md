@@ -283,7 +283,29 @@ Consequences recorded:
   same API; full fidelity appears in the graphical path. This is D1
   working as intended, not a defect.
 
-### Context: PurfecTerm is already multi-frontend  *(noted 2026-07-05)*
+### D7 — A Canvas widget is the pixel escape hatch; development deferred  *(decided 2026-07-05)*
+
+There will be a widget akin to HTML5's canvas: the escape hatch for
+apps with image and drawing needs the stock widget set cannot express.
+It follows the PurfecTerm pattern — app-owned content streaming into a
+server-composited region, with input events forwarded raw — but for
+pixels/drawing instead of character cells. **Development is deferred**
+to a future to-be-developed widget; the groundwork only needs to keep
+the slot open (it is one more widget type in the D2 protocol, so
+nothing structural depends on its internals).
+
+Design questions to answer when it is built (noted now, not decided):
+
+- **Command-based vs pixel-buffer, or both** (HTML5 canvas is
+  command-based with `putImageData` bolted on). Command-based remotes
+  well — compact, and the display service can redraw on expose/resize
+  without app round-trips. Pixel-buffer is the truly universal hatch
+  but is bandwidth-heavy remotely and wants a shared-memory fast path
+  locally. Likely both modes, command-based first.
+- Coordinate space and DPI behavior (ties to O2).
+- Input forwarding contract and frame synchronization/damage.
+- Behavior in TUI mode (unavailable? degraded cell rendering? app's
+  choice?).
 
 PurfecTerm predates tuitk as an independent project and already has
 **three working frontends in a single codebase: this TUI implementation,
@@ -442,9 +464,9 @@ milestone for whole windows.
   (thin client, server does emulation), or run the emulator app-side
   and stream cell diffs to a cell-grid surface widget? Both are
   possible with the existing purfecterm library; pick the v1 shape.
-- **Pixel escape-hatch timing:** the cell-grid surface widget is needed
-  early; when does the pixel surface widget (arbitrary client-rendered
-  graphical content) land?
+- **Pixel escape-hatch timing:** resolved by D7 — a Canvas widget will
+  exist and is explicitly deferred; the cell-grid surface widget is
+  still needed early.
 - **Reconnection semantics:** resolved in principle by D4 (sessions are
   first-class and separable from connections). Remaining detail: does
   v1 ship terminate-on-disconnect with reattach-ready IDs/handshake, or
@@ -498,6 +520,7 @@ milestone for whole windows.
 | D1 | 2026-07-05 | Widgets are mode-aware; same API, per-mode rendering owned by the widget. TUI cell idioms are TUI-only rendering material. |
 | D2 | 2026-07-05 | Apps compile independent of the renderer and talk to a desktop/render server over a socket (X-style). Boundary = **widget-level protocol**: server owns widgets/layout/rendering/hit-testing, apps drive proxies with the same API and receive semantic events. In-process stays as a direct implementation. Cell-grid + (later) pixel surface widgets are the custom-rendering escape hatch. |
 | — | 2026-07-05 | Context: PurfecTerm is an independent pre-existing project with TUI, GTK, and Qt frontends in one codebase — proof of the D1 pattern, source of graphical cell-grid rendering, input to O1. |
+| D7 | 2026-07-05 | A Canvas widget (HTML5-canvas-like: PurfecTerm pattern, but for images/drawing) is the pixel escape hatch. Committed to exist; development deferred to a future widget. Likely command-based + pixel-buffer modes, command-based first. |
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
 | D4 | 2026-07-05 | X-direction rendezvous: the display service listens on a well-known endpoint, apps dial in. Sessions are first-class protocol objects separable from connections (enables reattach/multi-viewer without inverting topology). Reverse attachment is a possible later mode. Naming: "display service" and "apps". |
 | D5 | 2026-07-05 | Two graphical substrates, Gio and SDL, behind one neutral Platform interface (PurfecTerm-style discipline). Mandatory condition: one shared tuitk-owned text engine (shaping/measurement/rasterization) outside the substrates, so layout is substrate-independent; it doubles as the server-side TextMeasurer. Substrates land serially; second lands before the interface is declared stable. |
