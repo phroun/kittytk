@@ -6,6 +6,7 @@ import (
 
 	"github.com/phroun/tuitk/app"
 	"github.com/phroun/tuitk/backend"
+	"github.com/phroun/tuitk/client"
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/layout"
 	"github.com/phroun/tuitk/protocol"
@@ -101,70 +102,39 @@ watch=root.status
 wcb=root.cb
 winp=root.inp
 wcombo=root.combo
-
-# D20 default-closed: open the event flows this window listens to
-# (command events need no sub - the button works regardless).
-sub wcb toggle
-sub winp change
-sub wcombo change
 `
 
-// createProtocolWindow builds the P0 step-4 window: content
-// constructed by executing protocol text, interactions delivered back
-// as protocol event records into app handlers.
+// createProtocolWindow builds the Protocol Demo window through the
+// client veneer: typed handles over the wire objects, replica-backed
+// reads, write-through setters. No raw dispatcher, no sub statements
+// in the script - handles subscribe what they mirror.
 func createProtocolWindow(application *app.Application, desktop *widgets.Desktop) *window.Window {
-	dispatcher := protocol.NewEventDispatcher()
-	ctx := &protocol.BindContext{
-		Dispatch: func(id string) { application.Commands().Dispatch(id) },
-		Emit:     func(ev *protocol.Event) { dispatcher.Dispatch(ev) },
-	}
-
-	factory := &idCaptureFactory{
-		inner: protocol.NewRegistryFactory(ctx),
-		byID:  make(map[uint64]any),
-	}
-
-	script, err := protocol.Parse(protocolWindowScript)
-	if err != nil {
-		return nil
-	}
-	reply, err := protocol.NewSession().Execute(script, factory)
+	conn := client.NewInProcess(func(id string) { application.Commands().Dispatch(id) })
+	ui, err := conn.Build(protocolWindowScript)
 	if err != nil {
 		return nil
 	}
 
-	rootWidget, _ := factory.byID[reply.IDs["root"]].(core.Widget)
-	status, _ := factory.byID[reply.IDs["watch"]].(*widgets.Label)
-	if rootWidget == nil || status == nil {
-		return nil
-	}
+	status := ui.Label("watch")
 
-	// App-side handlers, keyed by the surfaced ObjectIDs - the same
-	// records a remote display service would deliver.
-	dispatcher.On(reply.IDs["wcb"], "toggle", func(ev *protocol.Event) {
+	ui.Checkbox("wcb").OnToggle(func(s protocol.FlagState) {
 		state := "off"
-		switch ev.Flag("checked") {
+		switch s {
 		case protocol.FlagTrue:
 			state = "on"
 		case protocol.FlagIndeterminate:
 			state = "mixed"
 		}
-		status.SetText("event toggle checked=" + state)
+		status.SetCaption("event toggle checked=" + state)
 	})
-	dispatcher.On(reply.IDs["winp"], "change", func(ev *protocol.Event) {
-		if s, ok := ev.Text("text"); ok {
-			status.SetText(`event change text="` + s + `"`)
-		}
+	ui.TextInput("winp").OnChange(func(s string) {
+		status.SetCaption(`event change text="` + s + `"`)
 	})
-	dispatcher.On(reply.IDs["wcombo"], "change", func(ev *protocol.Event) {
-		if i, ok := ev.Int("selected"); ok {
-			status.SetText(fmt.Sprintf("event change selected=%d", i))
-		}
+	ui.Selector("wcombo").OnChange(func(i int) {
+		status.SetCaption(fmt.Sprintf("event change selected=%d", i))
 	})
-	dispatcher.OnType("command", func(ev *protocol.Event) {
-		if a, ok := ev.Word("action"); ok {
-			status.SetText("event command action=" + a)
-		}
+	conn.OnCommand("demo.hello", func() {
+		status.SetCaption("event command action=demo.hello")
 	})
 
 	// The command also lands in the app's registry (slice-1 seam).
@@ -174,6 +144,10 @@ func createProtocolWindow(application *app.Application, desktop *widgets.Desktop
 		}
 	})
 
+	rootWidget, ok := ui.Object("root").Target().(core.Widget)
+	if !ok {
+		return nil
+	}
 	w := window.NewWindow("Protocol Demo")
 	w.SetBounds(core.UnitRect{X: 8 * 8, Y: 16 * 4, Width: 8 * 56, Height: 16 * 16})
 	w.SetContent(rootWidget)

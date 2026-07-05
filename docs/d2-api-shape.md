@@ -229,6 +229,40 @@ shadowed the common layout `align` hint — renamed `text_align`.
   starts, close button subscribed per-connection so instances never
   collide.
 
+## Client-library veneer *(done 2026-07-05)*
+
+The `client` package implements the slice-4 veneer contract — the
+app-facing purity layer P0 deferred:
+
+- **`client.Conn`** — instance-scoped (multi-display guardrail),
+  imports ONLY `protocol`: it compiles with zero knowledge of the
+  rendering side. `NewInProcess(dispatch)` wires the in-process
+  display (registered vocabulary via `RegistryFactory`); a remote
+  transport later slots in behind the same surface.
+- **Replica reads**: `Conn` interposes a recording factory (types +
+  in-process targets) and folds subscribed events into per-object
+  state BEFORE app handlers run — `Checkbox.State()`,
+  `TextInput.Text()`, `Selector.Selected()` are synchronous and
+  never cross the wire.
+- **Write-through setters**: `SetChecked`/`SetText`/`Select`/
+  `SetCaption` update the replica and send `set <id> …`; D20
+  guarantees no echo (tested: zero events observed on writes, user
+  edits still flow).
+- **Typed handles** from `Build(script)`: `Button` (OnClick),
+  `Checkbox` (tri-state), `TextInput`, `Selector` (combobox/list/
+  tree/tabs share the shape), `Label`, `Window`, generic `Handle`
+  with `Set(raw)` escape hatch, `Destroy`, `On(event)`. Handles
+  auto-subscribe the events backing their replica getters; class-C1
+  reads (geometry etc.) deliberately do not exist on handles.
+- **In-process escape hatch**: `Handle.Target()` exposes the real
+  widget for hybrid apps (window managers, AddWindow); documented as
+  nil under future remote transports.
+- The demo's Protocol Demo window is the showcase: no raw
+  dispatcher, no sub statements in the script, handlers write back
+  through the veneer (`status.SetCaption`). Six tests cover replica
+  mirroring, no-echo, fold-before-handler ordering, command
+  observation, escape hatch + destroy, and connection independence.
+
 **Messagebox + status bar (2026-07-05):** `messagebox` registered
 (buttons as individual D12 flags, `finish result=` event,
 destroy=close); all three demo dialogs are scripts via

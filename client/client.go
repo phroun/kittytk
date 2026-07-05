@@ -1,0 +1,256 @@
+// Package client is the app-side veneer over the display protocol:
+// typed handles with synchronous-looking reads served from an
+// app-side replica, writes as fire-and-forget protocol statements,
+// and event subscriptions folded into the replica before app
+// handlers run (the slice-4 veneer contract, docs/d2-read-audit.md).
+//
+// A Conn is instance-scoped, never global (multi-display guardrail):
+// one app may hold any number of connections. The package imports
+// ONLY the protocol package - it compiles with no knowledge of the
+// rendering side. In-process, the display side is the registered
+// widget vocabulary reached through protocol.RegistryFactory; under
+// transport the same Conn speaks to a socket instead.
+package client
+
+import (
+	"fmt"
+	"sync"
+
+	"github.com/phroun/tuitk/protocol"
+)
+
+// Conn is one connection to one display service.
+type Conn struct {
+	mu      sync.Mutex
+	session *protocol.Session
+	factory protocol.Factory
+
+	// Replica: per-object state folded from writes (class A) and
+	// subscribed events (class B).
+	types map[uint64]string
+	state map[uint64]*objState
+
+	// In-process escape hatch: the real constructed targets, keyed
+	// by object ID. Nil entries under a future remote transport.
+	targets map[uint64]any
+
+	// App handlers by (object, event type) and by event type.
+	handlers     map[uint64]map[string][]func(*protocol.Event)
+	typeHandlers map[string][]func(*protocol.Event)
+
+	// Subscriptions already sent (avoid duplicate sub statements).
+	subs map[subKey]bool
+
+	// Command sink for action= dispatch (the app's registry).
+	dispatch func(commandID string)
+}
+
+type subKey struct {
+	id    uint64
+	event string
+}
+
+// objState is the replica of one object's class-B state.
+type objState struct {
+	checked  protocol.FlagState
+	text     string
+	selected int
+	result   string
+}
+
+// NewInProcess creates a connection whose display side is the
+// registered widget vocabulary in this process. dispatch receives
+// action= command IDs (pass the application registry's Dispatch;
+// nil is allowed for connections that use no commands).
+func NewInProcess(dispatch func(commandID string)) *Conn {
+	c := &Conn{
+		session:      protocol.NewSession(),
+		types:        make(map[uint64]string),
+		state:        make(map[uint64]*objState),
+		targets:      make(map[uint64]any),
+		handlers:     make(map[uint64]map[string][]func(*protocol.Event)),
+		typeHandlers: make(map[string][]func(*protocol.Event)),
+		subs:         make(map[subKey]bool),
+		dispatch:     dispatch,
+	}
+	ctx := &protocol.BindContext{
+		Dispatch: func(id string) {
+			if c.dispatch != nil {
+				c.dispatch(id)
+			}
+		},
+		Emit: c.deliver,
+	}
+	c.factory = &recordingFactory{conn: c, inner: protocol.NewRegistryFactory(ctx)}
+	return c
+}
+
+// recordingFactory interposes on construction to record each object's
+// type and (in-process) target into the replica tables.
+type recordingFactory struct {
+	conn  *Conn
+	inner protocol.Factory
+}
+
+func (f *recordingFactory) New(typeName string) (protocol.Object, error) {
+	o, err := f.inner.New(typeName)
+	if err != nil {
+		return nil, err
+	}
+	f.conn.mu.Lock()
+	f.conn.types[o.ID()] = typeName
+	if tg, ok := o.(interface{ Target() any }); ok {
+		f.conn.targets[o.ID()] = tg.Target()
+	}
+	f.conn.mu.Unlock()
+	return o, nil
+}
+
+// Forward EventControl to the inner factory (wrappers must not hide
+// the capability).
+func (f *recordingFactory) Subscribe(id uint64, typ string) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Subscribe(id, typ)
+	}
+}
+func (f *recordingFactory) Unsubscribe(id uint64, typ string) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Unsubscribe(id, typ)
+	}
+}
+func (f *recordingFactory) Suppressed(fn func()) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Suppressed(fn)
+		return
+	}
+	fn()
+}
+
+// Exec parses and executes protocol text on this connection.
+func (c *Conn) Exec(src string) (*protocol.Reply, error) {
+	script, err := protocol.Parse(src)
+	if err != nil {
+		return nil, err
+	}
+	return c.session.Execute(script, c.factory)
+}
+
+// Build executes a construction script and returns handle access to
+// its surfaced names.
+func (c *Conn) Build(src string) (*UI, error) {
+	reply, err := c.Exec(src)
+	if err != nil {
+		return nil, err
+	}
+	return &UI{conn: c, ids: reply.IDs}, nil
+}
+
+// deliver folds an event into the replica, then invokes handlers.
+// (BindContext already filtered by subscription and suppression.)
+func (c *Conn) deliver(ev *protocol.Event) {
+	id, _ := ev.Widget()
+
+	c.mu.Lock()
+	st := c.state[id]
+	if st == nil {
+		st = &objState{selected: -1}
+		c.state[id] = st
+	}
+	switch ev.Type {
+	case "toggle":
+		st.checked = ev.Flag("checked")
+	case "change":
+		if s, ok := ev.Text("text"); ok {
+			st.text = s
+		}
+		if n, ok := ev.Int("selected"); ok {
+			st.selected = n
+		}
+	case "finish":
+		if w, ok := ev.Word("result"); ok {
+			st.result = w
+		}
+	}
+	var fns []func(*protocol.Event)
+	if hs, ok := c.handlers[id]; ok {
+		fns = append(fns, hs[ev.Type]...)
+	}
+	fns = append(fns, c.typeHandlers[ev.Type]...)
+	c.mu.Unlock()
+
+	for _, fn := range fns {
+		fn(ev)
+	}
+}
+
+// ensureSub sends a sub statement once per (object, event).
+func (c *Conn) ensureSub(id uint64, event string) {
+	c.mu.Lock()
+	key := subKey{id, event}
+	if c.subs[key] {
+		c.mu.Unlock()
+		return
+	}
+	c.subs[key] = true
+	c.mu.Unlock()
+	// Errors here indicate a connection without event support; the
+	// replica then simply never updates - surfaced by tests, not
+	// silent corruption of app state.
+	_, _ = c.Exec(fmt.Sprintf("sub %d %s", id, event))
+}
+
+// on registers an app handler and opens the event flow.
+func (c *Conn) on(id uint64, event string, fn func(*protocol.Event)) {
+	c.ensureSub(id, event)
+	c.mu.Lock()
+	if c.handlers[id] == nil {
+		c.handlers[id] = make(map[string][]func(*protocol.Event))
+	}
+	c.handlers[id][event] = append(c.handlers[id][event], fn)
+	c.mu.Unlock()
+}
+
+// OnCommand registers a handler for command events carrying the given
+// action ID (command events flow unconditionally per D20). This is
+// event observation; the authoritative dispatch is the sink passed to
+// NewInProcess.
+func (c *Conn) OnCommand(action string, fn func()) {
+	c.mu.Lock()
+	c.typeHandlers["command"] = append(c.typeHandlers["command"], func(ev *protocol.Event) {
+		if a, ok := ev.Word("action"); ok && a == action {
+			fn()
+		}
+	})
+	c.mu.Unlock()
+}
+
+// stateOf returns the replica entry, creating it lazily.
+func (c *Conn) stateOf(id uint64) *objState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	st := c.state[id]
+	if st == nil {
+		st = &objState{selected: -1}
+		c.state[id] = st
+	}
+	return st
+}
+
+// set sends a set statement for one object (fire-and-forget; D20
+// guarantees it will not echo back).
+func (c *Conn) set(id uint64, args string) error {
+	_, err := c.Exec(fmt.Sprintf("set %d %s", id, args))
+	return err
+}
+
+// UI is handle access to one Build's surfaced names.
+type UI struct {
+	conn *Conn
+	ids  map[string]uint64
+}
+
+// ID returns the ObjectID behind a surfaced name (0 if absent).
+func (u *UI) ID(name string) uint64 { return u.ids[name] }
+
+// Has reports whether a name was surfaced.
+func (u *UI) Has(name string) bool { _, ok := u.ids[name]; return ok }
