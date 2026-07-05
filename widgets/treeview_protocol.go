@@ -18,10 +18,11 @@ import (
 //	    new item caption="Roots"
 //	}
 //
-// v1 limitation (tracked in docs/property-vocabulary.md): tree items
-// are not addressable objects yet, so selection events carry the
-// item's caption (text=) and visible-row index (selected=); giving
-// items wire identity joins the set-verb follow-ups.
+// Items are first-class wire objects: each carries an ObjectID, and
+// correlation keys name them (`fruit=new item …` → `tree.fruit`, then
+// `set tree.fruit caption="…"`, `destroy tree.fruit`). Selection
+// events report the item's identity as item=<id> alongside the
+// visible-row index.
 func init() {
 	protocol.RegisterType("treeview", &protocol.TypeSpec{
 		New: func() any { return NewTreeView() },
@@ -31,23 +32,34 @@ func init() {
 		Bind: func(ctx *protocol.BindContext, target any) {
 			tv := target.(*TreeView)
 			id := uint64(tv.ObjectID())
-			tv.SetOnCurrentChanged(func(item *TreeItem) {
+			emit := func(evType string, item *TreeItem) {
 				if item == nil {
 					return
 				}
-				ctx.EmitEvent(protocol.NewEvent("change").
+				ctx.EmitEvent(protocol.NewEvent(evType).
 					WithUint("widget", id).
-					WithInt("selected", tv.CurrentIndex()).
-					WithString("text", item.Text))
+					WithUint("item", uint64(item.ID)).
+					WithInt("selected", tv.CurrentIndex()))
+			}
+			tv.SetOnCurrentChanged(func(item *TreeItem) { emit("change", item) })
+			tv.SetOnItemActivated(func(item *TreeItem) { emit("activate", item) })
+			tv.SetOnItemExpanded(func(item *TreeItem) {
+				if item == nil {
+					return
+				}
+				ctx.EmitEvent(protocol.NewEvent("expand").
+					WithUint("widget", id).
+					WithUint("item", uint64(item.ID)).
+					WithFlag("expanded", protocol.FlagTrue))
 			})
-			tv.SetOnItemActivated(func(item *TreeItem) {
+			tv.SetOnItemCollapsed(func(item *TreeItem) {
 				if item == nil {
 					return
 				}
-				ctx.EmitEvent(protocol.NewEvent("activate").
+				ctx.EmitEvent(protocol.NewEvent("expand").
 					WithUint("widget", id).
-					WithInt("selected", tv.CurrentIndex()).
-					WithString("text", item.Text))
+					WithUint("item", uint64(item.ID)).
+					WithFlag("expanded", protocol.FlagFalse))
 			})
 		},
 		Props: map[string]protocol.PropertyApplier{
@@ -63,21 +75,11 @@ func init() {
 			if !ok {
 				return fmt.Errorf("treeview: children must be items, got %T", child)
 			}
-			tv.AddRootItem(buildTreeItem(it))
+			tv.AddRootItem(it.bind(tv))
 			return nil
 		},
 		Destroy: func(t any) error {
 			return destroyWidget(t.(*TreeView))
 		},
 	})
-}
-
-// buildTreeItem converts a wire item subtree into TreeItems.
-func buildTreeItem(it *wireItem) *TreeItem {
-	node := NewTreeItem(it.caption)
-	node.Expanded = it.expanded
-	for _, c := range it.children {
-		node.AddChild(buildTreeItem(c))
-	}
-	return node
 }

@@ -3,6 +3,7 @@ package widgets
 import (
 	"fmt"
 
+	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
 )
 
@@ -11,19 +12,32 @@ import (
 // them with children={} blocks:
 //
 //	new treeview children={
-//	    new item caption="Fruit" expanded children={
+//	    fruit=new item caption="Fruit" expanded children={
 //	        new item caption="Apple"
 //	        new item caption="Pear"
 //	    }
 //	}
 //
-// An item is a record, not a widget; each consuming parent converts it
-// to its native form on Append.
+// Items carry real ObjectIDs (same allocation space as widgets), and
+// correlation keys name them like anything else - `set tree.fruit
+// caption="…"` and `destroy tree.fruit` work after construction. An
+// item starts as a record; when a treeview adopts it, it becomes a
+// live proxy for the TreeItem it produced, so later set/destroy
+// route to the visible tree.
 type wireItem struct {
+	id       uint64
 	caption  string
 	expanded bool
 	children []*wireItem
+
+	// Live backrefs, filled in when a treeview adopts the item.
+	node *TreeItem
+	view *TreeView
 }
+
+// SetWireID receives the factory-assigned identity (protocol calls
+// this for virtual targets at construction).
+func (it *wireItem) SetWireID(id uint64) { it.id = id }
 
 func init() {
 	protocol.RegisterType("item", &protocol.TypeSpec{
@@ -36,6 +50,10 @@ func init() {
 					return err
 				}
 				it.caption = s
+				if it.node != nil {
+					it.node.Text = s
+					it.refresh()
+				}
 				return nil
 			}),
 			"expanded": wprop("expanded", func(_ *protocol.BindContext, it *wireItem, v *protocol.Value, f protocol.FlagState) error {
@@ -44,6 +62,10 @@ func init() {
 					return err
 				}
 				it.expanded = b
+				if it.node != nil {
+					it.node.Expanded = b
+					it.refresh()
+				}
 				return nil
 			}),
 		},
@@ -54,7 +76,52 @@ func init() {
 				return fmt.Errorf("item: children must be items, got %T", child)
 			}
 			p.children = append(p.children, c)
+			if p.node != nil {
+				// Late append onto an already-live item (set k
+				// children={...}): grow the real tree too.
+				p.node.AddChild(c.bind(p.view))
+				p.refresh()
+			}
+			return nil
+		},
+		Destroy: func(t any) error {
+			it := t.(*wireItem)
+			if it.node == nil || it.view == nil {
+				return nil // never adopted; nothing visible to remove
+			}
+			if parent := it.node.Parent; parent != nil {
+				parent.RemoveChild(it.node)
+			} else {
+				it.view.RemoveRootItem(it.node)
+			}
+			it.refresh()
+			it.node, it.view = nil, nil
 			return nil
 		},
 	})
+}
+
+// bind converts the wire item subtree into TreeItems carrying the
+// wire identity, and records live backrefs for later set/destroy.
+func (it *wireItem) bind(view *TreeView) *TreeItem {
+	node := NewTreeItem(it.caption)
+	if it.id != 0 {
+		node.ID = core.ObjectID(it.id)
+	}
+	node.Expanded = it.expanded
+	it.node = node
+	it.view = view
+	for _, c := range it.children {
+		node.AddChild(c.bind(view))
+	}
+	return node
+}
+
+func (it *wireItem) refresh() {
+	if it.view != nil {
+		// Structure or expansion changed: the flattened row list must
+		// be rebuilt before the next paint or index-based selection.
+		it.view.rebuildFlatList()
+		it.view.Update()
+	}
 }

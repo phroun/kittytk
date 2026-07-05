@@ -316,6 +316,11 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 	o := &registryObject{ctx: f.ctx, spec: spec, target: spec.New()}
 	if spec.Virtual {
 		o.virtualID = virtualIDSource()
+		// Virtual targets that want to know their identity (e.g. tree
+		// items, whose IDs outlive construction) receive it here.
+		if aware, ok := o.target.(interface{ SetWireID(uint64) }); ok {
+			aware.SetWireID(o.virtualID)
+		}
 	}
 	if spec.Bind != nil {
 		spec.Bind(f.ctx, o.target)

@@ -187,10 +187,21 @@ is frozen; naming questions are collected at the end.
 | `indent_width` | numeric | treeview |
 | `multi_select` | flag | (future) |
 
-Events: `change selected=` on selection move, `activate selected=` on
-Enter/double-activation. v1 limitation: tree items are not
-addressable wire objects yet, so tree events also carry `text=` (the
-item caption); item-level identity joins a later slice.
+**Item identity (2026-07-05):** items are first-class wire objects —
+each carries an ObjectID from the same allocation space as widgets,
+and the ordinary correlation-key machinery names them (nothing
+item-specific was invented): `fruit=new item …` inside a keyed tree
+registers `tree.fruit`; `set tree.fruit caption="…" !expanded`,
+`set tree.fruit children={new item …}` (grows the live subtree), and
+`destroy tree.fruit` all work after construction, and a live tree
+updates in place. Tree events report the identity as `item=<id>`:
+`change`/`activate` carry `item=` + `selected=` (visible-row index),
+and `expand item=<id> expanded`/`!expanded` reports user
+expand/collapse. Go-side, `TreeItem.ID` is auto-assigned at
+construction, so imperatively built trees carry identity too.
+Listview/combobox rows have IDs as well but are not yet routed for
+set/destroy (flat rows; rebuild is cheap — join a later slice if
+needed).
 
 ### progress
 | Property | Type | Notes |
@@ -291,8 +302,9 @@ source where applicable. Apps subscribe per widget/event (slice 3).
 | `command` | `action` | Menu/button/shortcut dispatch — the slice-1 seam |
 | `click` | `widget`, `x`, `y`, `button` | Positions in the widget's denomination |
 | `toggle` | `widget`, `checked` | Checkbox/radio state after the change |
-| `change` | `widget`, `text` \| `value` \| `selected` | Content/value/selection changed (textinput, combobox, progress-consumer, list) |
-| `activate` | `widget`, `selected` | Item chosen (combobox selection committed, list double-activation) |
+| `change` | `widget`, `text` \| `value` \| `selected` (+ `item` on trees) | Content/value/selection changed (textinput, combobox, progress-consumer, list, tree) |
+| `activate` | `widget`, `selected` (+ `item` on trees) | Item chosen (combobox selection committed, list/tree double-activation) |
+| `expand` | `widget`, `item`, `expanded` flag | Tree node expanded (`expanded`) or collapsed (`!expanded`) by the user |
 | `focus_in` / `focus_out` | `widget` | |
 | `key` | `widget`, `key` | D3 string; only when subscribed (raw-key mode) |
 | `window_moved` / `window_resized` | `window`, `x`, `y`, `width`, `height` | |

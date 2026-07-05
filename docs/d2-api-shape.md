@@ -168,10 +168,23 @@ one slice:
   BoxLayout at attach), common `fg`/`bg` colors (named words +
   quoted "#rrggbb").
 
+**Tree-item identity (2026-07-05):** items are addressable wire
+objects — the owner's ruling: identity is the ObjectID (items already
+drew from the widget ID space), and the "user-chosen unseen name" is
+the existing correlation-key system, not a new mechanism. The wire
+item record becomes a live proxy when a treeview adopts it
+(`wireItem.bind` carries the ID onto the `TreeItem` and keeps
+backrefs), so `set tree.fruit …`, `set … children={}` (live append),
+and `destroy tree.fruit` mutate the visible tree; selection events
+carry `item=<id>`, and user expand/collapse emits
+`expand item=<id> expanded|!expanded`. `TreeItem.ID` is auto-assigned
+Go-side too. Factory hook: virtual targets implementing
+`SetWireID(uint64)` learn their identity at construction.
+
 Remaining before the full demo conversion: menus as protocol data
-(G6 trees), tree-item wire identity, `state` window property,
-progress/scrollbar polish — none block converting the demo's
-protocol-friendly tabs.
+(G6 trees), `state` window property, listview row set/destroy
+routing (rows have IDs; rebuild-on-change is fine for now) — none
+block converting the demo's protocol-friendly tabs.
 
 ## Slice 1 — Menu command identity & dispatch  *(done 2026-07-05)*
 

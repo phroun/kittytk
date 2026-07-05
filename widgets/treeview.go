@@ -11,6 +11,12 @@ import (
 
 // TreeItem represents an item in a TreeView.
 type TreeItem struct {
+	// ID is the item's stable object identity, allocated from the
+	// same space as widget ObjectIDs. Protocol-built items keep the
+	// wire ID they were created under, so events, set, and destroy
+	// address the same number the reply surfaced.
+	ID core.ObjectID
+
 	Text     string
 	Icon     *style.TextIcon
 	Data     interface{} // User data
@@ -23,6 +29,7 @@ type TreeItem struct {
 // NewTreeItem creates a new tree item.
 func NewTreeItem(text string) *TreeItem {
 	return &TreeItem{
+		ID:      core.NextObjectID(),
 		Text:    text,
 		Enabled: true,
 	}

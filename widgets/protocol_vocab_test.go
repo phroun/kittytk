@@ -78,6 +78,97 @@ tv=new treeview children={
 	}
 }
 
+func TestTreeItemIdentity(t *testing.T) {
+	session := protocol.NewSession()
+	events := &[]*protocol.Event{}
+	ctx := &protocol.BindContext{
+		Emit: func(ev *protocol.Event) { *events = append(*events, ev) },
+	}
+	ctx.Subscribe(0, "")
+	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
+
+	script, err := protocol.Parse(`
+tree=new treeview children={
+	fruit=new item caption="Fruit" expanded children={
+		apple=new item caption="Apple"
+	}
+	roots=new item caption="Roots"
+}
+wfruit=tree.fruit
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err := session.Execute(script, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tv := f.targets[0].(*TreeView)
+	fruit := tv.RootItems()[0]
+
+	// The live TreeItem carries the surfaced wire ID.
+	if uint64(fruit.ID) != reply.IDs["wfruit"] || fruit.ID == 0 {
+		t.Fatalf("fruit.ID = %d, surfaced = %d", fruit.ID, reply.IDs["wfruit"])
+	}
+
+	// set by key mutates the LIVE tree.
+	mutate, _ := protocol.Parse(`set tree.fruit caption="Fruits & Nuts" !expanded`)
+	if _, err := session.Execute(mutate, f); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if fruit.Text != "Fruits & Nuts" || fruit.Expanded {
+		t.Errorf("after set: text=%q expanded=%v", fruit.Text, fruit.Expanded)
+	}
+
+	// set children={} appends to the live subtree.
+	grow, _ := protocol.Parse(`set tree.fruit children={new item caption="Pear"}`)
+	if _, err := session.Execute(grow, f); err != nil {
+		t.Fatalf("set children: %v", err)
+	}
+	if len(fruit.Children) != 2 || fruit.Children[1].Text != "Pear" {
+		t.Errorf("after append: children=%d", len(fruit.Children))
+	}
+
+	// Selection events carry the item's identity. (fruit is already
+	// current - AddRootItem auto-selected it - so move to roots.)
+	roots := tv.RootItems()[1]
+	*events = nil
+	tv.SetCurrentItem(roots)
+	got := eventsOfType(*events, "change")
+	if len(got) != 1 {
+		t.Fatalf("change events = %d, want 1", len(got))
+	}
+	if id, ok := got[0].Uint("item"); !ok || id != uint64(roots.ID) {
+		t.Errorf("event item = %d, want %d", id, roots.ID)
+	}
+
+	// The nested key addresses the same identity the event reported
+	// (session keys aren't in the reply, but set proves resolution).
+	renameRoots, _ := protocol.Parse(`set tree.roots caption="Tubers"`)
+	if _, err := session.Execute(renameRoots, f); err != nil {
+		t.Fatalf("set tree.roots: %v", err)
+	}
+	if roots.Text != "Tubers" {
+		t.Errorf("roots.Text = %q", roots.Text)
+	}
+
+	// destroy removes the node from the live tree and releases keys.
+	kill, _ := protocol.Parse(`destroy tree.fruit`)
+	if _, err := session.Execute(kill, f); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if n := len(tv.RootItems()); n != 1 {
+		t.Errorf("root items after destroy = %d, want 1", n)
+	}
+	if tv.RootItems()[0] != roots {
+		t.Errorf("wrong item survived: %q", tv.RootItems()[0].Text)
+	}
+	again, _ := protocol.Parse(`set tree.fruit caption="x"`)
+	if _, err := session.Execute(again, f); err == nil {
+		t.Error("set on destroyed item key should fail")
+	}
+}
+
 func TestScrollAreaSingleContent(t *testing.T) {
 	f, _ := buildUI(t, nil, `
 sa=new scrollarea resizable children={new label caption="inside"}
