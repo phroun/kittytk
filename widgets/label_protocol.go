@@ -14,8 +14,11 @@ func init() {
 		map[string]protocol.PropertyApplier{
 			"caption": stringProp("caption", (*Label).SetText),
 			"wrap":    boolProp("wrap", (*Label).SetWordWrap),
-			"align": wprop("align", func(_ *protocol.BindContext, l *Label, v *protocol.Value, f protocol.FlagState) error {
-				w, err := protocol.AsWord("align", v, f)
+			// text_align is the TEXT alignment within the label;
+			// the common `align` property is the layout-item hint.
+			// Distinct concepts, distinct names.
+			"text_align": wprop("text_align", func(_ *protocol.BindContext, l *Label, v *protocol.Value, f protocol.FlagState) error {
+				w, err := protocol.AsWord("text_align", v, f)
 				if err != nil {
 					return err
 				}
@@ -27,7 +30,7 @@ func init() {
 				case "right":
 					l.SetAlignment(core.AlignRight)
 				default:
-					return fmt.Errorf("align: unknown value %q", w)
+					return fmt.Errorf("text_align: unknown value %q", w)
 				}
 				return nil
 			}),

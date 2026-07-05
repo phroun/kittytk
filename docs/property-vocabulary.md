@@ -140,7 +140,7 @@ is frozen; naming questions are collected at the end.
 |---|---|---|
 | `caption` | string | Displayed text (may contain `\n`) |
 | `wrap` | flag | Word wrap (enables height-for-width) |
-| `align` | enum | Text alignment within bounds |
+| `text_align` | enum | `left`, `center`, `right` — TEXT alignment within the label. Renamed from `align` (2026-07-05): it shadowed the common layout-item `align` hint; distinct concepts get distinct names. |
 
 ### checkbox
 | Property | Type | Notes |

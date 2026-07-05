@@ -181,10 +181,28 @@ carry `item=<id>`, and user expand/collapse emits
 Go-side too. Factory hook: virtual targets implementing
 `SetWireID(uint64)` learn their identity at construction.
 
-Remaining before the full demo conversion: menus as protocol data
-(G6 trees), `state` window property, listview row set/destroy
-routing (rows have IDs; rebuild-on-change is fine for now) — none
-block converting the demo's protocol-friendly tabs.
+**Main demo window converted (2026-07-05):** the "TUI Toolkit Demo"
+window IS protocol text now (`examples/demo/mainwindow_protocol.go`).
+Eight tabs — Basic Widgets, Selection, Lists, Scroll Selection,
+Scroll Lists, Progress, Bottom Tabs, Vertical Tabs — build from one
+script (window + tabs + nested splitters/scrollareas/lists/trees;
+repetitive runs generated, still protocol text). The MDI Demo tab
+stays imperative by design (G1 residuals + PurfecTerm) and attaches
+through the surfaced TabWidget — the supported hybrid. App-side
+wiring is entirely protocol-shaped: buttons dispatch commands via
+`action=`, the text input and all font/denomination/background
+toggles arrive as subscribed events keyed by surfaced ObjectIDs, and
+~800 lines of imperative construction are deleted. The demo also
+registers its own wire type (`fixedbox`), proving app-local
+vocabulary extension works through the public API. Paint tests
+render both the Basic Widgets and Selection tabs from the script —
+the tab flip in the test is done with `set tabs selected=1`.
+Found and fixed during conversion: label's `align` (text alignment)
+shadowed the common layout `align` hint — renamed `text_align`.
+
+Remaining: menus as protocol data (G6 trees), `state` window
+property, listview row set/destroy routing (rows have IDs;
+rebuild-on-change is fine for now).
 
 ## Slice 1 — Menu command identity & dispatch  *(done 2026-07-05)*
 
