@@ -13,7 +13,14 @@ is frozen; naming questions are collected at the end.
   (D8/D8′); rows/columns appear only where the concept is genuinely
   grid-based (e.g. terminal surfaces).
 - Enum values are lowercase strings: `align=center`, `state=maximized`.
-- Booleans: `true`/`false`.
+- **Flags (D12):** pure booleans travel as bare names — presence means
+  true (`wrap`), `!name` means false (`!enabled`), and absence means
+  *unsaid*: default at creation, **unchanged on update**. The long
+  forms `name=true`/`name=false` are accepted on input for generic
+  tooling; the flag form is canonical. `!` never begins a property
+  name. Flags compose with aliases (`alias d="default"` → `d` / `!d`).
+  Tri-states and other multi-valued switches are enums, not flags
+  (e.g. `checked=off|on|mixed`).
 - `id` values are ObjectIDs (server-assigned; see Correlation Keys).
 - `action` values are command IDs (semantic strings like `file.open`,
   or auto-assigned `cmd.auto.N`).
@@ -38,8 +45,8 @@ is frozen; naming questions are collected at the end.
 |---|---|---|
 | `id` | id | Read-only identity |
 | `name` | string | Human label for debugging/tooling; NOT identity |
-| `enabled` | bool | |
-| `visible` | bool | |
+| `enabled` | flag | |
+| `visible` | flag | |
 | `x`, `y`, `width`, `height` | units | Bounds in parent denomination; usually layout-managed |
 | `min_width`, `min_height` | units | |
 | `max_width`, `max_height` | units | |
@@ -60,13 +67,13 @@ is frozen; naming questions are collected at the end.
 | `caption` | string | Display text (`&` accelerator markup) |
 | `icon` | string | Icon identifier |
 | `action` | command-id | **Optional** — links the button to a command; when set, click dispatches the command. `click` events fire regardless |
-| `default` | bool | Default-button styling/Enter behavior |
+| `default` | flag | Default-button styling/Enter behavior |
 
 ### label
 | Property | Type | Notes |
 |---|---|---|
 | `caption` | string | Displayed text (may contain `\n`) |
-| `wrap` | bool | Word wrap (enables height-for-width) |
+| `wrap` | flag | Word wrap (enables height-for-width) |
 | `align` | enum | Text alignment within bounds |
 
 ### checkbox
@@ -74,17 +81,17 @@ is frozen; naming questions are collected at the end.
 |---|---|---|
 | `caption` | string | |
 | `checked` | enum | `off`, `on`, `mixed` (tri-state) |
-| `tristate` | bool | |
-| `wrap` | bool | Opt-in word wrap (D9: indicator is chrome) |
+| `tristate` | flag | |
+| `wrap` | flag | Opt-in word wrap (D9: indicator is chrome) |
 | `action` | command-id | Optional, as with button |
 
 ### radiobutton
 | Property | Type | Notes |
 |---|---|---|
 | `caption` | string | |
-| `checked` | bool | |
+| `checked` | flag | |
 | `group` | id | Radio group membership |
-| `wrap` | bool | |
+| `wrap` | flag | |
 
 ### textinput
 | Property | Type | Notes |
@@ -93,15 +100,15 @@ is frozen; naming questions are collected at the end.
 | `placeholder` | string | |
 | `cursor` | int | Caret position (rune index) |
 | `selection_start`, `selection_end` | int | |
-| `readonly` | bool | |
-| `mask` | bool/rune | Password-style echo |
+| `readonly` | flag | |
+| `mask` | flag or rune | Password-style echo: bare = default mask char; `mask="*"` = explicit |
 
 ### combobox
 | Property | Type | Notes |
 |---|---|---|
 | `items` | list | Encoding TBD |
 | `current` | int | Selected index (−1 = none) |
-| `editable` | bool | |
+| `editable` | flag | |
 | `placeholder` | string | |
 | `max_visible` | int | Dropdown row cap |
 
@@ -110,7 +117,7 @@ is frozen; naming questions are collected at the end.
 |---|---|---|
 | `items` / `nodes` | list/tree | Encoding TBD; tree nodes carry `caption`, `expanded`, children |
 | `current` | int/path | Selection |
-| `multi_select` | bool | (future) |
+| `multi_select` | flag | (future) |
 
 ### progress
 | Property | Type | Notes |
@@ -142,7 +149,7 @@ is frozen; naming questions are collected at the end.
 ### panel
 | Property | Type | Notes |
 |---|---|---|
-| `border` | bool | |
+| `border` | flag | |
 | `border_style` | enum | `single`, `double`, `rounded`, `heavy`, `ascii` |
 | `layout` | enum | `vbox`, `hbox`, `grid`, `none` |
 | `spacing` | units | Layout spacing |
@@ -171,11 +178,11 @@ when the widget is built.
 | `title` | string | |
 | `x`, `y`, `width`, `height` | units | Desktop denomination |
 | `state` | enum | `normal`, `minimized`, `maximized` |
-| `flags` | flags | `frameless`, `no_title`, `no_resize`, `modal`, `passive`, … |
+| `frameless`, `no_title`, `no_resize`, `modal`, `passive` | flag | Individual flags per D12 — no bitsets on the wire (`new window frameless modal`) |
 | `content` | id | Content widget |
 | `min_width`, `min_height` | units | |
 | `font`, `grid_width`, `grid_height` | | Per-window overrides (D8) |
-| `native` | bool | G4 dual-mode: request an OS window when available |
+| `native` | flag | G4 dual-mode: request an OS window when available |
 
 ## Menu structures
 
@@ -186,8 +193,8 @@ Menus are data trees (G6): `menu` has `caption` and items; each item:
 | `caption` | string | `&` accelerator markup |
 | `action` | command-id | THE dispatch identity (slice 1) |
 | `shortcut` | string | D3 nomenclature (`"^N"`) |
-| `enabled`, `checkable`, `checked` | bool | |
-| `separator` | bool | |
+| `enabled`, `checkable`, `checked` | flag | |
+| `separator` | flag | |
 | `submenu` | menu | |
 | `icon` | string | |
 
