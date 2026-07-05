@@ -400,6 +400,26 @@ func createBasicWidgetsDemo(desktop *widgets.Desktop) core.Widget {
 
 // createSelectionDemo creates a panel with selection widgets using a draggable splitter.
 func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window, desktop *widgets.Desktop) core.Widget {
+	// Word-wrap test row: two wrapped labels side by side. Wrapping breaks
+	// lines by rune count, so toggling Tuesday (double-width letters) below
+	// makes lines break too late and clip at the label edge.
+	wrapPanel := widgets.NewPanel()
+	wrapLayout := layout.NewBoxLayout(core.Horizontal)
+	wrapLayout.SetSpacing(8)
+
+	wrapLeft := widgets.NewLabel("The quick brown fox jumps over the lazy dog while wrapping onto several lines")
+	wrapLeft.SetWordWrap(true)
+	wrapLeft.SetMinimumSize(core.UnitSize{Width: 8 * 12, Height: 16 * 3})
+	wrapPanel.AddChild(wrapLeft)
+
+	wrapRight := widgets.NewLabel("Pack my box with five dozen liquor jugs and watch letters double in Tuesday")
+	wrapRight.SetWordWrap(true)
+	wrapRight.SetMinimumSize(core.UnitSize{Width: 8 * 12, Height: 16 * 3})
+	wrapPanel.AddChild(wrapRight)
+
+	wrapPanel.SetLayoutManager(wrapLayout)
+	wrapPanel.SetMinimumSize(core.UnitSize{Width: 8 * 24, Height: 16 * 3})
+
 	// Use a vertical splitter to divide checkboxes from radio buttons
 	splitter := widgets.NewVSplitter()
 	splitter.SetPosition(0.4) // Checkboxes get 40% of space
@@ -534,7 +554,14 @@ func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window
 	radioPanel.SetLayoutManager(radioLayout)
 	splitter.SetSecond(radioPanel)
 
-	return splitter
+	outer := widgets.NewPanel()
+	outerLayout := layout.NewBoxLayout(core.Vertical)
+	outerLayout.SetSpacing(0)
+	outer.AddChild(wrapPanel)
+	outer.AddChild(splitter)
+	outer.SetLayoutManager(outerLayout)
+
+	return outer
 }
 
 // createListDemo creates a panel with list widgets using a draggable splitter.
