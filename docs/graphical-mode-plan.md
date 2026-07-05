@@ -219,6 +219,52 @@ target; Gio is the nicer pure-Go distribution story.
 
 Each substrate sits behind its own build tag (interacts with O3).
 
+### D6 — The text engine is Pango-class, with the interface at shaped-paragraph altitude  *(decided 2026-07-05)*
+
+The shared text engine (D5) must support the full modern text model —
+full Unicode, OpenType shaping (ligatures via GSUB, combining-mark
+positioning via GPOS — e.g. Hebrew niqqud), bidirectional text (UAX #9,
+e.g. mixed Hebrew/Latin), font fallback, and standard line/grapheme
+segmentation (UAX #14/#29). We are building the architectural role
+Pango plays; a crippled string-width text model is explicitly rejected.
+
+**The protective decision is the interface altitude.** The engine's
+contract is the shaped paragraph, not the measured string:
+
+- Input: attributed text (font/style spans), available width,
+  paragraph direction.
+- Output: lines of shaped glyph runs — positioned glyphs with a bidi
+  level per run — plus the **cluster map** (byte-range ↔ glyph-range),
+  which is what makes caret movement, selection, and hit-testing
+  correct in RTL text and inside ligatures.
+
+Widgets' graphical paint paths (D1) consume shaped runs and cluster
+maps — never per-rune arithmetic. With this contract the implementation
+is swappable without touching widgets, layout, or protocol.
+
+Implementation direction: **go-text/typesetting** as the reference
+implementation (a Go transliteration of HarfBuzz's shaper — real
+GSUB/GPOS execution; used by Gio but standalone), with
+`x/text/unicode/bidi` (UAX #9), go-text's segmenter, and
+`go-text/fontscan` for fontconfig-style discovery/fallback. A cgo
+HarfBuzz/FreeType (or Pango) backend remains possible behind the same
+interface if fidelity gaps appear; known soft spot in pure Go is
+rasterization hinting quality (a swappable back-end concern, not
+architectural).
+
+Consequences recorded:
+
+- **D2 synergy:** shaping lives entirely in the display service, where
+  layout already is. Apps send logical text and never shape; cluster
+  maps never cross the wire. (A primitive-level protocol would have
+  forced both.)
+- **Accepted asymmetry — TUI mode is constrained by the terminal.** A
+  character grid cannot position niqqud or render ligatures; the TUI
+  paint path does what terminals can (grapheme clusters, wide chars,
+  the terminal's own bidi behavior). Same widget, same stored text,
+  same API; full fidelity appears in the graphical path. This is D1
+  working as intended, not a defect.
+
 ### Context: PurfecTerm is already multi-frontend  *(noted 2026-07-05)*
 
 PurfecTerm predates tuitk as an independent project and already has
@@ -417,9 +463,9 @@ milestone for whole windows.
    lifecycle, cell-grid surface widget). The TUI desktop-as-display-
    service is the first target: separate app binaries connecting to a
    running TUI desktop.
-6. **Shared text engine** (D5) — shaping/measurement/rasterization
-   module; also serves as G1's server-side TextMeasurer for graphical
-   mode.
+6. **Shared text engine** (D5/D6) — Pango-class shaped-paragraph module
+   (shaping, bidi, fallback, segmentation, rasterization); also serves
+   as G1's server-side TextMeasurer for graphical mode.
 7. First graphical substrate (order per O1): native windows, input,
    DPI; rendering path per O4. Second substrate lands before the
    substrate interface is declared stable.
@@ -437,3 +483,4 @@ milestone for whole windows.
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
 | D4 | 2026-07-05 | X-direction rendezvous: the display service listens on a well-known endpoint, apps dial in. Sessions are first-class protocol objects separable from connections (enables reattach/multi-viewer without inverting topology). Reverse attachment is a possible later mode. Naming: "display service" and "apps". |
 | D5 | 2026-07-05 | Two graphical substrates, Gio and SDL, behind one neutral Platform interface (PurfecTerm-style discipline). Mandatory condition: one shared tuitk-owned text engine (shaping/measurement/rasterization) outside the substrates, so layout is substrate-independent; it doubles as the server-side TextMeasurer. Substrates land serially; second lands before the interface is declared stable. |
+| D6 | 2026-07-05 | The text engine is Pango-class: full Unicode, OpenType shaping (ligatures, mark positioning/niqqud), bidi, font fallback, UAX segmentation. Interface fixed at shaped-paragraph altitude (attributed text in → shaped glyph runs + cluster maps out); go-text/typesetting as reference implementation, cgo HarfBuzz/Pango swappable behind the same interface. TUI mode's terminal-limited text fidelity is an accepted asymmetry. |
