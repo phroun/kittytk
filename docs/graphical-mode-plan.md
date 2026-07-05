@@ -119,6 +119,33 @@ expensive to retrofit):
 
 Sub-decisions still open (see O6).
 
+### D3 — Unified key nomenclature everywhere  *(decided 2026-07-05)*
+
+The direct-key-handler key-naming scheme (`^N`, `M-x`, `S-Tab`, `F10`,
+and so on) is retained across **all** implementations — TUI, graphical,
+and the display protocol — for now. It is the single internal
+representation for key events, shortcut definitions, and shortcut
+matching, and it is presented to the programmer, and to the user as far
+as practical, unchanged on every platform.
+
+Rationale: this is a specialized system — a technology demo and a
+programming learning environment, deliberately dabbling in
+WordStar-like heritage. The nomenclature carries real complexity and is
+part of the project's identity; unification outweighs platform
+convention for now.
+
+Boundary rule: if native system menus (NSMenu key equivalents, Win32
+accelerators) require per-platform normalized forms to be implemented,
+translation happens **only at that boundary**, as a display/registration
+concern inside the platform integration layer — never as a change to the
+internal or app-facing representation. This may be revisited later; any
+such revisit is a new decision, not an erosion of this one.
+
+Effect on G6: the "shortcut translation" snag listed there is scoped to
+a one-way mapping (key-string → native key equivalent) living in the
+native menu module; wire protocol (D2) and widget APIs carry key-strings
+verbatim.
+
 ### Context: PurfecTerm is already multi-frontend  *(noted 2026-07-05)*
 
 PurfecTerm predates tuitk as an independent project and already has
@@ -211,8 +238,10 @@ submenu, callback) maps nearly 1:1 to `NSMenu`/`HMENU`, and the Desktop's
 single global bar with per-active-app content swap is already the macOS
 model. Known porting snags:
 
-- Shortcuts use terminal key-strings (`"^N"`, `"M-x"`) and need
-  translation to native key equivalents.
+- Shortcuts use key-strings (`"^N"`, `"M-x"`) which per D3 remain the
+  internal and app-facing representation; native menus get a one-way
+  key-string → native-key-equivalent mapping inside the platform menu
+  module only.
 - Items dispatch by closure with no stable command ID (Win32 `WM_COMMAND`
   wants IDs).
 - Windows/Linux use per-window menu bars, so the active app's bar must be
@@ -331,3 +360,4 @@ milestone for whole windows.
 | D1 | 2026-07-05 | Widgets are mode-aware; same API, per-mode rendering owned by the widget. TUI cell idioms are TUI-only rendering material. |
 | D2 | 2026-07-05 | Apps compile independent of the renderer and talk to a desktop/render server over a socket (X-style). Boundary = **widget-level protocol**: server owns widgets/layout/rendering/hit-testing, apps drive proxies with the same API and receive semantic events. In-process stays as a direct implementation. Cell-grid + (later) pixel surface widgets are the custom-rendering escape hatch. |
 | — | 2026-07-05 | Context: PurfecTerm is an independent pre-existing project with TUI, GTK, and Qt frontends in one codebase — proof of the D1 pattern, source of graphical cell-grid rendering, input to O1. |
+| D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
