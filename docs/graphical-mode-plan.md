@@ -53,6 +53,58 @@ Implications:
   text measurement has to come from the backend (see groundwork G1) —
   a widget cannot assume 1 char = 1 cell = 8×16 units in graphical mode.
 
+### D2 — Client/server display protocol: apps compile independent of the renderer  *(proposed 2026-07-05 — pending confirmation)*
+
+Applications should be compilable independent of the rendering
+environment and able to talk to a rendering/desktop process over a
+boundary (unix socket, IP, or ssh-forwarded), similar in spirit to the
+X Window System. A running TUI (or graphical) desktop becomes a real
+desktop-environment binary; separately compiled apps connect to it and
+request their rendering needs. In-process operation remains supported:
+the same Platform/Surface API is implemented either directly (current
+single-binary mode) or by a remote proxy speaking the wire protocol.
+
+Chosen boundary (proposed): a **drawing-primitive command protocol at
+the Platform/Surface seam (G2)** — the `Painter`→backend call stream
+serialized per frame, with an event stream back. Cell-grid content
+(TUI widgets, PurfecTerm, terminal containers) travels as cell diffs, a
+cheap sub-case. Rejected altitudes: cell-grid-only (cannot express
+graphical mode), widget-level remoting (freezes the widget API into wire
+format and breaks custom widgets), retained scene graph (viable later
+optimization, too large a protocol surface to start with).
+
+Existing seams that make this natural:
+
+- `Painter`→`RenderBackend` is already a command stream with plain-data
+  arguments and `BeginFrame`/`EndFrame` atomic commits.
+- The `Desktop` + `ApplicationProvider` split is already the
+  server/client division of labor (server: window manager, menu-bar
+  merging, dock, status bar; client: windows, menu content, actions).
+
+Design constraints this imposes on the groundwork (must be honored in
+G1–G6 even before any transport exists — cheap now, expensive to
+retrofit):
+
+- **No synchronous queries in the render/layout path.** Text and cell
+  metrics are shipped by the server once at connect (metrics table:
+  font metrics, cell metrics, DPI); the client-side `TextMeasurer` (G1)
+  computes locally and deterministically from it — measurement must be
+  mirrorable, never a per-call round-trip. Same for `Size()`/`Metrics()`
+  (pushed via events) and clipboard (async).
+- **IDs, not pointers; data + events, not closures.** Windows, menus,
+  popups, dock entries are referenced by stable IDs across the seam.
+  Menu items dispatch as "item ID triggered" events (extends G6's
+  command-ID requirement). `PopupOverlay`'s `Paint func` callback model
+  is replaced by client-owned popup surfaces the server composites.
+- **Frames, damage, and flow control** are first-class in the Surface
+  interface: atomic commits, damage rects, and back-pressure so a
+  stalled client cannot wedge the server.
+- **Server-owned lifecycle:** the server cleans up all resources of a
+  disconnected client (app crash safety — a side benefit no in-process
+  design offers), and reconnection semantics are defined.
+
+Sub-decisions still open (see O6).
+
 ## Groundwork required regardless of open decisions
 
 These follow from the code survey (2026-07-05) and are needed no matter
@@ -184,6 +236,27 @@ and for terminal-style containers inside graphical windows (Goal 3) — the
 open question is only whether it also serves as the first end-to-end
 milestone for whole windows.
 
+### O6 — Display-protocol sub-decisions (if D2 is confirmed)
+
+- **Wire format:** custom binary framing vs protobuf/flatbuffers vs gob.
+  Requirements: cheap cell-diff encoding, pipelined (no round-trips in
+  the render path), capability/version negotiation at connect.
+- **Transports for v1:** unix socket with peer credentials is the
+  default. For remote use, lean on ssh forwarding (the X11 answer)
+  rather than building TLS+auth immediately? Direct IP+TLS later.
+- **Graphical remoting mode:** command stream executed with server-side
+  fonts (bandwidth-cheap; requires the shared metrics table) vs
+  client-rendered pixel buffers, Wayland-style (font-exact; shared
+  memory locally, heavy bandwidth remotely). Proposal: command stream
+  first; pixel-buffer surfaces later as an additional surface type
+  (also the escape hatch for arbitrary custom client rendering).
+- **Reconnection semantics:** do clients survive a server restart
+  (re-attach and replay state) or terminate? Proposal for v1: terminate;
+  design IDs/handshake so re-attach can be added.
+- **App launching:** does the desktop server spawn client apps (menu of
+  installed apps), or are apps launched externally and connect? Both
+  eventually; which first?
+
 ### O5 — Scope deferrals to confirm
 
 - Native accessibility bridging (NSAccessibility/UIA) — the existing
@@ -197,18 +270,25 @@ milestone for whole windows.
 
 ## Proposed phase order (draft, pending O1–O4)
 
-1. **G1** metrics/measurement hygiene (pure refactor, TUI-verified).
+1. **G1** metrics/measurement hygiene (pure refactor, TUI-verified) —
+   designed mirrorable per D2 (metrics table, no per-call queries).
 2. **G2 + G3** Platform/Surface split and event-loop inversion; TUI
-   reimplemented as a one-surface Platform.
+   reimplemented as a one-surface Platform. Interfaces designed as a
+   serializable protocol per D2 (IDs, events, no closures).
 3. **G4** dual-mode Window; WindowManager scoped to in-surface use.
 4. First graphical backend on the chosen substrate (O1): native windows,
    input, DPI; rendering path per O4.
-5. **G5 + G6** native popups and `PlatformIntegration` for menus/dialogs/
+5. **D2 transport** — the remote proxy backend + server-side connection
+   handling (wire format, unix socket, client lifecycle). Buildable any
+   time after phase 2 since in-process and remote share one interface;
+   the TUI desktop-as-server is the first target.
+6. **G5 + G6** native popups and `PlatformIntegration` for menus/dialogs/
    clipboard with rendered fallback; native macOS menus first.
-6. **D1 rollout** widget-by-widget graphical paint paths with real fonts.
+7. **D1 rollout** widget-by-widget graphical paint paths with real fonts.
 
 ## Decision log
 
 | # | Date | Decision |
 |---|------|----------|
 | D1 | 2026-07-05 | Widgets are mode-aware; same API, per-mode rendering owned by the widget. TUI cell idioms are TUI-only rendering material. |
+| D2 | 2026-07-05 | **Proposed:** apps compile independent of the renderer and talk to a desktop/render server over a socket (X-style); boundary = primitive command protocol at the Platform/Surface seam; in-process stays as a direct implementation of the same API. |
