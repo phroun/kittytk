@@ -28,6 +28,8 @@ type fixedSizeBox struct {
 func newFixedSizeBox(width, height core.Unit, content core.Widget) *fixedSizeBox {
 	f := &fixedSizeBox{Panel: widgets.NewPanel(), hint: core.UnitSize{Width: width, Height: height}}
 	f.SetBorder(true)
+	f.SetBorderStyle(style.BorderSingle) // zero-value BorderStyle renders invisibly
+
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	f.AddChild(content)
 	f.SetLayoutManager(boxLayout)

@@ -177,6 +177,40 @@ By file (line: enclosing method):
   785 `positionWindow`, 839 `TileWindows`, 883 `CascadeWindows`, 1016
   `HandleMousePress`, 1133/1209 `HandleMouseMove`.
 
+## Adjacent layout/sizing-contract findings
+
+Surfaced while building the Selection-tab wrap-test row (2026-07-05).
+Not DefaultCellMetrics sites, but they shape the sizing contract that
+G1 / the D2 API-shape phase must formalize — server-side layout cannot
+rely on hand-tuning around these:
+
+1. **`NewLayoutItem` defaults `Align` to `AlignLeft`** (layout.go:20)
+   while the `Alignment` type documents `AlignFill` as the default
+   (types.go:107). In a vertical box, AlignLeft silently forces item
+   width to hint width — a zero-hint widget becomes invisible while
+   still consuming stretch space.
+2. **`calculateStretch` never shrinks an item below its hint** — extra
+   space is distributed, but an oversized hint (e.g. a long label line)
+   pushes siblings off-screen with no recourse.
+3. **`Splitter.SizeHint()` returns `Bounds().Size()`** — zero before
+   first layout; a self-referential hint that starves the widget in any
+   hint-driven layout unless explicitly marked expanding + AlignFill.
+4. **Label has no height-for-width** — a wrapped label's true height
+   depends on the width it is given, but `SizeHint()` is
+   width-independent, so nothing can size a wrapped label correctly.
+5. **Font-dependent SizeHints reshape the whole layout on font change**
+   — sometimes wanted (buttons fitting text), sometimes not (a fixed
+   design grid); there is currently no way for a widget to declare
+   whether its size derives from text metrics or grid metrics. This is
+   the D8 two-concept distinction surfacing at the API level.
+6. **`wrapText` is character wrap, not word wrap** — no word-boundary
+   logic at all, in addition to counting runes instead of measuring
+   (label.go:203). The fix needs both: break at word boundaries, and
+   measure candidate lines via the font/TextMeasurer.
+7. **`Panel.SetBorder(true)` with the zero-value `BorderStyle` draws an
+   invisible border** (NUL runes) — SetBorder should default to a
+   visible style or warn.
+
 ## Suggested G1 execution order
 
 1. Build the inheritance mechanism: metrics provider interface +
