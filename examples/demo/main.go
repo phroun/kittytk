@@ -3,9 +3,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
-	"runtime"
-	"sync"
 
 	"github.com/phroun/tuitk/app"
 	"github.com/phroun/tuitk/backend"
@@ -279,249 +276,56 @@ func main() {
 	desktop.Run()
 }
 
-// createMenus creates the application's menu bar content.
-// The first menu is named after the app - standard items (Hide, Show All, Quit)
-// are automatically appended by the Desktop.
-func createMenus(desktop *widgets.Desktop, application *app.Application) []*widgets.Menu {
-	var menus []*widgets.Menu
-
-	// App menu (named after the application - standard items added automatically)
-	appMenu := widgets.NewMenu("&Demo")
-	newItem := widgets.NewMenuItem("&New")
-	newItem.SetShortcut(core.NewShortcut("^N"))
-	appMenu.AddItem(newItem)
-
-	openItem := widgets.NewMenuItem("&Open...")
-	openItem.SetShortcut(core.NewShortcut("^O"))
-	appMenu.AddItem(openItem)
-
-	saveItem := widgets.NewMenuItem("&Save")
-	saveItem.SetShortcut(core.NewShortcut("^S"))
-	appMenu.AddItem(saveItem)
-
-	// Note: Hide, Hide Others, Show All, and Quit are added automatically
-	menus = append(menus, appMenu)
-
-	// Edit menu
-	editMenu := widgets.NewMenu("&Edit")
-	cutItem := widgets.NewMenuItem("Cu&t")
-	cutItem.SetShortcut(core.NewShortcut("^X"))
-	editMenu.AddItem(cutItem)
-
-	copyItem := widgets.NewMenuItem("&Copy")
-	copyItem.SetShortcut(core.NewShortcut("^C"))
-	editMenu.AddItem(copyItem)
-
-	pasteItem := widgets.NewMenuItem("&Paste")
-	pasteItem.SetShortcut(core.NewShortcut("^V"))
-	editMenu.AddItem(pasteItem)
-
-	editMenu.AddSeparator()
-
-	// Raw Key Input - passes the next keypress directly to the focused widget
-	rawKeyItem := widgets.NewMenuItem("&Raw Key Input")
-	rawKeyItem.SetShortcut(core.NewShortcut("^\\"))
-	rawKeyItem.SetOnTriggered(func() {
-		desktop.ActivatePassNextKeyToWidget()
-	})
-	editMenu.AddItem(rawKeyItem)
-
-	menus = append(menus, editMenu)
-
-	// View menu
-	viewMenu := widgets.NewMenu("&View")
-	toolbarItem := widgets.NewMenuItem("&Toolbar")
-	toolbarItem.SetCheckable(true)
-	toolbarItem.SetChecked(true)
-	viewMenu.AddItem(toolbarItem)
-
-	statusBarItem := widgets.NewMenuItem("&Status Bar")
-	statusBarItem.SetCheckable(true)
-	statusBarItem.SetChecked(true)
-	viewMenu.AddItem(statusBarItem)
-
-	viewMenu.AddSeparator()
-
-	// Track accessibility settings
-	var showVisualAnnouncements, speakAnnouncements bool
-
-	// Track current speech process so we can interrupt it
-	var (
-		speechMu  sync.Mutex
-		speechCmd *exec.Cmd
-	)
-
-	updateAccessibilityHandler := func() {
-		am := desktop.AccessibilityManager()
-		if am == nil {
-			return
+// demoWindowScript builds the Demo Window, terminal included. The
+// feed= pseudo-property streams bytes (with \e / \xNN escapes) into
+// the terminal - the banner arrives over the wire before the local
+// shell starts.
+const demoWindowScript = `
+w=new window title="Demo Window" width=480 height=320 children={
+	sp=new splitter orientation=vertical position=0.3 caption="Terminal" children={
+		tp=new panel layout=vbox spacing=8 children={
+			new label caption="This is a child window."
+			new textinput placeholder="Type something..."
+			closebtn=new button caption="Close"
 		}
-
-		if !showVisualAnnouncements && !speakAnnouncements {
-			// Both disabled
-			am.OnAnnounce = nil
-			return
-		}
-
-		am.OnAnnounce = func(announcement core.AccessibilityAnnouncement) {
-			// Visual output to status bar
-			if showVisualAnnouncements {
-				if statusBar := desktop.StatusBar(); statusBar != nil {
-					prefix := "📢"
-					if announcement.Priority == "assertive" {
-						prefix = "⚠️"
-					}
-					statusBar.SetText(fmt.Sprintf("%s [%s] %s", prefix, announcement.Priority, announcement.Message))
-				}
-			}
-
-			// Text-to-speech on macOS using 'say' command
-			if speakAnnouncements && runtime.GOOS == "darwin" {
-				go func(msg string) {
-					speechMu.Lock()
-					// Kill any previous speech
-					if speechCmd != nil && speechCmd.Process != nil {
-						_ = speechCmd.Process.Kill()
-						_ = speechCmd.Wait()
-					}
-					// Start new speech
-					speechCmd = exec.Command("say", "-r", "250", msg)
-					speechMu.Unlock()
-
-					_ = speechCmd.Run()
-
-					speechMu.Lock()
-					speechCmd = nil
-					speechMu.Unlock()
-				}(announcement.Message)
-			}
-		}
+		term=new terminal
 	}
-
-	// Screen reader visual output toggle
-	screenReaderItem := widgets.NewMenuItem("Show A&nnouncements in Status Bar")
-	screenReaderItem.SetCheckable(true)
-	screenReaderItem.SetChecked(false)
-	screenReaderItem.SetOnTriggered(func() {
-		showVisualAnnouncements = screenReaderItem.Checked
-		updateAccessibilityHandler()
-		if showVisualAnnouncements {
-			if am := desktop.AccessibilityManager(); am != nil {
-				am.AnnouncePolite("Visual announcements enabled")
-			}
-		}
-	})
-	viewMenu.AddItem(screenReaderItem)
-
-	// Text-to-speech toggle (macOS only)
-	speakItem := widgets.NewMenuItem("Speak Announcements (macOS)")
-	speakItem.SetCheckable(true)
-	speakItem.SetChecked(false)
-	if runtime.GOOS != "darwin" {
-		speakItem.SetEnabled(false)
-	}
-	speakItem.SetOnTriggered(func() {
-		speakAnnouncements = speakItem.Checked
-		updateAccessibilityHandler()
-		if speakAnnouncements {
-			if am := desktop.AccessibilityManager(); am != nil {
-				am.AnnouncePolite("Text to speech enabled")
-			}
-		}
-	})
-	viewMenu.AddItem(speakItem)
-
-	menus = append(menus, viewMenu)
-
-	// Window menu
-	windowMenu := widgets.NewMenu("&Window")
-	newWindowItem := widgets.NewMenuItem("&New Window")
-	newWindowItem.SetOnTriggered(func() {
-		// Create a NEW application with its own identity, menus, and status bar
-		newApp := createSecondaryApplication(desktop)
-		desktop.AddApplication(newApp)
-	})
-	windowMenu.AddItem(newWindowItem)
-
-	windowMenu.AddSeparator()
-
-	tileItem := widgets.NewMenuItem("&Tile")
-	tileItem.SetOnTriggered(func() {
-		desktop.WindowManager().TileWindows()
-	})
-	windowMenu.AddItem(tileItem)
-
-	cascadeItem := widgets.NewMenuItem("&Cascade")
-	cascadeItem.SetOnTriggered(func() {
-		desktop.WindowManager().CascadeWindows()
-	})
-	windowMenu.AddItem(cascadeItem)
-	menus = append(menus, windowMenu)
-
-	// Alphabet menu (26 items for testing scrolling)
-	alphabetMenu := widgets.NewMenu("&Alphabet")
-	for i := 0; i < 26; i++ {
-		letter := string(rune('A' + i))
-		item := widgets.NewMenuItem("&" + letter + " - Letter " + letter)
-		alphabetMenu.AddItem(item)
-	}
-	menus = append(menus, alphabetMenu)
-
-	// Help menu
-	helpMenu := widgets.NewMenu("&Help")
-	aboutItem := widgets.NewMenuItem("&About")
-	aboutItem.SetOnTriggered(func() {
-		showAboutDialog(desktop, application)
-	})
-	helpMenu.AddItem(aboutItem)
-	menus = append(menus, helpMenu)
-
-	return menus
 }
+closer=w.sp.tp.closebtn
+term=w.sp.term
 
-// createDemoWindow creates a simple demo window with an embedded terminal.
+set term feed="\e[1;36mThis banner arrived as protocol text:\e[0m set term feed=\"...\"\r\n\r\n"
+set term shell
+
+sub closer click
+`
+
+// createDemoWindow builds a child window with an embedded terminal
+// from protocol text.
 func createDemoWindow(desktop *widgets.Desktop, application *app.Application) *window.Window {
-	w := window.NewWindow("Demo Window")
-	w.SetSize(core.UnitSize{
-		Width:  core.Unit(60 * 8),
-		Height: core.Unit(20 * 16),
-	})
+	dispatcher := protocol.NewEventDispatcher()
+	ctx := &protocol.BindContext{
+		Emit: func(ev *protocol.Event) { dispatcher.Dispatch(ev) },
+	}
+	factory := &idCaptureFactory{
+		inner: protocol.NewRegistryFactory(ctx),
+		byID:  make(map[uint64]any),
+	}
+	script, err := protocol.Parse(demoWindowScript)
+	if err != nil {
+		panic(fmt.Sprintf("demo window script: %v", err))
+	}
+	reply, err := protocol.NewSession().Execute(script, factory)
+	if err != nil {
+		panic(fmt.Sprintf("demo window script: %v", err))
+	}
 
-	// Create a vertical splitter to divide the window
-	splitter := widgets.NewVSplitter()
-	splitter.SetTitle("Terminal")
-	splitter.SetPosition(0.3) // Top panel gets 30% of space
-
-	// Top panel with controls
-	topPanel := widgets.NewPanel()
-	boxLayout := layout.NewBoxLayout(core.Vertical)
-	boxLayout.SetSpacing(8)
-
-	label := widgets.NewLabel("This is a child window.")
-	topPanel.AddChild(label)
-
-	textInput := widgets.NewTextInput()
-	textInput.SetPlaceholder("Type something...")
-	topPanel.AddChild(textInput)
-
-	closeButton := widgets.NewButton("Close")
-	closeButton.SetOnClick(func() {
+	w := factory.byID[reply.IDs["w"]].(*window.Window)
+	// The close button is subscribed per-connection, so any number of
+	// demo windows coexist without command-ID collisions.
+	dispatcher.On(reply.IDs["closer"], "click", func(*protocol.Event) {
 		w.Close()
 	})
-	topPanel.AddChild(closeButton)
-
-	topPanel.SetLayoutManager(boxLayout)
-	splitter.SetFirst(topPanel)
-
-	// Bottom panel with PurfecTerm terminal
-	terminal := widgets.NewPurfecTerm()
-	splitter.SetSecond(terminal)
-
-	// Start the terminal shell
-	terminal.Start()
-
-	w.SetContent(splitter)
-
 	return w
 }
 
@@ -919,85 +723,6 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 	newApp.AddWindow(w)
 
 	return newApp
-}
-
-// createSecondaryMenus creates a simple menu bar for secondary applications.
-// The first menu is named after the app - standard items are added automatically.
-func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application, appNum int) []*widgets.Menu {
-	var menus []*widgets.Menu
-
-	// App menu (named after the application - standard items added automatically)
-	appMenu := widgets.NewMenu(fmt.Sprintf("&App %d", appNum))
-	closeItem := widgets.NewMenuItem("&Close Window")
-	closeItem.SetShortcut(core.NewShortcut("^W"))
-	closeItem.SetOnTriggered(func() {
-		// Close the first window of this application
-		windows := application.Windows()
-		if len(windows) > 0 {
-			windows[0].Close()
-		}
-	})
-	appMenu.AddItem(closeItem)
-
-	// Note: Hide, Hide Others, Show All, and Quit are added automatically
-	menus = append(menus, appMenu)
-
-	// Edit menu (for testing Raw Key Input in secondary apps)
-	editMenu := widgets.NewMenu("&Edit")
-	cutItem := widgets.NewMenuItem("Cu&t")
-	cutItem.SetShortcut(core.NewShortcut("^X"))
-	editMenu.AddItem(cutItem)
-
-	copyItem := widgets.NewMenuItem("&Copy")
-	copyItem.SetShortcut(core.NewShortcut("^C"))
-	editMenu.AddItem(copyItem)
-
-	pasteItem := widgets.NewMenuItem("&Paste")
-	pasteItem.SetShortcut(core.NewShortcut("^V"))
-	editMenu.AddItem(pasteItem)
-
-	editMenu.AddSeparator()
-
-	// Raw Key Input - passes the next keypress directly to the focused widget
-	rawKeyItem := widgets.NewMenuItem("&Raw Key Input")
-	rawKeyItem.SetShortcut(core.NewShortcut("^\\"))
-	rawKeyItem.SetOnTriggered(func() {
-		desktop.ActivatePassNextKeyToWidget()
-	})
-	editMenu.AddItem(rawKeyItem)
-	menus = append(menus, editMenu)
-
-	// Info menu (app-specific)
-	infoMenu := widgets.NewMenu("&Info")
-	infoItem := widgets.NewMenuItem("&About This App")
-	infoItem.SetOnTriggered(func() {
-		dialog := widgets.NewMessageBox(
-			fmt.Sprintf("About App %d", appNum),
-			fmt.Sprintf("This is Secondary Application #%d\n\nIt has its own menus and status bar.", appNum),
-			widgets.ButtonOK,
-		)
-		dialog.SetIcon(widgets.IconInformation)
-		application.AddWindow(&dialog.Window)
-	})
-	infoMenu.AddItem(infoItem)
-	menus = append(menus, infoMenu)
-
-	// Help menu
-	helpMenu := widgets.NewMenu("&Help")
-	aboutItem := widgets.NewMenuItem("&About")
-	aboutItem.SetOnTriggered(func() {
-		dialog := widgets.NewMessageBox(
-			"About",
-			"Secondary Application\n\nDemonstrates multi-application support.",
-			widgets.ButtonOK,
-		)
-		dialog.SetIcon(widgets.IconInformation)
-		application.AddWindow(&dialog.Window)
-	})
-	helpMenu.AddItem(aboutItem)
-	menus = append(menus, helpMenu)
-
-	return menus
 }
 
 // showAboutDialog shows the about dialog.

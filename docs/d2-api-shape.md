@@ -200,9 +200,28 @@ the tab flip in the test is done with `set tabs selected=1`.
 Found and fixed during conversion: label's `align` (text alignment)
 shadowed the common layout `align` hint — renamed `text_align`.
 
-Remaining: menus as protocol data (G6 trees), `state` window
-property, listview row set/destroy routing (rows have IDs;
-rebuild-on-change is fine for now).
+**Menus + terminal feed (2026-07-05):**
+
+- **Menus are protocol data (G6 delivered):** `menubar`/`menu`/
+  `menuitem` types registered; submenus grow from menuitem children.
+  Both demo menu bars (primary + secondary apps) are scripts now;
+  every handler moved to `Commands().Register` under `action=` IDs —
+  the last closure wiring in the menu path is gone. Checkable-state
+  reads go through surfaced items.
+- **Terminal `feed`:** the string escapes gained `\e` and `\xNN`, so
+  arbitrary byte streams travel as quoted strings today (event
+  encoding round-trips control bytes too); the O6 bulk frame becomes
+  a transport-phase encoding optimization of the same statement.
+  `terminal` registered with `feed=` (append/stream pseudo-property
+  over `PurfecTerm.Write`) and the in-process `shell` flag. The
+  revived Demo Window (Demo → New, `demo.file.new`) is built from
+  protocol text, banner fed over the wire before the local shell
+  starts, close button subscribed per-connection so instances never
+  collide.
+
+Remaining: status bar content vocabulary, messagebox/dialog type,
+`state` window property, listview row set/destroy routing, terminal
+input direction (`data` events, raw-key), MDI (after G1 residuals).
 
 ## Slice 1 — Menu command identity & dispatch  *(done 2026-07-05)*
 

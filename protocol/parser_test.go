@@ -167,3 +167,32 @@ func TestParseErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestParseByteEscapes(t *testing.T) {
+	script, err := Parse(`set term feed="\e[1mA\x00B\x7f\xff"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got := script.Statements[0].Args[1].Value.Str
+	want := "\x1b[1mA\x00B\x7f\xff"
+	if got != want {
+		t.Errorf("feed bytes = %q, want %q", got, want)
+	}
+
+	for _, bad := range []string{`x="\x1"`, `x="\xzz"`, `x="\q"`} {
+		if _, err := Parse("new t " + bad); err == nil {
+			t.Errorf("Parse(%s): expected error", bad)
+		}
+	}
+}
+
+func TestEventEncodesControlBytes(t *testing.T) {
+	ev := NewEvent("data").WithUint("widget", 5).WithString("text", "\x1b[2Jok\x07")
+	back, err := ParseEvent(ev.Encode())
+	if err != nil {
+		t.Fatalf("ParseEvent(%q): %v", ev.Encode(), err)
+	}
+	if s, _ := back.Text("text"); s != "\x1b[2Jok\x07" {
+		t.Errorf("round-trip = %q", s)
+	}
+}

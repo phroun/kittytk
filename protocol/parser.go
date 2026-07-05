@@ -170,6 +170,18 @@ func (p *parser) skipSeparators() {
 	}
 }
 
+func hexVal(ch rune) int {
+	switch {
+	case ch >= '0' && ch <= '9':
+		return int(ch - '0')
+	case ch >= 'a' && ch <= 'f':
+		return int(ch-'a') + 10
+	case ch >= 'A' && ch <= 'F':
+		return int(ch-'A') + 10
+	}
+	return -1
+}
+
 func isWordStart(ch rune) bool {
 	return ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
@@ -239,6 +251,26 @@ func (p *parser) parseString() (string, error) {
 				sb.WriteRune('\t')
 			case 'r':
 				sb.WriteRune('\r')
+			case 'e':
+				// ESC - terminal traffic's most common byte.
+				sb.WriteByte(0x1b)
+			case 'x':
+				// \xNN arbitrary byte (two hex digits). With this,
+				// any byte stream travels as a quoted string; the O6
+				// bulk frame is a later transport-phase encoding of
+				// the same value.
+				var v byte
+				for i := 0; i < 2; i++ {
+					if p.eof() {
+						return "", p.errf("unterminated \\x escape")
+					}
+					d := hexVal(p.advance())
+					if d < 0 {
+						return "", p.errf("malformed \\x escape (two hex digits required)")
+					}
+					v = v<<4 | byte(d)
+				}
+				sb.WriteByte(v)
 			default:
 				return "", p.errf("unknown escape \\%c", esc)
 			}

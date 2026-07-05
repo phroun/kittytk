@@ -175,8 +175,16 @@ func quoteString(s string) string {
 			sb.WriteString(`\t`)
 		case '\r':
 			sb.WriteString(`\r`)
+		case 0x1b:
+			sb.WriteString(`\e`)
 		default:
-			sb.WriteRune(r)
+			if r < 0x20 || r == 0x7f {
+				// Control bytes as \xNN so any byte stream (terminal
+				// feeds) round-trips through the text form.
+				fmt.Fprintf(&sb, `\x%02x`, r)
+			} else {
+				sb.WriteRune(r)
+			}
 		}
 	}
 	sb.WriteByte('"')

@@ -1,0 +1,152 @@
+package widgets
+
+import (
+	"fmt"
+
+	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/protocol"
+)
+
+// Wire registration for menus (G6: menus are data trees). A menubar
+// collects menus; a menu collects menuitems; an item with menuitem
+// children grows a submenu:
+//
+//	bar=new menubar children={
+//	    new menu caption="&File" children={
+//	        new menuitem caption="&Open..." action=file.open shortcut="^O"
+//	        new menuitem separator
+//	        new menuitem caption="&Recent" children={
+//	            new menuitem caption="a.txt" action=file.recent.0
+//	        }
+//	    }
+//	}
+//
+// Activation is the slice-1 seam: action= is the item's command ID;
+// binding to the application registry happens when the app installs
+// the bar (Application.SetMenuBarContent), and the app registers
+// handlers under those IDs. No closures cross the wire.
+
+// wireMenuBar is the virtual menubar target: an ordered menu list.
+type wireMenuBar struct {
+	menus []*Menu
+}
+
+// Menus returns the collected menus (for SetMenuBarContent).
+func (b *wireMenuBar) Menus() []*Menu { return b.menus }
+
+func init() {
+	protocol.RegisterType("menubar", &protocol.TypeSpec{
+		Virtual: true,
+		New:     func() any { return &wireMenuBar{} },
+		Append: func(parent, child any) error {
+			b := parent.(*wireMenuBar)
+			m, ok := child.(*Menu)
+			if !ok {
+				return fmt.Errorf("menubar: children must be menus, got %T", child)
+			}
+			b.menus = append(b.menus, m)
+			return nil
+		},
+	})
+
+	protocol.RegisterType("menu", &protocol.TypeSpec{
+		New: func() any { return NewMenu("") },
+		ID: func(t any) uint64 {
+			return uint64(t.(*Menu).ObjectID())
+		},
+		Props: map[string]protocol.PropertyApplier{
+			"caption": wprop("caption", func(_ *protocol.BindContext, m *Menu, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("caption", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetTitle(s)
+				return nil
+			}),
+		},
+		Append: func(parent, child any) error {
+			m := parent.(*Menu)
+			it, ok := child.(*MenuItem)
+			if !ok {
+				return fmt.Errorf("menu: children must be menuitems, got %T", child)
+			}
+			m.AddItem(it)
+			return nil
+		},
+	})
+
+	protocol.RegisterType("menuitem", &protocol.TypeSpec{
+		Virtual: true,
+		New:     func() any { return NewMenuItem("") },
+		Props: map[string]protocol.PropertyApplier{
+			"caption": wprop("caption", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("caption", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetText(s)
+				return nil
+			}),
+			"action": wprop("action", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				id, err := protocol.AsWord("action", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetID(id)
+				return nil
+			}),
+			"shortcut": wprop("shortcut", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("shortcut", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetShortcut(core.NewShortcut(s))
+				return nil
+			}),
+			"checkable": wprop("checkable", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				b, err := protocol.AsBool("checkable", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetCheckable(b)
+				return nil
+			}),
+			"checked": wprop("checked", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				b, err := protocol.AsBool("checked", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetChecked(b)
+				return nil
+			}),
+			"enabled": wprop("enabled", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				b, err := protocol.AsBool("enabled", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetEnabled(b)
+				return nil
+			}),
+			"separator": wprop("separator", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				b, err := protocol.AsBool("separator", v, f)
+				if err != nil {
+					return err
+				}
+				m.Separator = b
+				return nil
+			}),
+		},
+		Append: func(parent, child any) error {
+			it := parent.(*MenuItem)
+			c, ok := child.(*MenuItem)
+			if !ok {
+				return fmt.Errorf("menuitem: submenu children must be menuitems, got %T", child)
+			}
+			if it.SubMenu == nil {
+				it.SetSubMenu(NewMenu(it.Text))
+			}
+			it.SubMenu.AddItem(c)
+			return nil
+		},
+	})
+}

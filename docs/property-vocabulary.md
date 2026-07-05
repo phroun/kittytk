@@ -249,11 +249,15 @@ Events: `change selected=`.
 | `orientation` | enum | |
 | (spacer) `width`, `height` | numeric (units) | Explicit size; unset = 1×1 cell |
 
-### terminal (PurfecTerm surface)
+### terminal (PurfecTerm surface) *(registered 2026-07-05)*
 | Property | Type | Notes |
 |---|---|---|
-| `columns`, `rows` | numeric | Grid size (genuinely cell-based) |
-| `feed` | bulk | Byte/cell stream — needs the bulk escape (O6) |
+| `feed` | string (stream) | **Pseudo-property**: every application APPENDS bytes to the terminal — a channel, not state; never read back. Arbitrary bytes travel via the `\xNN` string escape (+ `\e` for ESC), so `set term feed="\e[1mhi\r\n"` works today; the O6 bulk frame arrives with transport as a more efficient encoding of the same statement. |
+| `shell` | flag | In-process convenience: starts the widget's own local shell. Under the display-protocol split the PTY belongs to the APP, which pumps bytes through `feed=`. |
+| `columns`, `rows` | numeric | (future — currently bounds-driven) |
+
+Input direction (user keystrokes → app as `data` events) joins the
+raw-key work.
 
 ### canvas *(deferred, D7)*
 Reserved: `mode` (`commands`/`pixels`), plus its command stream — designed
@@ -278,9 +282,13 @@ Events: `window_closed window=<id>` (after close completes); moved/
 resized/state events land when the window grows those callbacks.
 `destroy` on a window closes it.
 
-## Menu structures
+## Menu structures *(registered 2026-07-05)*
 
-Menus are data trees (G6): `menu` has `caption` and items; each item:
+Menus are data trees (G6): `menubar` collects `menu`s; a `menu`
+collects `menuitem`s; a menuitem with menuitem children grows a
+submenu. Activation is the slice-1 seam — `action=` is the item's
+command ID, bound into the application registry when the app installs
+the bar; no closures cross the wire. Item properties:
 
 | Property | Type | Notes |
 |---|---|---|

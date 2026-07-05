@@ -249,6 +249,84 @@ new panel layout=hbox children={
 	}
 }
 
+func TestTerminalFeedOverWire(t *testing.T) {
+	session := protocol.NewSession()
+	f := &captureFactory{inner: protocol.NewRegistryFactory(&protocol.BindContext{})}
+
+	script, _ := protocol.Parse(`term=new terminal`)
+	if _, err := session.Execute(script, f); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.targets[0].(*PurfecTerm); !ok {
+		t.Fatalf("target is %T", f.targets[0])
+	}
+
+	// Feed with escaped control bytes in a later batch. (Content
+	// verification is the parser round-trip test's job; here the
+	// wire->widget path must accept the stream.)
+	feed, _ := protocol.Parse(`set term feed="\e[1;32mwire bytes\e[0m\r\n\x07"`)
+	if _, err := session.Execute(feed, f); err != nil {
+		t.Fatalf("feed: %v", err)
+	}
+}
+
+func TestMenuBarBuildFromProtocol(t *testing.T) {
+	commands := core.NewCommandRegistry()
+	opened := 0
+	commands.Register("file.open", func() { opened++ })
+
+	f, _ := buildUI(t, commands, `
+bar=new menubar children={
+	new menu caption="&File" children={
+		new menuitem caption="&Open..." action=file.open shortcut="^O"
+		new menuitem separator
+		new menuitem caption="&Recent" children={
+			new menuitem caption="a.txt" action=file.recent.0
+			new menuitem caption="b.txt" action=file.recent.1
+		}
+		new menuitem caption="&Locked" !enabled
+	}
+	new menu caption="&View" children={
+		new menuitem caption="&Toolbar" checkable checked
+	}
+}
+`)
+	bar := f.targets[0].(interface{ Menus() []*Menu })
+	menus := bar.Menus()
+	if len(menus) != 2 {
+		t.Fatalf("menus = %d, want 2", len(menus))
+	}
+	items := menus[0].Items()
+	if len(items) != 4 {
+		t.Fatalf("file items = %d, want 4", len(items))
+	}
+	open := items[0]
+	if open.ID() != "file.open" || open.Shortcut != core.Shortcut("^O") {
+		t.Errorf("open: id=%q shortcut=%q", open.ID(), open.Shortcut)
+	}
+	if !items[1].Separator {
+		t.Error("second item should be a separator")
+	}
+	recent := items[2]
+	if recent.SubMenu == nil || len(recent.SubMenu.Items()) != 2 {
+		t.Fatalf("submenu missing or wrong size")
+	}
+	if items[3].Enabled {
+		t.Error("locked item should be disabled")
+	}
+	toolbar := menus[1].Items()[0]
+	if !toolbar.Checkable || !toolbar.Checked {
+		t.Errorf("toolbar checkable=%v checked=%v", toolbar.Checkable, toolbar.Checked)
+	}
+
+	// The slice-1 seam: bind and trigger dispatches by action ID.
+	menus[0].BindCommands(commands)
+	open.Trigger()
+	if opened != 1 {
+		t.Errorf("file.open dispatched %d times, want 1", opened)
+	}
+}
+
 func TestColorProperties(t *testing.T) {
 	f, _ := buildUI(t, nil, `
 new label caption="tinted" fg=bright_yellow bg="#334455"
