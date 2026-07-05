@@ -35,6 +35,34 @@ list. (Also validated by the D10 sketch: buttons bind to command IDs
 via an `action` property — slice 1's registry extends to buttons in
 slice 3.)
 
+## Milestone P0 — the demo runs on the protocol, in-process
+
+Owner-directed goal (2026-07-05): tuitk and its demo operating on the
+D10–D17 protocol basis within a single process — commands and events
+as real protocol records, no sockets yet. Steps:
+
+1. ✅ **Protocol core package** (`protocol/`) — parser + AST for the
+   full command language: flags (`!`/`?`), quoted strings, numerics,
+   identifiers, `{}` blocks, keyed statements, alias/template forms,
+   surfacing references. The tokenizer is schema-free per D17; alias
+   application and template expansion belong to the layers above.
+   Provisional pending O6: `#` comments; string escapes `\\ \" \n \t
+   \r`. Eight tests cover the canonical corpus from D10–D17.
+2. **Vocabulary binding + builder** — machine-readable property
+   registry (the twin of `property-vocabulary.md`) mapping names to
+   typed setters per widget type; interpreter executing
+   `new`/`alias`/`template` against real widgets; scoped-key
+   resolution and correlation replies. (Introduces the `set` verb and
+   friends — verb inventory is a small O6 item to settle with the
+   owner.)
+3. **Event records + subscriptions** (absorbs slice 3) — events
+   emitted as protocol records (`event change widget=17 selected=3`)
+   through an in-process channel; app-side dispatch by ObjectID.
+4. **Demo on this basis** — a demo window defined as protocol text
+   executed at startup in-process, interactions flowing back as event
+   records into registry/subscription handlers. Full API purity (the
+   Go client-library veneer) comes after the milestone.
+
 ## Slice 1 — Menu command identity & dispatch  *(done 2026-07-05)*
 
 What exists now:

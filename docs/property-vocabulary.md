@@ -44,6 +44,12 @@ is frozen; naming questions are collected at the end.
 - `id` values are ObjectIDs (server-assigned; see Correlation Keys).
 - `action` values are command IDs — unquoted identifiers per D17
   (`action=file.open`, auto-assigned `cmd.auto.N`).
+- **Alias targets are strings, not identifiers** (owner ruling): an
+  alias is a lexical macro applied before interpretation, with no
+  object to validate against — `alias c="caption"`. Template targets
+  ARE identifiers (`template MyBtn=button`) — they name a type that
+  must exist. Lexical mechanism ⇒ string; semantic mechanism ⇒
+  identifier.
 - Key nomenclature is D3 throughout, carried as strings:
   `shortcut="^N"`, `key="M-Tab"`.
 - Color literal form is TBD (identifier names vs `"#rrggbb"` strings).
@@ -141,7 +147,7 @@ is frozen; naming questions are collected at the end.
 | Property | Type | Notes |
 |---|---|---|
 | `items` | {} | Children block of items (D13) |
-| `current` | numeric | Selected index (−1 = none) |
+| `selected` | numeric | Selected index (−1 = none) |
 | `editable` | flag | |
 | `placeholder` | string | |
 | `max_visible` | numeric | Dropdown row cap |
@@ -150,7 +156,7 @@ is frozen; naming questions are collected at the end.
 | Property | Type | Notes |
 |---|---|---|
 | `items` / `nodes` | {} | Children block (D13); tree nodes carry `caption`, `expanded`, children |
-| `current` | numeric | Selection |
+| `selected` | numeric | Selection |
 | `multi_select` | flag | (future) |
 
 ### progress
@@ -163,7 +169,7 @@ is frozen; naming questions are collected at the end.
 | Property | Type | Notes |
 |---|---|---|
 | `tabs` | {} | Each tab: `caption`, content `id` |
-| `current` | numeric | Active tab |
+| `selected` | numeric | Active tab |
 | `tab_position` | enum | `top`, `bottom`, `left`, `right` |
 
 ### splitter
@@ -242,8 +248,8 @@ source where applicable. Apps subscribe per widget/event (slice 3).
 | `command` | `action` | Menu/button/shortcut dispatch — the slice-1 seam |
 | `click` | `widget`, `x`, `y`, `button` | Positions in the widget's denomination |
 | `toggle` | `widget`, `checked` | Checkbox/radio state after the change |
-| `change` | `widget`, `text` \| `value` \| `current` | Content/value/selection changed (textinput, combobox, progress-consumer, list) |
-| `activate` | `widget`, `current` | Item chosen (combobox selection committed, list double-activation) |
+| `change` | `widget`, `text` \| `value` \| `selected` | Content/value/selection changed (textinput, combobox, progress-consumer, list) |
+| `activate` | `widget`, `selected` | Item chosen (combobox selection committed, list double-activation) |
 | `focus_in` / `focus_out` | `widget` | |
 | `key` | `widget`, `key` | D3 string; only when subscribed (raw-key mode) |
 | `window_moved` / `window_resized` | `window`, `x`, `y`, `width`, `height` | |
@@ -254,20 +260,21 @@ source where applicable. Apps subscribe per widget/event (slice 3).
 
 ## Open questions for review
 
-1. **`caption` vs `text`** — proposed split: `caption` = display label
-   ON a control (button, checkbox, label, tab, menu item);
-   `text` = editable/content text (textinput). Window uses `title`.
-   Agree, or unify on one name?
-2. `current` vs `selected` for selection indices (combobox, tabs,
-   lists) — `current` proposed for consistency with existing API.
+1. ✅ **Answered:** keep the split — `caption` (label on a control),
+   `text` (editable content), `title` (windows). Do not unify.
+2. ✅ **Answered:** `selected` is the standard for selection indices
+   (combobox, tabs, lists, trees) — standardized throughout this doc.
+   (The Go API's `CurrentIndex` naming may be aligned later; the wire
+   name is settled.)
 3. Should layout-item properties (`stretch`, `align`) live on the
    child (as here) or as arguments of an attach/add operation?
+   *(left open by owner for now)*
 4. `grid_width`/`grid_height` naming for the CellMetrics override —
    or `units_per_column`/`units_per_row` (more literal, longer)?
+   *(left open by owner for now)*
 5. Forward references from correlation keys within a batch (D11
-   extension) — approve?
-6. Event names: is `change` too generic — split into `text_changed`,
-   `value_changed`, `selection_changed`?
+   extension) — approve? *(left open by owner for now)*
+6. ✅ **Answered:** keep `change` as the event name; no split.
 7. ~~Addressing template-instantiated children~~ — **resolved by D15**
    (hierarchical key scoping): template-body keys are namespaced by
    the instance key (`k1.input`, `k2.input`); surface explicitly to
