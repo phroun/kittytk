@@ -180,6 +180,28 @@ By file (line: enclosing method):
   785 `positionWindow`, 839 `TileWindows`, 883 `CascadeWindows`, 1016
   `HandleMousePress`, 1133/1209 `HandleMouseMove`.
 
+## Semantics sharpened by the per-window override (2026-07-05)
+
+Observed live via the demo's "double-height grid" toggle:
+
+- **Three metrics sources now coexist, answering different questions.**
+  `EffectiveCellMetrics()` is the *layout grid* (container-defined,
+  overridable). `Painter.Metrics()` is the *backend's device cell
+  geometry* (physical 8×16 terminal cells). Font line height is a
+  *text* metric. Glyph placement must follow device cells; widget
+  sizing/spacing follows the grid; text-line stacking follows the
+  font. Consequence for the sweep: paint-time `p.Metrics()` uses are
+  fine only when they are device questions (where to stamp a rune);
+  any layout-ish math inside Paint must be re-classified against the
+  grid, since the two now genuinely diverge under an override.
+- **Implicit choice to ratify (or revisit): wrapped text stacks by
+  font line height, single-line widgets size by grid row.** Under a
+  32-unit grid, checkbox lists double-space (TextHeight(1) = one grid
+  row) while wrapped paragraphs stay at 16/line (HeightForWidth uses
+  font.LineHeight). Coherent under the D8 split — paragraph stacking
+  is a text question, row rhythm is a grid question — but currently
+  implicit.
+
 ## Adjacent layout/sizing-contract findings
 
 Surfaced while building the Selection-tab wrap-test row (2026-07-05).
