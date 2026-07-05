@@ -13,14 +13,18 @@ is frozen; naming questions are collected at the end.
   (D8/D8′); rows/columns appear only where the concept is genuinely
   grid-based (e.g. terminal surfaces).
 - Enum values are lowercase strings: `align=center`, `state=maximized`.
-- **Flags (D12):** pure booleans travel as bare names — presence means
-  true (`wrap`), `!name` means false (`!enabled`), and absence means
-  *unsaid*: default at creation, **unchanged on update**. The long
-  forms `name=true`/`name=false` are accepted on input for generic
-  tooling; the flag form is canonical. `!` never begins a property
-  name. Flags compose with aliases (`alias d="default"` → `d` / `!d`).
-  Tri-states and other multi-valued switches are enums, not flags
-  (e.g. `checked=off|on|mixed`).
+- **Flags (D12, extended by D16):** booleans travel as bare names —
+  `name` = true, `!name` = false, `?name` = **asserted indeterminate**
+  (a real value, deliberately set), and absence = *unsaid*: default at
+  creation, **unchanged on update**. `?name` is a value; absence never
+  is. The grammar admits `?` on any flag; each property declares
+  whether indeterminate is *meaningful* (e.g. checkbox `checked`
+  accepts it; `visible` rejects it under the standard invalid-property
+  policy). Long forms `name=true`/`name=false`/`name=mixed` are
+  accepted on input for generic tooling; flag forms are canonical.
+  `!` and `?` never begin property names. Flags compose with aliases
+  (`alias c="checked"` → `c` / `!c` / `?c`). Genuinely multi-valued
+  switches (more than three states) remain enums.
 - `id` values are ObjectIDs (server-assigned; see Correlation Keys).
 - `action` values are command IDs (semantic strings like `file.open`,
   or auto-assigned `cmd.auto.N`).
@@ -92,8 +96,8 @@ is frozen; naming questions are collected at the end.
 | Property | Type | Notes |
 |---|---|---|
 | `caption` | string | |
-| `checked` | enum | `off`, `on`, `mixed` (tri-state) |
-| `tristate` | flag | |
+| `checked` | flag | Tri-capable: `checked` / `!checked` / `?checked` (D16) |
+| `tristate` | flag | UI cycling behavior only (does clicking pass through mixed); wire representability comes from D16 regardless |
 | `wrap` | flag | Opt-in word wrap (D9: indicator is chrome) |
 | `action` | command-id | Optional, as with button |
 
