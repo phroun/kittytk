@@ -25,9 +25,19 @@ is frozen; naming questions are collected at the end.
 - `action` values are command IDs (semantic strings like `file.open`,
   or auto-assigned `cmd.auto.N`).
 - Key nomenclature is D3 throughout: `shortcut="^N"`, `key="M-Tab"`.
-- List/structure encoding (menu trees, combo items) is deliberately
-  TBD until the syntax phase; the vocabulary below names the
-  properties regardless of encoding.
+- **Structure encoding (D13):** subtrees build with inline children
+  blocks — `new panel children={new button; new button}` — and the
+  same construct encodes every list-like structure: combo `items`,
+  `tabs`, tree `nodes`, and menu trees are children blocks of typed
+  items. Block order = layout/z order. `parent=` remains for later
+  additions/reparenting. Correlation keys stay flat per request at any
+  nesting depth.
+- **Templates (D14):** `template MyBtn=button align=right caption="…"`
+  then `new MyBtn` — connection-scoped macros expanded at parse time
+  (never live restyling). Template properties first, instance
+  overrides win; D12 flags can explicitly un-set (`!visible`).
+  Templates may contain children (component definitions). Builtins are
+  lowercase; templates CamelCase by convention.
 
 ## Identity, creation, correlation
 
@@ -234,3 +244,9 @@ source where applicable. Apps subscribe per widget/event (slice 3).
    extension) — approve?
 6. Event names: is `change` too generic — split into `text_changed`,
    `value_changed`, `selection_changed`?
+7. **Addressing template-instantiated children (D14):** when
+   `new LabeledInput` instantiates a template containing children, how
+   does the app get the children's IDs? (a) role-based — template
+   children carry `name=` roles and the instantiation reply includes
+   `key1.input=<id>` per role (leaning); (b) events-only — learn IDs
+   from events as they arrive, query when needed. Pick one (or both).
