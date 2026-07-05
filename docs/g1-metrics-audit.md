@@ -107,9 +107,12 @@ Tuesday today):
 | menu.go:1773 | `MenuBar.SizeHint` | sums title widths via font |
 | menu.go:1790 | `menuTitleWidth` | title via font + spacing |
 
-Related (not a DefaultCellMetrics site): `label.go wrapText` counts
+Related (not a DefaultCellMetrics site): `label.go wrapText` counted
 every rune as width 1 — reproduced live via the word-wrap test row on
-the demo's Selection tab.
+the demo's Selection tab. **Fixed 2026-07-05**: wrapText now measures
+via the effective font and breaks at word boundaries (character
+fallback for overlong words), covered by `widgets/label_test.go` —
+the repo's first unit tests.
 
 ## Category E — PurfecTerm (6)
 
@@ -203,10 +206,12 @@ rely on hand-tuning around these:
    design grid); there is currently no way for a widget to declare
    whether its size derives from text metrics or grid metrics. This is
    the D8 two-concept distinction surfacing at the API level.
-6. **`wrapText` is character wrap, not word wrap** — no word-boundary
-   logic at all, in addition to counting runes instead of measuring
-   (label.go:203). The fix needs both: break at word boundaries, and
-   measure candidate lines via the font/TextMeasurer.
+6. **`wrapText` was character wrap, not word wrap** — no word-boundary
+   logic, and it counted runes instead of measuring. **Fixed
+   2026-07-05**: breaks at word boundaries and measures candidate lines
+   via the font (character fallback for overlong words); tests in
+   `widgets/label_test.go`. Will re-route from `font.MeasureText` to
+   the TextMeasurer when G1 lands.
 7. **`Panel.SetBorder(true)` with the zero-value `BorderStyle` draws an
    invisible border** (NUL runes) — SetBorder should default to a
    visible style or warn.

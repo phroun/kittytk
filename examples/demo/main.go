@@ -425,10 +425,9 @@ func createBasicWidgetsDemo(desktop *widgets.Desktop) core.Widget {
 func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window, desktop *widgets.Desktop) core.Widget {
 	// Word-wrap test row: two word-wrapped labels in fixed-width bordered
 	// boxes. The boxes pin the width (Label.SizeHint scales with the font,
-	// so an unconstrained label just grows instead of wrapping). In Monday
-	// the text wraps neatly inside the borders; in Tuesday wrapText still
-	// breaks by rune count, so each line is ~twice too wide and spills
-	// past the border.
+	// so an unconstrained label just grows instead of wrapping). Wrapping
+	// measures via the effective font: toggling Tuesday should re-wrap the
+	// text at word boundaries into more, shorter lines inside the border.
 	wrapPanel := widgets.NewPanel()
 	wrapLayout := layout.NewBoxLayout(core.Horizontal)
 	wrapLayout.SetSpacing(8)

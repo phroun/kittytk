@@ -164,14 +164,13 @@ func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellSt
 // paintWrapped renders word-wrapped text.
 func (l *Label) paintWrapped(p *core.Painter, bounds core.UnitRect, s style.CellStyle) {
 	metrics := p.Metrics()
-	maxChars := metrics.CharsForWidth(bounds.Width)
 	maxLines := metrics.LinesForHeight(bounds.Height)
 
-	if maxChars <= 0 || maxLines <= 0 {
+	if bounds.Width <= 0 || maxLines <= 0 {
 		return
 	}
 
-	lines := wrapText(l.text, maxChars)
+	lines := wrapText(l.text, bounds.Width, l.EffectiveFont())
 	y := core.Unit(0)
 
 	for i, line := range lines {
@@ -199,38 +198,70 @@ func (l *Label) AccessibleInfo() core.AccessibleInfo {
 	return info
 }
 
-// wrapText wraps text to the given width.
-func wrapText(text string, maxWidth int) []string {
+// wrapText wraps text to the given width in units, breaking at word
+// boundaries and measuring candidate lines with the font. Words wider
+// than a full line fall back to character breaking.
+func wrapText(text string, maxWidth core.Unit, font *core.Font) []string {
 	if maxWidth <= 0 {
 		return nil
 	}
 
 	var lines []string
-	var currentLine string
-	currentWidth := 0
+	spaceWidth := font.MeasureText(" ")
 
-	for _, r := range text {
-		if r == '\n' {
-			lines = append(lines, currentLine)
-			currentLine = ""
+	for _, paragraph := range strings.Split(text, "\n") {
+		var currentLine strings.Builder
+		currentWidth := core.Unit(0)
+
+		flush := func() {
+			lines = append(lines, currentLine.String())
+			currentLine.Reset()
 			currentWidth = 0
-			continue
 		}
 
-		charWidth := 1 // Simplified; would need proper width calculation for CJK
+		for _, word := range strings.Fields(paragraph) {
+			wordWidth := font.MeasureText(word)
 
-		if currentWidth+charWidth > maxWidth {
-			lines = append(lines, currentLine)
-			currentLine = string(r)
-			currentWidth = charWidth
-		} else {
-			currentLine += string(r)
-			currentWidth += charWidth
+			// Width if appended to the current line (with separating space)
+			joined := wordWidth
+			if currentWidth > 0 {
+				joined += currentWidth + spaceWidth
+			}
+
+			if joined <= maxWidth {
+				if currentWidth > 0 {
+					currentLine.WriteByte(' ')
+					currentWidth += spaceWidth
+				}
+				currentLine.WriteString(word)
+				currentWidth += wordWidth
+				continue
+			}
+
+			if currentWidth > 0 {
+				flush()
+			}
+
+			if wordWidth <= maxWidth {
+				currentLine.WriteString(word)
+				currentWidth = wordWidth
+				continue
+			}
+
+			// Word wider than a full line: break it by characters,
+			// placing at least one rune per line.
+			for _, r := range word {
+				runeWidth := font.MeasureText(string(r))
+				if currentWidth > 0 && currentWidth+runeWidth > maxWidth {
+					flush()
+				}
+				currentLine.WriteRune(r)
+				currentWidth += runeWidth
+			}
 		}
-	}
 
-	if currentLine != "" {
-		lines = append(lines, currentLine)
+		// Emit the remainder; preserve intentionally blank paragraphs.
+		lines = append(lines, currentLine.String())
 	}
 
 	return lines
