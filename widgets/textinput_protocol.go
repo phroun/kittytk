@@ -16,5 +16,13 @@ func init() {
 			"placeholder": stringProp("placeholder", (*TextInput).SetPlaceholder),
 		},
 		nil,
+		func(ctx *protocol.BindContext, w core.Widget) {
+			t := w.(*TextInput)
+			id := widgetID(t)
+			t.SetOnTextChanged(func(text string) {
+				ctx.EmitEvent(protocol.NewEvent("change").
+					WithUint("widget", id).WithString("text", text))
+			})
+		},
 	)
 }

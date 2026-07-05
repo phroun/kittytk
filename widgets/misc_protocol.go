@@ -35,6 +35,7 @@ func init() {
 			}),
 		},
 		nil,
+		nil,
 	)
 
 	regWidget("separator",
@@ -43,6 +44,7 @@ func init() {
 			"caption":     stringProp("caption", (*LineSeparator).SetTitle),
 			"orientation": orientationProp[*LineSeparator]((*LineSeparator).SetOrientation),
 		},
+		nil,
 		nil,
 	)
 
@@ -54,6 +56,7 @@ func init() {
 			"maximum": intProp("maximum", (*ProgressBar).SetMaximum),
 			"caption": stringProp("caption", (*ProgressBar).SetFormat),
 		},
+		nil,
 		nil,
 	)
 }

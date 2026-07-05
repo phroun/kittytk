@@ -60,26 +60,36 @@ func intProp[T any](name string, set func(w T, n int)) protocol.PropertyApplier 
 	})
 }
 
-// actionProp wires an activation callback to the connection's command
-// dispatcher (the slice-1 seam): activating the control dispatches the
-// command ID.
-func actionProp[T any](name string, wire func(w T, dispatch func())) protocol.PropertyApplier {
-	return wprop(name, func(ctx *protocol.BindContext, w T, v *protocol.Value, f protocol.FlagState) error {
+// actionProp records the command bound to a control (action=). The
+// control's activation wiring - set once in its Bind function -
+// consults BindContext.Action/FireAction, so assigning or replacing
+// the action never re-wires callbacks.
+func actionProp(name string) protocol.PropertyApplier {
+	return wprop(name, func(ctx *protocol.BindContext, w core.Widget, v *protocol.Value, f protocol.FlagState) error {
 		id, err := protocol.AsWord(name, v, f)
 		if err != nil {
 			return err
 		}
-		if ctx.Dispatch == nil {
+		if ctx.Dispatch == nil && ctx.Emit == nil {
 			return fmt.Errorf("%s: no command dispatcher on this connection", name)
 		}
-		dispatch := ctx.Dispatch
-		wire(w, func() { dispatch(id) })
+		ctx.SetAction(widgetID(w), id)
 		return nil
 	})
 }
 
+// widgetID returns a widget's stable object identity as a wire ID.
+func widgetID(w core.Widget) uint64 {
+	if iw, ok := w.(interface{ ObjectID() core.ObjectID }); ok {
+		return uint64(iw.ObjectID())
+	}
+	return 0
+}
+
 // regWidget registers a widget type whose targets are core.Widgets.
-func regWidget(name string, construct func() core.Widget, props map[string]protocol.PropertyApplier, appendFn func(parent, child core.Widget) error) {
+// bind, when non-nil, wires the widget's event emission into the
+// connection (called once at construction).
+func regWidget(name string, construct func() core.Widget, props map[string]protocol.PropertyApplier, appendFn func(parent, child core.Widget) error, bind func(ctx *protocol.BindContext, w core.Widget)) {
 	spec := &protocol.TypeSpec{
 		New:   func() any { return construct() },
 		Props: props,
@@ -98,6 +108,13 @@ func regWidget(name string, construct func() core.Widget, props map[string]proto
 				return fmt.Errorf("%s: children must be widgets", name)
 			}
 			return appendFn(pw, cw)
+		}
+	}
+	if bind != nil {
+		spec.Bind = func(ctx *protocol.BindContext, t any) {
+			if w, ok := t.(core.Widget); ok {
+				bind(ctx, w)
+			}
 		}
 	}
 	protocol.RegisterType(name, spec)

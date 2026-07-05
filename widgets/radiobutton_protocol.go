@@ -17,5 +17,17 @@ func init() {
 			"wrap":    boolProp("wrap", (*RadioButton).SetWordWrap),
 		},
 		nil,
+		func(ctx *protocol.BindContext, w core.Widget) {
+			r := w.(*RadioButton)
+			id := widgetID(r)
+			r.SetOnToggled(func(checked bool) {
+				flag := protocol.FlagFalse
+				if checked {
+					flag = protocol.FlagTrue
+				}
+				ctx.EmitEvent(protocol.NewEvent("toggle").
+					WithUint("widget", id).WithFlag("checked", flag))
+			})
+		},
 	)
 }

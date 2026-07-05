@@ -42,6 +42,14 @@ func init() {
 		ID: func(t any) uint64 {
 			return uint64(t.(*ComboBox).ObjectID())
 		},
+		Bind: func(ctx *protocol.BindContext, target any) {
+			c := target.(*ComboBox)
+			id := uint64(c.ObjectID())
+			c.SetOnCurrentIndexChanged(func(index int) {
+				ctx.EmitEvent(protocol.NewEvent("change").
+					WithUint("widget", id).WithInt("selected", index))
+			})
+		},
 		Props: map[string]protocol.PropertyApplier{
 			"selected":    intProp("selected", (*ComboBox).SetCurrentIndex),
 			"editable":    boolProp("editable", (*ComboBox).SetEditable),

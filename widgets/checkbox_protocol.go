@@ -43,10 +43,24 @@ func init() {
 			}),
 			"tristate": boolProp("tristate", (*Checkbox).SetTriState),
 			"wrap":     boolProp("wrap", (*Checkbox).SetWordWrap),
-			"action": actionProp("action", func(c *Checkbox, dispatch func()) {
-				c.SetOnToggled(func(bool) { dispatch() })
-			}),
+			"action":   actionProp("action"),
 		},
 		nil,
+		func(ctx *protocol.BindContext, w core.Widget) {
+			c := w.(*Checkbox)
+			id := widgetID(c)
+			c.SetOnStateChanged(func(state CheckState) {
+				ctx.FireAction(id)
+				flag := protocol.FlagFalse
+				switch state {
+				case Checked:
+					flag = protocol.FlagTrue
+				case PartiallyChecked:
+					flag = protocol.FlagIndeterminate
+				}
+				ctx.EmitEvent(protocol.NewEvent("toggle").
+					WithUint("widget", id).WithFlag("checked", flag))
+			})
+		},
 	)
 }

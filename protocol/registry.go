@@ -13,14 +13,63 @@ import (
 // imports nothing of tuitk). The registry is write-at-init,
 // read-at-execute.
 
-// BindContext carries per-connection services into property appliers.
-// It is instance-scoped, never global (multi-display guardrail): one
-// app may hold several connections, each with its own context.
+// BindContext carries per-connection services into property appliers
+// and event wiring. It is instance-scoped, never global (multi-display
+// guardrail): one app may hold several connections, each with its own
+// context.
 type BindContext struct {
 	// Dispatch delivers an activated command ID (action= wiring).
 	// Nil when the connection has no command sink; appliers that
 	// need it must error clearly.
 	Dispatch func(commandID string)
+
+	// Emit delivers event records to the app side. Nil when the
+	// connection does not consume events. Widgets' Bind wiring calls
+	// EmitEvent, which is nil-safe.
+	Emit func(*Event)
+
+	mu      sync.Mutex
+	actions map[uint64]string
+}
+
+// EmitEvent delivers an event if the connection consumes events.
+func (c *BindContext) EmitEvent(ev *Event) {
+	if c.Emit != nil {
+		c.Emit(ev)
+	}
+}
+
+// SetAction records the command bound to a widget (action=). The
+// widget's activation wiring (set once at Bind time) consults this,
+// so action can be assigned or replaced without re-wiring callbacks.
+func (c *BindContext) SetAction(widgetID uint64, commandID string) {
+	c.mu.Lock()
+	if c.actions == nil {
+		c.actions = make(map[uint64]string)
+	}
+	c.actions[widgetID] = commandID
+	c.mu.Unlock()
+}
+
+// Action returns the command bound to a widget, or "".
+func (c *BindContext) Action(widgetID uint64) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.actions[widgetID]
+}
+
+// FireAction dispatches a widget's bound command (if any) and emits
+// the corresponding command event. Called from widget activation
+// wiring.
+func (c *BindContext) FireAction(widgetID uint64) {
+	id := c.Action(widgetID)
+	if id == "" {
+		return
+	}
+	if c.Dispatch != nil {
+		c.Dispatch(id)
+	}
+	c.EmitEvent(NewEvent("command").WithWord("action", id))
 }
 
 // PropertyApplier applies one wire property to a target object,
@@ -39,6 +88,11 @@ type TypeSpec struct {
 	// Append attaches a constructed child target to a parent target
 	// (children blocks, D13). Nil means the type takes no children.
 	Append func(parent, child any) error
+
+	// Bind wires the target's event emission into the connection
+	// (called once, immediately after New). Widget codebases own this
+	// wiring, same as their property registration. Optional.
+	Bind func(ctx *BindContext, target any)
 
 	// ID returns the target's stable object identity. Nil for Virtual
 	// types, which get factory-assigned virtual IDs.
@@ -126,6 +180,9 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 	o := &registryObject{ctx: f.ctx, spec: spec, target: spec.New()}
 	if spec.Virtual {
 		o.virtualID = virtualIDCounter.Add(1)
+	}
+	if spec.Bind != nil {
+		spec.Bind(f.ctx, o.target)
 	}
 	return o, nil
 }

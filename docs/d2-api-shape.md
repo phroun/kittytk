@@ -91,9 +91,28 @@ as real protocol records, no sockets yet. Steps:
      tabs/lists/trees/menus types; `set` verb and friends (verb
      inventory — O6 item for the owner); radio `group`; items={}
      spelling reconciliation (v1 uses children per D13).
-3. **Event records + subscriptions** (absorbs slice 3) — events
-   emitted as protocol records (`event change widget=17 selected=3`)
-   through an in-process channel; app-side dispatch by ObjectID.
+3. ✅ **Event records + subscriptions** (absorbs slice 3; 2026-07-05).
+   `protocol.Event` follows the same named-property discipline as
+   commands — `event toggle widget=17 ?checked` — and its encoded
+   form is a parseable statement, so one tokenizer serves both wire
+   directions (Encode/ParseEvent round-trip tested, incl. string
+   escaping). Emission is widget-owned like everything else: each
+   widget's `*_protocol.go` wires its callbacks in a `TypeSpec.Bind`
+   hook called once at construction — button `click`, checkbox
+   `toggle` with tri-state flags (D16 on the wire), radio `toggle`,
+   textinput `change text=`, combobox `change selected=`. Events
+   flow through `BindContext.Emit` (per-connection; nil-safe);
+   `action=` became per-widget *data* (`BindContext.SetAction` /
+   `FireAction`), so assigning or replacing an action never re-wires
+   callbacks — activation dispatches the command registry AND emits
+   a `command` event. App side: `protocol.EventDispatcher` routes by
+   ObjectID + event type (`On`) or type-wide (`OnType`). In-process
+   delivery is synchronous by default; a channel is just an Emit
+   that enqueues (transport decides later). Known/accepted:
+   construction-time property application emits state events
+   (suppression policy joins the `sub` verb decision). Deferred:
+   window events, key events (raw-key mode), the `sub` verb itself
+   (v1 emits for all bound widgets).
 4. **Demo on this basis** — a demo window defined as protocol text
    executed at startup in-process, interactions flowing back as event
    records into registry/subscription handlers. Full API purity (the

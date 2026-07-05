@@ -12,10 +12,19 @@ func init() {
 		map[string]protocol.PropertyApplier{
 			"caption": stringProp("caption", (*Button).SetText),
 			"default": boolProp("default", (*Button).SetDefault),
-			// action is OPTIONAL (D11 note): when set, clicking the
-			// button dispatches the command ID.
-			"action": actionProp("action", (*Button).SetOnClick),
+			// action is OPTIONAL: when set, clicking dispatches the
+			// command ID (via BindContext.FireAction in the click
+			// wiring below).
+			"action": actionProp("action"),
 		},
 		nil, // buttons take no children
+		func(ctx *protocol.BindContext, w core.Widget) {
+			b := w.(*Button)
+			id := widgetID(b)
+			b.SetOnClick(func() {
+				ctx.FireAction(id)
+				ctx.EmitEvent(protocol.NewEvent("click").WithUint("widget", id))
+			})
+		},
 	)
 }

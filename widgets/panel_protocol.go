@@ -69,5 +69,6 @@ func init() {
 			parent.(*Panel).AddChild(child)
 			return nil
 		},
+		nil,
 	)
 }
