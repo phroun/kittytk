@@ -325,19 +325,47 @@ These follow from the code survey (2026-07-05) and are needed no matter
 how the open decisions land. All are refactors verifiable against the
 existing TUI demo with pixel-identical output.
 
-### G1 — Backend-driven text measurement and metrics hygiene
+### G1 — Metrics hygiene: two concepts, two sources  *(model decided 2026-07-05; full call-site audit in `g1-metrics-audit.md`)*
 
-- `Font.MeasureText` is currently a static, cell-quantized function
-  (multiples of 8/16 units) and `Font.LineHeight` is hardcoded to 16.
-  Measurement must route through the backend (a `TextMeasurer` provided
-  by the rendering target) so a real font engine can answer in graphical
-  mode.
-- Widgets that call `core.DefaultCellMetrics()` directly (button,
-  textinput, scrollarea, purfecterm, others) must ask the painter/backend
-  instead.
-- Remaining char-count measurements must be eliminated: `DrawBox` title
-  truncation by rune count, Label word-wrap's hardcoded `charWidth := 1`,
-  scrollbar range math done in cells via `CharsForWidth`.
+There are two distinct measurement concepts, which coincide numerically
+in default TUI mode and diverge everywhere else. G1's job is giving each
+its proper source and stopping them impersonating each other:
+
+- **Grid metrics** (CellMetrics) — a deliberate **layout vocabulary**,
+  not a TUI artifact: the application decides how many native units a
+  virtual row/column occupies per container, for placement detail and
+  density — including in true graphical windows, where lines/columns
+  remain available for aesthetic layout decoupled from the proportional
+  font. **Decided model:** grid metrics are *inherited from the
+  container chain* (mirroring the existing `FontProvider`/
+  `FindEffectiveFont` pattern), overridable per window/container in all
+  modes including TUI, rooted at the display service's default — which
+  derives from the system default font size in its settings. The
+  hygiene defect is that ~133 call sites grab the global
+  `DefaultCellMetrics()` constructor instead of their container's
+  definition (no container metrics storage exists yet — the inheritance
+  mechanism must be built; fonts provide the blueprint).
+- **Text metrics** — "how much space does this text in this font occupy
+  on this render target?" Target-dependent: the same text has different
+  correct widths on a TUI surface and a graphical window coexisting in
+  one display service. `Font.MeasureText` as a static function cannot
+  answer this; measurement routes through the render context
+  (TextMeasurer per target; the TUI measurer returns today's
+  cell-quantized answers, the graphical one delegates to the D6 text
+  engine). The Tuesday font exists precisely as a proportional test
+  case (letters/digits 16 units, punctuation 8) and already exposes
+  text-questions-answered-with-grid-math (Label `wrapText`,
+  tab-bar width, menu clock width).
+
+Audit summary (see `g1-metrics-audit.md` for the per-site checklist):
+133 sites — 102 grid questions needing the container walk, 14 text
+questions in disguise, 10 legitimate root-default sites (backend init +
+Desktop chrome, to be re-rooted on a stored desktop default), 6
+PurfecTerm cell-grid sites, 1 trivial painter swap, and one structural
+dead-end (`NewSpacer` sizing in its constructor). Verified by
+byte-identical demo rendering, except deliberate bug fixes at the
+text-in-disguise sites (reproducible via the Selection-tab wrap row
+under Tuesday).
 
 ### G2 — Split the backend into Platform + Surface
 
@@ -521,6 +549,7 @@ milestone for whole windows.
 | D2 | 2026-07-05 | Apps compile independent of the renderer and talk to a desktop/render server over a socket (X-style). Boundary = **widget-level protocol**: server owns widgets/layout/rendering/hit-testing, apps drive proxies with the same API and receive semantic events. In-process stays as a direct implementation. Cell-grid + (later) pixel surface widgets are the custom-rendering escape hatch. |
 | — | 2026-07-05 | Context: PurfecTerm is an independent pre-existing project with TUI, GTK, and Qt frontends in one codebase — proof of the D1 pattern, source of graphical cell-grid rendering, input to O1. |
 | D7 | 2026-07-05 | A Canvas widget (HTML5-canvas-like: PurfecTerm pattern, but for images/drawing) is the pixel escape hatch. Committed to exist; development deferred to a future widget. Likely command-based + pixel-buffer modes, command-based first. |
+| D8 | 2026-07-05 | Grid-metrics model: CellMetrics is a per-container layout vocabulary (app chooses units per virtual row/column for placement density), inherited through the container chain like fonts, overridable per window in all modes including TUI, rooted at the display service's default derived from its system default font size. Text measurement is a separate, per-render-target question. G1 implements this model; call-site audit in `g1-metrics-audit.md`. |
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
 | D4 | 2026-07-05 | X-direction rendezvous: the display service listens on a well-known endpoint, apps dial in. Sessions are first-class protocol objects separable from connections (enables reattach/multi-viewer without inverting topology). Reverse attachment is a possible later mode. Naming: "display service" and "apps". |
 | D5 | 2026-07-05 | Two graphical substrates, Gio and SDL, behind one neutral Platform interface (PurfecTerm-style discipline). Mandatory condition: one shared tuitk-owned text engine (shaping/measurement/rasterization) outside the substrates, so layout is substrate-independent; it doubles as the server-side TextMeasurer. Substrates land serially; second lands before the interface is declared stable. |

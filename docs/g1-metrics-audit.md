@@ -1,0 +1,194 @@
+# G1 Metrics Audit — DefaultCellMetrics() call-site classification
+
+Audited 2026-07-05 on branch `claude/project-survey-mr6k4v`. Companion to
+the G1 section of `graphical-mode-plan.md`. This is the refactor
+checklist: every call site of `core.DefaultCellMetrics()` outside its
+definition, classified by what question the code is actually asking.
+
+## The two-concept model (context)
+
+- **Grid metrics** — "how big is a virtual row/column *in this
+  container*?" A deliberate layout vocabulary: each container may define
+  its own row/column size in native units (for placement detail and
+  density), inherited from its parent container, rooted at the display
+  service's default (derived from the system default font size).
+  Overridable per window/container in all modes, including TUI.
+- **Text metrics** — "how much space does *this text* in *this font*
+  occupy on *this render target*?" Target-dependent; answered by the
+  backend / text engine, never by grid arithmetic.
+
+In TUI mode with default settings the two coincide numerically, which is
+why the code never had to distinguish them. They diverge in graphical
+mode and under non-uniform fonts (Tuesday already demonstrates this).
+
+## Categories
+
+- **A** — grid question, `*core.Painter` in scope → trivial swap to
+  `p.Metrics()`.
+- **B** — grid question, no painter in scope (SizeHint, hit-testing,
+  geometry) → needs container-inherited metrics via parent walk.
+- **C** — text question in disguise (width/char-count/truncation) →
+  route to text measurement (font.MeasureText now; TextMeasurer later).
+- **D** — plausibly intentional canonical default → human-reviewed;
+  resolution below.
+- **E** — cell-grid content (the widget IS a grid) → metrics from the
+  widget's own font/container.
+
+## Totals
+
+| Category | Count |
+|---|---|
+| A | 1 |
+| B | 102 |
+| C | 14 |
+| D | 10 |
+| E | 6 |
+| **Total** | **133** |
+
+## Structural findings
+
+1. **No container metrics storage exists yet.** No `CellMetrics` field
+   or accessor on Desktop, Window, or MDIPane; the only stored metrics
+   are `TUIBackend.metrics`, surfaced via `Painter.Metrics()` during
+   paint. **Fonts already have the needed pattern**: `FontProvider` +
+   `core.FindEffectiveFont` parent walk (`core/font.go:245-282`) with
+   `Font()/SetFont()/EffectiveFont()` on Desktop, Window, MDIPane. G1
+   builds the metrics analogue: a `CellMetricsProvider` (name TBD) +
+   `FindEffectiveCellMetrics` walk, rooted at the Desktop's stored
+   default. The 102 B-sites then rewrite mechanically onto it.
+2. **One true dead-end:** `widgets/spacer.go:19 NewSpacer()` bakes a
+   cell-based size in the constructor, before the widget has a parent.
+   Needs lazy sizing at first layout rather than a parent walk.
+3. **Paint paths are already clean.** Paint methods use `p.Metrics()`
+   (desktop.go:1621, window.go:794, mdipane.go:1083); only one paint
+   method calls the global constructor (the single A-site). The
+   contamination lives in the non-paint paths that had no metrics
+   source to ask — i.e., the missing inheritance mechanism.
+4. **Free-floating popups** (Menu/MenuBar overlays) may have a nil
+   `Parent()`; the parent walk needs the same fallback treatment
+   fonts use.
+
+## D-site resolution (the "intentional?" question)
+
+- `backend/tui.go:97` (`DefaultTUIOptions`), `:113` (`NewTUIBackend`
+  zero-value fallback) — **keep**: the backend is the legitimate source
+  of its own default.
+- `widgets/desktop.go:1228, 1428, 1491, 1522, 1530, 1539, 1567, 1736`
+  (`ChildAt`, `layoutChildren`, `ClientArea`, `MenuBarHeight`,
+  `StatusBarHeight`, `StatusBarBounds`, `DockBounds`,
+  `HandleMousePress`) — Desktop is the root container, so "which
+  container's metrics?" is "its own." **Resolution: Desktop gets a
+  stored metrics field** (seeded from backend/system settings — the
+  display service's default, per the decided model) and these eight
+  read it. Functionally identical today; that field becomes the root
+  of the inheritance chain for every B-site.
+
+## Category C — text questions in disguise (14)
+
+All but two sit next to `font.MeasureText`/`MeasureRunes` already; the
+fix is local. The two starred sites use pure `charCount × CellWidth`
+with no font at all — the clearest latent bugs (both misrender under
+Tuesday today):
+
+| Site | Method | Note |
+|---|---|---|
+| textinput.go:295 | `ensureCursorVisible` | CellWidth as cursor/space advance amid MeasureText math |
+| combobox.go:651 | `SizeHint` | measures items via font |
+| label.go:71 | `SizeHint` | TextHeight from line count; width via font |
+| separator.go:76 | `SizeHint` | title via font |
+| button.go:199 | `SizeHint` | text via font + cell chrome |
+| checkbox.go:138 | `SizeHint` | text via font + 3-cell indicator |
+| radiobutton.go:84 | `SizeHint` | text via font + 3-cell indicator |
+| tabwidget.go:511 ★ | `calculateTabBarWidth` | `(len(text)+4) × CellWidth`, no font |
+| tabwidget.go:526 | `calculateTotalTabsWidth` | text via font + separator chrome |
+| dialog.go:179 | `MessageBox.calculateSize` | width from `len(line)` |
+| menu.go:569 | `Menu.calculateSize` | item text via font + gutter/arrow |
+| menu.go:1357 ★ | `MenuBar.dateTimeWidth` | `18 × CellWidth` clock width, no font |
+| menu.go:1773 | `MenuBar.SizeHint` | sums title widths via font |
+| menu.go:1790 | `menuTitleWidth` | title via font + spacing |
+
+Related (not a DefaultCellMetrics site): `label.go wrapText` counts
+every rune as width 1 — reproduced live via the word-wrap test row on
+the demo's Selection tab.
+
+## Category E — PurfecTerm (6)
+
+purfecterm.go: 115 (`SizeHint`), 134 (`updateTerminalSize`), 308, 393,
+424, 451 (mouse handlers). The widget is genuinely a cell grid; its
+cell size should come from its own font/container metrics rather than
+the global default.
+
+## Category A (1)
+
+- combobox.go:973 `paintScrollbar` → swap to `p.Metrics()`.
+
+## Category B — grid questions needing the inheritance walk (102)
+
+By file (line: enclosing method):
+
+- **layout/box.go** — 132: `BoxLayout.Layout` (spacing rounding;
+  receives `container` directly — easiest B-fix, no walk needed).
+- **widgets/mdipane.go** — 608 `TileWindows`, 654 `CascadeWindows`,
+  804 `positionWindow`, 869 `detectResizeEdge`, 1195
+  `HandleMousePress`, 1323/1387 `HandleMouseMove`.
+- **widgets/panel.go** — 100 `Layout` (border inset), 154 `SizeHint`
+  (20×10 placeholder).
+- **widgets/textinput.go** — 342 `SizeHint` (fixed 20-char default).
+- **widgets/combobox.go** — 515 `registerPopupOverlay`, 923
+  `scrollbarGeometry`, 999/1086/1275 popup mouse handlers,
+  1526/1596/1696 mouse handlers.
+- **widgets/progress.go** — 173 `SizeHint` (cell block-bar sizing).
+- **widgets/button.go** — 458 `HandleMouseMove`.
+- **widgets/splitter.go** — 211 `dividerBounds`, 458 `HandleMouseMove`,
+  573 `HandleKeyPress`.
+- **widgets/dock.go** — 118 `entriesPerRow`, 133 `RowCount`, 152
+  `RequiredHeight`, 353 `HandleMousePress`.
+- **widgets/scrollarea.go** — 149 `ScrollBar.SizeHint`, 261/329
+  ScrollBar mouse handlers, 585 `EnsureRectVisible`, 726
+  `viewportBounds`, 748 `calculateScrollBarNeeds`, 803
+  `updateScrollBars`, 829 `ScrollArea.SizeHint`, 994/1029/1065 mouse
+  handlers.
+- **widgets/tabwidget.go** — 455 `tabBarHeight`, 463 `contentBounds`,
+  563 `scrollButtonWidth`, 606 `isLastTabFullyVisible`, 708
+  `vertVisibleCount`, 756 `vertScrollbarGeometry`, 867 `SizeHint`,
+  2390 `HandleMousePress`, 2468 `handleTabBarClick`, 2702
+  `ensureTabFullyVisible`, 2831/2867/2896 `HandleMouseMove`.
+- **widgets/listview.go** — 205 `SetCurrentIndex`, 362 `ensureVisible`,
+  374 `SizeHint`, 469 `scrollbarGeometry`, 604/615 `HandleKeyPress`,
+  641 `visibleCount`, 663 `HandleMousePress`, 733 `HandleMouseMove`.
+- **widgets/treeview.go** — 187 `SetCurrentIndex`, 416
+  `clampScrollOffset`, 447 `ensureVisible`, 459 `SizeHint`, 556
+  `visibleCount`, 564 `scrollbarGeometry`, 721/732 `HandleKeyPress`,
+  792 `HandleMousePress`, 897 `HandleMouseMove`.
+- **widgets/menu.go** — 234 `SetAvailableHeight`, 1033 `openSubMenu`,
+  1106 `HandleMousePress`, 1178 `HandleMouseMove`, 1364
+  `scrollButtonWidth`, 1390 `isLastMenuFullyVisible`, 1428
+  `ensureMenuVisible`, 1488 `clampScrollOffset`, 1661 `OpenMenu`, 1756
+  `calculateMenuX` (ellipsis part), 2225/2367/2444 mouse handlers.
+- **widgets/dialog.go** — 451 `FileDialog.setupUI`, 841
+  `NewInputDialog`.
+- **widgets/desktop.go** — 1919 `StatusBar.SizeHint` (StatusBar is a
+  child widget, not the Desktop root).
+- **widgets/spacer.go** — 19 `NewSpacer` (the dead-end; lazy sizing).
+- **window/window.go** — 640 `contentBounds`, 1216 `buttonAtPosition`,
+  1340 `handleTitleBarKey`, 1659 `constrainBoundsForMovement`, 1862
+  `HandleMousePress`, 2029 `SizeHint`.
+- **window/manager.go** — 143 `detectResizeEdge`, 719 `MapToScreen`,
+  785 `positionWindow`, 839 `TileWindows`, 883 `CascadeWindows`, 1016
+  `HandleMousePress`, 1133/1209 `HandleMouseMove`.
+
+## Suggested G1 execution order
+
+1. Build the inheritance mechanism: metrics provider interface +
+   `FindEffectiveCellMetrics` parent walk; Desktop stores the root
+   default (seeded from backend/system settings).
+2. Resolve the 10 D-sites onto the stored root (desktop.go) / keep
+   (tui.go).
+3. Rewrite the 102 B-sites onto the walk (mechanical; box.go and the
+   A-site first as warm-ups; spacer.go lazily).
+4. Fix the 14 C-sites onto text measurement (the two ★ sites and
+   label.go `wrapText` first — they are live bugs under Tuesday).
+5. Route the 6 E-sites (PurfecTerm) onto its own font/container.
+6. Verify: demo renders byte-identical cell buffers before/after
+   (except deliberate C-site bug fixes, verified via the Selection-tab
+   wrap row under Tuesday).
