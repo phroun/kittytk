@@ -31,9 +31,19 @@ guardrail keeps the client library from undoing that.
    (`OnClick`, `OnToggled`, `OnStateChanged`, …) become subscriptions
    keyed by widget ID under the hood; the public setter API keeps its
    current feel.
-4. **Replicated-read discipline audit** — classify every public getter
-   as replica-safe (served from app-side cached state) or
-   server-authoritative; restructure the exceptions.
+4. ✅ **Replicated-read discipline audit** — done 2026-07-05, full
+   classification in `d2-read-audit.md`. Three classes: A
+   (write-through — the bulk of the surface, incl. item lists the
+   app built), B (event-mirrored — every currently-registered state
+   event covers its getters), C (server-authoritative: C1 =
+   deliberately not app-model state — geometry, resolved
+   environment, transient interaction, rendered cells; C2 = six
+   enumerated exceptions needing future events: menu checked state,
+   window geometry/state events, text caret, multi-select, focus,
+   scroll offsets — none blocking transport). Restructured now: the
+   demo's menu toggle handlers own their booleans instead of reading
+   display-side MenuItem.Checked. The audit ends with the
+   four-point veneer contract feeding the client-library phase.
 
 The protocol's wire shape is deliberately NOT decided here, with one
 principle now fixed (D10, 2026-07-05): **nothing positional — every

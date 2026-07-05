@@ -87,9 +87,7 @@ speakitem=bar.v.speak
 }
 
 func createMenus(desktop *widgets.Desktop, application *app.Application) []*widgets.Menu {
-	menus, byID, reply := buildMenuBar(mainMenuScript())
-	announceItem := byID[reply.IDs["announce"]].(*widgets.MenuItem)
-	speakItem := byID[reply.IDs["speakitem"]].(*widgets.MenuItem)
+	menus, _, _ := buildMenuBar(mainMenuScript())
 
 	commands := application.Commands()
 	commands.Register("demo.file.new", func() {
@@ -112,9 +110,11 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		showAboutDialog(desktop, application)
 	})
 
-	// Accessibility announcement routing. Trigger toggles the item's
-	// checked state before dispatch, so handlers read current state
-	// from the item.
+	// Accessibility announcement routing. Replica discipline (slice
+	// 4): the handlers OWN these booleans - the app's record of the
+	// toggle intent - instead of reading the menu item's display-side
+	// Checked state. Both flip on the same activation, so the check
+	// mark and the behavior stay in step without a cross-seam read.
 	var showVisualAnnouncements, speakAnnouncements bool
 	var (
 		speechMu  sync.Mutex
@@ -157,7 +157,7 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		}
 	}
 	commands.Register("demo.view.announce", func() {
-		showVisualAnnouncements = announceItem.Checked
+		showVisualAnnouncements = !showVisualAnnouncements
 		updateAccessibilityHandler()
 		if showVisualAnnouncements {
 			if am := desktop.AccessibilityManager(); am != nil {
@@ -166,7 +166,7 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		}
 	})
 	commands.Register("demo.view.speak", func() {
-		speakAnnouncements = speakItem.Checked
+		speakAnnouncements = !speakAnnouncements
 		updateAccessibilityHandler()
 		if speakAnnouncements {
 			if am := desktop.AccessibilityManager(); am != nil {
