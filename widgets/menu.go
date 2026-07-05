@@ -27,6 +27,15 @@ type MenuItem struct {
 
 	// Callbacks
 	OnTriggered func()
+
+	// id is the stable command identity used for dispatch (and, under
+	// the display protocol, the wire). Auto-assigned; override with
+	// SetID for a semantic, run-stable ID like "file.open".
+	id string
+
+	// commands is the registry this item dispatches through once bound
+	// (see Menu.BindCommands). Nil = direct closure fallback.
+	commands *core.CommandRegistry
 }
 
 // NewMenuItem creates a new menu item.
@@ -38,6 +47,7 @@ func NewMenuItem(text string) *MenuItem {
 		acceleratorChar: accel,
 		acceleratorPos:  pos,
 		Enabled:         true,
+		id:              core.NextAutoCommandID(),
 	}
 }
 
@@ -65,7 +75,23 @@ func (m *MenuItem) AcceleratorPos() int {
 func NewSeparator() *MenuItem {
 	return &MenuItem{
 		Separator: true,
+		id:        core.NextAutoCommandID(),
 	}
+}
+
+// ID returns the item's stable command identity.
+func (m *MenuItem) ID() string {
+	return m.id
+}
+
+// SetID sets a semantic command ID (e.g. "file.open", see
+// core.StandardActions). Set it before the menu is bound to a
+// registry; IDs are the dispatch key.
+func (m *MenuItem) SetID(id string) *MenuItem {
+	if id != "" {
+		m.id = id
+	}
+	return m
 }
 
 // SetShortcut sets the keyboard shortcut.
@@ -104,19 +130,59 @@ func (m *MenuItem) SetSubMenu(menu *Menu) *MenuItem {
 	return m
 }
 
-// SetOnTriggered sets the triggered callback.
+// SetOnTriggered sets the triggered callback. If the item is already
+// bound to a command registry, the registration is refreshed.
 func (m *MenuItem) SetOnTriggered(handler func()) *MenuItem {
 	m.OnTriggered = handler
+	if m.commands != nil {
+		m.commands.Register(m.id, handler)
+	}
 	return m
 }
 
-// Trigger triggers the menu item action.
+// Trigger triggers the menu item action. When bound to a command
+// registry, dispatch goes by stable ID through the registry (the D2
+// display-protocol seam); otherwise the direct closure runs.
 func (m *MenuItem) Trigger() {
 	if m.Checkable {
 		m.Checked = !m.Checked
 	}
+	if m.commands != nil && m.commands.Dispatch(m.id) {
+		return
+	}
 	if m.OnTriggered != nil {
 		m.OnTriggered()
+	}
+}
+
+// bindCommands registers this item's handler under its command ID and
+// routes future triggers through the registry. Recurses into submenus.
+func (m *MenuItem) bindCommands(reg *core.CommandRegistry) {
+	if m.Separator {
+		return
+	}
+	if m.OnTriggered != nil {
+		reg.Register(m.id, m.OnTriggered)
+	}
+	m.commands = reg
+	if m.SubMenu != nil {
+		m.SubMenu.BindCommands(reg)
+	}
+}
+
+// BindCommands registers this menu's item handlers (recursively, with
+// submenus) in the given registry, keyed by command ID, and routes all
+// future triggers through it. This is the D2 seam: menu activation
+// becomes "command <ID> triggered" dispatched at one boundary, instead
+// of closures invoked from inside UI objects. Applications bind their
+// menu bar content automatically (see Application.SetMenuBarContent);
+// the desktop binds its system menu.
+func (menu *Menu) BindCommands(reg *core.CommandRegistry) {
+	if reg == nil {
+		return
+	}
+	for _, item := range menu.items {
+		item.bindCommands(reg)
 	}
 }
 

@@ -75,6 +75,10 @@ type Application struct {
 	// Menu bar content for this application
 	menuBarContent []*widgets.Menu
 
+	// Command registry: menu (and future) handlers keyed by stable
+	// command ID - the app-side half of the D2 dispatch seam.
+	commands *core.CommandRegistry
+
 	// Status bar content for this application
 	statusBarContent []widgets.StatusSection
 
@@ -109,6 +113,7 @@ func New(backend core.RenderBackend) *Application {
 		updateChan:           make(chan struct{}, 100),
 		theme:                style.DefaultTheme(),
 		accessibilityManager: core.NewAccessibilityManager(),
+		commands:             core.NewCommandRegistry(),
 	}
 
 	if backend != nil {
@@ -138,6 +143,7 @@ func NewSecondary() *Application {
 		quitChan:   make(chan struct{}),
 		updateChan: make(chan struct{}, 100),
 		theme:      style.DefaultTheme(),
+		commands:   core.NewCommandRegistry(),
 	}
 }
 
@@ -798,11 +804,29 @@ func (app *Application) MenuBarContent() []*widgets.Menu {
 	return app.menuBarContent
 }
 
-// SetMenuBarContent sets the menu bar content for this application.
+// SetMenuBarContent sets the menu bar content for this application and
+// binds the menus' handlers into the app's command registry, so all
+// menu activation dispatches by stable command ID (the D2 seam).
 func (app *Application) SetMenuBarContent(menus []*widgets.Menu) {
 	app.mu.Lock()
-	defer app.mu.Unlock()
 	app.menuBarContent = menus
+	commands := app.commands
+	app.mu.Unlock()
+
+	if commands != nil {
+		for _, menu := range menus {
+			menu.BindCommands(commands)
+		}
+	}
+}
+
+// Commands returns the application's command registry: handlers keyed
+// by stable command ID. Menu bar content is bound automatically;
+// additional commands may be registered directly.
+func (app *Application) Commands() *core.CommandRegistry {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.commands
 }
 
 // StatusBarContent returns the status bar content for this application.

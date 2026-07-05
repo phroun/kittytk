@@ -127,6 +127,10 @@ type Desktop struct {
 	// Event filters
 	eventFilters []func(core.Event) bool
 
+	// Command registry for desktop-level (system menu) commands,
+	// keyed by stable command ID - the D2 dispatch seam.
+	commands *core.CommandRegistry
+
 	// Exit code
 	exitCode int
 }
@@ -163,8 +167,12 @@ func NewDesktop() *Desktop {
 	d.SetFocusPolicy(core.NoFocus)
 	d.dockRow.SetParent(d)
 
-	// Create system menu
+	// Desktop-level command registry (system menu dispatch)
+	d.commands = core.NewCommandRegistry()
+
+	// Create system menu and bind it to the command registry
 	d.systemMenu = d.createSystemMenu()
+	d.systemMenu.BindCommands(d.commands)
 
 	// Create menu bar (always present in Desktop)
 	d.menuBar = NewMenuBar()
@@ -1014,12 +1022,12 @@ func (d *Desktop) checkMenuItemShortcuts(menu *Menu, event core.KeyPressEvent) b
 			continue
 		}
 
-		// Check if this item's shortcut matches
+		// Check if this item's shortcut matches. Trigger routes
+		// through the command registry (dispatch by stable ID), and
+		// keeps checkable-toggle semantics consistent with clicking.
 		if item.Shortcut != "" && item.Shortcut.Matches(event) {
-			if item.OnTriggered != nil {
-				item.OnTriggered()
-				return true
-			}
+			item.Trigger()
+			return true
 		}
 
 		// Recursively check submenus
