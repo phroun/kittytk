@@ -256,8 +256,16 @@ Known residuals:
 - Desktop paints its own children without boundary logic — correct
   while the desktop's root override equals `DefaultCellMetrics`; needs
   the same treatment if a backend ever reports different metrics.
-- MDIPane has no boundary machinery yet (overrides on MDI child
-  windows inside a pane).
+  (Becomes a prerequisite when the graphical substrates land.)
+- ~~MDIPane has no boundary machinery yet~~ — **done 2026-07-05**:
+  same pattern as Panel/Window (`denominations()`/`toInterior`; one
+  exchange at the boundary). `ClientArea` is interior currency, so
+  positioning/tile/cascade/maximize inherit correctness; Paint runs
+  on a `WithDenomination` painter; ChildAt and all three mouse
+  handlers exchange at entry, so drag/resize state stays interior.
+  Covered by `TestMDIPaneDenominationBoundary` (hit-testing agrees
+  with paint position under an override; maximize fills the interior
+  client area; toggle-off restores identity).
 - FileDialog/InputDialog paint content manually on the window painter
   (outer space) with interior metrics — harmless until a dialog
   carries an override; normalize when dialogs are reworked.

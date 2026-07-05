@@ -765,12 +765,32 @@ func (m *MDIPane) DeactivateActiveWindow() {
 // ClientArea returns the area available for windows.
 func (m *MDIPane) ClientArea() core.UnitRect {
 	bounds := m.Bounds()
+	outer, interior := m.denominations()
 	return core.UnitRect{
 		X:      0,
 		Y:      0,
-		Width:  bounds.Width,
-		Height: bounds.Height,
+		Width:  core.ExchangeX(bounds.Width, outer, interior),
+		Height: core.ExchangeY(bounds.Height, outer, interior),
 	}
+}
+
+// denominations returns the grid-metrics currency of the pane's own
+// coordinate space (outer: the parent's, in which Bounds lives) and
+// of its interior, where child-window geometry lives (honoring a
+// per-pane override). Equal unless an override is set on this pane.
+func (m *MDIPane) denominations() (outer, interior core.CellMetrics) {
+	interior = m.EffectiveCellMetrics()
+	if m.CellMetricsOverride() == nil {
+		return interior, interior
+	}
+	return core.ParentCellMetrics(m.Self()), interior
+}
+
+// toInterior converts a point from the pane's outer currency into its
+// interior currency (where window bounds and content live).
+func (m *MDIPane) toInterior(x, y core.Unit) (core.Unit, core.Unit) {
+	outer, interior := m.denominations()
+	return core.ExchangeX(x, outer, interior), core.ExchangeY(y, outer, interior)
 }
 
 // bringToFront moves a window to the top of the z-order.
@@ -968,8 +988,11 @@ func (m *MDIPane) RemoveChild(child core.Widget) {
 	}
 }
 
-// ChildAt returns the child at the given position.
+// ChildAt returns the child at the given position (in the pane's
+// outer currency; window geometry lives in the interior).
 func (m *MDIPane) ChildAt(pos core.UnitPoint) core.Widget {
+	pos.X, pos.Y = m.toInterior(pos.X, pos.Y)
+
 	m.mu.RLock()
 	windows := m.windows
 	content := m.content
@@ -1078,7 +1101,6 @@ func (m *MDIPane) CollectFocusChain(collector func(core.Widget)) {
 
 // Paint renders the MDI pane.
 func (m *MDIPane) Paint(p *core.Painter) {
-	bounds := m.Bounds()
 	scheme := m.GetScheme()
 	metrics := m.EffectiveCellMetrics()
 
@@ -1089,29 +1111,35 @@ func (m *MDIPane) Paint(p *core.Painter) {
 	windows := m.windows
 	m.mu.RUnlock()
 
+	// Everything inside the pane lives in the interior denomination:
+	// content bounds, window geometry, the background cell grid. One
+	// exchange at the boundary, then all math is interior.
+	outer, interior := m.denominations()
+	ip := p.WithDenomination(outer, interior)
+	clientArea := m.ClientArea() // interior currency
+
 	// Draw background
 	if drawPattern {
 		// Draw pattern background (like Desktop)
 		bgStyle := scheme.GetDesktopFill()
-		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
-			for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
-				p.DrawCell(x, y, bgChar, bgStyle)
+		for y := core.Unit(0); y < clientArea.Height; y += metrics.CellHeight {
+			for x := core.Unit(0); x < clientArea.Width; x += metrics.CellWidth {
+				ip.DrawCell(x, y, bgChar, bgStyle)
 			}
 		}
 	} else {
 		// Draw solid background (like ScrollArea)
 		inheritedBg := m.EffectiveBackgroundColor()
 		bgStyle := scheme.GetNormal(true).WithBg(inheritedBg)
-		p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
+		ip.FillRect(core.UnitRect{Width: clientArea.Width, Height: clientArea.Height}, ' ', bgStyle)
 	}
 
 	// Draw content if any
 	if content != nil {
-		content.Paint(p)
+		content.Paint(ip)
 	}
 
 	// Paint windows from bottom to top
-	clientArea := m.ClientArea()
 	for _, win := range windows {
 		if win.IsVisible() && !win.IsMinimized() {
 			winBounds := win.Bounds()
@@ -1132,7 +1160,7 @@ func (m *MDIPane) Paint(p *core.Painter) {
 				Height: visibleBounds.Height,
 			}
 
-			windowPainter := p.WithOffset(winBounds.X, winBounds.Y).
+			windowPainter := ip.WithOffset(winBounds.X, winBounds.Y).
 				WithClip(localClip)
 			win.Paint(windowPainter)
 		}
@@ -1182,6 +1210,10 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 
 // HandleMousePress handles mouse clicks.
 func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
+	// Coordinates arrive in the pane's outer currency; window geometry
+	// and all drag state live in the interior. Exchange once at entry.
+	event.X, event.Y = m.toInterior(event.X, event.Y)
+
 	// Any click inside the MDIPane should give it focus, so keyboard events
 	// (including Tab) route through MDIPane to the active child window.
 	// Use SetFocusWithoutScroll since mouse clicks prove visibility - no need to scroll.
@@ -1307,6 +1339,9 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement.
 func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Outer -> interior at the boundary (see HandleMousePress).
+	event.X, event.Y = m.toInterior(event.X, event.Y)
+
 	m.mu.Lock()
 	dragging := m.dragging
 	offsetX := m.dragOffsetX
@@ -1482,6 +1517,9 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 // HandleMouseRelease handles mouse release.
 func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	// Outer -> interior at the boundary (see HandleMousePress).
+	event.X, event.Y = m.toInterior(event.X, event.Y)
+
 	m.mu.Lock()
 	dragging := m.dragging
 	resizing := m.resizing

@@ -73,3 +73,72 @@ func TestWindowDenominationLayoutInvariance(t *testing.T) {
 			topBefore, topBack, splitBefore, splitBack)
 	}
 }
+
+// MDIPane boundary machinery: child-window geometry lives in the
+// pane's interior denomination. Hit-testing takes outer coordinates
+// and must agree with where windows actually sit; ClientArea (the
+// window-positioning space) is interior; and toggling an override
+// off restores the identity mapping.
+func TestMDIPaneDenominationBoundary(t *testing.T) {
+	pane := NewMDIPane()
+	pane.SetBounds(core.UnitRect{Width: 8 * 80, Height: 16 * 20}) // outer: 640x320
+
+	child := window.NewWindow("doc")
+	child.SetBounds(core.UnitRect{X: 64, Y: 64, Width: 160, Height: 96})
+	pane.AddWindow(child)
+	// AddWindow may cascade-position; pin the geometry we assert on.
+	child.SetBounds(core.UnitRect{X: 64, Y: 64, Width: 160, Height: 96})
+
+	// Baseline (no override): outer == interior, identity mapping.
+	if got := pane.ChildAt(core.UnitPoint{X: 70, Y: 70}); got != child {
+		t.Fatalf("baseline hit: got %T", got)
+	}
+	if got := pane.ChildAt(core.UnitPoint{X: 70, Y: 200}); got == child {
+		t.Fatal("baseline miss expected below the window")
+	}
+	baseArea := pane.ClientArea()
+	if baseArea.Width != 640 || baseArea.Height != 320 {
+		t.Fatalf("baseline client area = %+v", baseArea)
+	}
+
+	// Override: 32 units per row inside the pane (outer stays 16).
+	dense := core.CellMetrics{CellWidth: 8, CellHeight: 32}
+	pane.SetCellMetrics(&dense)
+
+	// ClientArea re-denominates: same physical area, interior units.
+	area := pane.ClientArea()
+	if area.Width != 640 || area.Height != 640 {
+		t.Errorf("override client area = %+v, want 640x640 interior units", area)
+	}
+
+	// The window sits at interior y=64 (2 rows of 32) = outer y=32
+	// (2 rows of 16). Hit-testing must find it where it PAINTS:
+	// outer y in [32, 80) maps into the window's interior y-range.
+	if got := pane.ChildAt(core.UnitPoint{X: 70, Y: 40}); got != child {
+		t.Errorf("override hit at outer y=40 failed")
+	}
+	// Outer y=70 is interior y=140 - past the window's bottom (160
+	// ends at... 64+96=160, so interior 140 IS inside; outer y=90 ->
+	// interior 180 is below).
+	if got := pane.ChildAt(core.UnitPoint{X: 70, Y: 90}); got == child {
+		t.Errorf("override miss at outer y=90 failed (interior 180 is below the window)")
+	}
+
+	// Maximized windows fill the INTERIOR client area.
+	pane.MaximizeWindow(child)
+	if b := child.Bounds(); b.Width != 640 || b.Height != 640 {
+		t.Errorf("maximized bounds = %+v, want interior 640x640", b)
+	}
+	pane.RestoreWindow(child)
+
+	// Toggle off: identity mapping again, geometry untouched.
+	pane.SetCellMetrics(nil)
+	child.SetBounds(core.UnitRect{X: 64, Y: 64, Width: 160, Height: 96})
+	if got := pane.ChildAt(core.UnitPoint{X: 70, Y: 70}); got != child {
+		t.Errorf("post-toggle hit failed")
+	}
+	backArea := pane.ClientArea()
+	if backArea != baseArea {
+		t.Errorf("client area did not restore: %+v vs %+v", backArea, baseArea)
+	}
+}
