@@ -711,35 +711,61 @@ func (m *WindowManager) HasPopups() bool {
 }
 
 // MapToScreen implements core.PopupController.
-// It converts local widget coordinates to screen coordinates.
+// It converts local widget coordinates to screen coordinates,
+// exchanging denominations at each re-denominating container boundary.
 func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
-	// Traverse up the widget hierarchy to accumulate offsets
-	// Each widget's Bounds().X/Y is its position within its parent
+	// Traverse up the widget hierarchy to accumulate offsets.
+	// Each widget's Bounds().X/Y is its position within its parent,
+	// denominated in the parent's currency. The accumulated point is
+	// kept in the currency of the space it currently describes.
 	result := local
-	metrics := core.DefaultCellMetrics()
 
 	current := widget
 	for current != nil {
+		parent := current.Parent()
+
+		// Leaving a container that re-denominates its interior: the
+		// accumulated point is in its interior currency; re-express it
+		// in the outer currency its bounds live in. (Windows exchange
+		// in the parent branch below, where the client-area offset must
+		// be added in the outer currency - skip them here.)
+		if _, isWin := current.(*Window); !isWin {
+			if mp, ok := current.(core.CellMetricsProvider); ok {
+				if ov := mp.CellMetricsOverride(); ov != nil {
+					outer := core.ParentCellMetrics(current)
+					result.X = core.ExchangeX(result.X, *ov, outer)
+					result.Y = core.ExchangeY(result.Y, *ov, outer)
+				}
+			}
+		}
+
 		bounds := current.Bounds()
 		result.X += bounds.X
 		result.Y += bounds.Y
 
-		parent := current.Parent()
 		if parent == nil {
 			break
 		}
 
-		// Check if parent is a scroll container and adjust for scroll offset
+		// Check if parent is a scroll container and adjust for scroll
+		// offset (offsets are cells of the scroller's own denomination)
 		if scroller, ok := parent.(core.ScrollOffsetProvider); ok {
+			pm := core.DefaultCellMetrics()
+			if pw, ok := parent.(core.Widget); ok {
+				pm = core.FindEffectiveCellMetrics(pw)
+			}
 			scrollX, scrollY := scroller.ScrollOffset()
-			result.X -= core.Unit(scrollX) * metrics.CellWidth
-			result.Y -= core.Unit(scrollY) * metrics.CellHeight
+			result.X -= core.Unit(scrollX) * pm.CellWidth
+			result.Y -= core.Unit(scrollY) * pm.CellHeight
 		}
 
-		// Check if parent is a Window - if so, add the content area offset
-		// The content widget's bounds are (0,0) but it's painted at an offset
-		// to account for the window's title bar and frame
+		// Crossing a window's content boundary: content coordinates are
+		// interior currency; exchange to the window's outer currency,
+		// then add the client-area offset (outer currency).
 		if win, ok := parent.(*Window); ok {
+			outer, interior := win.denominations()
+			result.X = core.ExchangeX(result.X, interior, outer)
+			result.Y = core.ExchangeY(result.Y, interior, outer)
 			offset := win.ClientAreaOffset()
 			result.X += offset.X
 			result.Y += offset.Y
@@ -753,6 +779,18 @@ func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) co
 	}
 
 	return result
+}
+
+// ScreenCellMetrics returns the grid metrics of the screen/desktop
+// surface - the denomination popup overlays are composited in.
+func (m *WindowManager) ScreenCellMetrics() core.CellMetrics {
+	m.mu.RLock()
+	desktop := m.desktop
+	m.mu.RUnlock()
+	if dw, ok := desktop.(core.Widget); ok && dw != nil {
+		return core.FindEffectiveCellMetrics(dw)
+	}
+	return core.DefaultCellMetrics()
 }
 
 // widgetIsInWindow checks if a widget is contained within a window.

@@ -29,6 +29,11 @@ type ComboBox struct {
 	maxVisible       int // User-configured maximum (0 = auto-size to screen)
 	popupVisibleRows int // Actual visible rows for current popup (calculated from screen space)
 
+	// popupScreenMetrics is the screen/desktop denomination captured
+	// when the popup opens; popup-space geometry, painting, and input
+	// all use it (popups are desktop-surface overlays).
+	popupScreenMetrics core.CellMetrics
+
 	// Mouse interaction state
 	mouseDown     bool       // Mouse button is held down
 	dragging      bool       // Actually dragging (mouse moved while down)
@@ -509,15 +514,36 @@ func (c *ComboBox) popupID() string {
 	return "combobox-" + c.Name()
 }
 
+// screenMetrics returns the denomination of the screen/desktop surface,
+// which popup overlays are composited in. The popup is a desktop-level
+// overlay: its geometry, painting, and input all speak the screen's
+// currency, not the combobox's (possibly re-denominated) interior.
+func (c *ComboBox) screenMetrics() core.CellMetrics {
+	if c.popupScreenMetrics.CellWidth > 0 && c.popupScreenMetrics.CellHeight > 0 {
+		return c.popupScreenMetrics
+	}
+	return core.DefaultCellMetrics()
+}
+
 // registerPopupOverlay registers the popup with the popup controller.
 func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	bounds := c.Bounds()
 	metrics := c.EffectiveCellMetrics()
 
+	// Popups are desktop-surface overlays: capture the screen currency
+	// for all popup-space geometry, painting, and input handling.
+	if sm, ok := pc.(interface{ ScreenCellMetrics() core.CellMetrics }); ok {
+		c.popupScreenMetrics = sm.ScreenCellMetrics()
+	} else {
+		c.popupScreenMetrics = core.DefaultCellMetrics()
+	}
+	screen := c.screenMetrics()
+
 	// Get screen bounds to calculate available space
 	screenBounds := pc.ScreenBounds()
 
-	// Get the widget's positions on screen
+	// Get the widget's positions on screen (the local point is in the
+	// widget's own denomination; MapToScreen exchanges at boundaries)
 	widgetBottomPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: metrics.CellHeight})
 	widgetTopPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: 0})
 
@@ -525,9 +551,9 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	spaceBelow := screenBounds.Y + screenBounds.Height - widgetBottomPos.Y
 	spaceAbove := widgetTopPos.Y - screenBounds.Y
 
-	// Calculate max rows that fit in each direction
-	maxRowsBelow := int(spaceBelow / metrics.CellHeight)
-	maxRowsAbove := int(spaceAbove / metrics.CellHeight)
+	// Calculate max rows that fit in each direction (screen rows)
+	maxRowsBelow := int(spaceBelow / screen.CellHeight)
+	maxRowsAbove := int(spaceAbove / screen.CellHeight)
 
 	// Minimum rows needed to show useful content (at least 2 items + potential scroll indicators)
 	const minRowsRequired = 4
@@ -576,7 +602,7 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	// Store for use during rendering
 	c.popupVisibleRows = visibleRows
 
-	popupHeightUnits := core.Unit(visibleRows) * metrics.CellHeight
+	popupHeightUnits := core.Unit(visibleRows) * screen.CellHeight
 
 	// If popping up, calculate Y position now that we know height
 	if !popDown {
@@ -587,9 +613,11 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	}
 
 	popupBounds := core.UnitRect{
-		X:      widgetBottomPos.X,
-		Y:      popupY,
-		Width:  bounds.Width,
+		X: widgetBottomPos.X,
+		Y: popupY,
+		// The widget's width is in its own denomination; the popup
+		// lives on the screen surface.
+		Width:  core.ExchangeX(bounds.Width, metrics, screen),
 		Height: popupHeightUnits,
 	}
 
@@ -812,7 +840,7 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 // The popup is rendered at its screen position.
 func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect) {
 	scheme := c.GetScheme()
-	metrics := c.EffectiveCellMetrics()
+	metrics := c.screenMetrics()
 
 	// Use a painter offset to the popup position
 	popupPainter := p.WithOffset(popupBounds.X, popupBounds.Y)
@@ -920,7 +948,7 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 // scrollbarGeometry returns scrollbar dimensions and thumb position.
 // Returns: scrollbarX, thumbStart, thumbHeight, trackHeight (all in rows)
 func (c *ComboBox) scrollbarGeometry(popupWidth core.Unit, visibleCount int) (scrollbarX core.Unit, thumbStart, thumbHeight, trackHeight int) {
-	metrics := c.EffectiveCellMetrics()
+	metrics := c.screenMetrics()
 	totalItems := len(c.items)
 
 	scrollbarX = popupWidth - metrics.CellWidth
@@ -970,7 +998,7 @@ func (c *ComboBox) scrollbarGeometry(popupWidth core.Unit, visibleCount int) (sc
 // paintScrollbar draws a vertical scrollbar for the popup.
 func (c *ComboBox) paintScrollbar(p *core.Painter, popupWidth core.Unit, visibleCount int) {
 	scheme := c.GetScheme()
-	metrics := c.EffectiveCellMetrics()
+	metrics := c.screenMetrics()
 
 	scrollbarX, thumbStart, thumbHeight, trackHeight := c.scrollbarGeometry(popupWidth, visibleCount)
 
@@ -996,7 +1024,7 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 		return false
 	}
 
-	metrics := c.EffectiveCellMetrics()
+	metrics := c.screenMetrics()
 
 	// Check if the click is within the popup bounds
 	if event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&
@@ -1083,7 +1111,7 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 
 // handlePopupMouseMove handles mouse movement on the popup overlay.
 func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds core.UnitRect) bool {
-	metrics := c.EffectiveCellMetrics()
+	metrics := c.screenMetrics()
 	maxVis := c.effectiveMaxVisible()
 	popupHeight := maxVis
 	if popupHeight > len(c.items) {
@@ -1272,7 +1300,7 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 		return true
 	}
 
-	metrics := c.EffectiveCellMetrics()
+	metrics := c.screenMetrics()
 
 	// Check if the release is within the popup bounds
 	inPopup := event.X >= popupBounds.X && event.X < popupBounds.X+popupBounds.Width &&

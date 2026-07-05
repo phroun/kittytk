@@ -274,9 +274,16 @@ func (s *Splitter) childBounds() (core.UnitRect, core.UnitRect) {
 		}
 }
 
-// SizeHint returns the preferred size.
+// SizeHint returns a modest fixed preference; splitters are meant to
+// be stretched by their layout. (Returning the current bounds made the
+// hint a ratchet: layouts could grow the splitter but never shrink it
+// back, since stretch distribution treats the hint as a floor.)
 func (s *Splitter) SizeHint() core.UnitSize {
-	return s.Bounds().Size()
+	metrics := s.EffectiveCellMetrics()
+	return core.UnitSize{
+		Width:  metrics.CellWidth * 20,
+		Height: metrics.CellHeight * 5,
+	}
 }
 
 // Paint renders the splitter.

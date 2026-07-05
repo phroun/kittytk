@@ -239,10 +239,20 @@ with no exchange at the border. Work required to close it:
 - Invariance is tested: `TestDenominationInvariance` (interior hint
   changes, outer hint does not).
 
+**Update (same day):** `MapToScreen` is now denomination-aware
+(exchanges at every re-denominating container boundary, window content
+included; scroll offsets use the scroller's own denomination), and
+popups are formally **desktop-surface overlays**: `WindowManager`
+exposes `ScreenCellMetrics()`, and ComboBox captures it at popup-open —
+all popup-space geometry, painting, and input use the screen currency
+while the in-window field stays interior. The splitter drift on
+toggle-off was findings #2 + #3 conspiring (self-referential hint +
+no-shrink stretch = a one-way ratchet); both fixed. End-to-end
+round-trip invariance is tested against the demo hierarchy
+(`TestWindowDenominationLayoutInvariance`).
+
 Known residuals:
 
-- `MapToScreen` (popup placement — combobox dropdowns in an overridden
-  window; text-input cursor positioning) is not denomination-aware.
 - Desktop paints its own children without boundary logic — correct
   while the desktop's root override equals `DefaultCellMetrics`; needs
   the same treatment if a backend ever reports different metrics.
@@ -251,6 +261,8 @@ Known residuals:
 - FileDialog/InputDialog paint content manually on the window painter
   (outer space) with interior metrics — harmless until a dialog
   carries an override; normalize when dialogs are reworked.
+- Hardware cursor placement for focused text inputs, if routed outside
+  MapToScreen, may still need auditing under overrides.
 
 ## Adjacent layout/sizing-contract findings
 
@@ -264,12 +276,16 @@ rely on hand-tuning around these:
    (types.go:107). In a vertical box, AlignLeft silently forces item
    width to hint width — a zero-hint widget becomes invisible while
    still consuming stretch space.
-2. **`calculateStretch` never shrinks an item below its hint** — extra
-   space is distributed, but an oversized hint (e.g. a long label line)
-   pushes siblings off-screen with no recourse.
-3. **`Splitter.SizeHint()` returns `Bounds().Size()`** — zero before
-   first layout; a self-referential hint that starves the widget in any
-   hint-driven layout unless explicitly marked expanding + AlignFill.
+2. **`calculateStretch` never shrank an item below its hint** — extra
+   space was distributed, but an oversized hint pushed siblings
+   off-screen with no recourse. **Fixed 2026-07-05**: when
+   over-committed, stretch items now compress proportionally (elastic
+   in both directions); non-stretch items keep their hints.
+3. **`Splitter.SizeHint()` returned `Bounds().Size()`** — zero before
+   first layout, and a ratchet after: layouts could grow it but (with
+   finding #2) never shrink it back — the cause of the splitter
+   drifting on denomination toggle-off. **Fixed 2026-07-05**: modest
+   fixed hint; splitters are meant to be stretched by their layout.
 4. **Label has no height-for-width** — a wrapped label's true height
    depends on the width it is given, but `SizeHint()` is
    width-independent, so nothing can size a wrapped label correctly.
