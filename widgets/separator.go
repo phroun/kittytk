@@ -90,7 +90,7 @@ func (s *LineSeparator) SizeHint() core.UnitSize {
 	if s.orientation == core.Horizontal {
 		// Horizontal separator: 1 cell tall, width depends on title
 		titleWidth := font.MeasureText(s.title)
-		decorWidth := font.MeasureText("····    ") // Decoration around title
+		decorWidth := font.MeasureText("──  ──") // line stubs + title padding
 		return core.UnitSize{
 			Width:  titleWidth + decorWidth,
 			Height: metrics.CellHeight,
@@ -106,26 +106,31 @@ func (s *LineSeparator) SizeHint() core.UnitSize {
 // Paint renders the separator.
 func (s *LineSeparator) Paint(p *core.Painter) {
 	bounds := s.Bounds()
-	theme := s.Theme()
 	metrics := s.EffectiveCellMetrics()
 
-	// Use a subtle style for the separator
-	lineStyle := theme.Normal
+	// A separator is decoration, not a control: draw it like a group
+	// box border - line on the inherited background - so it never
+	// reads as an interactable splitter bar.
+	scheme := s.GetScheme()
+	inheritedBG := s.EffectiveBackgroundColor()
+	lineStyle := scheme.GetGroupBoxBorder(true, inheritedBG)
+	titleStyle := scheme.GetGroupBoxTitle(true, inheritedBG)
 
 	// Use custom style if set
 	if customStyle := s.Style(); customStyle != nil {
-		lineStyle = *customStyle
+		lineStyle = customStyle.WithBg(inheritedBG)
+		titleStyle = lineStyle
 	}
 
 	if s.orientation == core.Horizontal {
-		s.paintHorizontal(p, bounds, lineStyle, metrics)
+		s.paintHorizontal(p, bounds, lineStyle, titleStyle, metrics)
 	} else {
-		s.paintVertical(p, bounds, lineStyle, metrics)
+		s.paintVertical(p, bounds, lineStyle, titleStyle, metrics)
 	}
 }
 
 // paintHorizontal draws: ────·· Title ··────
-func (s *LineSeparator) paintHorizontal(p *core.Painter, bounds core.UnitRect, lineStyle style.CellStyle, metrics core.CellMetrics) {
+func (s *LineSeparator) paintHorizontal(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle, metrics core.CellMetrics) {
 	width := int(bounds.Width / metrics.CellWidth)
 	if width <= 0 {
 		return
@@ -135,41 +140,36 @@ func (s *LineSeparator) paintHorizontal(p *core.Painter, bounds core.UnitRect, l
 	titleRunes := []rune(s.title)
 	titleLen := len(titleRunes)
 
+	// No grab-handle dots here: the ···· decoration means "draggable"
+	// and belongs to Splitter alone. A separator is a plain rule,
+	// optionally interrupted by a space-padded title.
 	if titleLen == 0 {
-		// No title: draw line with 4 middots centered
-		// ────────··  ··────────
-		center := width / 2
+		// ────────────────
 		for x := 0; x < width; x++ {
-			ch := '─'
-			// Draw ·· at center-1, center, center+1, center+2 (4 dots total)
-			if x == center-1 || x == center || x == center+1 || x == center+2 {
-				ch = '·'
-			}
-			p.DrawCell(metrics.CellToUnitsX(x), y, ch, lineStyle)
+			p.DrawCell(metrics.CellToUnitsX(x), y, '─', lineStyle)
 		}
 	} else {
-		// With title: ────·· Title ··────
-		// Format: dots + space + title + space + dots
-		middleContent := "·· " + s.title + " ··"
-		middleLen := len([]rune(middleContent))
+		// ────── Title ──────
+		middleRunes := []rune(" " + s.title + " ")
+		middleLen := len(middleRunes)
 		startMiddle := (width - middleLen) / 2
 
 		for x := 0; x < width; x++ {
-			var ch rune
-			if x < startMiddle {
-				ch = '─'
-			} else if x < startMiddle+middleLen {
-				ch = []rune(middleContent)[x-startMiddle]
-			} else {
-				ch = '─'
+			ch := '─'
+			cellStyle := lineStyle
+			if rel := x - startMiddle; rel >= 0 && rel < middleLen {
+				ch = middleRunes[rel]
+				if rel >= 1 && rel < 1+titleLen {
+					cellStyle = titleStyle
+				}
 			}
-			p.DrawCell(metrics.CellToUnitsX(x), y, ch, lineStyle)
+			p.DrawCell(metrics.CellToUnitsX(x), y, ch, cellStyle)
 		}
 	}
 }
 
 // paintVertical draws a vertical line with optional centered title.
-func (s *LineSeparator) paintVertical(p *core.Painter, bounds core.UnitRect, lineStyle style.CellStyle, metrics core.CellMetrics) {
+func (s *LineSeparator) paintVertical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle, metrics core.CellMetrics) {
 	height := int(bounds.Height / metrics.CellHeight)
 	if height <= 0 {
 		return
@@ -179,49 +179,32 @@ func (s *LineSeparator) paintVertical(p *core.Painter, bounds core.UnitRect, lin
 	titleRunes := []rune(s.title)
 	titleLen := len(titleRunes)
 
+	// Same rule as horizontal: no grab-handle dots on a separator.
 	if titleLen == 0 {
-		// No title: draw line with 4 middots centered
-		center := height / 2
 		for y := 0; y < height; y++ {
-			ch := '│'
-			// Draw · at center-1, center, center+1, center+2 (4 dots total, stacked)
-			if y == center-1 || y == center || y == center+1 || y == center+2 {
-				ch = '·'
-			}
-			p.DrawCell(x, metrics.CellToUnitsY(y), ch, lineStyle)
+			p.DrawCell(x, metrics.CellToUnitsY(y), '│', lineStyle)
 		}
 	} else {
-		// With title: each character of title on its own row, centered
-		// ·
-		// ·
-		// T
-		// i
-		// t
-		// l
-		// e
-		// ·
-		// ·
-		middleLen := titleLen + 4 // 2 dots above, title, 2 dots below
+		// Title characters stacked vertically, one blank row above
+		// and below, centered in the line.
+		middleLen := titleLen + 2
 		startMiddle := (height - middleLen) / 2
 		if startMiddle < 0 {
 			startMiddle = 0
 		}
 
 		for y := 0; y < height; y++ {
-			var ch rune
-			relY := y - startMiddle
-			if y < startMiddle || relY >= middleLen {
-				ch = '│'
-			} else if relY == 0 || relY == 1 {
-				ch = '·'
-			} else if relY >= 2 && relY < 2+titleLen {
-				ch = titleRunes[relY-2]
-			} else if relY == 2+titleLen || relY == 3+titleLen {
-				ch = '·'
-			} else {
-				ch = '│'
+			ch := '│'
+			cellStyle := lineStyle
+			if rel := y - startMiddle; rel >= 0 && rel < middleLen {
+				if rel >= 1 && rel < 1+titleLen {
+					ch = titleRunes[rel-1]
+					cellStyle = titleStyle
+				} else {
+					ch = ' '
+				}
 			}
-			p.DrawCell(x, metrics.CellToUnitsY(y), ch, lineStyle)
+			p.DrawCell(x, metrics.CellToUnitsY(y), ch, cellStyle)
 		}
 	}
 }

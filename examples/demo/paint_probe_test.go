@@ -167,4 +167,27 @@ root=new panel layout=vbox %s children={
 func TestProtocolDemoWindowPaint(t *testing.T) {
 	out := paintScript(t, protocolWindowScript)
 	t.Logf("Protocol Demo window:\n%s", out)
+	if strings.Contains(out, "·") {
+		t.Error("separator must not show grab-handle dots (splitter-only decoration)")
+	}
+}
+
+func TestSeparatorPaint(t *testing.T) {
+	out := paintScript(t, `
+root=new panel layout=vbox children={
+	new separator
+	new separator caption="Section"
+}
+`)
+	t.Logf("separators:\n%s", out)
+	if strings.Contains(out, "·") {
+		t.Error("separator must not show grab-handle dots")
+	}
+	if !strings.Contains(out, "── Section ──") {
+		t.Error("titled separator should read \"── Section ──\" (single spaces, no dots)")
+	}
+	// The plain rule spans the window's full content width (48 cells).
+	if !strings.Contains(out, strings.Repeat("─", 48)) {
+		t.Error("plain separator should span the full content width")
+	}
 }
