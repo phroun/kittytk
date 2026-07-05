@@ -12,6 +12,16 @@ pointer identity; data + events instead of closures crossing the seam;
 reads served replica-style (synchronous-looking, cache-backed);
 sessions separable from connections.
 
+Additional guardrail (2026-07-05): **the app-side client library is
+instance-scoped, never a singleton.** One app must be able to hold N
+connections to N display services simultaneously (console + GUI +
+remote — the Emacs-daemon scenario), which works by construction as
+long as connections are first-class handles, event delivery and
+command dispatch carry their originating connection, and nothing
+app-side assumes "the one display." ObjectIDs, aliases, templates, and
+sessions are already per-connection by earlier decisions; this
+guardrail keeps the client library from undoing that.
+
 ## Slices
 
 1. **Menu command identity & registry dispatch** — ✅ done 2026-07-05
