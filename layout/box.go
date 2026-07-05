@@ -9,8 +9,28 @@ import (
 // This is similar to Qt's QBoxLayout, QHBoxLayout, and QVBoxLayout.
 type BoxLayout struct {
 	BaseLayout
-	orientation core.Orientation
-	items       []*LayoutItem
+	orientation   core.Orientation
+	items         []*LayoutItem
+	metricsSource core.Widget // container whose effective grid metrics apply
+}
+
+// SetMetricsSource sets the widget whose effective grid metrics this
+// layout uses (normally the container; wired by Panel). Layouts are
+// not widgets, so they cannot walk the inheritance chain themselves.
+func (l *BoxLayout) SetMetricsSource(w core.Widget) {
+	l.metricsSource = w
+}
+
+// effectiveMetrics resolves grid metrics from the given container if
+// it is a widget, else from the stored metrics source, else defaults.
+func (l *BoxLayout) effectiveMetrics(container core.Container) core.CellMetrics {
+	if w, ok := container.(core.Widget); ok && w != nil {
+		return core.FindEffectiveCellMetrics(w)
+	}
+	if l.metricsSource != nil {
+		return core.FindEffectiveCellMetrics(l.metricsSource)
+	}
+	return core.DefaultCellMetrics()
 }
 
 // NewBoxLayout creates a new box layout with the given orientation.
@@ -129,7 +149,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	rect := l.effectiveBounds(bounds)
 
 	// Round spacing to whole cell size based on orientation
-	metrics := core.DefaultCellMetrics()
+	metrics := l.effectiveMetrics(container)
 	var spacing core.Unit
 	if l.orientation == core.Horizontal {
 		// Round to CellWidth
@@ -420,7 +440,7 @@ func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
 		return 0
 	}
 
-	metrics := core.DefaultCellMetrics()
+	metrics := l.effectiveMetrics(nil)
 	contentWidth := width - l.margins.Horizontal()
 	if contentWidth < 0 {
 		contentWidth = 0

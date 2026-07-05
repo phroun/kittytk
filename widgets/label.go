@@ -68,7 +68,7 @@ func (l *Label) SetWordWrap(wrap bool) {
 
 // SizeHint returns the preferred size.
 func (l *Label) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := l.EffectiveCellMetrics()
 	font := l.EffectiveFont()
 
 	// Split text by newlines to calculate proper dimensions

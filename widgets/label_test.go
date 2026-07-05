@@ -112,6 +112,42 @@ func TestCheckboxHeightForWidth(t *testing.T) {
 	}
 }
 
+func TestEffectiveCellMetricsInheritance(t *testing.T) {
+	l := NewLabel("hi")
+	p := NewPanel()
+	p.AddChild(l)
+
+	// No override anywhere: default 8x16.
+	if got := l.EffectiveCellMetrics(); got != core.DefaultCellMetrics() {
+		t.Errorf("default: got %+v", got)
+	}
+
+	// Container override is inherited by the child.
+	dense := core.CellMetrics{CellWidth: 8, CellHeight: 32}
+	p.SetCellMetrics(&dense)
+	if got := l.EffectiveCellMetrics(); got != dense {
+		t.Errorf("inherited: got %+v, want %+v", got, dense)
+	}
+
+	// The child's SizeHint follows the inherited grid (row height 32).
+	if got := l.SizeHint().Height; got != 32 {
+		t.Errorf("SizeHint height: got %d, want 32", got)
+	}
+
+	// A widget-level override wins over the container's.
+	own := core.CellMetrics{CellWidth: 16, CellHeight: 16}
+	l.SetCellMetrics(&own)
+	if got := l.EffectiveCellMetrics(); got != own {
+		t.Errorf("own override: got %+v, want %+v", got, own)
+	}
+
+	// Clearing the override restores inheritance.
+	l.SetCellMetrics(nil)
+	if got := l.EffectiveCellMetrics(); got != dense {
+		t.Errorf("cleared: got %+v, want %+v", got, dense)
+	}
+}
+
 func TestPanelPropagatesHeightForWidth(t *testing.T) {
 	l := NewLabel("hello world again")
 	l.SetWordWrap(true)

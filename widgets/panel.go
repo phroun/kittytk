@@ -97,7 +97,7 @@ func (p *Panel) Layout() {
 			Height: bounds.Height,
 		}
 		if p.border {
-			metrics := core.DefaultCellMetrics()
+			metrics := p.EffectiveCellMetrics()
 			contentBounds = core.UnitRect{
 				X:      metrics.CellWidth,
 				Y:      metrics.CellHeight,
@@ -122,6 +122,11 @@ func (p *Panel) SetLayoutManager(layout core.LayoutManager) {
 		for _, child := range p.children {
 			adder.AddWidget(child)
 		}
+	}
+	// Let the layout resolve grid metrics through this container's
+	// inheritance chain (layouts are not widgets themselves).
+	if ms, ok := layout.(interface{ SetMetricsSource(core.Widget) }); ok {
+		ms.SetMetricsSource(p.Self())
 	}
 	p.Layout()
 	p.Update()
@@ -151,7 +156,7 @@ func (p *Panel) SizeHint() core.UnitSize {
 	if p.layoutManager != nil {
 		return p.layoutManager.SizeHint(p)
 	}
-	metrics := core.DefaultCellMetrics()
+	metrics := p.EffectiveCellMetrics()
 	font := p.EffectiveFont()
 	return core.UnitSize{
 		Width:  font.MeasureRunes(20), // 20 chars wide
@@ -182,7 +187,7 @@ func (p *Panel) HeightForWidth(width core.Unit) core.Unit {
 		return p.SizeHint().Height
 	}
 	if p.border {
-		metrics := core.DefaultCellMetrics()
+		metrics := p.EffectiveCellMetrics()
 		inner := width - 2*metrics.CellWidth
 		if inner < 0 {
 			inner = 0

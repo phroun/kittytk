@@ -149,7 +149,7 @@ func (c *Checkbox) SetWordWrap(wrap bool) {
 
 // SizeHint returns the preferred size.
 func (c *Checkbox) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 	font := c.EffectiveFont()
 	// Indicator is decorative (3 cells), space is 1 cell, text uses font
 	indicatorWidth := metrics.CellWidth * 3 // "[ ]" = 3 cells
@@ -172,7 +172,7 @@ func (c *Checkbox) HeightForWidth(width core.Unit) core.Unit {
 	if !c.wordWrap {
 		return c.SizeHint().Height
 	}
-	metrics := core.DefaultCellMetrics()
+	metrics := c.EffectiveCellMetrics()
 	font := c.EffectiveFont()
 	lineCount := len(wrapText(c.text, width-metrics.CellWidth*4, font))
 	if lineCount < 1 {

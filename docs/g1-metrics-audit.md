@@ -227,15 +227,28 @@ rely on hand-tuning around these:
 
 ## Suggested G1 execution order
 
-1. Build the inheritance mechanism: metrics provider interface +
-   `FindEffectiveCellMetrics` parent walk; Desktop stores the root
-   default (seeded from backend/system settings).
-2. Resolve the 10 D-sites onto the stored root (desktop.go) / keep
-   (tui.go).
-3. Rewrite the 102 B-sites onto the walk (mechanical; box.go and the
-   A-site first as warm-ups; spacer.go lazily).
-4. Fix the 14 C-sites onto text measurement (the two ★ sites and
-   label.go `wrapText` first — they are live bugs under Tuesday).
+1. ✅ **Done 2026-07-05** — inheritance mechanism built, mirroring the
+   font machinery: `core.CellMetricsProvider` +
+   `core.FindEffectiveCellMetrics` parent walk; `WidgetBase` stores an
+   optional override with `SetCellMetrics` / `CellMetricsOverride` /
+   `EffectiveCellMetrics` (so Desktop, Window, MDIPane, and every
+   widget get override capability by embedding); Desktop seeds its
+   override from `backend.Metrics()` in `SetBackend`, rooting the
+   chain. Layouts are not widgets: BoxLayout resolves metrics from its
+   container (or a `SetMetricsSource` widget wired by Panel).
+   Inheritance/override/clear covered by
+   `TestEffectiveCellMetricsInheritance`.
+   **Pilot conversions:** layout/box.go (Layout + HeightForWidth),
+   widgets/panel.go (all 3 sites), label.go, checkbox.go,
+   radiobutton.go — all now use `EffectiveCellMetrics()`.
+2. Resolve the remaining D-sites: desktop.go's 8 chrome sites read the
+   desktop's stored override (now exists) instead of the global
+   constructor; tui.go keeps its 2.
+3. Rewrite the remaining ~95 B-sites onto the walk (mechanical;
+   the combobox.go:973 A-site as a warm-up; spacer.go lazily).
+4. Fix the remaining 13 C-sites onto text measurement (the two ★
+   sites first — still live bugs under Tuesday; label.go `wrapText`
+   is done).
 5. Route the 6 E-sites (PurfecTerm) onto its own font/container.
 6. Verify: demo renders byte-identical cell buffers before/after
    (except deliberate C-site bug fixes, verified via the Selection-tab

@@ -95,7 +95,7 @@ func (r *RadioButton) SetWordWrap(wrap bool) {
 
 // SizeHint returns the preferred size.
 func (r *RadioButton) SizeHint() core.UnitSize {
-	metrics := core.DefaultCellMetrics()
+	metrics := r.EffectiveCellMetrics()
 	font := r.EffectiveFont()
 	// Indicator is decorative (3 cells), space is 1 cell, text uses font
 	indicatorWidth := metrics.CellWidth * 3 // "( )" = 3 cells
@@ -118,7 +118,7 @@ func (r *RadioButton) HeightForWidth(width core.Unit) core.Unit {
 	if !r.wordWrap {
 		return r.SizeHint().Height
 	}
-	metrics := core.DefaultCellMetrics()
+	metrics := r.EffectiveCellMetrics()
 	font := r.EffectiveFont()
 	lineCount := len(wrapText(r.text, width-metrics.CellWidth*4, font))
 	if lineCount < 1 {

@@ -230,6 +230,49 @@ func (m CellMetrics) AlignRect(r UnitRect) UnitRect {
 	}
 }
 
+// CellMetricsProvider is implemented by widgets that can provide a
+// grid-metrics override. Grid metrics are a per-container layout
+// vocabulary: each container may define how many units a virtual
+// row/column occupies, inherited through the container chain like
+// fonts (see FontProvider), rooted at the display service's default.
+type CellMetricsProvider interface {
+	// CellMetricsOverride returns the metrics set on this provider,
+	// or nil to inherit from the parent chain.
+	CellMetricsOverride() *CellMetrics
+}
+
+// FindEffectiveCellMetrics walks up the widget tree to find the
+// effective grid metrics, mirroring FindEffectiveFont. It checks the
+// widget, then its ancestors (window, MDI pane, desktop). Returns
+// DefaultCellMetrics() if no override is set anywhere in the chain.
+func FindEffectiveCellMetrics(w Widget) CellMetrics {
+	if w == nil {
+		return DefaultCellMetrics()
+	}
+
+	if mp, ok := w.(CellMetricsProvider); ok {
+		if m := mp.CellMetricsOverride(); m != nil {
+			return *m
+		}
+	}
+
+	current := w.Parent()
+	for current != nil {
+		if mp, ok := current.(CellMetricsProvider); ok {
+			if m := mp.CellMetricsOverride(); m != nil {
+				return *m
+			}
+		}
+		if widget, ok := current.(Widget); ok {
+			current = widget.Parent()
+		} else {
+			break
+		}
+	}
+
+	return DefaultCellMetrics()
+}
+
 // Transform handles coordinate transformation between different coordinate spaces.
 type Transform struct {
 	// Offset added to coordinates

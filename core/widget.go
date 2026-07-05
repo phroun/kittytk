@@ -349,6 +349,7 @@ type WidgetBase struct {
 	style           *style.CellStyle
 	backgroundColor *style.Color // nil = inherit from parent
 	font            *Font        // nil = inherit from parent/window/desktop
+	cellMetrics     *CellMetrics // nil = inherit from parent/window/desktop
 	popupController PopupController
 
 	needsRepaint bool
@@ -959,6 +960,36 @@ func (w *WidgetBase) SetFont(f *Font) {
 // It checks this widget, then walks up the parent chain.
 func (w *WidgetBase) EffectiveFont() *Font {
 	return FindEffectiveFont(w.Self())
+}
+
+// CellMetricsOverride returns the grid metrics explicitly set on this
+// widget, or nil if inheriting.
+func (w *WidgetBase) CellMetricsOverride() *CellMetrics {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.cellMetrics
+}
+
+// SetCellMetrics sets explicit grid metrics for this widget/container.
+// Set to nil to inherit from parent/window/desktop.
+func (w *WidgetBase) SetCellMetrics(m *CellMetrics) {
+	w.mu.Lock()
+	w.cellMetrics = m
+	parent := w.parent
+	w.mu.Unlock()
+
+	// Trigger parent container's layout since grid metrics affect sizing
+	if parent != nil {
+		parent.Layout()
+	}
+	w.Update()
+}
+
+// EffectiveCellMetrics returns the grid metrics to use for this widget.
+// It checks this widget, then walks up the parent chain, falling back
+// to DefaultCellMetrics.
+func (w *WidgetBase) EffectiveCellMetrics() CellMetrics {
+	return FindEffectiveCellMetrics(w.Self())
 }
 
 // Theme returns the theme for this widget.

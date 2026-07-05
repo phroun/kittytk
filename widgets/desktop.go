@@ -219,6 +219,13 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	defer d.mu.Unlock()
 
 	d.backend = backend
+
+	// The desktop roots the grid-metrics inheritance chain: seed its
+	// override from the backend so every widget inherits the display
+	// service's default unless a container overrides it.
+	rootMetrics := backend.Metrics()
+	d.WidgetBase.SetCellMetrics(&rootMetrics)
+
 	d.windowManager = window.NewWindowManager()
 	d.windowManager.SetOnRepaintNeeded(func() {
 		d.RequestUpdate()
