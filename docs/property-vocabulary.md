@@ -8,6 +8,22 @@ is frozen; naming questions are collected at the end.
 
 ## Conventions (proposed)
 
+- **Type system (D17)** — every value is exactly one of:
+  - `flag` — bare name / `!name` / `?name` (D12/D16)
+  - `enum` — unquoted word from the property's declared vocabulary
+  - `numeric` — int or float lexically; each property declares its
+    domain (units are integer-valued; ratios are floats)
+  - `identifier` — unquoted reference token: object IDs, key paths,
+    command IDs, template names
+  - `{}` — a collection of objects/definitions (D13)
+  - `"string"` — **quotes required**; a bare token is never a string
+
+  Consequence: quoting alone separates references from text —
+  `parent=k1.sk1` is an identifier (resolved), `caption="k1.sk1"` is
+  text. No reference sigil needed (closes the item parked under D15).
+  Flags/enums/identifiers are lexically similar bare tokens typed per
+  property, so the tokenizer is schema-free; only interpretation
+  consults the vocabulary.
 - Names are `lower_snake_case`, singular where sensible.
 - All coordinates/sizes are units in the **container's denomination**
   (D8/D8′); rows/columns appear only where the concept is genuinely
@@ -26,9 +42,11 @@ is frozen; naming questions are collected at the end.
   (`alias c="checked"` → `c` / `!c` / `?c`). Genuinely multi-valued
   switches (more than three states) remain enums.
 - `id` values are ObjectIDs (server-assigned; see Correlation Keys).
-- `action` values are command IDs (semantic strings like `file.open`,
-  or auto-assigned `cmd.auto.N`).
-- Key nomenclature is D3 throughout: `shortcut="^N"`, `key="M-Tab"`.
+- `action` values are command IDs — unquoted identifiers per D17
+  (`action=file.open`, auto-assigned `cmd.auto.N`).
+- Key nomenclature is D3 throughout, carried as strings:
+  `shortcut="^N"`, `key="M-Tab"`.
+- Color literal form is TBD (identifier names vs `"#rrggbb"` strings).
 - **Structure encoding (D13):** subtrees build with inline children
   blocks — `new panel children={new button; new button}` — and the
   same construct encodes every list-like structure: combo `items`,
@@ -59,19 +77,19 @@ is frozen; naming questions are collected at the end.
 
 | Property | Type | Notes |
 |---|---|---|
-| `id` | id | Read-only identity |
+| `id` | identifier | Read-only identity |
 | `name` | string | Human label for debugging/tooling; NOT identity |
 | `enabled` | flag | |
 | `visible` | flag | |
-| `x`, `y`, `width`, `height` | units | Bounds in parent denomination; usually layout-managed |
-| `min_width`, `min_height` | units | |
-| `max_width`, `max_height` | units | |
+| `x`, `y`, `width`, `height` | numeric (units) | Bounds in parent denomination; usually layout-managed |
+| `min_width`, `min_height` | numeric (units) | |
+| `max_width`, `max_height` | numeric (units) | |
 | `size_policy_h`, `size_policy_v` | enum | `fixed`, `minimum`, `maximum`, `preferred`, `expanding`, `ignored` |
-| `stretch` | int | Layout-item stretch factor |
+| `stretch` | numeric | Layout-item stretch factor |
 | `align` | enum | Layout-item alignment: `fill`, `left`, `center`, `right`, `top`, `middle`, `bottom` |
 | `font` | string | Family name; `font_size` (int), `font_style` (flags: `bold`, `italic`, `underline`, …) |
-| `grid_width`, `grid_height` | units | CellMetrics override: units per column/row (D8); unset = inherit |
-| `scheme` | string/int | Color scheme selector |
+| `grid_width`, `grid_height` | numeric (units) | CellMetrics override: units per column/row (D8); unset = inherit |
+| `scheme` | identifier | Color scheme selector |
 | `background` | color | Explicit background; unset = inherit |
 | `acc_name`, `acc_role`, `acc_description` | string | Accessibility |
 
@@ -82,7 +100,7 @@ is frozen; naming questions are collected at the end.
 |---|---|---|
 | `caption` | string | Display text (`&` accelerator markup) |
 | `icon` | string | Icon identifier |
-| `action` | command-id | **Optional** — links the button to a command; when set, click dispatches the command. `click` events fire regardless |
+| `action` | identifier | **Optional** — links the button to a command; when set, click dispatches the command. `click` events fire regardless |
 | `default` | flag | Default-button styling/Enter behavior |
 
 ### label
@@ -99,14 +117,14 @@ is frozen; naming questions are collected at the end.
 | `checked` | flag | Tri-capable: `checked` / `!checked` / `?checked` (D16) |
 | `tristate` | flag | UI cycling behavior only (does clicking pass through mixed); wire representability comes from D16 regardless |
 | `wrap` | flag | Opt-in word wrap (D9: indicator is chrome) |
-| `action` | command-id | Optional, as with button |
+| `action` | identifier | Optional, as with button |
 
 ### radiobutton
 | Property | Type | Notes |
 |---|---|---|
 | `caption` | string | |
 | `checked` | flag | |
-| `group` | id | Radio group membership |
+| `group` | identifier | Radio group membership |
 | `wrap` | flag | |
 
 ### textinput
@@ -114,53 +132,53 @@ is frozen; naming questions are collected at the end.
 |---|---|---|
 | `text` | string | The editable content (server-authoritative) |
 | `placeholder` | string | |
-| `cursor` | int | Caret position (rune index) |
-| `selection_start`, `selection_end` | int | |
+| `cursor` | numeric | Caret position (rune index) |
+| `selection_start`, `selection_end` | numeric | |
 | `readonly` | flag | |
-| `mask` | flag or rune | Password-style echo: bare = default mask char; `mask="*"` = explicit |
+| `mask` | flag or string | Password-style echo: bare = default mask char; `mask="*"` = explicit |
 
 ### combobox
 | Property | Type | Notes |
 |---|---|---|
-| `items` | list | Encoding TBD |
-| `current` | int | Selected index (−1 = none) |
+| `items` | {} | Children block of items (D13) |
+| `current` | numeric | Selected index (−1 = none) |
 | `editable` | flag | |
 | `placeholder` | string | |
-| `max_visible` | int | Dropdown row cap |
+| `max_visible` | numeric | Dropdown row cap |
 
 ### listview / treeview
 | Property | Type | Notes |
 |---|---|---|
-| `items` / `nodes` | list/tree | Encoding TBD; tree nodes carry `caption`, `expanded`, children |
-| `current` | int/path | Selection |
+| `items` / `nodes` | {} | Children block (D13); tree nodes carry `caption`, `expanded`, children |
+| `current` | numeric | Selection |
 | `multi_select` | flag | (future) |
 
 ### progress
 | Property | Type | Notes |
 |---|---|---|
-| `value`, `minimum`, `maximum` | int | |
+| `value`, `minimum`, `maximum` | numeric | |
 | `caption` | string | Optional overlay text |
 
 ### tabwidget
 | Property | Type | Notes |
 |---|---|---|
-| `tabs` | list | Each tab: `caption`, content `id` |
-| `current` | int | Active tab |
+| `tabs` | {} | Each tab: `caption`, content `id` |
+| `current` | numeric | Active tab |
 | `tab_position` | enum | `top`, `bottom`, `left`, `right` |
 
 ### splitter
 | Property | Type | Notes |
 |---|---|---|
 | `orientation` | enum | `horizontal`, `vertical` |
-| `position` | float | 0.0–1.0 ratio (denomination-free by design) |
+| `position` | numeric | 0.0–1.0 ratio (denomination-free by design) |
 | `caption` | string | Optional divider title |
 
 ### scrollarea
 | Property | Type | Notes |
 |---|---|---|
-| `scroll_x`, `scroll_y` | int | Scroll offsets (cells of own denomination) |
+| `scroll_x`, `scroll_y` | numeric | Scroll offsets (cells of own denomination) |
 | `h_bar`, `v_bar` | enum | `auto`, `always`, `never` |
-| `content` | id | Scrolled child |
+| `content` | identifier | Scrolled child |
 
 ### panel
 | Property | Type | Notes |
@@ -168,19 +186,19 @@ is frozen; naming questions are collected at the end.
 | `border` | flag | |
 | `border_style` | enum | `single`, `double`, `rounded`, `heavy`, `ascii` |
 | `layout` | enum | `vbox`, `hbox`, `grid`, `none` |
-| `spacing` | units | Layout spacing |
+| `spacing` | numeric (units) | Layout spacing |
 
 ### separator / spacer
 | Property | Type | Notes |
 |---|---|---|
 | `caption` | string | Separator title (optional) |
 | `orientation` | enum | |
-| (spacer) `width`, `height` | units | Explicit size; unset = 1×1 cell |
+| (spacer) `width`, `height` | numeric (units) | Explicit size; unset = 1×1 cell |
 
 ### terminal (PurfecTerm surface)
 | Property | Type | Notes |
 |---|---|---|
-| `columns`, `rows` | int | Grid size (genuinely cell-based) |
+| `columns`, `rows` | numeric | Grid size (genuinely cell-based) |
 | `feed` | bulk | Byte/cell stream — needs the bulk escape (O6) |
 
 ### canvas *(deferred, D7)*
@@ -192,11 +210,11 @@ when the widget is built.
 | Property | Type | Notes |
 |---|---|---|
 | `title` | string | |
-| `x`, `y`, `width`, `height` | units | Desktop denomination |
+| `x`, `y`, `width`, `height` | numeric (units) | Desktop denomination |
 | `state` | enum | `normal`, `minimized`, `maximized` |
 | `frameless`, `no_title`, `no_resize`, `modal`, `passive` | flag | Individual flags per D12 — no bitsets on the wire (`new window frameless modal`) |
-| `content` | id | Content widget |
-| `min_width`, `min_height` | units | |
+| `content` | identifier | Content widget |
+| `min_width`, `min_height` | numeric (units) | |
 | `font`, `grid_width`, `grid_height` | | Per-window overrides (D8) |
 | `native` | flag | G4 dual-mode: request an OS window when available |
 
@@ -207,7 +225,7 @@ Menus are data trees (G6): `menu` has `caption` and items; each item:
 | Property | Type | Notes |
 |---|---|---|
 | `caption` | string | `&` accelerator markup |
-| `action` | command-id | THE dispatch identity (slice 1) |
+| `action` | identifier | THE dispatch identity (slice 1) |
 | `shortcut` | string | D3 nomenclature (`"^N"`) |
 | `enabled`, `checkable`, `checked` | flag | |
 | `separator` | flag | |
