@@ -155,6 +155,22 @@ func RegisteredTypes() []string {
 
 var virtualIDCounter atomic.Uint64
 
+// virtualIDSource allocates IDs for Virtual objects. The default is a
+// package-private counter, which is fine only when virtual IDs never
+// meet real object IDs. Hosts whose real IDs share the uint64 space
+// (tuitk's core.ObjectID does) must install their own allocator so the
+// two can never collide — see SetVirtualIDSource.
+var virtualIDSource = func() uint64 { return virtualIDCounter.Add(1) }
+
+// SetVirtualIDSource installs the allocator used for Virtual objects'
+// IDs. Call once at init, before any factory runs; the widget package
+// points this at the same counter that issues real object IDs.
+func SetVirtualIDSource(fn func() uint64) {
+	if fn != nil {
+		virtualIDSource = fn
+	}
+}
+
 // RegistryFactory implements Factory over the registered types, bound
 // to one connection's BindContext.
 type RegistryFactory struct {
@@ -179,7 +195,7 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 	}
 	o := &registryObject{ctx: f.ctx, spec: spec, target: spec.New()}
 	if spec.Virtual {
-		o.virtualID = virtualIDCounter.Add(1)
+		o.virtualID = virtualIDSource()
 	}
 	if spec.Bind != nil {
 		spec.Bind(f.ctx, o.target)

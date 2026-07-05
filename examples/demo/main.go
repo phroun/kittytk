@@ -11,6 +11,7 @@ import (
 	"github.com/phroun/tuitk/backend"
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/layout"
+	"github.com/phroun/tuitk/protocol"
 	"github.com/phroun/tuitk/style"
 	"github.com/phroun/tuitk/widgets"
 	"github.com/phroun/tuitk/window"
@@ -41,6 +42,119 @@ func newFixedWidthBox(width core.Unit, content core.Widget) *fixedWidthBox {
 
 func (f *fixedWidthBox) SizeHint() core.UnitSize {
 	return core.UnitSize{Width: f.width, Height: f.Panel.SizeHint().Height}
+}
+
+// idCaptureFactory records built targets by object ID so the app can
+// reach the real widgets behind surfaced reply names.
+type idCaptureFactory struct {
+	inner protocol.Factory
+	byID  map[uint64]any
+}
+
+func (f *idCaptureFactory) New(typeName string) (protocol.Object, error) {
+	o, err := f.inner.New(typeName)
+	if err != nil {
+		return nil, err
+	}
+	type built interface {
+		Target() any
+		ID() uint64
+	}
+	if b, ok := o.(built); ok {
+		f.byID[b.ID()] = b.Target()
+	}
+	return o, nil
+}
+
+// protocolWindowScript is the Protocol Demo window's entire content,
+// expressed in the display-protocol command language (D10-D18).
+const protocolWindowScript = `
+alias C="caption"
+
+root=new panel layout=vbox border children={
+	new label C="This window's content was built from protocol text." wrap
+	status=new label C="Interact below; events appear here."
+	new separator
+	cb=new checkbox C="Tri-state checkbox (watch the label above)" tristate
+	inp=new textinput placeholder="Type here..."
+	combo=new combobox children={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
+	btn=new button C="Dispatch demo.hello" action=demo.hello
+}
+watch=root.status
+wcb=root.cb
+winp=root.inp
+wcombo=root.combo
+`
+
+// createProtocolWindow builds the P0 step-4 window: content
+// constructed by executing protocol text, interactions delivered back
+// as protocol event records into app handlers.
+func createProtocolWindow(application *app.Application, desktop *widgets.Desktop) *window.Window {
+	dispatcher := protocol.NewEventDispatcher()
+	ctx := &protocol.BindContext{
+		Dispatch: func(id string) { application.Commands().Dispatch(id) },
+		Emit:     func(ev *protocol.Event) { dispatcher.Dispatch(ev) },
+	}
+
+	factory := &idCaptureFactory{
+		inner: protocol.NewRegistryFactory(ctx),
+		byID:  make(map[uint64]any),
+	}
+
+	script, err := protocol.Parse(protocolWindowScript)
+	if err != nil {
+		return nil
+	}
+	reply, err := protocol.NewSession().Execute(script, factory)
+	if err != nil {
+		return nil
+	}
+
+	rootWidget, _ := factory.byID[reply.IDs["root"]].(core.Widget)
+	status, _ := factory.byID[reply.IDs["watch"]].(*widgets.Label)
+	if rootWidget == nil || status == nil {
+		return nil
+	}
+
+	// App-side handlers, keyed by the surfaced ObjectIDs - the same
+	// records a remote display service would deliver.
+	dispatcher.On(reply.IDs["wcb"], "toggle", func(ev *protocol.Event) {
+		state := "off"
+		switch ev.Flag("checked") {
+		case protocol.FlagTrue:
+			state = "on"
+		case protocol.FlagIndeterminate:
+			state = "mixed"
+		}
+		status.SetText("event toggle checked=" + state)
+	})
+	dispatcher.On(reply.IDs["winp"], "change", func(ev *protocol.Event) {
+		if s, ok := ev.Text("text"); ok {
+			status.SetText(`event change text="` + s + `"`)
+		}
+	})
+	dispatcher.On(reply.IDs["wcombo"], "change", func(ev *protocol.Event) {
+		if i, ok := ev.Int("selected"); ok {
+			status.SetText(fmt.Sprintf("event change selected=%d", i))
+		}
+	})
+	dispatcher.OnType("command", func(ev *protocol.Event) {
+		if a, ok := ev.Word("action"); ok {
+			status.SetText("event command action=" + a)
+		}
+	})
+
+	// The command also lands in the app's registry (slice-1 seam).
+	application.Commands().Register("demo.hello", func() {
+		if sb := desktop.StatusBar(); sb != nil {
+			sb.SetText("demo.hello dispatched from protocol-built button!")
+		}
+	})
+
+	w := window.NewWindow("Protocol Demo")
+	w.SetBounds(core.UnitRect{X: 8 * 8, Y: 16 * 4, Width: 8 * 56, Height: 16 * 16})
+	w.SetContent(rootWidget)
+	return w
 }
 
 func main() {
@@ -124,6 +238,12 @@ func main() {
 
 	// Create windows in startup callback (after screen bounds are set)
 	desktop.SetOnStartup(func() {
+		// P0 step 4: a window whose content is built entirely from
+		// protocol text, with interactions flowing back as event
+		// records. See createProtocolWindow.
+		if pw := createProtocolWindow(application, desktop); pw != nil {
+			application.AddWindow(pw)
+		}
 		// Create the main demo window - owned by the application
 		mainWindow := createMainWindow(desktop, application)
 		application.AddWindow(mainWindow)

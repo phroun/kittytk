@@ -113,10 +113,31 @@ as real protocol records, no sockets yet. Steps:
    (suppression policy joins the `sub` verb decision). Deferred:
    window events, key events (raw-key mode), the `sub` verb itself
    (v1 emits for all bound widgets).
-4. **Demo on this basis** — a demo window defined as protocol text
-   executed at startup in-process, interactions flowing back as event
-   records into registry/subscription handlers. Full API purity (the
-   Go client-library veneer) comes after the milestone.
+4. ✅ **Demo on this basis** (2026-07-05). The demo app opens a
+   "Protocol Demo" window at startup whose entire content — panel,
+   wrapping label, status label, separator, tri-state checkbox,
+   textinput, combobox with items, action-bound button — is built by
+   executing protocol text (`protocolWindowScript` in
+   `examples/demo/main.go`), exercising aliases, children blocks,
+   flags, and hierarchical surfacing (`watch=root.status`). App-side
+   handlers subscribe via `protocol.EventDispatcher` keyed by the
+   surfaced ObjectIDs; interacting with the widgets updates the
+   status label with the received event, and the button's
+   `action=demo.hello` lands in `Application.Commands()` (slice-1
+   seam) *and* arrives as a `command` event. A demo-package test
+   (`TestProtocolWindowScriptBuilds`) guards the script + surfaced
+   keys, since `createProtocolWindow` degrades to "no window" on
+   error. Writing it caught a real bug: virtual items drew IDs from
+   a protocol-private counter that collided with `core.ObjectID`s —
+   fixed with `protocol.SetVirtualIDSource`, which `widgets` points
+   at the same allocator as real widget IDs (`core.NextObjectID`).
+
+**Milestone P0 complete (2026-07-05):** tuitk and its demo run on the
+D10–D18 protocol basis in-process — UI built from protocol text,
+interactions delivered as protocol event records, commands dispatched
+by stable ID. Next big rocks: the verb inventory (`set`/`destroy`/
+`sub` — owner decision, O6), the Go client-library veneer, and then
+the transport phase.
 
 ## Slice 1 — Menu command identity & dispatch  *(done 2026-07-05)*
 

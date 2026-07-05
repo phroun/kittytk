@@ -121,6 +121,11 @@ func regWidget(name string, construct func() core.Widget, props map[string]proto
 }
 
 func init() {
+	// Virtual objects (e.g. combobox items) draw their IDs from the
+	// same allocator as real widgets, so a virtual ID can never
+	// collide with a core.ObjectID in a session's reply table.
+	protocol.SetVirtualIDSource(func() uint64 { return uint64(core.NextObjectID()) })
+
 	protocol.RegisterCommonProperty("enabled", boolProp("enabled", core.Widget.SetEnabled))
 	protocol.RegisterCommonProperty("visible", boolProp("visible", core.Widget.SetVisible))
 	protocol.RegisterCommonProperty("name", stringProp("name", core.Widget.SetName))
