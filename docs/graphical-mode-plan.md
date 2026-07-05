@@ -146,6 +146,79 @@ a one-way mapping (key-string → native key equivalent) living in the
 native menu module; wire protocol (D2) and widget APIs carry key-strings
 verbatim.
 
+### D4 — X-direction rendezvous; sessions are separate from connections  *(decided 2026-07-05)*
+
+Connection topology for the D2 protocol follows the X model: the
+**display service (desktop) listens on a well-known endpoint** (env
+var, unix socket by default) and **apps dial in**. Rationale: the
+ephemeral party must announce itself to the durable, well-known party —
+discovery is one env var, launching from the desktop is fork/exec with
+connect-back, cleanup on socket drop is unambiguous, one socket to
+secure with peer credentials, and ssh forwarding works like `ssh -X`.
+
+**Protocol invariant adopted:** a *session* (an app's entire UI state)
+is a first-class protocol object distinct from the *connection* that
+carries it. Under the widget-level protocol this is cheap — the app-side
+client library already replicates the widget tree — and it buys
+tmux-grade capabilities in the X-style topology: reattach after a
+display-service restart, attach to a different display service
+(replay the tree, resubscribe), and potentially multiple simultaneous
+viewers later (input ownership then becomes a policy question).
+
+Also adopted:
+
+- **Naming discipline:** the desktop process is the *display service*
+  (or desktop); apps are *apps*. Client/server language is reserved for
+  describing individual connections, avoiding X's naming confusion.
+- **Reverse attachment is a possible later mode, not the foundation:**
+  daemon-style apps that listen for a display service to dial in can be
+  added later — the post-handshake protocol is identical, only the
+  connector differs (as with LSP transports / gdbserver reverse
+  connections). Nothing in the wire format depends on who dialed.
+
+This resolves the reconnection item in O6 in principle (v1 may still
+ship terminate-on-disconnect, but IDs/handshake are designed for
+session reattach from the start).
+
+### D5 — Dual graphical substrates: Gio and SDL, neutrally  *(decided 2026-07-05)*
+
+The graphical Platform (G2) gets **two substrate implementations, Gio
+and SDL**, behind one substrate-neutral interface — the same discipline
+PurfecTerm already applies to GTK/Qt. A third implementation of the
+Platform interface (alongside the TUI Platform) is what keeps the
+boundary honest and fossil-free, and it insures against substrate risk
+(Gio API churn; SDL cgo dependency).
+
+**Condition that makes this sound — the shared text engine:** text
+shaping, measurement, and rasterization are pulled *out* of the
+substrates into one tuitk-owned font module (go-text/typesetting is the
+leading candidate), used identically by all graphical backends. Gio's
+built-in text stack goes deliberately unused. This is mandatory, not
+stylistic: under D2, layout is server-side and must be deterministic —
+text measuring differently on two substrates would be a correctness
+bug. The shared engine doubles as G1's server-side `TextMeasurer`, so
+measurement and painting can never disagree.
+
+The substrate contract is correspondingly small:
+
+- window/surface creation and lifecycle, DPI scale factor
+- input events, translated into D3 key nomenclature at the boundary
+- vector primitives: fills, strokes, clips; glyph and image blitting
+- clipboard; capability flags (IME, etc.)
+
+Threading rule: Gio runs an event loop per window (goroutine each); SDL
+has one main-thread global queue. The Platform delivers all events into
+a **single tuitk dispatch goroutine** (channel fan-in), keeping widget
+code single-threaded on both substrates (pins down G3's model).
+
+Sequencing rule: substrates are brought up serially — define the
+interface, land one substrate, then land the second **before the
+interface is declared stable**, as a validation pass. Which substrate
+goes first remains open (see O1): SDL is the easy glyph-grid bring-up
+target; Gio is the nicer pure-Go distribution story.
+
+Each substrate sits behind its own build tag (interacts with O3).
+
 ### Context: PurfecTerm is already multi-frontend  *(noted 2026-07-05)*
 
 PurfecTerm predates tuitk as an independent project and already has
@@ -251,23 +324,18 @@ model. Known porting snags:
 
 ## Open decisions
 
-### O1 — GUI substrate
+### O1 — Substrate bring-up order  *(narrowed by D5)*
 
-Portable windowing layer vs per-OS native shells. Leading options:
+The substrate question itself is resolved by D5 (both Gio and SDL,
+neutrally, serially). Remaining open: **which substrate lands first.**
+SDL is the trivially easy target for glyph-grid bring-up (cell grid →
+texture-atlas blit); Gio is the nicer pure-Go distribution story and
+exercises more of the interface sooner.
 
-- **Gio** — pure Go, real multi-window, text shaping, HiDPI, clipboard,
-  IME; no native menus (per-OS cgo add-ons needed for those regardless).
-- **SDL2/3** — proven, one `SDL_Window` per window; cgo everywhere, no
-  text shaping (needs FreeType + shaper), no native menus.
-- **Per-OS native (Cocoa/Win32)** — the only route to first-class system
-  menu integration; the most work. Likely later phases, not the
-  foundation.
-
-Because no portable layer provides native menus, the working shape is:
-portable substrate for surfaces/input/pixels + a `PlatformIntegration`
-capability interface (menus, dialogs, clipboard) that falls back to the
-existing rendered `MenuBar` when no native implementation exists, with
-per-OS native menu modules added over time.
+Still applicable regardless: no portable layer provides native menus,
+so a `PlatformIntegration` capability interface (menus, dialogs) falls
+back to the existing rendered `MenuBar` when no native implementation
+exists, with per-OS native menu modules (Cocoa/Win32) added over time.
 
 ### O2 — Unit semantics in graphical mode
 
@@ -313,9 +381,10 @@ milestone for whole windows.
 - **Pixel escape-hatch timing:** the cell-grid surface widget is needed
   early; when does the pixel surface widget (arbitrary client-rendered
   graphical content) land?
-- **Reconnection semantics:** do clients survive a server restart
-  (re-attach and replay state) or terminate? Proposal for v1: terminate;
-  design IDs/handshake so re-attach can be added.
+- **Reconnection semantics:** resolved in principle by D4 (sessions are
+  first-class and separable from connections). Remaining detail: does
+  v1 ship terminate-on-disconnect with reattach-ready IDs/handshake, or
+  implement session reattach immediately?
 - **App launching:** does the desktop server spawn client apps (menu of
   installed apps), or are apps launched externally and connect? Both
   eventually; which first?
@@ -343,15 +412,20 @@ milestone for whole windows.
 3. **G2 + G3** Platform/Surface split and event-loop inversion inside
    the server; TUI reimplemented as a one-surface Platform.
 4. **G4** dual-mode Window; WindowManager scoped to in-surface use.
-5. **D2 transport** — client library + wire format + server connection
-   handling (unix socket, client lifecycle, cell-grid surface widget).
-   The TUI desktop-as-server is the first target: separate app binaries
-   connecting to a running TUI desktop.
-6. First graphical backend on the chosen substrate (O1): native windows,
-   input, DPI; rendering path per O4.
-7. **G5 + G6** native popups and `PlatformIntegration` for menus/dialogs/
+5. **D2 transport** — client library + wire format + display-service
+   connection handling (unix socket rendezvous per D4, client
+   lifecycle, cell-grid surface widget). The TUI desktop-as-display-
+   service is the first target: separate app binaries connecting to a
+   running TUI desktop.
+6. **Shared text engine** (D5) — shaping/measurement/rasterization
+   module; also serves as G1's server-side TextMeasurer for graphical
+   mode.
+7. First graphical substrate (order per O1): native windows, input,
+   DPI; rendering path per O4. Second substrate lands before the
+   substrate interface is declared stable.
+8. **G5 + G6** native popups and `PlatformIntegration` for menus/dialogs/
    clipboard with rendered fallback; native macOS menus first.
-8. **D1 rollout** widget-by-widget graphical paint paths with real fonts.
+9. **D1 rollout** widget-by-widget graphical paint paths with real fonts.
 
 ## Decision log
 
@@ -361,3 +435,5 @@ milestone for whole windows.
 | D2 | 2026-07-05 | Apps compile independent of the renderer and talk to a desktop/render server over a socket (X-style). Boundary = **widget-level protocol**: server owns widgets/layout/rendering/hit-testing, apps drive proxies with the same API and receive semantic events. In-process stays as a direct implementation. Cell-grid + (later) pixel surface widgets are the custom-rendering escape hatch. |
 | — | 2026-07-05 | Context: PurfecTerm is an independent pre-existing project with TUI, GTK, and Qt frontends in one codebase — proof of the D1 pattern, source of graphical cell-grid rendering, input to O1. |
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
+| D4 | 2026-07-05 | X-direction rendezvous: the display service listens on a well-known endpoint, apps dial in. Sessions are first-class protocol objects separable from connections (enables reattach/multi-viewer without inverting topology). Reverse attachment is a possible later mode. Naming: "display service" and "apps". |
+| D5 | 2026-07-05 | Two graphical substrates, Gio and SDL, behind one neutral Platform interface (PurfecTerm-style discipline). Mandatory condition: one shared tuitk-owned text engine (shaping/measurement/rasterization) outside the substrates, so layout is substrate-independent; it doubles as the server-side TextMeasurer. Substrates land serially; second lands before the interface is declared stable. |
