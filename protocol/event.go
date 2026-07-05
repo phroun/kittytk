@@ -160,6 +160,11 @@ func (e *Event) Encode() string {
 
 // quoteString renders a string literal with the provisional escape set
 // (matching the parser).
+// Quote renders s as a protocol string literal (quotes + escapes,
+// control bytes as \xNN). Script builders use it to interpolate
+// arbitrary text safely.
+func Quote(s string) string { return quoteString(s) }
+
 func quoteString(s string) string {
 	var sb strings.Builder
 	sb.WriteByte('"')

@@ -226,6 +226,26 @@ func (m *MessageBox) SetIcon(icon MessageBoxIcon) {
 	m.content.icon = icon
 }
 
+// SetText replaces the message text.
+func (m *MessageBox) SetText(text string) {
+	m.content.text = text
+	m.calculateSize()
+	m.Update()
+}
+
+// SetButtons replaces the button set.
+func (m *MessageBox) SetButtons(buttons DialogButton) {
+	m.buttons = buttons
+	m.content.createButtons(buttons)
+	m.calculateSize()
+	m.Update()
+}
+
+// Buttons returns the current button set.
+func (m *MessageBox) Buttons() DialogButton {
+	return m.buttons
+}
+
 // SetOnFinished sets the finished callback.
 func (m *MessageBox) SetOnFinished(handler func(result DialogResult)) {
 	m.onFinished = handler

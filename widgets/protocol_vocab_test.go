@@ -249,6 +249,61 @@ new panel layout=hbox children={
 	}
 }
 
+func TestMessageBoxFromProtocol(t *testing.T) {
+	f, events := buildWithEvents(t, nil, `
+dlg=new messagebox title="Confirm" text="Save changes?" yes no cancel icon=question
+sub dlg finish
+`)
+	m := f.targets[0].(*MessageBox)
+	if m.Title() != "Confirm" {
+		t.Errorf("title = %q", m.Title())
+	}
+	want := ButtonYes | ButtonNo | ButtonCancel
+	if m.Buttons() != want {
+		t.Errorf("buttons = %v, want %v", m.Buttons(), want)
+	}
+
+	*events = nil
+	m.done(ResultYes)
+	got := eventsOfType(*events, "finish")
+	if len(got) != 1 {
+		t.Fatalf("finish events = %d, want 1", len(got))
+	}
+	if r, ok := got[0].Word("result"); !ok || r != "yes" {
+		t.Errorf("result = %q, want yes", r)
+	}
+}
+
+func TestStatusBarFromProtocol(t *testing.T) {
+	f, _ := buildUI(t, nil, `
+sb=new statusbar children={
+	new section children={
+		new span text="Ready - "
+		new span text="F10" fg=red bg=white
+	}
+	new section text="plain" width=20 align=right
+}
+`)
+	bar := f.targets[0].(interface{ Sections() []StatusSection })
+	sections := bar.Sections()
+	if len(sections) != 2 {
+		t.Fatalf("sections = %d, want 2", len(sections))
+	}
+	spans := sections[0].Spans
+	if len(spans) != 2 || spans[0].Text != "Ready - " {
+		t.Fatalf("spans = %+v", spans)
+	}
+	if spans[0].Style != nil {
+		t.Error("unstyled span should have nil style")
+	}
+	if spans[1].Style == nil || spans[1].Style.Fg != style.ColorRed || spans[1].Style.Bg != style.ColorWhite {
+		t.Errorf("styled span = %+v", spans[1].Style)
+	}
+	if sections[1].Text != "plain" || sections[1].Width != 20 || sections[1].Alignment != 2 {
+		t.Errorf("section 2 = %+v", sections[1])
+	}
+}
+
 func TestTerminalFeedOverWire(t *testing.T) {
 	session := protocol.NewSession()
 	f := &captureFactory{inner: protocol.NewRegistryFactory(&protocol.BindContext{})}

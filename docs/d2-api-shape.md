@@ -219,9 +219,19 @@ shadowed the common layout `align` hint — renamed `text_align`.
   starts, close button subscribed per-connection so instances never
   collide.
 
-Remaining: status bar content vocabulary, messagebox/dialog type,
-`state` window property, listview row set/destroy routing, terminal
-input direction (`data` events, raw-key), MDI (after G1 residuals).
+**Messagebox + status bar (2026-07-05):** `messagebox` registered
+(buttons as individual D12 flags, `finish result=` event,
+destroy=close); all three demo dialogs are scripts via
+`protocolMessageBox`. Status bar content is protocol data:
+`statusbar`/`section`/`span` virtuals — the first inline styling on
+the wire (span `fg=`/`bg=`) — used for the main bar, the secondary
+apps' bars, and the dynamic cell-debug readout (built per-update
+with `protocol.Quote`, the new exported string-literal quoter).
+
+Remaining: `state` window property, listview row set/destroy
+routing, terminal input direction (`data` events, raw-key), MDI
+(after G1 residuals) — at this point the demo's only imperative UI
+is the MDI tab and the secondary app's window construction.
 
 ## Slice 1 — Menu command identity & dispatch  *(done 2026-07-05)*
 

@@ -217,22 +217,13 @@ func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application
 		desktop.ActivatePassNextKeyToWidget()
 	})
 	commands.Register("demo.app.info", func() {
-		dialog := widgets.NewMessageBox(
-			fmt.Sprintf("About App %d", appNum),
-			fmt.Sprintf("This is Secondary Application #%d\n\nIt has its own menus and status bar.", appNum),
-			widgets.ButtonOK,
-		)
-		dialog.SetIcon(widgets.IconInformation)
-		application.AddWindow(&dialog.Window)
+		protocolMessageBox(application, fmt.Sprintf(
+			`dlg=new messagebox icon=information ok title="About App %d" text="This is Secondary Application #%d\n\nIt has its own menus and status bar."`,
+			appNum, appNum))
 	})
 	commands.Register("demo.app.about", func() {
-		dialog := widgets.NewMessageBox(
-			"About",
-			"Secondary Application\n\nDemonstrates multi-application support.",
-			widgets.ButtonOK,
-		)
-		dialog.SetIcon(widgets.IconInformation)
-		application.AddWindow(&dialog.Window)
+		protocolMessageBox(application,
+			`dlg=new messagebox icon=information ok title="About" text="Secondary Application\n\nDemonstrates multi-application support."`)
 	})
 
 	return menus

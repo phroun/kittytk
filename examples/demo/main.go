@@ -196,18 +196,19 @@ func main() {
 	// Set up application's menu bar content
 	application.SetMenuBarContent(createMenus(desktop, application))
 
-	// Set up application's status bar content
-	redStyle := style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
-	normalStatusContent := []widgets.StatusSection{
-		{Spans: []widgets.StatusTextSpan{
-			{Text: "Ready - Press "},
-			{Text: "F10", Style: &redStyle},
-			{Text: " for menu, Tab to navigate, "},
-			{Text: "Ctrl+Q", Style: &redStyle},
-			{Text: " to quit"},
-		}},
+	// Status bar content is protocol data too: sections of styled
+	// text spans.
+	application.SetStatusBarContent(buildStatusSections(`
+sb=new statusbar children={
+	new section children={
+		new span text="Ready - Press "
+		new span text="F10" fg=red bg=white
+		new span text=" for menu, Tab to navigate, "
+		new span text="Ctrl+Q" fg=red bg=white
+		new span text=" to quit"
 	}
-	application.SetStatusBarContent(normalStatusContent)
+}
+`))
 
 	// Register application with desktop
 	desktop.AddApplication(application)
@@ -613,11 +614,9 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 	newApp.SetMenuBarContent(menus)
 
 	// Create unique status bar content
-	newApp.SetStatusBarContent([]widgets.StatusSection{
-		{Spans: []widgets.StatusTextSpan{
-			{Text: fmt.Sprintf("Secondary Application #%d", appNum)},
-		}},
-	})
+	newApp.SetStatusBarContent(buildStatusSections(fmt.Sprintf(`
+sb=new statusbar children={new section children={new span text="Secondary Application #%d"}}
+`, appNum)))
 
 	// Create window for this application
 	w := window.NewWindow(fmt.Sprintf("App %d Window", appNum))
@@ -707,10 +706,12 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 			charStr = fmt.Sprintf("0x%02X", info.Char)
 		}
 
-		newApp.SetStatusBarContent([]widgets.StatusSection{
-			{Text: fmt.Sprintf("[%d,%d] %s Fg:%s Bg:%s Attr:%s",
-				info.Col, info.Row, charStr, fg, bg, attrs)},
-		})
+		// Dynamic update: rebuild the status content as protocol
+		// text; protocol.Quote makes arbitrary cell contents safe.
+		debugText := fmt.Sprintf("[%d,%d] %s Fg:%s Bg:%s Attr:%s",
+			info.Col, info.Row, charStr, fg, bg, attrs)
+		newApp.SetStatusBarContent(buildStatusSections(
+			`sb=new statusbar children={new section text=` + protocol.Quote(debugText) + `}`))
 	})
 
 	splitter.SetSecond(terminal)
@@ -726,17 +727,48 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 }
 
 // showAboutDialog shows the about dialog.
-func showAboutDialog(desktop *widgets.Desktop, application *app.Application) {
-	dialog := widgets.NewMessageBox(
-		"About TUI Toolkit",
-		"TUI Toolkit Demo\n\nA comprehensive terminal UI framework.\n\nVersion 0.1.0",
-		widgets.ButtonOK,
-	)
-	dialog.SetIcon(widgets.IconInformation)
-	dialog.SetOnFinished(func(result widgets.DialogResult) {
-		// Dialog closed
-	})
+// buildStatusSections executes a statusbar script and returns the
+// section list for SetStatusBarContent.
+func buildStatusSections(script string) []widgets.StatusSection {
+	factory := &idCaptureFactory{
+		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
+		byID:  make(map[uint64]any),
+	}
+	parsed, err := protocol.Parse(script)
+	if err != nil {
+		panic(fmt.Sprintf("statusbar script: %v", err))
+	}
+	reply, err := protocol.NewSession().Execute(parsed, factory)
+	if err != nil {
+		panic(fmt.Sprintf("statusbar script: %v", err))
+	}
+	bar := factory.byID[reply.IDs["sb"]].(interface{ Sections() []widgets.StatusSection })
+	return bar.Sections()
+}
 
-	// MessageBox is itself a window, add it to the application
+// protocolMessageBox executes a messagebox script and shows the
+// dialog. Dialogs are one-shot protocol objects: built from text,
+// closed by their own buttons (the finish event is available via a
+// sub statement in the script when a caller cares).
+func protocolMessageBox(application *app.Application, script string) {
+	factory := &idCaptureFactory{
+		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
+		byID:  make(map[uint64]any),
+	}
+	parsed, err := protocol.Parse(script)
+	if err != nil {
+		panic(fmt.Sprintf("messagebox script: %v", err))
+	}
+	reply, err := protocol.NewSession().Execute(parsed, factory)
+	if err != nil {
+		panic(fmt.Sprintf("messagebox script: %v", err))
+	}
+	dialog := factory.byID[reply.IDs["dlg"]].(*widgets.MessageBox)
 	application.AddWindow(&dialog.Window)
+}
+
+func showAboutDialog(desktop *widgets.Desktop, application *app.Application) {
+	protocolMessageBox(application, `
+dlg=new messagebox title="About TUI Toolkit" icon=information ok text="TUI Toolkit Demo\n\nA comprehensive terminal UI framework.\n\nVersion 0.1.0"
+`)
 }

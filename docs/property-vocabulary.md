@@ -259,6 +259,27 @@ Events: `change selected=`.
 Input direction (user keystrokes → app as `data` events) joins the
 raw-key work.
 
+### messagebox *(registered 2026-07-05)*
+| Property | Type | Notes |
+|---|---|---|
+| `title`, `text` | string | |
+| `icon` | enum | `none`, `information`, `warning`, `error`, `question` |
+| `ok`, `cancel`, `yes`, `no`, `retry`, `ignore`, `abort`, `save`, `discard`, `apply`, `help` | flag | Button set as individual flags (D12) |
+
+Event: `finish widget=<id> result=<button-word>` when a button closes
+the dialog. `destroy` closes it programmatically.
+
+### statusbar / section / span *(registered 2026-07-05)*
+| Type | Property | Notes |
+|---|---|---|
+| `statusbar` | children of `section` | The whole bar's content |
+| `section` | `text`, `width`, `stretch` flag, `align` (`left`/`center`/`right`), children of `span` | Spans take precedence over `text` |
+| `span` | `text`, `fg`, `bg` | First inline styling on the wire — colors per the color vocabulary |
+
+All three are virtual (data records); the application installs the
+result. `protocol.Quote` renders arbitrary text as a protocol string
+literal for script builders (dynamic status updates).
+
 ### canvas *(deferred, D7)*
 Reserved: `mode` (`commands`/`pixels`), plus its command stream — designed
 when the widget is built.
