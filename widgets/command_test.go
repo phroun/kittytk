@@ -102,6 +102,50 @@ func TestMenuItemFallbackWithoutRegistry(t *testing.T) {
 	}
 }
 
+func TestObjectIDsAreUniqueAcrossWidgetTypes(t *testing.T) {
+	seen := map[core.ObjectID]bool{}
+	for _, w := range []interface{ ObjectID() core.ObjectID }{
+		NewLabel("a"), NewCheckbox("b"), NewPanel(), NewComboBox(),
+		NewDockRow(), NewVSplitter(),
+	} {
+		id := w.ObjectID()
+		if id == 0 {
+			t.Fatal("widget has zero ObjectID")
+		}
+		if seen[id] {
+			t.Fatalf("duplicate ObjectID %d", id)
+		}
+		seen[id] = true
+	}
+}
+
+func TestComboBoxPopupIDsAreUniqueWhenUnnamed(t *testing.T) {
+	a := NewComboBox()
+	b := NewComboBox()
+	if a.popupID() == b.popupID() {
+		t.Fatalf("two unnamed comboboxes share popup ID %q", a.popupID())
+	}
+}
+
+func TestDockRemoveEntryByIDWithDuplicateTitles(t *testing.T) {
+	dock := NewDockRow()
+	first := &DockEntry{Title: "Untitled", WindowID: core.NextObjectID()}
+	second := &DockEntry{Title: "Untitled", WindowID: core.NextObjectID()}
+	dock.AddEntry(first)
+	dock.AddEntry(second)
+
+	// Removing by ID takes exactly the right entry despite the shared
+	// title (RemoveEntryByTitle would have removed the first).
+	dock.RemoveEntryByID(second.WindowID)
+
+	if got := len(dock.Entries()); got != 1 {
+		t.Fatalf("entries = %d, want 1", got)
+	}
+	if dock.Entries()[0].WindowID != first.WindowID {
+		t.Fatal("wrong entry removed")
+	}
+}
+
 func TestSetOnTriggeredAfterBindRefreshesRegistration(t *testing.T) {
 	reg := core.NewCommandRegistry()
 	menu := NewMenu("M")

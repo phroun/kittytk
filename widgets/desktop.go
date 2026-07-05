@@ -258,7 +258,8 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	if d.dockRow != nil {
 		d.windowManager.SetOnWindowMinimized(func(win *window.Window) {
 			entry := &DockEntry{
-				Title: win.Title(),
+				Title:    win.Title(),
+				WindowID: win.ObjectID(),
 				OnClick: func() {
 					d.windowManager.RestoreWindow(win)
 				},
@@ -267,7 +268,7 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 		})
 
 		d.windowManager.SetOnWindowRestored(func(win *window.Window) {
-			d.dockRow.RemoveEntryByTitle(win.Title())
+			d.dockRow.RemoveEntryByID(win.ObjectID())
 		})
 	}
 

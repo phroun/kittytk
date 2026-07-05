@@ -329,6 +329,8 @@ type WidgetBase struct {
 	// outer type. Widgets should call Init(self) after embedding.
 	self Widget
 
+	objectID ObjectID // stable object identity; immutable after construction
+
 	name   string
 	parent Container
 	app    *Application
@@ -358,6 +360,7 @@ type WidgetBase struct {
 // NewWidgetBase creates a new widget base with default values.
 func NewWidgetBase() *WidgetBase {
 	return &WidgetBase{
+		objectID:    NextObjectID(),
 		visible:     true,
 		enabled:     true,
 		focusPolicy: NoFocus,
@@ -365,6 +368,12 @@ func NewWidgetBase() *WidgetBase {
 		sizePolicy:  NewSizePolicy(SizePreferred, SizePreferred),
 		maxSize:     UnitSize{Width: 1<<30 - 1, Height: 1<<30 - 1},
 	}
+}
+
+// ObjectID returns this widget's stable object identity (see ObjectID).
+// Immutable after construction; no lock needed.
+func (w *WidgetBase) ObjectID() ObjectID {
+	return w.objectID
 }
 
 // Init initializes the WidgetBase with a reference to the outer widget.

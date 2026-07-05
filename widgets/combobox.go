@@ -509,9 +509,11 @@ func (c *ComboBox) HidePopup() {
 	c.Update()
 }
 
-// popupID returns a unique identifier for this ComboBox's popup.
+// popupID returns a unique identifier for this ComboBox's popup,
+// derived from the widget's stable object identity. (Name() is a
+// human label and may be empty or duplicated - it is not identity.)
 func (c *ComboBox) popupID() string {
-	return "combobox-" + c.Name()
+	return fmt.Sprintf("combobox-%d", c.ObjectID())
 }
 
 // screenMetrics returns the denomination of the screen/desktop surface,

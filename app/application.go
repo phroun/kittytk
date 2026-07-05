@@ -228,7 +228,8 @@ func (app *Application) SetDesktop(desktop core.Widget) {
 				// When a window is minimized, add it to the dock row
 				wm.SetOnWindowMinimized(func(win *window.Window) {
 					entry := &widgets.DockEntry{
-						Title: win.Title(),
+						Title:    win.Title(),
+						WindowID: win.ObjectID(),
 						OnClick: func() {
 							wm.RestoreWindow(win)
 						},
@@ -238,7 +239,7 @@ func (app *Application) SetDesktop(desktop core.Widget) {
 
 				// When a window is restored, remove it from the dock row
 				wm.SetOnWindowRestored(func(win *window.Window) {
-					dockRow.RemoveEntryByTitle(win.Title())
+					dockRow.RemoveEntryByID(win.ObjectID())
 				})
 			}
 

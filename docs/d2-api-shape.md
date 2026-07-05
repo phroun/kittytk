@@ -16,9 +16,7 @@ sessions separable from connections.
 
 1. **Menu command identity & registry dispatch** — ✅ done 2026-07-05
    (below).
-2. **Stable IDs for windows and widgets** — an ID registry the display
-   service will use to address objects on the wire; pointer identity
-   remains an in-process convenience only.
+2. **Stable IDs for windows and widgets** — ✅ done 2026-07-05 (below).
 3. **Event-subscription formalization** — widget callbacks
    (`OnClick`, `OnToggled`, `OnStateChanged`, …) become subscriptions
    keyed by widget ID under the hood; the public setter API keeps its
@@ -73,3 +71,31 @@ Deferred within this slice (tracked, not forgotten):
   ID/shortcut/enabled/checkable) — slice 3 territory.
 - Dock entries (`OnClick`) and `PopupRequest` callbacks are the other
   closure-crossing surfaces; they join in slices 2–3.
+
+## Slice 2 — Stable object identity  *(done 2026-07-05)*
+
+What exists now:
+
+- **`core.ObjectID`** (uint64) — the stable identity of a UI object.
+  Allocated from a process-wide counter at `NewWidgetBase()`, so every
+  widget, window, panel, and the desktop itself carries one from
+  birth: `w.ObjectID()`. Immutable after construction.
+- **Deliberately NO process-global ID→object registry.** The object
+  table belongs to the display service's per-session connection state
+  (created at attach, released at detach, per D4's session model).
+  A global registry now would bake in the wrong lifecycle and leak
+  discarded widgets; the transport phase builds the real table.
+- **First consumers converted (both fixed latent identity bugs):**
+  - Dock entries carry `WindowID`; minimize/restore wiring (Desktop
+    and Application) adds/removes by ID. Previously keyed by window
+    *title* — two same-titled windows corrupted the dock.
+    `RemoveEntryByTitle` is deprecated but kept.
+  - ComboBox popup IDs derive from `ObjectID()`. Previously
+    `"combobox-" + Name()` — unnamed comboboxes collided.
+- Distinction now explicit in the codebase: **ObjectID is identity;
+  `Name()` is a human label; command IDs are semantic verbs.** Three
+  different things, no longer substitutable.
+
+Next: slice 3 (event-subscription formalization) keys widget-event
+subscriptions by ObjectID — the "widget 17 was clicked" half of the
+event stream, joining slice 1's "command file.open triggered" half.

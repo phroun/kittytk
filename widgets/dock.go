@@ -9,6 +9,11 @@ import (
 type DockEntry struct {
 	Title   string
 	OnClick func()
+
+	// WindowID is the stable identity of the minimized window. Entries
+	// are added/removed by ID: titles are display text, not identity
+	// (two windows may share a title).
+	WindowID core.ObjectID
 }
 
 // DockRow displays minimized windows as clickable buttons.
@@ -67,8 +72,33 @@ func (d *DockRow) RemoveEntry(entry *DockEntry) {
 	}
 }
 
+// Entries returns the dock's current entries in display order.
+func (d *DockRow) Entries() []*DockEntry {
+	return d.entries
+}
+
+// RemoveEntryByID removes an entry by its window's object identity.
+// After removal, the selection moves to the most recently added entry.
+func (d *DockRow) RemoveEntryByID(id core.ObjectID) {
+	for i, e := range d.entries {
+		if e.WindowID == id {
+			d.entries = append(d.entries[:i], d.entries[i+1:]...)
+			if len(d.entries) > 0 {
+				d.selectedIndex = len(d.entries) - 1
+			} else {
+				d.selectedIndex = -1
+			}
+			d.Update()
+			return
+		}
+	}
+}
+
 // RemoveEntryByTitle removes an entry by its title.
 // After removal, the selection moves to the most recently added entry (last in list).
+//
+// Deprecated: titles are display text, not identity - two windows may
+// share one. Use RemoveEntryByID.
 func (d *DockRow) RemoveEntryByTitle(title string) {
 	for i, e := range d.entries {
 		if e.Title == title {
