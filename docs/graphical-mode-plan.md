@@ -550,9 +550,12 @@ milestone for whole windows.
 
 ## Proposed phase order (draft, pending O1–O4)
 
-1. **G1** metrics/measurement hygiene (pure refactor, TUI-verified) —
-   server-internal under D2: widgets query the render backend, never
-   static cell assumptions.
+1. ✅ **G1** metrics/measurement hygiene — **complete 2026-07-05**
+   (inheritance chain, denomination exchange with visual invariance,
+   full call-site sweep, C-site resolution; residuals tracked in
+   `g1-metrics-audit.md`). Delivered beyond original scope: the
+   denomination model (D8′) implemented and live-verified, plus the
+   height-for-width protocol (D9) and four layout-contract fixes.
 2. **D2 API shape** — restructure the app-facing API against the
    proxy/replica model (stable IDs, event subscriptions instead of
    closures, cached reads, async writes), still entirely in-process.

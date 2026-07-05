@@ -14,15 +14,11 @@ type Spacer struct {
 	size core.UnitSize
 }
 
-// NewSpacer creates a new spacer with default size of 1x1 cell.
+// NewSpacer creates a new spacer with a default size of 1x1 cell,
+// resolved lazily against the effective grid metrics (a constructor
+// has no parent chain to ask yet).
 func NewSpacer() *Spacer {
-	metrics := core.DefaultCellMetrics()
-	s := &Spacer{
-		size: core.UnitSize{
-			Width:  metrics.CellWidth,
-			Height: metrics.CellHeight,
-		},
-	}
+	s := &Spacer{}
 	s.WidgetBase = *core.NewWidgetBase()
 	s.Init(s)
 	s.SetFocusPolicy(core.NoFocus)
@@ -51,9 +47,15 @@ func (s *Spacer) Size() core.UnitSize {
 	return s.size
 }
 
-// SizeHint returns the preferred size.
+// SizeHint returns the preferred size. When no explicit size is set,
+// it is one cell of the effective grid metrics, resolved at layout
+// time when the parent chain exists.
 func (s *Spacer) SizeHint() core.UnitSize {
-	return s.size
+	if s.size.Width > 0 || s.size.Height > 0 {
+		return s.size
+	}
+	metrics := s.EffectiveCellMetrics()
+	return core.UnitSize{Width: metrics.CellWidth, Height: metrics.CellHeight}
 }
 
 // Paint renders the spacer (which is invisible - just takes up space).

@@ -340,13 +340,39 @@ rely on hand-tuning around these:
    the default today; route via the desktop's stored metrics when the
    desktop boundary is generalized) and spacer.go's constructor
    dead-end (needs lazy sizing).
-4. Remaining C-sites: the two ★ sites (tabwidget.go
-   `calculateTabBarWidth`, menu.go `dateTimeWidth`) still compute
-   text width as charCount × CellWidth — live bugs under Tuesday.
-   `DrawBox` title truncation and the other font-adjacent sites
-   remain. (label.go `wrapText` is done.)
+4. ✅ **Resolved 2026-07-05** — C-sites closed out after live
+   verification under Tuesday (user-tested):
+   - `label.go wrapText` — fixed earlier (font-measured word wrap).
+   - `tabwidget.go calculateTabBarWidth` (★ withdrawn) — the vertical
+     tab bar's width is a grid-design choice (N columns from longest
+     label's rune count); tab text paints with the font and truncates
+     gracefully. Verified correct-looking under Tuesday; reclassified
+     as grid, not text.
+   - `menu.go dateTimeWidth` (★ withdrawn) — the clock is cell-rendered
+     chrome (`DrawCell` per rune, no font), so cell-count measurement
+     matches its rendering exactly. Internally consistent; whether the
+     clock should be font-aware is a style decision, deferred.
+   - `dialog.go MessageBox.calculateSize` — message text is ALSO
+     cell-rendered (`DrawCell` per rune); `len(line)` sizing matches.
+     Internally consistent; becomes font-aware naturally when
+     MessageBox adopts the wrapped-Label approach (D9 future adopter).
+   - `textinput.go ensureCursorVisible` — correct as written:
+     character advances via the font, end-of-text cursor is one grid
+     cell (a block cursor is a grid fact).
+   - `backend/tui.go DrawBox` title truncation — a cell-level
+     primitive drawing runes 1:1; rune-count truncation matches.
+   - `NewSpacer` dead-end fixed: default size resolves lazily against
+     effective metrics at layout time instead of baking the global
+     default in the constructor.
 5. ✅ PurfecTerm E-sites now use its effective (container) metrics —
    its cell grid follows the container's denomination.
-6. Verify: demo renders byte-identical cell buffers with no overrides
-   set; with the Selection-tab denomination toggle, rendering must be
-   visually invariant (known popup/cursor residuals aside).
+6. ✅ Verified live (2026-07-05): default rendering unchanged; the
+   Selection-tab denomination toggle is visually invariant round-trip,
+   including splitter position and popups.
+
+**G1 is complete.** Remaining items are tracked residuals (below), not
+phase blockers: MDIPane boundary machinery, desktop-children boundary
+if a backend reports non-default root metrics, manual-painting
+dialogs, window/manager outer-currency routing formalization, and the
+optional font-awareness of cell-rendered chrome (clock, MessageBox
+text).
