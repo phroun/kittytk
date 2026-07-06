@@ -24,11 +24,6 @@ import (
 	"os"
 	"sync"
 
-	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/gomono"
-	"golang.org/x/image/font/opentype"
-	"golang.org/x/image/math/fixed"
-
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
 	"github.com/phroun/tuitk/text"
@@ -50,9 +45,6 @@ type Backend struct {
 	roundClipRadius core.Unit
 	hasRoundClip    bool
 
-	face   font.Face
-	ascent int
-
 	defaultFg color.RGBA
 	defaultBg color.RGBA
 
@@ -68,35 +60,18 @@ func New(widthPx, heightPx int) (*Backend, error) {
 }
 
 // NewScaled creates a framebuffer backend where each abstract unit
-// covers scale x scale pixels. The font is rasterized at the scaled
-// size (not upsampled), so glyphs stay sharp at any scale.
+// covers scale x scale pixels. Glyphs are rasterized by the shared
+// text engine at the scaled size (not upsampled), so they stay sharp
+// at any scale.
 func NewScaled(widthPx, heightPx, scale int) (*Backend, error) {
 	if scale < 1 {
 		scale = 1
 	}
-	ft, err := opentype.Parse(gomono.TTF)
-	if err != nil {
-		return nil, err
-	}
-	// Size 10pt at 96dpi = 13.33px em; Go Mono's advance is 0.6em =
-	// 8px - exactly Monday's per-character unit width, so measured
-	// layout and rasterized glyphs agree by construction. Scaling the
-	// point size scales the advance with it (8*scale px per cell).
-	face, err := opentype.NewFace(ft, &opentype.FaceOptions{
-		Size: 10 * float64(scale), DPI: 96, Hinting: font.HintingFull,
-	})
-	if err != nil {
-		return nil, err
-	}
-	m := face.Metrics()
-
 	b := &Backend{
 		img:       image.NewRGBA(image.Rect(0, 0, widthPx, heightPx)),
 		w:         widthPx,
 		h:         heightPx,
 		scale:     scale,
-		face:      face,
-		ascent:    m.Ascent.Ceil(),
 		defaultFg: color.RGBA{220, 220, 220, 255},
 		defaultBg: color.RGBA{16, 16, 24, 255},
 	}
@@ -369,6 +344,12 @@ func isWide(ch rune) bool {
 
 // drawRune paints one glyph inside its advance box: background fill,
 // then the glyph centered horizontally, baseline-aligned.
+// cellFont is the face for the CELL primitive (DrawCell): the
+// monospace cell font at the size whose line box equals one cell
+// row. Shaping through the engine gives chrome glyphs (checkmarks,
+// markers, box drawing) the same per-rune fallback chain as text.
+var cellFont = &core.Font{Name: "Monday", Size: 12}
+
 func (b *Backend) drawRune(x, y core.Unit, ch rune, adv core.Unit, fg, bg color.RGBA, underline, transparentBg bool) {
 	xPx, yPx, advPx := b.px(x), b.px(y), b.px(adv)
 	if !transparentBg {
@@ -376,35 +357,16 @@ func (b *Backend) drawRune(x, y core.Unit, ch rune, adv core.Unit, fg, bg color.
 	}
 
 	if ch != ' ' && ch != 0 {
-		d := font.Drawer{
-			Dst:  &clippedRGBA{b: b},
-			Src:  image.NewUniform(fg),
-			Face: b.face,
-		}
-		gw, _ := b.face.GlyphAdvance(ch)
-		pad := (advPx - gw.Ceil()) / 2
+		ti := b.cachedTextImage(cellFont, string(ch), fg, color.RGBA{}, false, false)
+		pad := (advPx - ti.img.Rect.Dx()) / 2
 		if pad < 0 {
 			pad = 0
 		}
-		d.Dot = fixed.P(xPx+pad, yPx+b.ascent)
-		d.DrawString(string(ch))
+		b.compositeRGBA(xPx+pad, yPx, ti.img)
 	}
 	if underline {
 		b.fillPx(xPx, yPx+14*b.scale, xPx+advPx, yPx+15*b.scale, fg)
 	}
-}
-
-// clippedRGBA adapts the framebuffer for font.Drawer with clip.
-type clippedRGBA struct{ b *Backend }
-
-func (c *clippedRGBA) ColorModel() color.Model { return c.b.img.ColorModel() }
-func (c *clippedRGBA) Bounds() image.Rectangle { return c.b.img.Bounds() }
-func (c *clippedRGBA) At(x, y int) color.Color { return c.b.img.At(x, y) }
-func (c *clippedRGBA) Set(x, y int, col color.Color) {
-	if !c.b.pointVisible(x, y) {
-		return
-	}
-	c.b.img.Set(x, y, col)
 }
 
 // DrawCell is the CELL primitive: terminal-style regions (D23
@@ -453,6 +415,38 @@ func textImageKey(f *core.Font, s string, fg, bg color.RGBA, underline bool, sca
 		byte(f.Style), byte(f.Style >> 8), byte(f.Size), byte(scale), u,
 		fg.R, fg.G, fg.B, bg.R, bg.G, bg.B,
 	}) + "\x00" + s
+}
+
+// cachedTextImage returns the cached render of one string (see
+// textImageCache), rasterizing on a miss.
+func (b *Backend) cachedTextImage(f *core.Font, s string, fg, bg color.RGBA, underline, opaque bool) textImage {
+	key := textImageKey(f, s, fg, bg, underline, b.scale)
+	if !opaque {
+		key = "t\x00" + key
+	}
+	textImageCache.Lock()
+	defer textImageCache.Unlock()
+	if e := engine().Epoch(); e != textImageCache.epoch {
+		// Font set changed: shaped output may differ - flush.
+		textImageCache.epoch = e
+		textImageCache.cur = map[string]textImage{}
+		textImageCache.prev = map[string]textImage{}
+	}
+	ti, ok := textImageCache.cur[key]
+	if !ok {
+		if ti, ok = textImageCache.prev[key]; ok {
+			textImageCache.cur[key] = ti // keep the working set warm
+		}
+	}
+	if !ok {
+		ti = b.renderTextImage(f, s, fg, bg, underline, opaque)
+		if len(textImageCache.cur) >= textImageCacheMax {
+			textImageCache.prev = textImageCache.cur
+			textImageCache.cur = map[string]textImage{}
+		}
+		textImageCache.cur[key] = ti
+	}
+	return ti
 }
 
 // renderTextImage rasterizes one string into a fresh image: opaque
@@ -561,32 +555,7 @@ func (b *Backend) DrawText(x, y core.Unit, s string, st style.CellStyle, f *core
 	underline := st.Attrs&style.StyleUnderline != 0
 	opaque := st.Bg != style.ColorTransparent
 
-	key := textImageKey(f, s, fg, bg, underline, b.scale)
-	if !opaque {
-		key = "t\x00" + key
-	}
-	textImageCache.Lock()
-	if e := engine().Epoch(); e != textImageCache.epoch {
-		// Font set changed: shaped output may differ - flush.
-		textImageCache.epoch = e
-		textImageCache.cur = map[string]textImage{}
-		textImageCache.prev = map[string]textImage{}
-	}
-	ti, ok := textImageCache.cur[key]
-	if !ok {
-		if ti, ok = textImageCache.prev[key]; ok {
-			textImageCache.cur[key] = ti // keep the working set warm
-		}
-	}
-	if !ok {
-		ti = b.renderTextImage(f, s, fg, bg, underline, opaque)
-		if len(textImageCache.cur) >= textImageCacheMax {
-			textImageCache.prev = textImageCache.cur
-			textImageCache.cur = map[string]textImage{}
-		}
-		textImageCache.cur[key] = ti
-	}
-	textImageCache.Unlock()
+	ti := b.cachedTextImage(f, s, fg, bg, underline, opaque)
 
 	if ti.opaque {
 		b.blitRGBA(b.px(x), b.px(y), ti.img)

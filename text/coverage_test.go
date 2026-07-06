@@ -16,6 +16,7 @@ func TestFallbackCoversUIGlyphsAndHebrew(t *testing.T) {
 	m := fallbackMap{db: db, primary: primary}
 	for _, r := range []rune{
 		'▸', '▶', '▼', '·', // tree/list/menu markers
+		'✓', 'ℹ', '⚠', '✖', // menu check and dialog icons
 		'│', '░', '█', // scrollbar and divider runes
 		'א', 'ש', 'ת', // Hebrew
 	} {
