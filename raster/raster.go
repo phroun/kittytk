@@ -21,6 +21,7 @@ import (
 	"image/color"
 	"image/png"
 	"os"
+	"sync"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gomono"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
+	"github.com/phroun/tuitk/text"
 )
 
 // Backend renders tuitk drawing primitives into an RGBA image.
@@ -226,12 +228,52 @@ func (b *Backend) Clear(s style.CellStyle) {
 
 // --- Text ---
 
-// runeAdvance mirrors core.Font.MeasureText for one rune.
-func runeAdvance(f *core.Font, ch rune) core.Unit {
-	if f == nil {
-		f = core.DefaultFont()
+// engine is the shared text engine (D5/D6): one per process, shared
+// by every raster backend (SDL recreates backends on resize; the
+// engine and its font caches survive). The same engine answers
+// core.TextMeasurer, so measurement and painting cannot disagree.
+var (
+	engineOnce sync.Once
+	engineInst *text.Engine
+)
+
+func engine() *text.Engine {
+	engineOnce.Do(func() { engineInst = text.NewEngine() })
+	return engineInst
+}
+
+// Engine exposes the shared text engine (e.g. to register fonts).
+func (b *Backend) Engine() *text.Engine { return engine() }
+
+// MeasureText implements core.TextMeasurer: the graphical target's
+// measurement is the shaper's, matching the proportional render
+// exactly. (The text-based system keeps its own cell-arithmetic
+// answer; this never applies there.)
+func (b *Backend) MeasureText(f *core.Font, s string) core.Unit {
+	return engine().Measure(f, s)
+}
+
+// LineHeight implements core.TextMeasurer: Size * 4/3 units by the
+// engine's denomination (12pt = 16 units = one default cell row).
+func (b *Backend) LineHeight(f *core.Font) core.Unit {
+	return engine().LineHeight(f)
+}
+
+// cellAdvance is the terminal-region advance for one rune: exactly
+// one cell of layout units (two for wide characters). Used only by
+// the cell primitives (DrawCell, glyph tiling), never by DrawText.
+func cellAdvance(ch rune) core.Unit {
+	adv := core.Unit(8)
+	if isWide(ch) {
+		adv += 8
 	}
-	return f.MeasureText(string(ch))
+	return adv
+}
+
+func isWide(ch rune) bool {
+	return (ch >= 0x4E00 && ch <= 0x9FFF) || (ch >= 0x3400 && ch <= 0x4DBF) ||
+		(ch >= 0xAC00 && ch <= 0xD7AF) || (ch >= 0x3040 && ch <= 0x30FF) ||
+		(ch >= 0xFF00 && ch <= 0xFFEF)
 }
 
 // drawRune paints one glyph inside its advance box: background fill,
@@ -275,28 +317,43 @@ func (c *clippedRGBA) Set(x, y int, col color.Color) {
 	c.b.img.Set(x, y, col)
 }
 
+// DrawCell is the CELL primitive: terminal-style regions (D23
+// carve-out - PurfecTerm and friends) paint through it, so its
+// advance is exactly one cell of layout units regardless of any
+// font. This is not a second text path: UI text goes through
+// DrawText's shaped path below.
 func (b *Backend) DrawCell(x, y core.Unit, ch rune, s style.CellStyle) {
 	fg, bg := b.styleColors(s)
-	b.drawRune(x, y, ch, runeAdvance(nil, ch), fg, bg, s.Attrs&style.StyleUnderline != 0)
+	b.drawRune(x, y, ch, cellAdvance(ch), fg, bg, s.Attrs&style.StyleUnderline != 0)
 }
 
-func (b *Backend) DrawText(x, y core.Unit, text string, s style.CellStyle, f *core.Font) core.Unit {
-	fg, bg := b.styleColors(s)
-	underline := s.Attrs&style.StyleUnderline != 0
-	pen := x
-	for _, ch := range text {
-		adv := runeAdvance(f, ch)
-		b.drawRune(pen, y, ch, adv, fg, bg, underline)
-		pen += adv
+// DrawText is the graphical renderer's one text path: fully shaped,
+// proportional (D6). Choosing a monospaced family yields the
+// cell-gridded look; there is no separate grid-quantized path here.
+// Measurement (core.TextMeasurer, answered by this backend) uses the
+// same engine, so the returned advance always equals the painted one.
+func (b *Backend) DrawText(x, y core.Unit, s string, st style.CellStyle, f *core.Font) core.Unit {
+	if s == "" {
+		return 0
 	}
-	return pen - x
+	fg, bg := b.styleColors(st)
+	sp := engine().ShapeRun(f, s)
+	w := sp.Width()
+	h := engine().LineHeight(f)
+
+	b.fillPx(b.px(x), b.px(y), b.px(x+w), b.px(y+h), bg)
+	text.Render(&clippedRGBA{b: b}, sp, x, y, b.scale, fg)
+
+	if st.Attrs&style.StyleUnderline != 0 && len(sp.Lines) > 0 {
+		uy := b.px(y+sp.Lines[0].Baseline) + b.scale
+		b.fillPx(b.px(x), uy, b.px(x+w), uy+b.scale, fg)
+	}
+	return w
 }
 
-func (b *Backend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, vAlign core.Alignment, s style.CellStyle, f *core.Font) {
-	if f == nil {
-		f = core.DefaultFont()
-	}
-	w := f.MeasureText(text)
+func (b *Backend) DrawTextAligned(bounds core.UnitRect, s string, hAlign, vAlign core.Alignment, st style.CellStyle, f *core.Font) {
+	w := engine().Measure(f, s)
+	h := engine().LineHeight(f)
 	x := bounds.X
 	switch hAlign {
 	case core.AlignCenter:
@@ -307,11 +364,11 @@ func (b *Backend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, vAl
 	y := bounds.Y
 	switch vAlign {
 	case core.AlignMiddle:
-		y += (bounds.Height - f.LineHeight()) / 2
+		y += (bounds.Height - h) / 2
 	case core.AlignBottom:
-		y += bounds.Height - f.LineHeight()
+		y += bounds.Height - h
 	}
-	b.DrawText(x, y, text, s, f)
+	b.DrawText(x, y, s, st, f)
 }
 
 // --- Fills & lines: REAL pixels, not box runes (D23) ---

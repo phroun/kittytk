@@ -638,10 +638,23 @@ milestone for whole windows.
    go-text/render. Tested: proportional vs mono metrics, cross-engine
    determinism, wrapping invariants, bidi run structure (LTR/RTL/LTR
    and RTL-base), caret round-trips both directions, cluster
-   snapping, span splitting, render ink at 1x/2x. Remaining in this
-   phase: adoption (raster backend text path + G1 TextMeasurer
-   wiring, D1 widget rollout), height-for-width via shaping,
-   fontscan-style optional system-font discovery.
+   snapping, span splitting, render ink at 1x/2x. **Adopted
+   2026-07-06:** measurement comes from the render target
+   (`core.TextMeasurer`, installed by `Desktop.SetBackend`; the
+   text-based system keeps its exact cell arithmetic — one character
+   = one cell of layout units); the raster backend's `DrawText`/
+   `DrawTextAligned` is ONE path — fully shaped and proportional,
+   with monospace-by-choice giving the grid look — while `DrawCell`
+   stays the cell primitive for terminal regions (D23 carve-out).
+   Size denomination: a font's line height is `Size × 4/3` units
+   (12pt = 16 = one default cell row); the em size is derived per
+   face from that budget, so text always fits its chrome. `"ui-text"`
+   is the internal UI font name: text mode maps it to Monday, the
+   graphical engine maps it to "Go" (swappable later). Remaining in
+   this phase: D1 widget rollout onto shaped paragraphs (Label
+   bidi/wrap via ShapeParagraph, TextInput selection via cluster
+   maps), height-for-width via shaping, optional system-font
+   discovery.
 7. First graphical substrate — **SDL core landed 2026-07-05** (D23).
    The `raster` package is the pixel implementation of the rendering
    primitives (real TTF glyphs at Monday-matching advance, real

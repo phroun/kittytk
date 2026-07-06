@@ -30,6 +30,7 @@ import (
 	"sync"
 
 	"github.com/go-text/typesetting/di"
+	gtfont "github.com/go-text/typesetting/font"
 	"github.com/go-text/typesetting/shaping"
 	"golang.org/x/image/math/fixed"
 	xbidi "golang.org/x/text/unicode/bidi"
@@ -156,10 +157,13 @@ func (e *Engine) RegisterFont(familyName string, a Aspect, ttf []byte) error {
 	return e.db.register(familyName, a, ttf)
 }
 
-// sizeToFixed converts a point size to the engine's unit space
-// (units are CSS-like px: 96 per inch, so px = pt * 4/3; 12pt = 16
-// units, matching the toolkit's 16-unit line grid).
-func sizeToFixed(f *core.Font) fixed.Int26_6 {
+// lineBudget is the vertical space a font's line occupies, in fixed
+// units: Size * 4/3. This is the toolkit's size denomination - a
+// 12pt font has a 16-unit line height, exactly one default cell row,
+// so graphical text lines up with the TUI-era grid and text always
+// fits the chrome that hosts it. The em size is derived from this
+// budget per face (below), not the other way around.
+func lineBudget(f *core.Font) fixed.Int26_6 {
 	if f == nil {
 		f = core.DefaultFont()
 	}
@@ -168,6 +172,20 @@ func sizeToFixed(f *core.Font) fixed.Int26_6 {
 		size = 12
 	}
 	return fixed.Int26_6(size * 256 / 3)
+}
+
+// emFor computes the em size (the shaping Size) that makes face's
+// ascent + descent + line gap fill exactly the font's line budget.
+// Deterministic per face + size (D5).
+func emFor(face *gtfont.Face, f *core.Font) fixed.Int26_6 {
+	budget := lineBudget(f)
+	ext, ok := face.FontHExtents()
+	total := float64(ext.Ascender) - float64(ext.Descender) + float64(ext.LineGap)
+	if !ok || total <= 0 {
+		return budget
+	}
+	em := float64(budget) * float64(face.Upem()) / total
+	return fixed.Int26_6(math.Round(em))
 }
 
 // resolveDirection applies UAX #9 P2/P3: first strong character wins.
@@ -242,7 +260,7 @@ func (e *Engine) shapeOutputs(runes []rune, pieces []spanPiece, base di.Directio
 			RunEnd:    pc.end,
 			Direction: base,
 			Face:      face,
-			Size:      sizeToFixed(pc.font),
+			Size:      emFor(face, pc.font),
 		}
 		for _, si := range e.seg.Split(in, fallbackMap{db: e.db, primary: face}) {
 			outs = append(outs, e.shaper.Shape(si))
@@ -282,7 +300,7 @@ func (e *Engine) ShapeParagraph(p Paragraph, width core.Unit) *ShapedParagraph {
 		// Empty text still has one empty line with font metrics.
 		face := e.db.resolve(p.Font)
 		ext, _ := face.FontHExtents()
-		size := sizeToFixed(p.Font)
+		size := emFor(face, p.Font)
 		scale := float32(size) / float32(face.Upem()) / 64
 		asc := core.Unit(math.Ceil(float64(ext.Ascender * scale)))
 		desc := core.Unit(math.Ceil(float64(-ext.Descender * scale)))
@@ -353,18 +371,16 @@ func (e *Engine) Measure(f *core.Font, s string) core.Unit {
 	return e.ShapeRun(f, s).Width()
 }
 
-// LineHeight returns the line height (ascent + descent + line gap)
-// of font f.
+// LineHeight returns the line height of font f: exactly the font's
+// line budget (Size * 4/3 units) by construction - the em size is
+// derived to fill it, so 12pt = 16 units = one default cell row.
 func (e *Engine) LineHeight(f *core.Font) core.Unit {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	face := e.db.resolve(f)
-	ext, ok := face.FontHExtents()
-	if !ok {
-		return 16
-	}
-	size := sizeToFixed(f)
-	scale := float32(size) / float32(face.Upem()) / 64
-	total := float64((ext.Ascender - ext.Descender + ext.LineGap) * scale)
-	return core.Unit(math.Ceil(total))
+	return core.Unit(lineBudget(f).Ceil())
+}
+
+// MeasureText implements core.TextMeasurer (G1: measurement comes
+// from the render target). The same engine paints, so measurement
+// and rendering can never disagree.
+func (e *Engine) MeasureText(f *core.Font, s string) core.Unit {
+	return e.Measure(f, s)
 }

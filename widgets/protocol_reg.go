@@ -168,6 +168,7 @@ func init() {
 			return err
 		}
 		fnt, ok := map[string]*core.Font{
+			"ui-text": core.FontUIText12,
 			"Monday":  core.FontMonday12,
 			"Tuesday": core.FontTuesday12,
 		}[s]

@@ -240,6 +240,16 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	rootMetrics := backend.Metrics()
 	d.WidgetBase.SetCellMetrics(&rootMetrics)
 
+	// Measurement comes from the render target (G1): a pixel backend
+	// answers from its shaping engine so measurement matches the
+	// proportional render; the text-based system keeps the built-in
+	// cell arithmetic (nil restores it).
+	if tm, ok := backend.(core.TextMeasurer); ok {
+		core.SetTextMeasurer(tm)
+	} else {
+		core.SetTextMeasurer(nil)
+	}
+
 	d.windowManager = window.NewWindowManager()
 	if sp, ok := backend.(core.SmoothPositioner); ok && sp.SmoothPositioning() {
 		// Pixel surfaces place windows at unit granularity; cell-grid

@@ -81,6 +81,10 @@ func newFontDB() *fontDB {
 	must(db.register("Go Mono", Aspect{Italic: true}, gomonoitalic.TTF))
 	must(db.register("Go Mono", Aspect{Bold: true, Italic: true}, gomonobolditalic.TTF))
 	db.def = canonical("Go")
+	// "ui-text" is the internal UI font name: each renderer maps it
+	// to its own face. Here (the graphical engine) it is the default
+	// proportional family; the text-based system maps it to Monday.
+	db.aliases[canonical("ui-text")] = canonical("Go")
 	// The TUI-era font names keep meaning on the graphical side:
 	// Monday has always been the monospace cell font.
 	db.aliases[canonical("Monday")] = canonical("Go Mono")
