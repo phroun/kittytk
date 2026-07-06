@@ -842,6 +842,43 @@ func (b *Backend) SmoothPositioning() bool { return true }
 // this backend paints pixels.
 func (b *Backend) GraphicalMode() bool { return true }
 
+// DrawImage implements core.ImageDrawer: composite a device-pixel
+// image (alpha honored) at a unit position, respecting every active
+// clip.
+func (b *Backend) DrawImage(x, y core.Unit, img image.Image) {
+	if rgba, ok := img.(*image.RGBA); ok {
+		b.compositeRGBA(b.px(x), b.px(y), rgba)
+		return
+	}
+	// Generic path for other image types.
+	bnds := img.Bounds()
+	xPx, yPx := b.px(x), b.px(y)
+	for row := 0; row < bnds.Dy(); row++ {
+		for col := 0; col < bnds.Dx(); col++ {
+			dx, dy := xPx+col, yPx+row
+			if !b.pointVisible(dx, dy) {
+				continue
+			}
+			r, g, bl, a := img.At(bnds.Min.X+col, bnds.Min.Y+row).RGBA()
+			if a == 0 {
+				continue
+			}
+			if a == 0xffff {
+				b.img.SetRGBA(dx, dy, color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(bl >> 8), 255})
+				continue
+			}
+			d := b.img.RGBAAt(dx, dy)
+			inv := 0xffff - a
+			b.img.SetRGBA(dx, dy, color.RGBA{
+				R: uint8((r + uint32(d.R)*0x101*inv/0xffff) >> 8),
+				G: uint8((g + uint32(d.G)*0x101*inv/0xffff) >> 8),
+				B: uint8((bl + uint32(d.B)*0x101*inv/0xffff) >> 8),
+				A: 255,
+			})
+		}
+	}
+}
+
 // FillPattern implements core.PatternFiller: an 8x8 two-color bitmap
 // tiled across the rect, each pattern bit chunked to chunkPx x
 // chunkPx device pixels, anchored at the surface origin.

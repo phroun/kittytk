@@ -348,6 +348,34 @@ GTK, and Qt.** Consequences for this plan:
   windows) and to the D2 cell-grid surface widget.
 - Its GTK/Qt experience is an input to the substrate choice (O1).
 
+**Frontend audit + first graphical port (2026-07-06).** The published
+module's `gtk/` and `qt/` frontends were audited: each is a thin
+`Terminal` (PTY + process wiring) around a ~3,300-line `Widget`
+adapter owning the toolkit-agnostic `Buffer`+`Parser`. What a Widget
+consumes from its host toolkit: a paint callback with rect fills,
+clip, scaling, and **glyph-image blitting** (each frontend keeps its
+own glyph LRU keyed by `purfecterm.GlyphCacheKey` and only needs
+"rasterize this glyph once"); font family/size selection with
+metrics and per-rune fallback; blink/auto-scroll timers; key events
+with modifiers (it builds its own escape sequences); mouse events
+with pixel→cell mapping; clipboard; scrollbars + context menu
+composed around the drawing area. The render contract against the
+buffer is ~40 read methods, all in core. Our side now provides:
+`core.ImageDrawer` / `Painter.DrawImage` (device-pixel composite,
+alpha honored — the sprite/custom-glyph carrier); the text engine
+covers fonts, fallback, metrics, and cached glyph rendering.
+**Landed:** `widgets.PurfecTerm` gained its D1 graphical paint path —
+terminal-font cell grid (`SetTerminalFont`: the terminal's own
+family/size, independent of toolkit cells; sizing measured through
+the render target so text mode is untouched), run-batched
+backgrounds, glyphs through the engine's cached shaped-text path
+with real bold/italic faces, reverse resolved to concrete colors,
+combining marks appended, and buffer cursor shapes (block/underline/
+bar — bar via DrawCaret) gated on the active window chain. Not yet
+ported from gtk/qt: sprites, screen splits, custom glyphs, screen
+scale/crop, selection painting, blink animation, autoscroll,
+scrollbars, context menu.
+
 ## Groundwork required regardless of open decisions
 
 These follow from the code survey (2026-07-05) and are needed no matter

@@ -2,6 +2,8 @@
 package core
 
 import (
+	"image"
+
 	"github.com/phroun/tuitk/style"
 )
 
@@ -139,6 +141,15 @@ type SmoothPositioningProvider interface {
 type RoundedRectDrawer interface {
 	DrawRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle)
 	StrokeRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle)
+}
+
+// ImageDrawer is an optional RenderBackend capability: composite a
+// raster image onto the surface at a unit position. The image is in
+// DEVICE pixels (callers render at the surface's scale); alpha is
+// honored (Porter-Duff over). Groundwork for PurfecTerm's sprites
+// and custom glyphs, and any widget with image content.
+type ImageDrawer interface {
+	DrawImage(x, y Unit, img image.Image)
 }
 
 // GraphicalModer is the D1 mode query: a backend reports true when
@@ -437,6 +448,20 @@ func (p *Painter) DrawRoundedRect(r UnitRect, radius Unit, border style.BorderSt
 	screenRect := p.transform.ApplyRect(r)
 	p.applyClip()
 	rd.DrawRoundedRect(screenRect, radius, border, s)
+	return true
+}
+
+// DrawImage composites a device-pixel image at a unit position when
+// the backend supports it (see ImageDrawer). Returns false on cell
+// surfaces.
+func (p *Painter) DrawImage(x, y Unit, img image.Image) bool {
+	id, ok := p.backend.(ImageDrawer)
+	if !ok {
+		return false
+	}
+	sx, sy := p.toScreen(x, y)
+	p.applyClip()
+	id.DrawImage(sx, sy, img)
 	return true
 }
 
