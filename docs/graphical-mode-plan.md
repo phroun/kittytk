@@ -576,8 +576,20 @@ milestone for whole windows.
    proxy/replica model (stable IDs, event subscriptions instead of
    closures, cached reads, async writes), still entirely in-process.
    This is the protocol's dress rehearsal with no serialization yet.
-3. **G2 + G3** Platform/Surface split and event-loop inversion inside
-   the server; TUI reimplemented as a one-surface Platform.
+3. ✅ **G2 + G3** core — **done 2026-07-05** (D21). The `platform`
+   package defines Platform (Run/Post/PostAfter/Quit/CreateSurface/
+   clipboard) and Surface (size, metrics, damage-driven Invalidate,
+   handler callbacks: Frame/Event/Resized), all callbacks on the
+   OS-locked platform thread. The TUI runs as a one-surface Platform
+   (`platform.NewPolling` over any RenderBackend — no backend-package
+   coupling); `Desktop.Run()` wraps `RunOn(platform)`; the old
+   poll→dispatch→render loop is gone (dispatch is `dispatchEvent`
+   per event, paint is the Frame callback, timers self-tick via
+   PostAfter). Contract test + headless end-to-end desktop test.
+   Remaining under G2 for the substrate phase: screens/DPI
+   enumeration, multi-surface creation, native dialogs/menus hooks
+   (G5/G6), and per-damage-region frames when a substrate can use
+   them.
 4. **G4** dual-mode Window; WindowManager scoped to in-surface use.
 5. **D2 transport** — client library + wire format + display-service
    connection handling (unix socket rendezvous per D4, client
@@ -615,6 +627,7 @@ milestone for whole windows.
 | D18 | 2026-07-05 | **Case namespaces**: system names (properties, widget types, verbs, enums) begin lowercase; **user-defined templates and aliases MUST begin uppercase** (upgrades D14's convention to a rule). The namespaces are disjoint by construction — the system vocabulary can grow without ever colliding with client definitions (HTML custom-elements precedent). `new X…` dispatch: uppercase → template table, lowercase → builtin. Correlation keys unconstrained (different syntactic positions). Enforced by the interpreter; parser stays schema-free. |
 | D19 | 2026-07-05 | **Verb inventory**: `new`, `set`, `destroy`, `sub`, `unsub` (plus declaration forms `alias`, `template`). Later verbs reference their target as a **key path or bare numeric ObjectID** (`set root.status caption="…"` / `set 1042 …`) — the one place a bare number is legal (D10 stays intact for properties). Consequence: **correlation keys become session-persistent** (D11 refined: replies still report only their own request's keys; re-registering shadows); surfacing (`wcb=root.cb`) also registers the short name as a key. `destroy` detaches the object and releases every key referencing it. `set` accepts everything `new` accepts, including `children={}` (append). |
 | D20 | 2026-07-05 | **Event flow is default-closed except `command`**: state events (`change`, `toggle`, …) are delivered only where a `sub` exists (`sub <target>\|all [events…]`; no events listed = all of that target; `unsub` symmetric, `unsub all` clears). `command` events and registry dispatch always flow — a button with `action=` works with zero subscriptions. **Wire-initiated mutations never echo**: property application during `new` and `set` is suppressed at the connection — no state events, no action firing — killing construction echo and set-feedback loops by construction. |
+| D21 | 2026-07-05 | **G2/G3 execution model — single-threaded UI on the platform main thread.** The platform loop invokes tuitk dispatch/layout/paint via callbacks on its (OS-locked) main thread; `Platform.Post(func())` is the ONLY cross-thread door (+ `PostAfter` for timers). Rationale: matches every substrate's real contract (SDL/AppKit/GTK/Qt main-thread rules; Gio adapts), keeps event→layout→paint synchronous with no tree-locking discipline, and the process running Platform/Surface is the display service — app logic lives in other processes after transport, so the classic "app blocks the UI thread" risk is architecturally evicted; the socket reader simply Posts decoded statements. Channel-pumped dispatch was rejected: paint marshaling forces whole-tree snapshots or deep locking, a permanent per-substrate bridge tax. Rendering is **damage-driven** (`Surface.Invalidate` → scheduled frame callback); the TUI platform v1 maps any invalidation to a full repaint (visual parity). `Desktop.Run()` stays as a wrapper over the inverted loop. PurfecTerm relationship clarified: tuitk becomes another HOST toolkit PurfecTerm is ported onto (like Qt/GTK) — the platform layers stay independent. |
 | D8′ | 2026-07-05 | **D8 clarified:** CellMetrics is a coordinate *denomination* (units per row/column, like DPI), not a spacing knob. Row/column-denominated sizes are visually invariant under re-denomination; only explicit numeric unit values reinterpret. Implies denomination scaling at container boundaries (paint + input; `Transform.ScaleX/Y` was built for this) and container-denominated text metrics (font.go's 8/16 are DefaultCellMetrics in disguise). Demo's grid toggle is the acceptance test: must become a visual no-op for row-denominated content. |
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
 | D4 | 2026-07-05 | X-direction rendezvous: the display service listens on a well-known endpoint, apps dial in. Sessions are first-class protocol objects separable from connections (enables reattach/multi-viewer without inverting topology). Reverse attachment is a possible later mode. Naming: "display service" and "apps". |

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/platform"
 	"github.com/phroun/tuitk/style"
 	"github.com/phroun/tuitk/window"
 )
@@ -106,6 +107,11 @@ type Desktop struct {
 
 	// Font (default font for all windows/widgets)
 	font *core.Font
+
+	// Inverted-loop residence (G3/D21): the platform whose main
+	// thread runs us, and our one surface on it.
+	platform platform.Platform
+	surface  platform.Surface
 
 	// Running state
 	running atomic.Bool
@@ -794,167 +800,191 @@ func (d *Desktop) filterEvent(event core.Event) bool {
 	return false
 }
 
-// Run starts the desktop event loop.
-// Returns the exit code when the desktop quits.
-// This is an alternative to using app.Application.Run() - only use one.
+// Run starts the desktop under the inverted loop (G3/D21): it wraps
+// the polled backend in a one-surface Platform and hands control
+// over. Kept as the compatible entry point; RunOn is the general
+// form. Returns the exit code when the desktop quits.
 func (d *Desktop) Run() int {
-	d.mu.Lock()
+	d.mu.RLock()
 	backend := d.backend
-	onStartup := d.onStartup
-	d.mu.Unlock()
-
+	d.mu.RUnlock()
 	if backend == nil {
 		return 1
 	}
+	return d.RunOn(platform.NewPolling(backend))
+}
 
-	// Initialize backend
-	if err := backend.Init(); err != nil {
-		return 1
-	}
-	defer backend.Shutdown()
-
-	// Update screen bounds
+// RunOn runs the desktop as the content of one surface of the given
+// platform. All dispatch, layout, and paint happen on the platform's
+// main thread (D21); Platform.Post is the only cross-thread door.
+func (d *Desktop) RunOn(p platform.Platform) int {
 	d.mu.Lock()
+	d.platform = p
+	onStartup := d.onStartup
 	wm := d.windowManager
 	d.mu.Unlock()
 
-	size := backend.Size()
-	wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+	code := p.Run(func(pf platform.Platform) {
+		surface, err := pf.CreateSurface(platform.SurfaceOptions{})
+		if err != nil {
+			pf.Quit(1)
+			return
+		}
+		d.mu.Lock()
+		d.surface = surface
+		d.mu.Unlock()
+		surface.SetHandler(&desktopSurfaceHandler{d: d})
 
-	// Mark as running
-	d.running.Store(true)
-	defer d.running.Store(false)
+		size := surface.Size()
+		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
 
-	// Call startup handler
-	if onStartup != nil {
-		onStartup()
-	}
+		d.running.Store(true)
+		if onStartup != nil {
+			onStartup()
+		}
+		surface.Invalidate(core.UnitRect{})
+		d.scheduleTick(pf)
+	})
 
-	// Run event loop
-	d.eventLoop()
+	d.running.Store(false)
 
-	// Call shutdown handler
 	d.mu.RLock()
 	onShutdown := d.onShutdown
-	exitCode := d.exitCode
 	d.mu.RUnlock()
-
 	if onShutdown != nil {
 		onShutdown()
 	}
-
-	return exitCode
+	return code
 }
 
-// eventLoop is the main event processing loop.
-func (d *Desktop) eventLoop() {
-	for d.running.Load() {
+// scheduleTick keeps desktop timers firing and preserves the
+// historical full-frame cadence while widgets migrate to precise
+// invalidation. Self-reposting through the platform (D21: PostAfter
+// is the timer primitive).
+func (d *Desktop) scheduleTick(p platform.Platform) {
+	p.PostAfter(50*time.Millisecond, func() {
+		if !d.running.Load() {
+			return
+		}
 		d.ProcessTimers()
-		d.processEvents()
-		d.render()
+		d.mu.RLock()
+		s := d.surface
+		d.mu.RUnlock()
+		if s != nil {
+			s.Invalidate(core.UnitRect{})
+		}
+		d.scheduleTick(p)
+	})
+}
+
+// desktopSurfaceHandler adapts the Desktop to platform.SurfaceHandler.
+type desktopSurfaceHandler struct {
+	d *Desktop
+}
+
+// Frame paints the whole desktop (v1 full-frame contract).
+func (h *desktopSurfaceHandler) Frame(painter *core.Painter) {
+	d := h.d
+	d.mu.RLock()
+	wm := d.windowManager
+	theme := d.theme
+	s := d.surface
+	d.mu.RUnlock()
+
+	size := s.Size()
+	painter.Clear(core.UnitRect{Width: size.Width, Height: size.Height}, theme.Normal)
+	wm.Paint(painter)
+}
+
+// Resized reports the terminal/window size change.
+func (h *desktopSurfaceHandler) Resized(size core.UnitSize) {
+	d := h.d
+	d.mu.RLock()
+	wm := d.windowManager
+	s := d.surface
+	d.mu.RUnlock()
+	wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+	if s != nil {
+		s.Invalidate(core.UnitRect{})
 	}
 }
 
-// processEvents handles pending events.
-func (d *Desktop) processEvents() {
+// Event dispatches one input event, then requests a frame (parity
+// with the historical render-after-events loop).
+func (h *desktopSurfaceHandler) Event(ev core.Event) bool {
+	d := h.d
+	handled := d.dispatchEvent(ev)
 	d.mu.RLock()
-	backend := d.backend
+	s := d.surface
+	d.mu.RUnlock()
+	if s != nil {
+		s.Invalidate(core.UnitRect{})
+	}
+	return handled
+}
+
+// dispatchEvent routes one input event through the desktop: pass-key
+// mode, event filters, shortcuts, focus, window manager. Runs on the
+// platform thread (delivered by the surface handler).
+func (d *Desktop) dispatchEvent(event core.Event) bool {
+	d.mu.RLock()
 	wm := d.windowManager
 	fm := d.focusManager
 	d.mu.RUnlock()
 
-	// Process all pending events
-	for {
-		event := backend.PollEvent()
-		if event == nil {
-			// No more events - wait for next event or update request
-			select {
-			case <-d.quitChan:
-				return
-			case <-d.updateChan:
-				return
-			default:
-				// Wait briefly for events
-				event = d.waitEventWithTimeout(50 * time.Millisecond)
-				if event == nil {
-					return
+	// Check pass-next-key-to-widget mode FIRST, before any event filters.
+	// This ensures the key goes directly to the widget without any interception.
+	if keyEvent, isKey := event.(core.KeyPressEvent); isKey {
+		d.mu.RLock()
+		activeApp := d.activeApp
+		d.mu.RUnlock()
+		if activeApp != nil && activeApp.PassNextKeyToWidget() {
+			activeApp.ClearPassNextKeyToWidget()
+			// Skip ALL shortcut handling - send key directly to the active window's
+			// focused widget, bypassing WindowManager's menu accelerator interception
+			if wm != nil {
+				if activeWin := wm.ActiveWindow(); activeWin != nil {
+					activeWin.HandleKeyPress(keyEvent)
 				}
 			}
-		}
-
-		// Check pass-next-key-to-widget mode FIRST, before any event filters.
-		// This ensures the key goes directly to the widget without any interception.
-		if keyEvent, isKey := event.(core.KeyPressEvent); isKey {
-			d.mu.RLock()
-			activeApp := d.activeApp
-			d.mu.RUnlock()
-			if activeApp != nil && activeApp.PassNextKeyToWidget() {
-				activeApp.ClearPassNextKeyToWidget()
-				// Skip ALL shortcut handling - send key directly to the active window's
-				// focused widget, bypassing WindowManager's menu accelerator interception
-				if wm != nil {
-					if activeWin := wm.ActiveWindow(); activeWin != nil {
-						activeWin.HandleKeyPress(keyEvent)
-					}
-				}
-				continue
-			}
-		}
-
-		// Run through event filters
-		if d.filterEvent(event) {
-			continue
-		}
-
-		// Handle event based on type
-		switch e := event.(type) {
-		case core.ResizeEvent:
-			wm.SetScreenBounds(core.UnitRect{Width: e.Width, Height: e.Height})
-
-		case core.QuitEvent:
-			d.running.Store(false)
-			return
-
-		case core.KeyPressEvent:
-			// Pass-next-key mode is handled above, before event filters.
-			// Check global shortcuts first
-			if d.handleShortcut(e) {
-				continue
-			}
-			// Try focus manager
-			if fm != nil && fm.HandleKeyPress(e) {
-				continue
-			}
-			// Pass to window manager
-			wm.HandleKeyPress(e)
-
-		case core.MousePressEvent:
-			wm.HandleMousePress(e)
-
-		case core.MouseMoveEvent:
-			wm.HandleMouseMove(e)
-
-		case core.MouseReleaseEvent:
-			wm.HandleMouseRelease(e)
+			return true
 		}
 	}
-}
 
-// waitEventWithTimeout waits for an event with a timeout.
-func (d *Desktop) waitEventWithTimeout(timeout time.Duration) core.Event {
-	d.mu.RLock()
-	backend := d.backend
-	d.mu.RUnlock()
-
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		event := backend.PollEvent()
-		if event != nil {
-			return event
-		}
-		time.Sleep(10 * time.Millisecond)
+	// Run through event filters
+	if d.filterEvent(event) {
+		return true
 	}
-	return nil
+
+	// Handle event based on type
+	switch e := event.(type) {
+	case core.QuitEvent:
+		d.QuitWithCode(0)
+		return true
+
+	case core.KeyPressEvent:
+		// Pass-next-key mode is handled above, before event filters.
+		// Check global shortcuts first
+		if d.handleShortcut(e) {
+			return true
+		}
+		// Try focus manager
+		if fm != nil && fm.HandleKeyPress(e) {
+			return true
+		}
+		// Pass to window manager
+		return wm.HandleKeyPress(e)
+
+	case core.MousePressEvent:
+		return wm.HandleMousePress(e)
+
+	case core.MouseMoveEvent:
+		return wm.HandleMouseMove(e)
+
+	case core.MouseReleaseEvent:
+		return wm.HandleMouseRelease(e)
+	}
+	return false
 }
 
 // handleShortcut checks if a key event matches a global shortcut.
@@ -1041,28 +1071,6 @@ func (d *Desktop) checkMenuItemShortcuts(menu *Menu, event core.KeyPressEvent) b
 	return false
 }
 
-// render redraws the screen.
-func (d *Desktop) render() {
-	d.mu.RLock()
-	backend := d.backend
-	wm := d.windowManager
-	theme := d.theme
-	d.mu.RUnlock()
-
-	backend.BeginFrame()
-
-	// Clear with theme background
-	backend.Clear(theme.Normal)
-
-	// Create painter
-	painter := core.NewPainter(backend)
-
-	// Paint window manager (includes desktop and windows)
-	wm.Paint(painter)
-
-	backend.EndFrame()
-}
-
 // ProcessTimers checks and fires due timers.
 // This is called by the Application's event loop to process desktop timers.
 func (d *Desktop) ProcessTimers() {
@@ -1098,8 +1106,15 @@ func (d *Desktop) ProcessTimers() {
 	}
 }
 
-// RequestUpdate requests a screen update.
+// RequestUpdate requests a screen update (damage-driven: invalidates
+// the surface; the platform schedules the frame).
 func (d *Desktop) RequestUpdate() {
+	d.mu.RLock()
+	s := d.surface
+	d.mu.RUnlock()
+	if s != nil {
+		s.Invalidate(core.UnitRect{})
+	}
 	select {
 	case d.updateChan <- struct{}{}:
 	default:
@@ -1116,8 +1131,12 @@ func (d *Desktop) Quit() {
 func (d *Desktop) QuitWithCode(code int) {
 	d.mu.Lock()
 	d.exitCode = code
+	p := d.platform
 	d.mu.Unlock()
 	d.running.Store(false)
+	if p != nil {
+		p.Quit(code)
+	}
 	select {
 	case <-d.quitChan:
 		// Already closed
