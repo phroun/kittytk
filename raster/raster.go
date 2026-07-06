@@ -347,10 +347,10 @@ func (b *Backend) DrawRect(r core.UnitRect, bs style.BorderStyle, s style.CellSt
 		b.fillPx(x0, y0, x1, y1, fg)
 	}
 	rect := func(l, t, rr, bt int) {
-		stroke(l, t, rr, t+th)     // top
-		stroke(l, bt-th, rr, bt)   // bottom
-		stroke(l, t, l+th, bt)     // left
-		stroke(rr-th, t, rr, bt)   // right
+		stroke(l, t, rr, t+th)   // top
+		stroke(l, bt-th, rr, bt) // bottom
+		stroke(l, t, l+th, bt)   // left
+		stroke(rr-th, t, rr, bt) // right
 	}
 	rect(left, top, right, bottom)
 	if dbl {
