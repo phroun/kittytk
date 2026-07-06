@@ -46,6 +46,14 @@ type ComboBox struct {
 	// Scrollbar interaction state (click mode only)
 	scrollbarDragging   bool  // Whether scrollbar thumb is being dragged
 	scrollbarDragStartY int   // Row where drag started
+
+	// Smooth (pixel-surface) popup scrollbar drag: the thumb follows
+	// the pointer at unit granularity while scrollOffset snaps to
+	// whole items. sbGrabOff is where the press landed within the
+	// thumb; sbThumbPos is the unsnapped thumb origin.
+	sbSmoothDrag bool
+	sbGrabOff    float64
+	sbThumbPos   float64
 	scrollbarDragOffset int   // Scroll offset when drag started
 
 	// Timer for scroll repeating
@@ -500,6 +508,7 @@ func (c *ComboBox) HidePopup() {
 	c.clickMode = false
 	c.scrollHoverZone = 0
 	c.scrollbarDragging = false
+	c.sbSmoothDrag = false
 
 	// Unregister popup overlay - find popup controller by walking parent chain
 	if pc := c.findPopupController(); pc != nil {
@@ -999,22 +1008,79 @@ func (c *ComboBox) scrollbarGeometry(popupWidth core.Unit, visibleCount int) (sc
 	return
 }
 
+// popupScrollbarUnits returns the popup lane geometry in units for
+// pixel surfaces: track length, thumb length, and thumb origin -
+// the same proportions as scrollbarGeometry without row quantization.
+// Mid-drag the thumb origin is the smooth (pointer-tracked) position.
+func (c *ComboBox) popupScrollbarUnits(visibleCount int) (trackU, thumbU, posU float64) {
+	metrics := c.screenMetrics()
+	trackU = float64(core.Unit(visibleCount) * metrics.CellHeight)
+	totalItems := len(c.items)
+	if totalItems <= visibleCount || visibleCount <= 0 {
+		return trackU, trackU, 0
+	}
+	thumbU = trackU * float64(visibleCount) / float64(totalItems)
+	if thumbU < 8 {
+		thumbU = 8
+	}
+	if thumbU > trackU {
+		thumbU = trackU
+	}
+	scrollable := trackU - thumbU
+	maxScroll := totalItems - visibleCount
+	if c.scrollbarDragging && c.sbSmoothDrag {
+		posU = c.sbThumbPos
+	} else if maxScroll > 0 {
+		posU = float64(c.scrollOffset) * scrollable / float64(maxScroll)
+	}
+	if posU < 0 {
+		posU = 0
+	}
+	if posU > scrollable {
+		posU = scrollable
+	}
+	return trackU, thumbU, posU
+}
+
 // paintScrollbar draws a vertical scrollbar for the popup.
 func (c *ComboBox) paintScrollbar(p *core.Painter, popupWidth core.Unit, visibleCount int) {
 	scheme := c.GetScheme()
 	metrics := c.screenMetrics()
 
+	trackStyle := scheme.GetDropdownScrollbar()
+	thumbStyle := scheme.GetDropdownScrollbarThumb()
+
+	// Pixel surfaces: one hairline stripe at 50% opacity behind (so
+	// it stays subtle over item text) and one solid full-opacity
+	// rectangle for the thumb, both at unit granularity.
+	if p.Graphical() {
+		trackU, thumbU, posU := c.popupScrollbarUnits(visibleCount)
+		laneX := popupWidth - metrics.CellWidth
+		stripeX := laneX + metrics.CellWidth/2
+		p.FillRect(core.UnitRect{
+			X:      stripeX,
+			Y:      0,
+			Width:  1,
+			Height: core.Unit(trackU + 0.5),
+		}, '▒', trackStyle.WithBg(style.ColorTransparent))
+		p.FillRect(core.UnitRect{
+			X:      laneX + 1,
+			Y:      core.Unit(posU + 0.5),
+			Width:  metrics.CellWidth - 2,
+			Height: core.Unit(thumbU + 0.5),
+		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
+		return
+	}
+
 	scrollbarX, thumbStart, thumbHeight, trackHeight := c.scrollbarGeometry(popupWidth, visibleCount)
 
 	// Draw scrollbar track
-	trackStyle := scheme.GetDropdownScrollbar()
 	for i := 0; i < trackHeight; i++ {
 		y := core.Unit(i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '│', trackStyle)
 	}
 
 	// Draw scrollbar thumb
-	thumbStyle := scheme.GetDropdownScrollbarThumb()
 	for i := 0; i < thumbHeight; i++ {
 		y := core.Unit(thumbStart+i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)
@@ -1047,6 +1113,28 @@ func (c *ComboBox) handlePopupMousePress(event core.MousePressEvent, popupBounds
 				// Click on scrollbar area
 				relY := event.Y - popupBounds.Y
 				clickedRow := int(relY / metrics.CellHeight)
+
+				// Pixel surfaces anchor the drag to the grab point
+				// within the unit-granular thumb.
+				if core.FindSmoothPositioning(c.Self()) {
+					_, thumbU, posU := c.popupScrollbarUnits(popupHeight)
+					pos := float64(relY)
+					if pos >= posU && pos < posU+thumbU {
+						c.scrollbarDragging = true
+						c.sbSmoothDrag = true
+						c.sbGrabOff = pos - posU
+						c.sbThumbPos = posU
+						c.mouseDown = true
+						return true
+					}
+					// Track press falls through to page up/down
+					// below, keyed off the smooth thumb position.
+					if pos < posU {
+						clickedRow = thumbStart - 1
+					} else {
+						clickedRow = thumbStart + thumbHeight
+					}
+				}
 
 				// Check if click is on thumb - start drag
 				if clickedRow >= thumbStart && clickedRow < thumbStart+thumbHeight {
@@ -1125,6 +1213,32 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 	// Handle scrollbar thumb dragging first
 	if c.scrollbarDragging {
 		relY := event.Y - popupBounds.Y
+
+		// Smooth drag: the thumb follows the pointer in units, the
+		// scroll offset snaps to the nearest whole item.
+		if c.sbSmoothDrag {
+			visibleCount := popupHeight
+			trackU, thumbU, _ := c.popupScrollbarUnits(visibleCount)
+			scrollable := trackU - thumbU
+			pos := float64(relY) - c.sbGrabOff
+			if pos < 0 {
+				pos = 0
+			}
+			if pos > scrollable {
+				pos = scrollable
+			}
+			c.sbThumbPos = pos
+			maxScroll := len(c.items) - visibleCount
+			newOffset := 0
+			if scrollable > 0 && maxScroll > 0 {
+				newOffset = int(pos*float64(maxScroll)/scrollable + 0.5)
+			}
+			c.scrollOffset = newOffset
+			// The thumb moves even when the snapped offset does not.
+			c.Update()
+			return true
+		}
+
 		currentRow := int(relY / metrics.CellHeight)
 		rowDelta := currentRow - c.scrollbarDragStartY
 
@@ -1298,6 +1412,7 @@ func (c *ComboBox) handlePopupMouseRelease(event core.MouseReleaseEvent, popupBo
 	c.mouseDown = false
 	c.dragging = false
 	c.scrollbarDragging = false
+	c.sbSmoothDrag = false
 
 	// If we were dragging the scrollbar, just stop - don't process as item selection
 	if wasScrollbarDragging {

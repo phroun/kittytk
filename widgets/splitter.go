@@ -3,6 +3,7 @@ package widgets
 
 import (
 	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/style"
 )
 
 // Splitter is a container widget that divides space between two children
@@ -209,6 +210,21 @@ func (s *Splitter) SetLayoutManager(layout core.LayoutManager) {
 	// Splitter manages its own layout
 }
 
+// dividerThickness returns the divider band's cross-axis size: one
+// layout column everywhere except horizontal bands on cell surfaces,
+// which cannot be thinner than a character row. On pixel surfaces
+// this matches the scrollbar lane dimension.
+func (s *Splitter) dividerThickness() core.Unit {
+	metrics := s.EffectiveCellMetrics()
+	if s.orientation == core.Horizontal {
+		return metrics.CellWidth
+	}
+	if core.FindSmoothPositioning(s.Self()) {
+		return metrics.CellWidth
+	}
+	return metrics.CellHeight
+}
+
 // dividerBounds returns the bounds of the divider bar.
 func (s *Splitter) dividerBounds() core.UnitRect {
 	bounds := s.Bounds()
@@ -218,10 +234,10 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 	// (pixel) surfaces track the split ratio at unit granularity -
 	// the same adjustment window drag/resize received.
 	smooth := core.FindSmoothPositioning(s.Self())
+	dividerSize := s.dividerThickness()
 
 	if s.orientation == core.Horizontal {
-		// Horizontal splitter has a vertical divider bar (use cell width)
-		dividerSize := metrics.CellWidth
+		// Horizontal splitter has a vertical divider bar
 		totalWidth := bounds.Width - dividerSize
 		firstWidth := core.Unit(float64(totalWidth) * s.position)
 		if !smooth {
@@ -237,8 +253,7 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 		}
 	}
 
-	// Vertical splitter has a horizontal divider bar (use cell height)
-	dividerSize := metrics.CellHeight
+	// Vertical splitter has a horizontal divider bar
 	totalHeight := bounds.Height - dividerSize
 	firstHeight := core.Unit(float64(totalHeight) * s.position)
 	if !smooth {
@@ -321,7 +336,7 @@ func (sp *Splitter) Paint(p *core.Painter) {
 		sp.first.Paint(firstPainter)
 	}
 
-	// Draw divider with middot drag handle styling
+	// Divider style with middot drag handle styling
 	divider := sp.dividerBounds()
 	focused := sp.HasFocus()
 	dividerStyle := scheme.GetSplitter()
@@ -331,55 +346,57 @@ func (sp *Splitter) Paint(p *core.Painter) {
 		dividerStyle = scheme.GetFocusedSplitter()
 	}
 
-	if sp.orientation == core.Horizontal {
-		// Vertical divider bar with ':' handle
-		midY := bounds.Height / 2
-		// Round to cell boundary
-		midY = (midY / metrics.CellHeight) * metrics.CellHeight
-		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
-			ch := '│'
-			// Draw drag handle indicator in the middle
-			if y == midY {
-				ch = ':'
-			}
-			p.DrawCell(divider.X, y, ch, dividerStyle)
-		}
-	} else {
-		// Horizontal divider bar: ────·· Title ··────
-		width := int(bounds.Width / metrics.CellWidth)
-		titleRunes := []rune(sp.title)
-		titleLen := len(titleRunes)
-
-		if titleLen == 0 {
-			// No title: draw line with 4 middots centered
-			center := width / 2
-			for xi := 0; xi < width; xi++ {
-				x := metrics.CellToUnitsX(xi)
-				ch := '─'
-				// Draw ·· ·· (4 dots) at center
-				if xi == center-1 || xi == center || xi == center+1 || xi == center+2 {
-					ch = '·'
+	if !p.Graphical() {
+		if sp.orientation == core.Horizontal {
+			// Vertical divider bar with ':' handle
+			midY := bounds.Height / 2
+			// Round to cell boundary
+			midY = (midY / metrics.CellHeight) * metrics.CellHeight
+			for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
+				ch := '│'
+				// Draw drag handle indicator in the middle
+				if y == midY {
+					ch = ':'
 				}
-				p.DrawCell(x, divider.Y, ch, dividerStyle)
+				p.DrawCell(divider.X, y, ch, dividerStyle)
 			}
 		} else {
-			// With title: ────·· Title ··────
-			middleContent := "·· " + sp.title + " ··"
-			middleRunes := []rune(middleContent)
-			middleLen := len(middleRunes)
-			startMiddle := (width - middleLen) / 2
+			// Horizontal divider bar: ────·· Title ··────
+			width := int(bounds.Width / metrics.CellWidth)
+			titleRunes := []rune(sp.title)
+			titleLen := len(titleRunes)
 
-			for xi := 0; xi < width; xi++ {
-				x := metrics.CellToUnitsX(xi)
-				var ch rune
-				if xi < startMiddle {
-					ch = '─'
-				} else if xi < startMiddle+middleLen {
-					ch = middleRunes[xi-startMiddle]
-				} else {
-					ch = '─'
+			if titleLen == 0 {
+				// No title: draw line with 4 middots centered
+				center := width / 2
+				for xi := 0; xi < width; xi++ {
+					x := metrics.CellToUnitsX(xi)
+					ch := '─'
+					// Draw ·· ·· (4 dots) at center
+					if xi == center-1 || xi == center || xi == center+1 || xi == center+2 {
+						ch = '·'
+					}
+					p.DrawCell(x, divider.Y, ch, dividerStyle)
 				}
-				p.DrawCell(x, divider.Y, ch, dividerStyle)
+			} else {
+				// With title: ────·· Title ··────
+				middleContent := "·· " + sp.title + " ··"
+				middleRunes := []rune(middleContent)
+				middleLen := len(middleRunes)
+				startMiddle := (width - middleLen) / 2
+
+				for xi := 0; xi < width; xi++ {
+					x := metrics.CellToUnitsX(xi)
+					var ch rune
+					if xi < startMiddle {
+						ch = '─'
+					} else if xi < startMiddle+middleLen {
+						ch = middleRunes[xi-startMiddle]
+					} else {
+						ch = '─'
+					}
+					p.DrawCell(x, divider.Y, ch, dividerStyle)
+				}
 			}
 		}
 	}
@@ -391,6 +408,60 @@ func (sp *Splitter) Paint(p *core.Painter) {
 			WithClip(core.UnitRect{Width: secondBounds.Width, Height: secondBounds.Height})
 		sp.second.Paint(secondPainter)
 	}
+
+	// Pixel surfaces draw the divider last: its caption box may
+	// overhang a band thinner than the caption face.
+	if p.Graphical() {
+		sp.paintDividerGraphical(p, divider, dividerStyle)
+	}
+}
+
+// paintDividerGraphical draws the pixel-surface divider: the band
+// fills its whole rectangle, a hairline runs its full length, and the
+// grab widgetry (title caption or dots) sits exactly centered in a
+// cleared mid-section - no cell quantization anywhere.
+func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect, dividerStyle style.CellStyle) {
+	line := dividerStyle.WithBg(dividerStyle.Fg)
+	p.FillRect(divider, ' ', dividerStyle)
+
+	if sp.orientation == core.Horizontal {
+		// Vertical band: hairline down the middle, broken by the ':'
+		// grab dots at the exact center.
+		lineX := divider.X + (divider.Width-1)/2
+		cx := divider.X + divider.Width/2
+		cy := divider.Y + divider.Height/2
+		gapHalf := core.Unit(6)
+		p.FillRect(core.UnitRect{X: lineX, Y: divider.Y, Width: 1, Height: cy - gapHalf - divider.Y}, ' ', line)
+		p.FillRect(core.UnitRect{X: lineX, Y: cy + gapHalf, Width: 1, Height: divider.Y + divider.Height - cy - gapHalf}, ' ', line)
+		dot := core.Unit(2)
+		p.FillRect(core.UnitRect{X: cx - dot/2, Y: cy - dot - 1, Width: dot, Height: dot}, ' ', line)
+		p.FillRect(core.UnitRect{X: cx - dot/2, Y: cy + 1, Width: dot, Height: dot}, ' ', line)
+		return
+	}
+
+	// Horizontal band: hairline across, broken by the centered caption
+	// (title or the classic four grab dots) in the 75% caption face.
+	lineY := divider.Y + (divider.Height-1)/2
+	label := "····"
+	if sp.title != "" {
+		label = "·· " + sp.title + " ··"
+	}
+	font := captionFont75(sp.EffectiveFont())
+	w := font.MeasureText(label)
+	h := font.LineHeight()
+	pad := core.Unit(4)
+	boxW := w + pad*2
+	if boxW > divider.Width {
+		boxW = divider.Width
+	}
+	boxX := divider.X + (divider.Width-boxW)/2
+	p.FillRect(core.UnitRect{X: divider.X, Y: lineY, Width: boxX - divider.X, Height: 1}, ' ', line)
+	p.FillRect(core.UnitRect{X: boxX + boxW, Y: lineY, Width: divider.X + divider.Width - boxX - boxW, Height: 1}, ' ', line)
+	// Caption box on the band background, text exactly centered on
+	// the band's centerline.
+	boxY := divider.Y + (divider.Height-h)/2
+	p.FillRect(core.UnitRect{X: boxX, Y: boxY, Width: boxW, Height: h}, ' ', dividerStyle)
+	p.DrawText(boxX+pad, boxY, label, dividerStyle, font)
 }
 
 // HandleMousePress handles mouse button presses.
@@ -477,10 +548,9 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if s.dragging {
 		bounds := s.Bounds()
-		metrics := s.EffectiveCellMetrics()
 
 		if s.orientation == core.Horizontal {
-			dividerSize := metrics.CellWidth
+			dividerSize := s.dividerThickness()
 			totalWidth := bounds.Width - dividerSize
 			if totalWidth > 0 {
 				newPos := float64(event.X-s.dragOffset) / float64(totalWidth)
@@ -493,7 +563,7 @@ func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 				s.Update()
 			}
 		} else {
-			dividerSize := metrics.CellHeight
+			dividerSize := s.dividerThickness()
 			totalHeight := bounds.Height - dividerSize
 			if totalHeight > 0 {
 				newPos := float64(event.Y-s.dragOffset) / float64(totalHeight)
@@ -599,7 +669,7 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 		// Large step (10 cells horizontal, 4 cells vertical) for modified keys
 		var smallStep, largeStep float64
 		if s.orientation == core.Horizontal {
-			totalWidth := float64(bounds.Width - metrics.CellWidth) // Subtract divider
+			totalWidth := float64(bounds.Width - s.dividerThickness()) // Subtract divider
 			if totalWidth > 0 {
 				smallStep = float64(metrics.CellWidth) / totalWidth
 				largeStep = float64(metrics.CellWidth*10) / totalWidth
@@ -608,7 +678,7 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 				largeStep = 0.1
 			}
 		} else {
-			totalHeight := float64(bounds.Height - metrics.CellHeight)
+			totalHeight := float64(bounds.Height - s.dividerThickness())
 			if totalHeight > 0 {
 				smallStep = float64(metrics.CellHeight) / totalHeight
 				largeStep = float64(metrics.CellHeight*4) / totalHeight

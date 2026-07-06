@@ -6,6 +6,17 @@ import (
 	"github.com/phroun/tuitk/style"
 )
 
+// captionFont75 returns the face used for divider/separator captions
+// on pixel surfaces: 75% of the given font, so the widgetry stays
+// visually subordinate to application text and the bands can be thin.
+func captionFont75(f *core.Font) *core.Font {
+	size := f.Size * 3 / 4
+	if size < 6 {
+		size = 6
+	}
+	return &core.Font{Name: f.Name, Size: size, Style: f.Style}
+}
+
 // LineSeparator is a visual divider widget that draws a horizontal or vertical line.
 // For horizontal separators, it draws: ────·· Title ··────
 // For vertical separators, it draws a vertical line with optional title.
@@ -128,12 +139,72 @@ func (s *LineSeparator) Paint(p *core.Painter) {
 		// descenders of the text row above.
 		lineStyle = lineStyle.WithBg(style.ColorTransparent)
 		titleStyle = titleStyle.WithBg(style.ColorTransparent)
+		if s.orientation == core.Horizontal {
+			s.paintHorizontalGraphical(p, bounds, lineStyle, titleStyle)
+		} else {
+			s.paintVerticalGraphical(p, bounds, lineStyle, titleStyle)
+		}
+		return
 	}
 
 	if s.orientation == core.Horizontal {
 		s.paintHorizontal(p, bounds, lineStyle, titleStyle, metrics)
 	} else {
 		s.paintVertical(p, bounds, lineStyle, titleStyle, metrics)
+	}
+}
+
+// paintHorizontalGraphical draws the pixel-surface rule: a hairline
+// spanning the full width, vertically centered, broken around an
+// exactly-centered title in the 75% caption face.
+func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle) {
+	line := lineStyle.WithBg(lineStyle.Fg)
+	midY := bounds.Height / 2
+	if s.title == "" {
+		p.FillRect(core.UnitRect{Y: midY, Width: bounds.Width, Height: 1}, ' ', line)
+		return
+	}
+	font := captionFont75(s.EffectiveFont())
+	w := font.MeasureText(s.title)
+	h := font.LineHeight()
+	pad := core.Unit(6)
+	boxW := w + pad*2
+	if boxW > bounds.Width {
+		boxW = bounds.Width
+	}
+	boxX := (bounds.Width - boxW) / 2
+	// The line in two segments: the mid-section belongs to the title.
+	p.FillRect(core.UnitRect{X: 0, Y: midY, Width: boxX, Height: 1}, ' ', line)
+	p.FillRect(core.UnitRect{X: boxX + boxW, Y: midY, Width: bounds.Width - boxX - boxW, Height: 1}, ' ', line)
+	p.DrawText(boxX+pad, midY-h/2, s.title, titleStyle, font)
+}
+
+// paintVerticalGraphical draws the vertical rule: a hairline spanning
+// the full height, horizontally centered, broken around the stacked
+// title runes in the 75% caption face.
+func (s *LineSeparator) paintVerticalGraphical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle) {
+	line := lineStyle.WithBg(lineStyle.Fg)
+	midX := bounds.Width / 2
+	if s.title == "" {
+		p.FillRect(core.UnitRect{X: midX, Width: 1, Height: bounds.Height}, ' ', line)
+		return
+	}
+	font := captionFont75(s.EffectiveFont())
+	h := font.LineHeight()
+	runes := []rune(s.title)
+	pad := core.Unit(4)
+	boxH := core.Unit(len(runes))*h + pad*2
+	if boxH > bounds.Height {
+		boxH = bounds.Height
+	}
+	boxY := (bounds.Height - boxH) / 2
+	p.FillRect(core.UnitRect{X: midX, Y: 0, Width: 1, Height: boxY}, ' ', line)
+	p.FillRect(core.UnitRect{X: midX, Y: boxY + boxH, Width: 1, Height: bounds.Height - boxY - boxH}, ' ', line)
+	y := boxY + pad
+	for _, r := range runes {
+		rw := font.MeasureText(string(r))
+		p.DrawText(midX-rw/2, y, string(r), titleStyle, font)
+		y += h
 	}
 }
 
