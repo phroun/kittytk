@@ -266,6 +266,13 @@ func (m *MDIPane) AddWindow(win *window.Window) {
 	// Set window's parent to this pane
 	win.SetParent(m)
 
+	// MDI children are not stamped by the WindowManager, so carry
+	// the surface's smooth-positioning capability onto them here -
+	// widgets inside (splitters, future draggables) discover it via
+	// FindSmoothPositioning, which stops at the first window-like
+	// provider it meets.
+	win.SetSmoothPositioning(core.FindSmoothPositioning(m.Self()))
+
 	// Trigger layout now that parent is set (font inheritance works)
 	win.Layout()
 

@@ -210,13 +210,20 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 	bounds := s.Bounds()
 	metrics := s.EffectiveCellMetrics()
 
+	// Cell surfaces snap the divider to whole rows/columns; smooth
+	// (pixel) surfaces track the split ratio at unit granularity -
+	// the same adjustment window drag/resize received.
+	smooth := core.FindSmoothPositioning(s.Self())
+
 	if s.orientation == core.Horizontal {
 		// Horizontal splitter has a vertical divider bar (use cell width)
 		dividerSize := metrics.CellWidth
 		totalWidth := bounds.Width - dividerSize
 		firstWidth := core.Unit(float64(totalWidth) * s.position)
-		// Round to cell boundary
-		firstWidth = core.Unit(metrics.UnitsToCellX(firstWidth)) * metrics.CellWidth
+		if !smooth {
+			// Round to cell boundary
+			firstWidth = core.Unit(metrics.UnitsToCellX(firstWidth)) * metrics.CellWidth
+		}
 
 		return core.UnitRect{
 			X:      firstWidth,
@@ -230,8 +237,10 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 	dividerSize := metrics.CellHeight
 	totalHeight := bounds.Height - dividerSize
 	firstHeight := core.Unit(float64(totalHeight) * s.position)
-	// Round to cell boundary
-	firstHeight = core.Unit(metrics.UnitsToCellY(firstHeight)) * metrics.CellHeight
+	if !smooth {
+		// Round to cell boundary
+		firstHeight = core.Unit(metrics.UnitsToCellY(firstHeight)) * metrics.CellHeight
+	}
 
 	return core.UnitRect{
 		X:      0,
