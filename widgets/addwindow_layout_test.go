@@ -1,0 +1,38 @@
+package widgets
+
+import (
+	"testing"
+
+	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/raster"
+	"github.com/phroun/tuitk/window"
+)
+
+// A window laid out before joining the manager (the protocol builder
+// sets bounds first) used cell-frame insets; AddWindow re-lays it out
+// under its real ancestry so graphical edge-to-edge content applies
+// without a resize wiggle.
+func TestAddWindowRelayoutsUnderGraphicalFrames(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	win := window.NewWindow("built early")
+	panel := NewPanel()
+	win.SetContent(panel)
+	// Bounds set before the window has any ancestry: laid out with
+	// cell-frame insets (border column on each side).
+	win.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 400, Height: 200})
+	if got := panel.Bounds().Width; got != 400-16 {
+		t.Fatalf("harness: pre-add content width = %d, want 384 (cell frame)", got)
+	}
+
+	d.WindowManager().AddWindow(win)
+	if got := panel.Bounds().Width; got != 400 {
+		t.Errorf("post-add content width = %d, want 400 (graphical edge-to-edge)", got)
+	}
+}

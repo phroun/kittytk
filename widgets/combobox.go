@@ -1296,8 +1296,26 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 	// Check if mouse is within the popup X bounds (for scroll handling)
 	inXBounds := relX >= 0 && relX < popupBounds.Width
 
+	// While the pointer is still over the combobox itself (a popup
+	// may open above it), never auto-scroll: the user hasn't entered
+	// the list yet.
+	overSelf := false
+	if pc := c.findPopupController(); pc != nil {
+		topLeft := pc.MapToScreen(c, core.UnitPoint{})
+		selfH := c.Bounds().Height
+		if selfH <= 0 {
+			selfH = c.screenMetrics().CellHeight
+		}
+		selfRect := core.UnitRect{X: topLeft.X, Y: topLeft.Y, Width: c.Bounds().Width, Height: selfH}
+		overSelf = selfRect.Contains(core.UnitPoint{X: event.X, Y: event.Y})
+	}
+	if overSelf {
+		c.scrollHoverZone = 0
+		c.stopScrollTimer()
+	}
+
 	// Handle mouse above popup - scroll up
-	if relY < 0 && inXBounds && c.canScrollUp() {
+	if relY < 0 && inXBounds && !overSelf && c.canScrollUp() {
 		if c.scrollHoverZone != -1 {
 			c.scrollHoverZone = -1
 			c.scrollUp(1)
@@ -1312,7 +1330,7 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 	}
 
 	// Handle mouse below popup - scroll down
-	if relY >= popupBounds.Height && inXBounds && c.canScrollDown() {
+	if relY >= popupBounds.Height && inXBounds && !overSelf && c.canScrollDown() {
 		if c.scrollHoverZone != 1 {
 			c.scrollHoverZone = 1
 			c.scrollDown(1)

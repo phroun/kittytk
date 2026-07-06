@@ -324,6 +324,11 @@ func (m *WindowManager) AddWindow(win *Window) {
 	if desktop != nil {
 		if container, ok := desktop.(core.Container); ok {
 			win.SetParent(container)
+			// Ancestry decides capability lookups (graphical frames,
+			// smooth positioning, metrics): a window laid out before
+			// joining the manager used cell-frame insets, so re-lay it
+			// out under its real context.
+			win.Layout()
 		}
 	}
 
