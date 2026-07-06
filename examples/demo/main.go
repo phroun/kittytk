@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/phroun/tuitk/app"
-	"github.com/phroun/tuitk/backend"
 	"github.com/phroun/tuitk/client"
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/display"
@@ -155,15 +154,11 @@ func createProtocolWindow(application *app.Application, desktop *widgets.Desktop
 	return w
 }
 
-func main() {
-	// Create the TUI backend
-	opts := backend.DefaultTUIOptions()
-	tuiBackend := backend.NewTUIBackend(opts)
-
-	// Create desktop - owns the backend and runs the event loop
-	desktop := widgets.NewDesktop()
-	desktop.SetBackend(tuiBackend)
-
+// buildDemo assembles the entire demo application onto a desktop
+// whose backend is already set. The same construction runs on the
+// text backend and on the SDL pixel backend (selection by binary,
+// D23/O3): see main_tui.go and main_sdl.go.
+func buildDemo(desktop *widgets.Desktop) {
 	// Create the application - owns windows, provides menu/status content
 	application := app.New(nil) // nil backend - Desktop owns it now
 	application.SetName("TUI Demo")
@@ -257,8 +252,6 @@ sb=new statusbar children={
 		}
 	})
 
-	// Run the desktop event loop
-	desktop.Run()
 }
 
 // demoWindowScript builds the Demo Window, terminal included. The
