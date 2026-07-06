@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/veandco/go-sdl2 v0.4.40 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 )
