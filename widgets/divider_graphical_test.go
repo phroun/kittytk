@@ -118,3 +118,39 @@ func TestComboBoxPopupSmoothScrollbarDrag(t *testing.T) {
 		t.Error("release did not end the popup scrollbar drag")
 	}
 }
+
+// The divider band's thickness is expressed in the Y denomination:
+// re-denominating a window's interior (32-unit rows) scales it with
+// the rows instead of leaving an X-denominated constant behind.
+func TestDividerThicknessFollowsRowDenomination(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	sp := NewSplitter(core.Vertical)
+	sp.AddChild(NewPanel())
+	sp.AddChild(NewPanel())
+	win := window.NewWindow("host")
+	win.SetContent(sp)
+	d.WindowManager().AddWindow(win)
+	win.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 400, Height: 200})
+	win.Layout()
+
+	if got := sp.dividerBounds().Height; got != 8 {
+		t.Errorf("standard metrics: divider %d units, want 8", got)
+	}
+	win.SetCellMetrics(&core.CellMetrics{CellWidth: 8, CellHeight: 32})
+	win.Layout()
+	if got := sp.dividerBounds().Height; got != 16 {
+		t.Errorf("32-unit rows: divider %d units, want 16 (half a row)", got)
+	}
+	win.SetCellMetrics(nil)
+	win.Layout()
+	if got := sp.dividerBounds().Height; got != 8 {
+		t.Errorf("after round-trip: divider %d units, want 8", got)
+	}
+}

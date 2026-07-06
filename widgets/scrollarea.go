@@ -160,7 +160,7 @@ func (s *ScrollBar) SizeHint() core.UnitSize {
 	if s.orientation == core.Horizontal {
 		height := metrics.CellHeight
 		if core.FindSmoothPositioning(s.Self()) {
-			height = metrics.CellWidth
+			height = metrics.CellHeight / 2
 		}
 		return core.UnitSize{
 			Width:  metrics.CellWidth * 20,
@@ -866,13 +866,14 @@ func (s *ScrollArea) SetWidgetResizable(resizable bool) {
 }
 
 // hScrollBarHeight returns the horizontal scrollbar's lane height:
-// one column width on pixel surfaces (matching the vertical bar's
-// width), a full cell row on cell surfaces where a bar cannot be
-// thinner than a character.
+// half a row on pixel surfaces (the same thickness as the vertical
+// bar's column at standard metrics, expressed in the Y denomination
+// so re-denominated interiors keep the proportion), a full cell row
+// on cell surfaces where a bar cannot be thinner than a character.
 func (s *ScrollArea) hScrollBarHeight() core.Unit {
 	metrics := s.EffectiveCellMetrics()
 	if core.FindSmoothPositioning(s.Self()) {
-		return metrics.CellWidth
+		return metrics.CellHeight / 2
 	}
 	return metrics.CellHeight
 }

@@ -211,16 +211,18 @@ func (s *Splitter) SetLayoutManager(layout core.LayoutManager) {
 }
 
 // dividerThickness returns the divider band's cross-axis size: one
-// layout column everywhere except horizontal bands on cell surfaces,
-// which cannot be thinner than a character row. On pixel surfaces
-// this matches the scrollbar lane dimension.
+// layout column for vertical bands; half a row for horizontal bands
+// on pixel surfaces (the scrollbar lane dimension - and expressed in
+// the Y denomination so re-denominated interiors keep the visual
+// proportion); a full row on cell surfaces, which cannot be thinner
+// than a character.
 func (s *Splitter) dividerThickness() core.Unit {
 	metrics := s.EffectiveCellMetrics()
 	if s.orientation == core.Horizontal {
 		return metrics.CellWidth
 	}
 	if core.FindSmoothPositioning(s.Self()) {
-		return metrics.CellWidth
+		return metrics.CellHeight / 2
 	}
 	return metrics.CellHeight
 }
