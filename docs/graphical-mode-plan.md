@@ -371,10 +371,22 @@ the render target so text mode is untouched), run-batched
 backgrounds, glyphs through the engine's cached shaped-text path
 with real bold/italic faces, reverse resolved to concrete colors,
 combining marks appended, and buffer cursor shapes (block/underline/
-bar — bar via DrawCaret) gated on the active window chain. Not yet
-ported from gtk/qt: sprites, screen splits, custom glyphs, screen
-scale/crop, selection painting, blink animation, autoscroll,
-scrollbars, context menu.
+bar — bar via DrawCaret) gated on the active window chain. **Full port landed
+2026-07-06:** sprites (fine-positioned via device-pixel image
+composition, crop rects, flips, scaling, Z-order behind/front),
+screen splits (scanline renderer with fine scroll and per-split
+clipping), custom glyphs (GlyphCacheKey-cached images, seam
+extension, palette resolution), screen scale and crop, selection
+painting with drag + edge autoscroll (50ms timer, speed-capped),
+blink animation (bobbing wave + cursor blink at gtk cadences),
+cursor states including the unfocused hollow-box form, overlay
+scrollbars (vertical scrollback + horizontal content, gtk adjustment
+math), the right-click context menu (Copy/Paste/Select All/mouse
+reporting toggle), xterm mouse reporting with the Shift bypass
+(mouse events now carry keyboard modifiers), and DECDWL/DECDHL
+double-width/height lines. Groundwork added: ImageDrawer.DrawImagePx
++ Painter.DrawImageOffset (device-pixel anchoring), Painter.
+DeviceScale, raster local clipboard.
 
 ## Groundwork required regardless of open decisions
 

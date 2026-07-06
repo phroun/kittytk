@@ -144,12 +144,22 @@ type RoundedRectDrawer interface {
 }
 
 // ImageDrawer is an optional RenderBackend capability: composite a
-// raster image onto the surface at a unit position. The image is in
-// DEVICE pixels (callers render at the surface's scale); alpha is
-// honored (Porter-Duff over). Groundwork for PurfecTerm's sprites
-// and custom glyphs, and any widget with image content.
+// raster image onto the surface. The image is in DEVICE pixels
+// (callers render at the surface's scale); alpha is honored
+// (Porter-Duff over). DrawImage anchors at a unit position;
+// DrawImagePx anchors at a device pixel for sub-unit placement
+// (sprite fine positioning, animation offsets). The carrier for
+// PurfecTerm's sprites and custom glyphs, and any widget with image
+// content.
 type ImageDrawer interface {
 	DrawImage(x, y Unit, img image.Image)
+	DrawImagePx(xPx, yPx int, img image.Image)
+}
+
+// DeviceScaler is an optional RenderBackend capability reporting how
+// many device pixels one unit covers (the raster backend's scale).
+type DeviceScaler interface {
+	Scale() int
 }
 
 // GraphicalModer is the D1 mode query: a backend reports true when
@@ -263,33 +273,37 @@ func (KeyReleaseEvent) isEvent() {}
 
 // MousePressEvent represents a mouse button press.
 type MousePressEvent struct {
-	X, Y   Unit        // Position in units
-	Button MouseButton // Which button
+	X, Y      Unit         // Position in units
+	Button    MouseButton  // Which button
+	Modifiers KeyModifiers // Active keyboard modifiers
 }
 
 func (MousePressEvent) isEvent() {}
 
 // MouseReleaseEvent represents a mouse button release.
 type MouseReleaseEvent struct {
-	X, Y   Unit
-	Button MouseButton
+	X, Y      Unit
+	Button    MouseButton
+	Modifiers KeyModifiers
 }
 
 func (MouseReleaseEvent) isEvent() {}
 
 // MouseMoveEvent represents mouse movement.
 type MouseMoveEvent struct {
-	X, Y    Unit
-	Buttons MouseButton // Buttons currently held
+	X, Y      Unit
+	Buttons   MouseButton  // Buttons currently held
+	Modifiers KeyModifiers // Active keyboard modifiers
 }
 
 func (MouseMoveEvent) isEvent() {}
 
 // MouseWheelEvent represents mouse wheel scrolling.
 type MouseWheelEvent struct {
-	X, Y   Unit
-	DeltaX int // Horizontal scroll
-	DeltaY int // Vertical scroll (positive = up)
+	X, Y      Unit
+	DeltaX    int          // Horizontal scroll
+	DeltaY    int          // Vertical scroll (positive = up)
+	Modifiers KeyModifiers // Active keyboard modifiers
 }
 
 func (MouseWheelEvent) isEvent() {}
@@ -463,6 +477,33 @@ func (p *Painter) DrawImage(x, y Unit, img image.Image) bool {
 	p.applyClip()
 	id.DrawImage(sx, sy, img)
 	return true
+}
+
+// DrawImageOffset composites a device-pixel image anchored at a unit
+// position plus a device-pixel nudge - for content that needs
+// sub-unit placement (sprite fine positioning, wave animation).
+// Returns false on cell surfaces.
+func (p *Painter) DrawImageOffset(x, y Unit, offXPx, offYPx int, img image.Image) bool {
+	id, ok := p.backend.(ImageDrawer)
+	if !ok {
+		return false
+	}
+	sx, sy := p.toScreen(x, y)
+	scale := p.DeviceScale()
+	p.applyClip()
+	id.DrawImagePx(int(sx)*scale+offXPx, int(sy)*scale+offYPx, img)
+	return true
+}
+
+// DeviceScale reports how many device pixels one unit covers on this
+// target (1 on cell surfaces and unscaled pixel surfaces).
+func (p *Painter) DeviceScale() int {
+	if ds, ok := p.backend.(DeviceScaler); ok {
+		if s := ds.Scale(); s > 0 {
+			return s
+		}
+	}
+	return 1
 }
 
 // Graphical reports whether the target paints pixels rather than

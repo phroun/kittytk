@@ -55,6 +55,10 @@ type Backend struct {
 
 	defaultFg color.RGBA
 	defaultBg color.RGBA
+
+	// clipboard holds the local clipboard for headless use; SDL and
+	// other substrates may sync it with the system clipboard.
+	clipboard string
 }
 
 // New creates a framebuffer backend of the given pixel size at scale 1
@@ -846,13 +850,18 @@ func (b *Backend) GraphicalMode() bool { return true }
 // image (alpha honored) at a unit position, respecting every active
 // clip.
 func (b *Backend) DrawImage(x, y core.Unit, img image.Image) {
+	b.DrawImagePx(b.px(x), b.px(y), img)
+}
+
+// DrawImagePx implements core.ImageDrawer's device-pixel anchor for
+// sub-unit placement (sprite fine positioning, animation offsets).
+func (b *Backend) DrawImagePx(xPx, yPx int, img image.Image) {
 	if rgba, ok := img.(*image.RGBA); ok {
-		b.compositeRGBA(b.px(x), b.px(y), rgba)
+		b.compositeRGBA(xPx, yPx, rgba)
 		return
 	}
 	// Generic path for other image types.
 	bnds := img.Bounds()
-	xPx, yPx := b.px(x), b.px(y)
 	for row := 0; row < bnds.Dy(); row++ {
 		for col := 0; col < bnds.Dx(); col++ {
 			dx, dy := xPx+col, yPx+row
@@ -943,6 +952,6 @@ func (b *Backend) SupportsColor() bool                    { return true }
 func (b *Backend) SupportsMouse() bool                    { return true }
 func (b *Backend) SupportsUnicode() bool                  { return true }
 func (b *Backend) ColorDepth() int                        { return 1 << 24 }
-func (b *Backend) GetClipboard() string                   { return "" }
-func (b *Backend) SetClipboard(string)                    {}
+func (b *Backend) GetClipboard() string                   { return b.clipboard }
+func (b *Backend) SetClipboard(s string)                  { b.clipboard = s }
 func (b *Backend) Beep()                                  {}

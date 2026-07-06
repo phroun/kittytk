@@ -34,6 +34,10 @@ type PurfecTerm struct {
 
 	// Debug callback for cell inspection
 	onCellClicked func(info CellDebugInfo)
+
+	// Graphical-path state (rendering caches, blink animation,
+	// selection drag, scrollbars, context menu).
+	gfx purfecTermGfx
 }
 
 // CellDebugInfo contains debug information about a clicked cell.
@@ -112,6 +116,7 @@ func (t *PurfecTerm) Terminal() *cli.Terminal {
 
 // Close stops the terminal and cleans up resources.
 func (t *PurfecTerm) Close() {
+	t.stopGfxTimers()
 	if t.terminal != nil {
 		t.terminal.Close()
 	}
@@ -249,146 +254,6 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 	}
 }
 
-// paintGraphical is the pixel paint path (D1): the same rendered
-// cells, drawn with the terminal's OWN font metrics - backgrounds
-// batched into per-row runs, glyphs through the engine's cached
-// shaped-text path with real bold/italic faces, and the buffer's
-// cursor shape honored (block, underline, or bar). Sprites, screen
-// splits, and custom glyphs (the gtk/qt frontends' extras) are not
-// yet ported; they arrive with core.ImageDrawer consumers.
-func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
-	cw, chh := t.cellDims()
-	if cw <= 0 || chh <= 0 {
-		return
-	}
-	baseFont := t.termFont
-	if baseFont == nil {
-		baseFont = core.FontMonday12
-	}
-	cells := t.terminal.GetCells()
-
-	// Pass 1 - backgrounds: consecutive cells sharing a background
-	// merge into one fill.
-	for row, rowCells := range cells {
-		y := core.Unit(row) * chh
-		if y >= bounds.Height {
-			break
-		}
-		runStart := 0
-		for col := 1; col <= len(rowCells); col++ {
-			if col < len(rowCells) && t.cellBg(rowCells[col]) == t.cellBg(rowCells[runStart]) {
-				continue
-			}
-			x := core.Unit(runStart) * cw
-			if x < bounds.Width {
-				p.FillRect(core.UnitRect{
-					X: x, Y: y,
-					Width:  core.Unit(col-runStart) * cw,
-					Height: chh,
-				}, ' ', style.DefaultStyle().WithBg(t.cellBg(rowCells[runStart])))
-			}
-			runStart = col
-		}
-	}
-
-	// Pass 2 - glyphs: transparent backgrounds (pass 1 painted them),
-	// composited from the engine's cached rendered-text images.
-	for row, rowCells := range cells {
-		y := core.Unit(row) * chh
-		if y >= bounds.Height {
-			break
-		}
-		for col, cell := range rowCells {
-			x := core.Unit(col) * cw
-			if x >= bounds.Width {
-				break
-			}
-			if (cell.Char == 0 || cell.Char == ' ') && cell.Combining == "" {
-				continue
-			}
-			fg, _ := t.cellColors(cell)
-			st := style.DefaultStyle().WithFg(fg).WithBg(style.ColorTransparent)
-			if cell.Underline {
-				st = st.Underline()
-			}
-			f := baseFont
-			if cell.Bold || cell.Italic {
-				var fs core.FontStyle
-				if cell.Bold {
-					fs |= core.FontStyleBold
-				}
-				if cell.Italic {
-					fs |= core.FontStyleItalic
-				}
-				f = f.WithStyle(fs)
-			}
-			text := string(cell.Char) + cell.Combining
-			p.DrawText(x, y, text, st, f)
-		}
-	}
-
-	t.paintGraphicalCursor(p, bounds, cells, cw, chh, baseFont)
-}
-
-// cellColors converts a rendered cell's colors. GetCells has ALREADY
-// resolved them against the terminal scheme and swapped for reverse
-// video - the Reverse flag on RenderedCell is informational, so no
-// attribute and no second swap here (a transparent background must
-// never be swapped into the foreground anyway).
-func (t *PurfecTerm) cellColors(cell cli.RenderedCell) (fg, bg style.Color) {
-	return t.convertColor(cell.Fg), t.convertColor(cell.Bg)
-}
-
-func (t *PurfecTerm) cellBg(cell cli.RenderedCell) style.Color {
-	_, bg := t.cellColors(cell)
-	return bg
-}
-
-// paintGraphicalCursor draws the buffer's cursor in its requested
-// shape: block (default), underline, or bar - only when this widget
-// has focus within the active window chain (never two cursors).
-func (t *PurfecTerm) paintGraphicalCursor(p *core.Painter, bounds core.UnitRect, cells [][]cli.RenderedCell, cw, chh core.Unit, baseFont *core.Font) {
-	if !t.HasFocus() || !core.FocusChainActive(t.Self()) {
-		return
-	}
-	buf := t.terminal.Buffer()
-	if !buf.IsCursorVisible() {
-		return
-	}
-	cursorCol, cursorRow := buf.GetCursor()
-	if cursorRow >= len(cells) || cursorCol >= t.cols {
-		return
-	}
-	x := core.Unit(cursorCol) * cw
-	y := core.Unit(cursorRow) * chh
-	if x >= bounds.Width || y >= bounds.Height {
-		return
-	}
-
-	cursorStyle := style.DefaultStyle().
-		WithFg(style.ColorBlack).
-		WithBg(style.ColorWhite)
-	shape, _ := buf.GetCursorStyle() // 0=block, 1=underline, 2=bar
-	switch shape {
-	case 2: // bar at the cell's left edge
-		p.DrawCaret(x, y, chh, cursorStyle)
-	case 1: // underline along the cell's bottom
-		p.FillRect(core.UnitRect{X: x, Y: y + chh - 2, Width: cw, Height: 2},
-			' ', style.DefaultStyle().WithBg(style.ColorWhite))
-	default: // block: repaint the cell with swapped colors
-		p.FillRect(core.UnitRect{X: x, Y: y, Width: cw, Height: chh}, ' ',
-			style.DefaultStyle().WithBg(style.ColorWhite))
-		var ch rune = ' '
-		if cursorRow < len(cells) && cursorCol < len(cells[cursorRow]) {
-			ch = cells[cursorRow][cursorCol].Char
-		}
-		if ch != 0 && ch != ' ' {
-			st := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorTransparent)
-			p.DrawText(x, y, string(ch), st, baseFont)
-		}
-	}
-}
-
 // cellToStyle converts a purfecterm RenderedCell to a tuitk CellStyle.
 func (t *PurfecTerm) cellToStyle(cell cli.RenderedCell) style.CellStyle {
 	s := style.DefaultStyle()
@@ -480,6 +345,11 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 	if t.terminal == nil {
 		return true
 	}
+	if t.gfxInputActive() {
+		// Graphical path: local selection, mouse reporting with the
+		// Shift bypass, scrollbars, and the right-click context menu.
+		return t.gfxMousePress(event)
+	}
 
 	// Track held button for drag events
 	t.heldButton = event.Button
@@ -564,6 +434,9 @@ func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if t.terminal == nil {
 		return false
 	}
+	if t.gfxInputActive() {
+		return t.gfxMouseRelease(event)
+	}
 
 	// Clear held button
 	if t.heldButton == event.Button {
@@ -600,6 +473,9 @@ func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if t.terminal == nil {
 		return false
 	}
+	if t.gfxInputActive() {
+		return t.gfxMouseMove(event)
+	}
 
 	// Convert unit coordinates to 1-based cell coordinates
 	cw, chh := t.cellDims()
@@ -626,6 +502,9 @@ func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
 func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	if t.terminal == nil {
 		return false
+	}
+	if t.gfxInputActive() {
+		return t.gfxMouseWheel(event)
 	}
 
 	// Convert unit coordinates to 1-based cell coordinates

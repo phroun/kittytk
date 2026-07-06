@@ -225,10 +225,11 @@ func (p *Platform) pumpEvents() bool {
 		case *sdl2.MouseButtonEvent:
 			btn := mapButton(e.Button)
 			x, y := p.toUnits(e.X, e.Y)
+			mods := currentKeyModifiers()
 			if e.Type == sdl2.MOUSEBUTTONDOWN {
-				s.handler.Event(core.MousePressEvent{X: x, Y: y, Button: btn})
+				s.handler.Event(core.MousePressEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 			} else {
-				s.handler.Event(core.MouseReleaseEvent{X: x, Y: y, Button: btn})
+				s.handler.Event(core.MouseReleaseEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 			}
 		case *sdl2.MouseMotionEvent:
 			var held core.MouseButton
@@ -236,13 +237,14 @@ func (p *Platform) pumpEvents() bool {
 				held = core.LeftButton
 			}
 			x, y := p.toUnits(e.X, e.Y)
-			s.handler.Event(core.MouseMoveEvent{X: x, Y: y, Buttons: held})
+			s.handler.Event(core.MouseMoveEvent{X: x, Y: y, Buttons: held, Modifiers: currentKeyModifiers()})
 		case *sdl2.MouseWheelEvent:
 			mx, my, _ := sdl2.GetMouseState()
 			x, y := p.toUnits(mx, my)
 			s.handler.Event(core.MouseWheelEvent{
 				X: x, Y: y,
 				DeltaX: int(e.X), DeltaY: int(e.Y),
+				Modifiers: currentKeyModifiers(),
 			})
 		}
 	}
@@ -251,6 +253,27 @@ func (p *Platform) pumpEvents() bool {
 // toUnits converts window-pixel mouse coordinates to abstract units.
 func (p *Platform) toUnits(x, y int32) (core.Unit, core.Unit) {
 	return core.Unit(int(x) / p.scale), core.Unit(int(y) / p.scale)
+}
+
+// currentKeyModifiers translates SDL's live modifier state for mouse
+// events (Shift+click bypasses terminal mouse reporting, Shift+wheel
+// scrolls horizontally).
+func currentKeyModifiers() core.KeyModifiers {
+	var mods core.KeyModifiers
+	state := sdl2.GetModState()
+	if state&sdl2.KMOD_SHIFT != 0 {
+		mods |= core.ShiftModifier
+	}
+	if state&sdl2.KMOD_CTRL != 0 {
+		mods |= core.ControlModifier
+	}
+	if state&sdl2.KMOD_ALT != 0 {
+		mods |= core.AltModifier
+	}
+	if state&sdl2.KMOD_GUI != 0 {
+		mods |= core.MetaModifier
+	}
+	return mods
 }
 
 func mapButton(b uint8) core.MouseButton {
