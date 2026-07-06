@@ -435,8 +435,11 @@ func (t *TextInput) Paint(p *core.Painter) {
 		}
 	}
 
-	// Draw cursor - cursor position is still cell-based for consistency
-	if focused && !t.readOnly {
+	// Draw cursor - cursor position is still cell-based for consistency.
+	// Only in the active window chain: a widget keeps local focus while
+	// its window is in the background, but showing the caret there
+	// would put two carets on screen.
+	if focused && !t.readOnly && core.FocusChainActive(t.Self()) {
 		// Calculate cursor X position based on font metrics of text before cursor
 		cursorTextPos := t.cursorPos - t.scrollOffset
 		if cursorTextPos < 0 {

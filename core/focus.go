@@ -764,3 +764,38 @@ func (gfm *GlobalFocusManager) HandleKeyPress(event KeyPressEvent) bool {
 	}
 	return false
 }
+
+// ActivityReporter is implemented by window-like containers that can
+// be the active one among their siblings (top-level windows, MDI
+// children). A widget's focus indicators should only show when every
+// such ancestor is active.
+type ActivityReporter interface {
+	IsActive() bool
+}
+
+// FocusChainActive reports whether every window-like ancestor of w
+// (including w itself) is the active one in its container. A widget
+// keeps its local focus while its window sits in the background, but
+// focus indicators - the text caret in particular - must not show
+// there, or two carets can be on screen at once. Widgets outside any
+// window pass vacuously.
+func FocusChainActive(w Widget) bool {
+	if w == nil {
+		return true
+	}
+	if ar, ok := w.(ActivityReporter); ok && !ar.IsActive() {
+		return false
+	}
+	current := w.Parent()
+	for current != nil {
+		if ar, ok := current.(ActivityReporter); ok && !ar.IsActive() {
+			return false
+		}
+		widget, ok := current.(Widget)
+		if !ok {
+			break
+		}
+		current = widget.Parent()
+	}
+	return true
+}
