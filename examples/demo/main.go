@@ -8,6 +8,7 @@ import (
 	"github.com/phroun/tuitk/backend"
 	"github.com/phroun/tuitk/client"
 	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/display"
 	"github.com/phroun/tuitk/layout"
 	"github.com/phroun/tuitk/protocol"
 	"github.com/phroun/tuitk/style"
@@ -245,6 +246,15 @@ sb=new statusbar children={
 		// Create the main demo window - owned by the application
 		mainWindow := createMainWindow(desktop, application)
 		application.AddWindow(mainWindow)
+
+		// D22: this desktop IS a display service. Remote apps dial
+		// the socket and appear as full applications:
+		//   go run ./examples/remoteapp
+		if _, err := display.Serve(desktop, client.DefaultSocketPath()); err != nil {
+			if sb := desktop.StatusBar(); sb != nil {
+				sb.SetText("display service unavailable: " + err.Error())
+			}
+		}
 	})
 
 	// Run the desktop event loop

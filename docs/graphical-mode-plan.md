@@ -601,11 +601,25 @@ milestone for whole windows.
    against a fake surface (bounds/flags/layout, paint, click
    routing, resize tracking, invalidation). Desktop-side granting
    policy activates when a multi-surface platform exists.
-5. **D2 transport** — client library + wire format + display-service
-   connection handling (unix socket rendezvous per D4, client
-   lifecycle, cell-grid surface widget). The TUI desktop-as-display-
-   service is the first target: separate app binaries connecting to a
-   running TUI desktop.
+5. ✅ **D2 transport** core — **done 2026-07-05** (D22). The wire IS
+   the language: `protocol.Scanner` frames statements off the socket
+   by brace/string awareness; batches end with `end`; replies and
+   errors are statements (`reply wcb=19`, `error text="…"`);
+   `hello`/`welcome` handshake carries app name and a server-assigned
+   session id (reattach-ready). `display.Serve` makes any desktop a
+   display service: per connection — session, BindContext, a FULL
+   Application (windows/menubar/statusbar adopted from batches),
+   socket reader Posting batches onto the UI thread (D21), writer
+   goroutine so a slow client can never stall the display, teardown
+   on disconnect. `client.Dial` gives apps the same Conn surface as
+   in-process (events on a dedicated goroutine; Target() nil);
+   command dispatch unified as command events on both transports.
+   The demo desktop serves `$XDG_RUNTIME_DIR/tuitk/display-0.sock`;
+   `examples/remoteapp` is a rendering-free app binary that dials
+   in. End-to-end socket test (build, set, events both ways, command
+   dispatch, disconnect teardown), race-detector clean. Remaining:
+   D4 reattach, O6 bulk frames, TCP/SSH endpoints, per-connection
+   auth beyond socket perms.
 6. **Shared text engine** (D5/D6) — Pango-class shaped-paragraph module
    (shaping, bidi, fallback, segmentation, rasterization); also serves
    as G1's server-side TextMeasurer for graphical mode.
@@ -637,6 +651,7 @@ milestone for whole windows.
 | D18 | 2026-07-05 | **Case namespaces**: system names (properties, widget types, verbs, enums) begin lowercase; **user-defined templates and aliases MUST begin uppercase** (upgrades D14's convention to a rule). The namespaces are disjoint by construction — the system vocabulary can grow without ever colliding with client definitions (HTML custom-elements precedent). `new X…` dispatch: uppercase → template table, lowercase → builtin. Correlation keys unconstrained (different syntactic positions). Enforced by the interpreter; parser stays schema-free. |
 | D19 | 2026-07-05 | **Verb inventory**: `new`, `set`, `destroy`, `sub`, `unsub` (plus declaration forms `alias`, `template`). Later verbs reference their target as a **key path or bare numeric ObjectID** (`set root.status caption="…"` / `set 1042 …`) — the one place a bare number is legal (D10 stays intact for properties). Consequence: **correlation keys become session-persistent** (D11 refined: replies still report only their own request's keys; re-registering shadows); surfacing (`wcb=root.cb`) also registers the short name as a key. `destroy` detaches the object and releases every key referencing it. `set` accepts everything `new` accepts, including `children={}` (append). |
 | D20 | 2026-07-05 | **Event flow is default-closed except `command`**: state events (`change`, `toggle`, …) are delivered only where a `sub` exists (`sub <target>\|all [events…]`; no events listed = all of that target; `unsub` symmetric, `unsub all` clears). `command` events and registry dispatch always flow — a button with `action=` works with zero subscriptions. **Wire-initiated mutations never echo**: property application during `new` and `set` is suppressed at the connection — no state events, no action firing — killing construction echo and set-feedback loops by construction. |
+| D22 | 2026-07-05 | **Transport shape.** (1) **The wire IS the language**: the socket carries protocol text in both directions — commands/`sub`/`set` inbound, `event`/`reply`/`error` statements outbound; framing is the parser's own brace-awareness (no length prefixes; the O6 bulk frame arrives later as a statement announcing raw bytes). A display service is drivable by hand with socat. (2) **Batches end with an explicit `end` statement** — one reply per batch (D11); blank lines stay insignificant so scripts move to the wire verbatim. (3) **Disconnect = teardown now, reattach-ready**: v1 destroys the connection's UI, but the `hello` handshake carries app identity and a server-assigned session ID from day one, so D4 detach/reattach lands later without a protocol break. (4) **Every connection is a full Application**: its own ApplicationProvider — menu bar content, status bar, dock presence, command identity — peers of in-process apps via the desktop's existing multi-app machinery. Rendezvous: `TUITK_DISPLAY` env, default `$XDG_RUNTIME_DIR/tuitk/display-0.sock`. |
 | D21 | 2026-07-05 | **G2/G3 execution model — single-threaded UI on the platform main thread.** The platform loop invokes tuitk dispatch/layout/paint via callbacks on its (OS-locked) main thread; `Platform.Post(func())` is the ONLY cross-thread door (+ `PostAfter` for timers). Rationale: matches every substrate's real contract (SDL/AppKit/GTK/Qt main-thread rules; Gio adapts), keeps event→layout→paint synchronous with no tree-locking discipline, and the process running Platform/Surface is the display service — app logic lives in other processes after transport, so the classic "app blocks the UI thread" risk is architecturally evicted; the socket reader simply Posts decoded statements. Channel-pumped dispatch was rejected: paint marshaling forces whole-tree snapshots or deep locking, a permanent per-substrate bridge tax. Rendering is **damage-driven** (`Surface.Invalidate` → scheduled frame callback); the TUI platform v1 maps any invalidation to a full repaint (visual parity). `Desktop.Run()` stays as a wrapper over the inverted loop. PurfecTerm relationship clarified: tuitk becomes another HOST toolkit PurfecTerm is ported onto (like Qt/GTK) — the platform layers stay independent. |
 | D8′ | 2026-07-05 | **D8 clarified:** CellMetrics is a coordinate *denomination* (units per row/column, like DPI), not a spacing knob. Row/column-denominated sizes are visually invariant under re-denomination; only explicit numeric unit values reinterpret. Implies denomination scaling at container boundaries (paint + input; `Transform.ScaleX/Y` was built for this) and container-denominated text metrics (font.go's 8/16 are DefaultCellMetrics in disguise). Demo's grid toggle is the acceptance test: must become a visual no-op for row-denominated content. |
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |

@@ -1106,6 +1106,22 @@ func (d *Desktop) ProcessTimers() {
 	}
 }
 
+// Post schedules fn on the platform (UI) thread - the D21
+// cross-thread door, exposed for embedders like the display-service
+// transport whose socket readers must hand work to the UI. Before
+// the desktop runs (no platform yet) fn runs inline; use only from
+// wiring code in that window.
+func (d *Desktop) Post(fn func()) {
+	d.mu.RLock()
+	p := d.platform
+	d.mu.RUnlock()
+	if p != nil {
+		p.Post(fn)
+		return
+	}
+	fn()
+}
+
 // RequestUpdate requests a screen update (damage-driven: invalidates
 // the surface; the platform schedules the frame).
 func (d *Desktop) RequestUpdate() {

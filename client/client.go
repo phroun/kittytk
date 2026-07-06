@@ -19,11 +19,17 @@ import (
 	"github.com/phroun/tuitk/protocol"
 )
 
+// transport is how statements reach the display service: in-process
+// session execution, or a socket carrying protocol text (D22).
+type transport interface {
+	exec(src string) (*protocol.Reply, error)
+	close() error
+}
+
 // Conn is one connection to one display service.
 type Conn struct {
-	mu      sync.Mutex
-	session *protocol.Session
-	factory protocol.Factory
+	mu        sync.Mutex
+	transport transport
 
 	// Replica: per-object state folded from writes (class A) and
 	// subscribed events (class B).
@@ -58,13 +64,8 @@ type objState struct {
 	result   string
 }
 
-// NewInProcess creates a connection whose display side is the
-// registered widget vocabulary in this process. dispatch receives
-// action= command IDs (pass the application registry's Dispatch;
-// nil is allowed for connections that use no commands).
-func NewInProcess(dispatch func(commandID string)) *Conn {
-	c := &Conn{
-		session:      protocol.NewSession(),
+func newConn(dispatch func(commandID string)) *Conn {
+	return &Conn{
 		types:        make(map[uint64]string),
 		state:        make(map[uint64]*objState),
 		targets:      make(map[uint64]any),
@@ -73,17 +74,44 @@ func NewInProcess(dispatch func(commandID string)) *Conn {
 		subs:         make(map[subKey]bool),
 		dispatch:     dispatch,
 	}
+}
+
+// NewInProcess creates a connection whose display side is the
+// registered widget vocabulary in this process. dispatch receives
+// action= command IDs (pass the application registry's Dispatch;
+// nil is allowed for connections that use no commands).
+func NewInProcess(dispatch func(commandID string)) *Conn {
+	c := newConn(dispatch)
+	// Commands arrive uniformly as command events (deliver invokes
+	// the dispatch sink), so the BindContext dispatch stays nil -
+	// FireAction still emits the event, and there is exactly one
+	// dispatch path in-process and remote alike.
 	ctx := &protocol.BindContext{
-		Dispatch: func(id string) {
-			if c.dispatch != nil {
-				c.dispatch(id)
-			}
-		},
 		Emit: c.deliver,
 	}
-	c.factory = &recordingFactory{conn: c, inner: protocol.NewRegistryFactory(ctx)}
+	factory := &recordingFactory{conn: c, inner: protocol.NewRegistryFactory(ctx)}
+	c.transport = &inProcessTransport{
+		session: protocol.NewSession(),
+		factory: factory,
+	}
 	return c
 }
+
+// inProcessTransport executes against the local session/factory.
+type inProcessTransport struct {
+	session *protocol.Session
+	factory protocol.Factory
+}
+
+func (t *inProcessTransport) exec(src string) (*protocol.Reply, error) {
+	script, err := protocol.Parse(src)
+	if err != nil {
+		return nil, err
+	}
+	return t.session.Execute(script, t.factory)
+}
+
+func (t *inProcessTransport) close() error { return nil }
 
 // recordingFactory interposes on construction to record each object's
 // type and (in-process) target into the replica tables.
@@ -126,14 +154,15 @@ func (f *recordingFactory) Suppressed(fn func()) {
 	fn()
 }
 
-// Exec parses and executes protocol text on this connection.
+// Exec executes protocol text on this connection (one batch; the
+// remote transport appends the D22 end terminator).
 func (c *Conn) Exec(src string) (*protocol.Reply, error) {
-	script, err := protocol.Parse(src)
-	if err != nil {
-		return nil, err
-	}
-	return c.session.Execute(script, c.factory)
+	return c.transport.exec(src)
 }
+
+// Close releases the connection (closes the socket for remote
+// connections; no-op in-process).
+func (c *Conn) Close() error { return c.transport.close() }
 
 // Build executes a construction script and returns handle access to
 // its surfaced names.
@@ -156,6 +185,7 @@ func (c *Conn) deliver(ev *protocol.Event) {
 		st = &objState{selected: -1}
 		c.state[id] = st
 	}
+	var dispatchAction string
 	switch ev.Type {
 	case "toggle":
 		st.checked = ev.Flag("checked")
@@ -170,14 +200,24 @@ func (c *Conn) deliver(ev *protocol.Event) {
 		if w, ok := ev.Word("result"); ok {
 			st.result = w
 		}
+	case "command":
+		// The one dispatch path (in-process and remote): command
+		// events invoke the app's dispatch sink.
+		if a, ok := ev.Word("action"); ok {
+			dispatchAction = a
+		}
 	}
 	var fns []func(*protocol.Event)
 	if hs, ok := c.handlers[id]; ok {
 		fns = append(fns, hs[ev.Type]...)
 	}
 	fns = append(fns, c.typeHandlers[ev.Type]...)
+	dispatch := c.dispatch
 	c.mu.Unlock()
 
+	if dispatchAction != "" && dispatch != nil {
+		dispatch(dispatchAction)
+	}
 	for _, fn := range fns {
 		fn(ev)
 	}
