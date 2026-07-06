@@ -27,6 +27,8 @@ package text
 
 import (
 	"math"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/go-text/typesetting/di"
@@ -141,20 +143,107 @@ type Engine struct {
 	shaper  shaping.HarfbuzzShaper
 	seg     shaping.Segmenter
 	wrapper shaping.LineWrapper
+
+	// Shaping is deterministic (D5), so identical inputs are shaped
+	// once and reused: UI frames repeat the same strings, and without
+	// this every repaint re-runs segmentation and HarfBuzz shaping
+	// for every visible string.
+	cache shapeCache
+	epoch uint64 // bumped when the font set changes
 }
 
 // NewEngine creates an engine with the embedded default fonts: the
 // "Go" family (sans, default) and "Go Mono", with the TUI-era names
 // "Monday" and "Tuesday" aliased onto them.
 func NewEngine() *Engine {
-	return &Engine{db: newFontDB()}
+	return &Engine{db: newFontDB(), cache: newShapeCache(2048)}
 }
 
 // RegisterFont adds a font variant (TTF/OTF bytes) under a family
 // name, extending the fallback chain in registration order. Data is
 // parsed once; registering the same family+aspect again replaces it.
+// Cached shapes are invalidated: fallback resolution may change.
 func (e *Engine) RegisterFont(familyName string, a Aspect, ttf []byte) error {
-	return e.db.register(familyName, a, ttf)
+	if err := e.db.register(familyName, a, ttf); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	e.cache.clear()
+	e.epoch++
+	e.mu.Unlock()
+	return nil
+}
+
+// Epoch identifies the engine's font set: it changes whenever
+// RegisterFont does. External caches keyed on shaped output (e.g.
+// rendered-text images) compare epochs to know when to flush.
+func (e *Engine) Epoch() uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.epoch
+}
+
+// shapeCache is a two-generation cache: inserts land in cur; when cur
+// fills, it becomes prev and a fresh cur starts. Anything untouched
+// for two generations is dropped - no per-entry bookkeeping, bounded
+// memory, and the hot working set (the strings on screen) stays warm.
+type shapeCache struct {
+	cur, prev map[string]*ShapedParagraph
+	max       int
+}
+
+func newShapeCache(max int) shapeCache {
+	return shapeCache{
+		cur:  make(map[string]*ShapedParagraph),
+		prev: make(map[string]*ShapedParagraph),
+		max:  max,
+	}
+}
+
+func (c *shapeCache) get(k string) (*ShapedParagraph, bool) {
+	if v, ok := c.cur[k]; ok {
+		return v, true
+	}
+	if v, ok := c.prev[k]; ok {
+		c.cur[k] = v // promote so it survives the next rotation
+		return v, true
+	}
+	return nil, false
+}
+
+func (c *shapeCache) put(k string, v *ShapedParagraph) {
+	if len(c.cur) >= c.max {
+		c.prev = c.cur
+		c.cur = make(map[string]*ShapedParagraph)
+	}
+	c.cur[k] = v
+}
+
+func (c *shapeCache) clear() {
+	c.cur = make(map[string]*ShapedParagraph)
+	c.prev = make(map[string]*ShapedParagraph)
+}
+
+// shapeKey identifies a shaping request: font identity (colors are
+// irrelevant to shaping), direction, wrap width, and the text.
+func shapeKey(f *core.Font, d Direction, w core.Unit, text string) string {
+	if f == nil {
+		f = core.DefaultFont()
+	}
+	var b strings.Builder
+	b.Grow(len(f.Name) + len(text) + 24)
+	b.WriteString(f.Name)
+	b.WriteByte(0)
+	b.WriteString(strconv.Itoa(int(f.Style)))
+	b.WriteByte(0)
+	b.WriteString(strconv.Itoa(f.Size))
+	b.WriteByte(0)
+	b.WriteString(strconv.Itoa(int(d)))
+	b.WriteByte(0)
+	b.WriteString(strconv.Itoa(int(w)))
+	b.WriteByte(0)
+	b.WriteString(text)
+	return b.String()
 }
 
 // lineBudget is the vertical space a font's line occupies, in fixed
@@ -276,6 +365,17 @@ func (e *Engine) ShapeParagraph(p Paragraph, width core.Unit) *ShapedParagraph {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// Spanless paragraphs (the hot path: every label, title, and
+	// measurement) are cached; shaped output is immutable to callers.
+	cacheable := len(p.Spans) == 0
+	var key string
+	if cacheable {
+		key = shapeKey(p.Font, p.Direction, width, p.Text)
+		if sp, ok := e.cache.get(key); ok {
+			return sp
+		}
+	}
+
 	runes := []rune(p.Text)
 	base := resolveDirection(p.Direction, runes)
 	pieces := normalizeSpans(p.Spans, p.Font, len(runes))
@@ -306,6 +406,9 @@ func (e *Engine) ShapeParagraph(p Paragraph, width core.Unit) *ShapedParagraph {
 		desc := core.Unit(math.Ceil(float64(-ext.Descender * scale)))
 		gap := core.Unit(math.Ceil(float64(ext.LineGap * scale)))
 		sp.Lines = []Line{{Ascent: asc, Descent: desc, Gap: gap, Baseline: asc}}
+	}
+	if cacheable {
+		e.cache.put(key, sp)
 	}
 	return sp
 }

@@ -405,28 +405,137 @@ func (b *Backend) DrawCell(x, y core.Unit, ch rune, s style.CellStyle) {
 	b.drawRune(x, y, ch, cellAdvance(ch), fg, bg, s.Attrs&style.StyleUnderline != 0)
 }
 
+// textImage is one cached rendered string: opaque pixels (background
+// included) at the backend's scale, ready to blit.
+type textImage struct {
+	img   *image.RGBA
+	width core.Unit
+}
+
+// textImageCache caches rendered strings across frames (and across
+// backends - SDL recreates the backend on resize; scale is in the
+// key). Same two-generation scheme as the engine's shape cache.
+// Without it every frame re-rasterizes every glyph outline of every
+// visible string.
+var textImageCache = struct {
+	sync.Mutex
+	epoch     uint64
+	cur, prev map[string]textImage
+}{cur: map[string]textImage{}, prev: map[string]textImage{}}
+
+const textImageCacheMax = 512
+
+func textImageKey(f *core.Font, s string, fg, bg color.RGBA, underline bool, scale int) string {
+	if f == nil {
+		f = core.DefaultFont()
+	}
+	u := byte('-')
+	if underline {
+		u = 'u'
+	}
+	return f.Name + "\x00" + string([]byte{
+		byte(f.Style), byte(f.Style >> 8), byte(f.Size), byte(scale), u,
+		fg.R, fg.G, fg.B, bg.R, bg.G, bg.B,
+	}) + "\x00" + s
+}
+
+// renderTextImage rasterizes one string into a fresh opaque image.
+func (b *Backend) renderTextImage(f *core.Font, s string, fg, bg color.RGBA, underline bool) textImage {
+	sp := engine().ShapeRun(f, s)
+	w := sp.Width()
+	h := engine().LineHeight(f)
+	img := image.NewRGBA(image.Rect(0, 0, b.px(w), b.px(h)))
+	for i := range img.Pix {
+		switch i % 4 {
+		case 0:
+			img.Pix[i] = bg.R
+		case 1:
+			img.Pix[i] = bg.G
+		case 2:
+			img.Pix[i] = bg.B
+		case 3:
+			img.Pix[i] = 255
+		}
+	}
+	text.Render(img, sp, 0, 0, b.scale, fg)
+	if underline && len(sp.Lines) > 0 {
+		uy := b.px(sp.Lines[0].Baseline) + b.scale
+		for py := uy; py < uy+b.scale && py < img.Rect.Max.Y; py++ {
+			for px := 0; px < img.Rect.Max.X; px++ {
+				img.SetRGBA(px, py, fg)
+			}
+		}
+	}
+	return textImage{img: img, width: w}
+}
+
+// blitRGBA copies a rendered image to (xPx, yPx), honoring every
+// active clip. Fully visible blits take a per-row copy.
+func (b *Backend) blitRGBA(xPx, yPx int, src *image.RGBA) {
+	sw, sh := src.Rect.Dx(), src.Rect.Dy()
+	if sw <= 0 || sh <= 0 {
+		return
+	}
+	fullyVisible := !b.hasRoundClip &&
+		b.pointVisible(xPx, yPx) && b.pointVisible(xPx+sw-1, yPx) &&
+		b.pointVisible(xPx, yPx+sh-1) && b.pointVisible(xPx+sw-1, yPx+sh-1)
+	if fullyVisible {
+		for row := 0; row < sh; row++ {
+			so := src.PixOffset(0, row)
+			do := b.img.PixOffset(xPx, yPx+row)
+			copy(b.img.Pix[do:do+sw*4], src.Pix[so:so+sw*4])
+		}
+		return
+	}
+	for row := 0; row < sh; row++ {
+		for col := 0; col < sw; col++ {
+			if b.pointVisible(xPx+col, yPx+row) {
+				b.img.SetRGBA(xPx+col, yPx+row, src.RGBAAt(col, row))
+			}
+		}
+	}
+}
+
 // DrawText is the graphical renderer's one text path: fully shaped,
 // proportional (D6). Choosing a monospaced family yields the
 // cell-gridded look; there is no separate grid-quantized path here.
 // Measurement (core.TextMeasurer, answered by this backend) uses the
 // same engine, so the returned advance always equals the painted one.
+// Rendered strings are cached: a repeated frame blits pixels instead
+// of re-shaping and re-rasterizing.
 func (b *Backend) DrawText(x, y core.Unit, s string, st style.CellStyle, f *core.Font) core.Unit {
 	if s == "" {
 		return 0
 	}
 	fg, bg := b.styleColors(st)
-	sp := engine().ShapeRun(f, s)
-	w := sp.Width()
-	h := engine().LineHeight(f)
+	underline := st.Attrs&style.StyleUnderline != 0
 
-	b.fillPx(b.px(x), b.px(y), b.px(x+w), b.px(y+h), bg)
-	text.Render(&clippedRGBA{b: b}, sp, x, y, b.scale, fg)
-
-	if st.Attrs&style.StyleUnderline != 0 && len(sp.Lines) > 0 {
-		uy := b.px(y+sp.Lines[0].Baseline) + b.scale
-		b.fillPx(b.px(x), uy, b.px(x+w), uy+b.scale, fg)
+	key := textImageKey(f, s, fg, bg, underline, b.scale)
+	textImageCache.Lock()
+	if e := engine().Epoch(); e != textImageCache.epoch {
+		// Font set changed: shaped output may differ - flush.
+		textImageCache.epoch = e
+		textImageCache.cur = map[string]textImage{}
+		textImageCache.prev = map[string]textImage{}
 	}
-	return w
+	ti, ok := textImageCache.cur[key]
+	if !ok {
+		if ti, ok = textImageCache.prev[key]; ok {
+			textImageCache.cur[key] = ti // keep the working set warm
+		}
+	}
+	if !ok {
+		ti = b.renderTextImage(f, s, fg, bg, underline)
+		if len(textImageCache.cur) >= textImageCacheMax {
+			textImageCache.prev = textImageCache.cur
+			textImageCache.cur = map[string]textImage{}
+		}
+		textImageCache.cur[key] = ti
+	}
+	textImageCache.Unlock()
+
+	b.blitRGBA(b.px(x), b.px(y), ti.img)
+	return ti.width
 }
 
 func (b *Backend) DrawTextAligned(bounds core.UnitRect, s string, hAlign, vAlign core.Alignment, st style.CellStyle, f *core.Font) {

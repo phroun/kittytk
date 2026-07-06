@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"testing"
 
+	"golang.org/x/image/font/gofont/gomono"
+
 	"github.com/phroun/tuitk/core"
 )
 
@@ -306,3 +308,30 @@ func TestRegisterFontExtendsFallback(t *testing.T) {
 		t.Errorf("unknown family should resolve to default: %d != %d", a, b)
 	}
 }
+
+func TestShapeCacheReusesAndInvalidates(t *testing.T) {
+	e := NewEngine()
+	a := e.ShapeRun(sans(12), "cached string")
+	b := e.ShapeRun(sans(12), "cached string")
+	if a != b {
+		t.Error("identical spanless requests should return the cached shape")
+	}
+
+	// Registering a font may change fallback resolution: cache flushes.
+	epoch := e.Epoch()
+	if err := e.RegisterFont("Extra", Aspect{}, gomonoTTFForTest()); err != nil {
+		t.Fatal(err)
+	}
+	if e.Epoch() == epoch {
+		t.Error("epoch should advance on RegisterFont")
+	}
+	c := e.ShapeRun(sans(12), "cached string")
+	if c == a {
+		t.Error("cache should be invalidated by RegisterFont")
+	}
+	if c.Width() != a.Width() {
+		t.Errorf("reshape changed measurement: %d != %d", c.Width(), a.Width())
+	}
+}
+
+func gomonoTTFForTest() []byte { return gomono.TTF }
