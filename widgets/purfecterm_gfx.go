@@ -29,7 +29,9 @@ import (
 )
 
 const (
-	gfxScrollbarLane  = core.Unit(5)  // overlay lane width in units
+	// Overlay lane thickness: one layout column, matching every other
+	// scrollbar in the toolkit.
+	gfxScrollbarLane  = core.Unit(8)
 	gfxMenuItemHeight = core.Unit(16) // context menu row height
 	gfxMenuWidth      = core.Unit(150)
 )
@@ -116,6 +118,9 @@ func (t *PurfecTerm) gfxScheme() purfecterm.ColorScheme {
 func (t *PurfecTerm) gfxEngine() *text.Engine {
 	if t.gfx.engine == nil {
 		t.gfx.engine = text.NewEngine()
+		// Same tail-of-chain system fallbacks as the raster engine,
+		// so terminal cells and UI text cover the same repertoire.
+		t.gfx.engine.LoadSystemFallbacks()
 	}
 	return t.gfx.engine
 }
@@ -1066,16 +1071,22 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 // ---------------------------------------------------------------
 
 func (t *PurfecTerm) findDesktop() *Desktop {
-	current := t.Parent()
+	return findDesktopFor(t)
+}
+
+// findDesktopFor walks a widget's ancestry to the hosting Desktop
+// (nil when detached or on a plain surface).
+func findDesktopFor(w core.Widget) *Desktop {
+	current := w.Parent()
 	for current != nil {
 		if d, ok := current.(*Desktop); ok {
 			return d
 		}
-		w, ok := current.(core.Widget)
+		ww, ok := current.(core.Widget)
 		if !ok {
 			break
 		}
-		current = w.Parent()
+		current = ww.Parent()
 	}
 	return nil
 }
@@ -1112,6 +1123,16 @@ func (t *PurfecTerm) ensureBlinkTimer() {
 		}
 		t.Update()
 	})
+}
+
+// resetCursorBlink makes the cursor immediately visible and restarts
+// its blink phase (called on key input).
+func (t *PurfecTerm) resetCursorBlink() {
+	t.gfx.blinkTick = 0
+	if !t.gfx.cursorBlinkOn {
+		t.gfx.cursorBlinkOn = true
+		t.Update()
+	}
 }
 
 func (t *PurfecTerm) stopGfxTimers() {
@@ -1715,6 +1736,7 @@ func (t *PurfecTerm) PasteClipboard() {
 	if t.terminal.Buffer().IsBracketedPasteModeEnabled() {
 		s = "\x1b[200~" + s + "\x1b[201~"
 	}
+	t.resetCursorBlink()
 	t.terminal.Write([]byte(s))
 }
 

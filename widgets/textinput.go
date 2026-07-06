@@ -2,6 +2,7 @@
 package widgets
 
 import (
+	"time"
 	"unicode/utf8"
 
 	"github.com/phroun/tuitk/core"
@@ -28,6 +29,12 @@ type TextInput struct {
 	// Callbacks
 	onTextChanged func(text string)
 	onReturnPressed func()
+
+	// Graphical caret blink: the bar toggles while focused and
+	// restarts visible on every keystroke. Without a running timer
+	// (cell surfaces, no desktop) the caret is steady.
+	caretTimer *DesktopTimer
+	caretOn    bool
 }
 
 // EchoMode controls how text is displayed.
@@ -452,18 +459,66 @@ func (t *TextInput) Paint(p *core.Painter) {
 
 		if cursorX >= 0 && cursorX < bounds.Width {
 			cursorStyle := scheme.GetFocusedEditBoxCursor()
-			// Pixel surfaces draw a vertical bar at the left edge of
-			// the glyph box; cell surfaces fall back to the block.
-			if !p.DrawCaret(cursorX, 0, font.LineHeight(), cursorStyle) {
-				var cursorChar rune = ' '
-				if t.cursorPos < len(t.getDisplayText()) {
-					cursorChar = t.getDisplayText()[t.cursorPos]
+			// The graphical bar caret blinks (keystrokes restart the
+			// phase); the cell-surface block stays steady.
+			if p.Graphical() {
+				t.ensureCaretTimer()
+			}
+			if !p.Graphical() || t.caretVisible() {
+				// Pixel surfaces draw a vertical bar at the left edge
+				// of the glyph box; cell surfaces fall back to the block.
+				if !p.DrawCaret(cursorX, 0, font.LineHeight(), cursorStyle) {
+					var cursorChar rune = ' '
+					if t.cursorPos < len(t.getDisplayText()) {
+						cursorChar = t.getDisplayText()[t.cursorPos]
+					}
+					// Draw cursor character using DrawText for consistency
+					p.DrawText(cursorX, 0, string(cursorChar), cursorStyle, font)
 				}
-				// Draw cursor character using DrawText for consistency
-				p.DrawText(cursorX, 0, string(cursorChar), cursorStyle, font)
 			}
 		}
 	}
+}
+
+// caretVisible reports the blink state: visible whenever no blink
+// timer is running (cell surfaces, detached widgets).
+func (t *TextInput) caretVisible() bool {
+	return t.caretTimer == nil || t.caretOn
+}
+
+// ensureCaretTimer starts the ~2Hz blink cycle when the widget can
+// reach a desktop timer source.
+func (t *TextInput) ensureCaretTimer() {
+	if t.caretTimer != nil {
+		return
+	}
+	d := findDesktopFor(t)
+	if d == nil {
+		return
+	}
+	t.caretOn = true
+	t.caretTimer = d.StartRepeatingTimer(500*time.Millisecond, func() {
+		t.caretOn = !t.caretOn
+		t.Update()
+	})
+}
+
+func (t *TextInput) stopCaretTimer() {
+	if t.caretTimer != nil {
+		t.caretTimer.Stop()
+		t.caretTimer = nil
+	}
+	t.caretOn = true
+}
+
+// resetCaretBlink restarts the blink phase with the caret visible -
+// typing never happens behind an invisible caret.
+func (t *TextInput) resetCaretBlink() {
+	if t.caretTimer == nil {
+		return
+	}
+	t.stopCaretTimer()
+	t.ensureCaretTimer()
 }
 
 // getDisplayText returns the text with echo mode applied.
@@ -526,6 +581,9 @@ func (t *TextInput) findCharAtX(x core.Unit, font *core.Font) int {
 
 // HandleKeyPress handles keyboard input.
 func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
+	// Any keystroke makes the caret immediately visible.
+	t.resetCaretBlink()
+
 	// Handle special keys
 	switch event.Key {
 	case "Left":
@@ -669,6 +727,7 @@ func (t *TextInput) HandleFocusIn() {
 
 // HandleFocusOut is called when focus is lost.
 func (t *TextInput) HandleFocusOut() {
+	t.stopCaretTimer()
 	t.ClearSelection()
 	t.Update()
 }

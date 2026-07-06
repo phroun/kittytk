@@ -323,7 +323,13 @@ var (
 )
 
 func engine() *text.Engine {
-	engineOnce.Do(func() { engineInst = text.NewEngine() })
+	engineOnce.Do(func() {
+		engineInst = text.NewEngine()
+		// Well-known OS faces join the TAIL of the fallback chain:
+		// the embedded faces stay authoritative, system fonts only
+		// catch runes nothing embedded covers.
+		engineInst.LoadSystemFallbacks()
+	})
 	return engineInst
 }
 

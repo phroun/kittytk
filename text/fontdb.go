@@ -110,6 +110,11 @@ func (db *fontDB) register(familyName string, a Aspect, ttf []byte) error {
 	if err != nil {
 		return fmt.Errorf("text: parsing font %q: %w", familyName, err)
 	}
+	db.registerFace(familyName, a, face)
+	return nil
+}
+
+func (db *fontDB) registerFace(familyName string, a Aspect, face *gtfont.Face) {
 	key := canonical(familyName)
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -120,7 +125,6 @@ func (db *fontDB) register(familyName string, a Aspect, ttf []byte) error {
 		db.order = append(db.order, key)
 	}
 	fam.variants[a] = face
-	return nil
 }
 
 // resolve returns the face for a font descriptor: named family (or

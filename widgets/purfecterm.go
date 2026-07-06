@@ -333,6 +333,10 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Ensure terminal knows it's focused before handling input
 	t.terminal.SetFocused(true)
 
+	// Typing must never happen behind an invisible cursor: restart
+	// the blink phase so the cursor shows immediately.
+	t.resetCursorBlink()
+
 	// Forward the key to the terminal
 	t.terminal.HandleKeyString(event.Key)
 	t.Update()
