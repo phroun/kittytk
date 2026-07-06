@@ -164,12 +164,58 @@ func NewShortcut(key string) Shortcut {
 }
 
 // Matches returns true if the key event matches this shortcut.
+// Control combinations have two accepted spellings - caret ("^X")
+// and prefix ("C-x") - so both sides are canonicalized before
+// comparing; "^\\" matches an event reported as "C-\\".
 func (s Shortcut) Matches(event KeyPressEvent) bool {
 	if s == "" {
 		return false
 	}
-	// Direct comparison - both use key handler format
-	return event.Key == string(s)
+	if event.Key == string(s) {
+		return true
+	}
+	return canonicalKeyString(event.Key) == canonicalKeyString(string(s))
+}
+
+// canonicalKeyString reduces a key-handler-format string to a single
+// canonical spelling: modifier prefixes are kept in encounter order,
+// and a Control modifier on a single-character key becomes caret
+// notation with letters uppercased ("C-h" -> "^H"). Control on a
+// named key stays in prefix form ("C-Up").
+func canonicalKeyString(k string) string {
+	mods := ""
+	rest := k
+	ctrl := false
+	for {
+		if len(rest) > 1 && rest[0] == '^' {
+			ctrl = true
+			rest = rest[1:]
+			continue
+		}
+		if len(rest) > 2 {
+			switch rest[:2] {
+			case "C-":
+				ctrl = true
+				rest = rest[2:]
+				continue
+			case "M-", "A-", "S-", "s-", "H-":
+				mods += rest[:2]
+				rest = rest[2:]
+				continue
+			}
+		}
+		break
+	}
+	if !ctrl {
+		return mods + rest
+	}
+	if len(rest) == 1 {
+		if c := rest[0]; c >= 'a' && c <= 'z' {
+			rest = string(c - 'a' + 'A')
+		}
+		return mods + "^" + rest
+	}
+	return mods + "C-" + rest
 }
 
 // String returns the shortcut in key handler format.

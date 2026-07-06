@@ -345,6 +345,38 @@ func translateKey(sym sdl2.Keysym) string {
 	if sym.Sym >= 32 && sym.Sym < 127 {
 		ch := rune(sym.Sym)
 		isLetter := ch >= 'a' && ch <= 'z'
+
+		// Control-punctuation combinations that produce C0 control
+		// bytes on a terminal keep their caret spellings so key
+		// strings match the TUI backend (byte 0x1C = "^\\", etc.).
+		// SDL keycodes are unshifted, hence the shifted trio for the
+		// US-layout ^, _, and @ positions.
+		if ctrl {
+			name := ""
+			switch {
+			case ch == '\\':
+				name = "^\\"
+			case ch == ']':
+				name = "^]"
+			case ch == '[':
+				name = "Escape"
+			case ch == ' ':
+				name = "^@"
+			case shift && ch == '6':
+				name = "^^"
+			case shift && ch == '-':
+				name = "^_"
+			case shift && ch == '2':
+				name = "^@"
+			}
+			if name != "" {
+				if alt {
+					return "M-" + name
+				}
+				return name
+			}
+		}
+
 		switch {
 		case ctrl && isLetter && !shift:
 			base := "^" + string(ch-'a'+'A')
