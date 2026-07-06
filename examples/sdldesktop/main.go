@@ -24,6 +24,7 @@ import (
 
 func main() {
 	plat := sdlplat.New("tuitk", 1024, 768)
+	plat.SetScale(2) // 2x font/cell size for now (per owner request)
 	backend, err := plat.EnsureBackend()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -57,7 +58,7 @@ func main() {
 func welcomeWindow(application *app.Application) *window.Window {
 	conn := client.NewInProcess(func(id string) { application.Commands().Dispatch(id) })
 	ui, err := conn.Build(`
-w=new window title="Graphical tuitk" x=128 y=96 width=560 height=320 children={
+w=new window title="Graphical tuitk" x=24 y=40 width=460 height=280 children={
 	p=new panel layout=vbox spacing=0 children={
 		new label caption="This desktop is rendered as PIXELS - same widgets," wrap
 		new label caption="same protocol, same everything. Only the display" wrap

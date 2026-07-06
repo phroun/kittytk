@@ -23,6 +23,7 @@ import (
 type Platform struct {
 	title    string
 	wPx, hPx int
+	scale    int // pixels per unit; see SetScale
 
 	mu     sync.Mutex
 	posts  []func()
@@ -46,7 +47,18 @@ type timerEntry struct {
 
 // New creates an SDL platform for one window of the given pixel size.
 func New(title string, widthPx, heightPx int) *Platform {
-	return &Platform{title: title, wPx: widthPx, hPx: heightPx}
+	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1}
+}
+
+// SetScale sets how many window pixels one abstract unit covers.
+// The raster backend renders glyphs at the scaled size (crisp, not
+// upsampled) and input coordinates are converted back to units. Call
+// before Run/EnsureBackend. Stopgap until DPI-derived scaling lands.
+func (p *Platform) SetScale(scale int) {
+	if scale < 1 {
+		scale = 1
+	}
+	p.scale = scale
 }
 
 // Backend returns the raster backend (valid after Run starts; used
@@ -57,7 +69,7 @@ func (p *Platform) Backend() *raster.Backend { return p.backend }
 // Desktop.SetBackend can seed metrics from it.
 func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 	if p.backend == nil {
-		b, err := raster.New(p.wPx, p.hPx)
+		b, err := raster.NewScaled(p.wPx, p.hPx, p.scale)
 		if err != nil {
 			return nil, err
 		}
@@ -132,7 +144,7 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 
 // recreateFramebuffer sizes the raster backend and streaming texture.
 func (p *Platform) recreateFramebuffer(wPx, hPx int) error {
-	b, err := raster.New(wPx, hPx)
+	b, err := raster.NewScaled(wPx, hPx, p.scale)
 	if err != nil {
 		return err
 	}
@@ -187,7 +199,7 @@ func (p *Platform) pumpEvents() bool {
 		case *sdl2.WindowEvent:
 			if e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
 				if err := p.recreateFramebuffer(int(e.Data1), int(e.Data2)); err == nil {
-					s.handler.Resized(core.UnitSize{Width: core.Unit(e.Data1), Height: core.Unit(e.Data2)})
+					s.handler.Resized(p.backend.Size())
 					s.Invalidate(core.UnitRect{})
 				}
 			}
@@ -212,25 +224,33 @@ func (p *Platform) pumpEvents() bool {
 			}
 		case *sdl2.MouseButtonEvent:
 			btn := mapButton(e.Button)
+			x, y := p.toUnits(e.X, e.Y)
 			if e.Type == sdl2.MOUSEBUTTONDOWN {
-				s.handler.Event(core.MousePressEvent{X: core.Unit(e.X), Y: core.Unit(e.Y), Button: btn})
+				s.handler.Event(core.MousePressEvent{X: x, Y: y, Button: btn})
 			} else {
-				s.handler.Event(core.MouseReleaseEvent{X: core.Unit(e.X), Y: core.Unit(e.Y), Button: btn})
+				s.handler.Event(core.MouseReleaseEvent{X: x, Y: y, Button: btn})
 			}
 		case *sdl2.MouseMotionEvent:
 			var held core.MouseButton
 			if e.State&sdl2.ButtonLMask() != 0 {
 				held = core.LeftButton
 			}
-			s.handler.Event(core.MouseMoveEvent{X: core.Unit(e.X), Y: core.Unit(e.Y), Buttons: held})
+			x, y := p.toUnits(e.X, e.Y)
+			s.handler.Event(core.MouseMoveEvent{X: x, Y: y, Buttons: held})
 		case *sdl2.MouseWheelEvent:
 			mx, my, _ := sdl2.GetMouseState()
+			x, y := p.toUnits(mx, my)
 			s.handler.Event(core.MouseWheelEvent{
-				X: core.Unit(mx), Y: core.Unit(my),
+				X: x, Y: y,
 				DeltaX: int(e.X), DeltaY: int(e.Y),
 			})
 		}
 	}
+}
+
+// toUnits converts window-pixel mouse coordinates to abstract units.
+func (p *Platform) toUnits(x, y int32) (core.Unit, core.Unit) {
+	return core.Unit(int(x) / p.scale), core.Unit(int(y) / p.scale)
 }
 
 func mapButton(b uint8) core.MouseButton {

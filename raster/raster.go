@@ -33,8 +33,9 @@ import (
 
 // Backend renders tuitk drawing primitives into an RGBA image.
 type Backend struct {
-	img  *image.RGBA
-	w, h int // pixels (== units at scale 1)
+	img   *image.RGBA
+	w, h  int // pixels
+	scale int // pixels per unit (framebuffer is w/scale x h/scale units)
 
 	clip    core.UnitRect
 	hasClip bool
@@ -46,17 +47,29 @@ type Backend struct {
 	defaultBg color.RGBA
 }
 
-// New creates a framebuffer backend of the given pixel size.
+// New creates a framebuffer backend of the given pixel size at scale 1
+// (one unit = one pixel).
 func New(widthPx, heightPx int) (*Backend, error) {
+	return NewScaled(widthPx, heightPx, 1)
+}
+
+// NewScaled creates a framebuffer backend where each abstract unit
+// covers scale x scale pixels. The font is rasterized at the scaled
+// size (not upsampled), so glyphs stay sharp at any scale.
+func NewScaled(widthPx, heightPx, scale int) (*Backend, error) {
+	if scale < 1 {
+		scale = 1
+	}
 	ft, err := opentype.Parse(gomono.TTF)
 	if err != nil {
 		return nil, err
 	}
 	// Size 10pt at 96dpi = 13.33px em; Go Mono's advance is 0.6em =
 	// 8px - exactly Monday's per-character unit width, so measured
-	// layout and rasterized glyphs agree by construction.
+	// layout and rasterized glyphs agree by construction. Scaling the
+	// point size scales the advance with it (8*scale px per cell).
 	face, err := opentype.NewFace(ft, &opentype.FaceOptions{
-		Size: 10, DPI: 96, Hinting: font.HintingFull,
+		Size: 10 * float64(scale), DPI: 96, Hinting: font.HintingFull,
 	})
 	if err != nil {
 		return nil, err
@@ -67,6 +80,7 @@ func New(widthPx, heightPx int) (*Backend, error) {
 		img:       image.NewRGBA(image.Rect(0, 0, widthPx, heightPx)),
 		w:         widthPx,
 		h:         heightPx,
+		scale:     scale,
 		face:      face,
 		ascent:    m.Ascent.Ceil(),
 		defaultFg: color.RGBA{220, 220, 220, 255},
@@ -74,6 +88,12 @@ func New(widthPx, heightPx int) (*Backend, error) {
 	}
 	return b, nil
 }
+
+// px converts an abstract-unit coordinate to framebuffer pixels.
+func (b *Backend) px(u core.Unit) int { return int(u) * b.scale }
+
+// Scale reports pixels per unit.
+func (b *Backend) Scale() int { return b.scale }
 
 // Image exposes the framebuffer (substrates blit it; tests read it).
 func (b *Backend) Image() *image.RGBA { return b.img }
@@ -100,7 +120,7 @@ func (b *Backend) Metrics() core.CellMetrics {
 }
 
 func (b *Backend) Size() core.UnitSize {
-	return core.UnitSize{Width: core.Unit(b.w), Height: core.Unit(b.h)}
+	return core.UnitSize{Width: core.Unit(b.w / b.scale), Height: core.Unit(b.h / b.scale)}
 }
 
 func (b *Backend) BeginFrame() {}
@@ -154,8 +174,8 @@ func (b *Backend) styleColors(s style.CellStyle) (fg, bg color.RGBA) {
 
 func (b *Backend) fillPx(x0, y0, x1, y1 int, c color.RGBA) {
 	if b.hasClip {
-		cx0, cy0 := int(b.clip.X), int(b.clip.Y)
-		cx1, cy1 := int(b.clip.X+b.clip.Width), int(b.clip.Y+b.clip.Height)
+		cx0, cy0 := b.px(b.clip.X), b.px(b.clip.Y)
+		cx1, cy1 := b.px(b.clip.X+b.clip.Width), b.px(b.clip.Y+b.clip.Height)
 		if x0 < cx0 {
 			x0 = cx0
 		}
@@ -217,7 +237,8 @@ func runeAdvance(f *core.Font, ch rune) core.Unit {
 // drawRune paints one glyph inside its advance box: background fill,
 // then the glyph centered horizontally, baseline-aligned.
 func (b *Backend) drawRune(x, y core.Unit, ch rune, adv core.Unit, fg, bg color.RGBA, underline bool) {
-	b.fillPx(int(x), int(y), int(x+adv), int(y)+16, bg)
+	xPx, yPx, advPx := b.px(x), b.px(y), b.px(adv)
+	b.fillPx(xPx, yPx, xPx+advPx, yPx+16*b.scale, bg)
 
 	if ch != ' ' && ch != 0 {
 		d := font.Drawer{
@@ -226,15 +247,15 @@ func (b *Backend) drawRune(x, y core.Unit, ch rune, adv core.Unit, fg, bg color.
 			Face: b.face,
 		}
 		gw, _ := b.face.GlyphAdvance(ch)
-		pad := (int(adv) - gw.Ceil()) / 2
+		pad := (advPx - gw.Ceil()) / 2
 		if pad < 0 {
 			pad = 0
 		}
-		d.Dot = fixed.P(int(x)+pad, int(y)+b.ascent)
+		d.Dot = fixed.P(xPx+pad, yPx+b.ascent)
 		d.DrawString(string(ch))
 	}
 	if underline {
-		b.fillPx(int(x), int(y)+14, int(x+adv), int(y)+15, fg)
+		b.fillPx(xPx, yPx+14*b.scale, xPx+advPx, yPx+15*b.scale, fg)
 	}
 }
 
@@ -247,7 +268,7 @@ func (c *clippedRGBA) At(x, y int) color.Color { return c.b.img.At(x, y) }
 func (c *clippedRGBA) Set(x, y int, col color.Color) {
 	if c.b.hasClip {
 		cl := c.b.clip
-		if x < int(cl.X) || y < int(cl.Y) || x >= int(cl.X+cl.Width) || y >= int(cl.Y+cl.Height) {
+		if x < c.b.px(cl.X) || y < c.b.px(cl.Y) || x >= c.b.px(cl.X+cl.Width) || y >= c.b.px(cl.Y+cl.Height) {
 			return
 		}
 	}
@@ -304,10 +325,10 @@ func (b *Backend) FillRect(r core.UnitRect, ch rune, s style.CellStyle) {
 	fg, bg := b.styleColors(s)
 	switch {
 	case ch == ' ' || ch == 0:
-		b.fillPx(int(r.X), int(r.Y), int(r.X+r.Width), int(r.Y+r.Height), bg)
+		b.fillPx(b.px(r.X), b.px(r.Y), b.px(r.X+r.Width), b.px(r.Y+r.Height), bg)
 	default:
 		if a, ok := shadeAlpha[ch]; ok {
-			b.fillPx(int(r.X), int(r.Y), int(r.X+r.Width), int(r.Y+r.Height), blend(fg, bg, a))
+			b.fillPx(b.px(r.X), b.px(r.Y), b.px(r.X+r.Width), b.px(r.Y+r.Height), blend(fg, bg, a))
 			return
 		}
 		// Arbitrary fill character: tile the glyph.
@@ -337,11 +358,12 @@ func borderWeight(bs style.BorderStyle) (thickness int, double bool) {
 func (b *Backend) DrawRect(r core.UnitRect, bs style.BorderStyle, s style.CellStyle) {
 	fg, _ := b.styleColors(s)
 	th, dbl := borderWeight(bs)
+	th *= b.scale
 
-	left := int(r.X) + 4
-	right := int(r.X+r.Width) - 4
-	top := int(r.Y) + 8
-	bottom := int(r.Y+r.Height) - 8
+	left := b.px(r.X) + 4*b.scale
+	right := b.px(r.X+r.Width) - 4*b.scale
+	top := b.px(r.Y) + 8*b.scale
+	bottom := b.px(r.Y+r.Height) - 8*b.scale
 
 	stroke := func(x0, y0, x1, y1 int) {
 		b.fillPx(x0, y0, x1, y1, fg)
@@ -354,18 +376,18 @@ func (b *Backend) DrawRect(r core.UnitRect, bs style.BorderStyle, s style.CellSt
 	}
 	rect(left, top, right, bottom)
 	if dbl {
-		rect(left-3, top-3, right+3, bottom+3)
+		rect(left-3*b.scale, top-3*b.scale, right+3*b.scale, bottom+3*b.scale)
 	}
 }
 
 func (b *Backend) DrawHLine(x, y, width core.Unit, ch rune, s style.CellStyle) {
 	fg, _ := b.styleColors(s)
-	b.fillPx(int(x), int(y)+8, int(x+width), int(y)+9, fg)
+	b.fillPx(b.px(x), b.px(y)+8*b.scale, b.px(x+width), b.px(y)+8*b.scale+b.scale, fg)
 }
 
 func (b *Backend) DrawVLine(x, y, height core.Unit, ch rune, s style.CellStyle) {
 	fg, _ := b.styleColors(s)
-	b.fillPx(int(x)+4, int(y), int(x)+5, int(y+height), fg)
+	b.fillPx(b.px(x)+4*b.scale, b.px(y), b.px(x)+4*b.scale+b.scale, b.px(y+height), fg)
 }
 
 func (b *Backend) DrawBox(r core.UnitRect, bs style.BorderStyle, title string, s style.CellStyle) {
