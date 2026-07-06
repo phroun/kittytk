@@ -13,18 +13,18 @@ import (
 func TestDesktopResizeGripDerivation(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 
-	// Scale 2: quarter-column = 2 units = 4 px - exactly the floor.
+	// Scale 2: quarter-column (2 units) x scale 2 = 4 units = 8 px.
 	px2, err := raster.NewScaled(640, 480, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := NewDesktop()
 	d.SetBackend(px2)
-	if got := d.GraphicalResizeGrip(); got != 2 {
-		t.Errorf("scale 2 grip = %d units, want 2", got)
+	if got := d.GraphicalResizeGrip(); got != 4 {
+		t.Errorf("scale 2 grip = %d units, want 4 (8 device px)", got)
 	}
 
-	// Scale 1: quarter-column = 2 units = 2 px < 4 px floor -> 4 units.
+	// Scale 1: quarter-column x 1 = 2 units = 2 px < 4 px floor -> 4 units.
 	px1, err := raster.New(640, 480)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestMDIPaneInheritsResizeGrip(t *testing.T) {
 	win := window.NewWindow("host")
 	win.SetContent(pane)
 	d.WindowManager().AddWindow(win)
-	if got := core.FindResizeGrip(pane.Self()); got != 2 {
-		t.Errorf("MDI pane grip = %d, want 2 (inherited from desktop)", got)
+	if got := core.FindResizeGrip(pane.Self()); got != 4 {
+		t.Errorf("MDI pane grip = %d, want 4 (inherited from desktop)", got)
 	}
 }

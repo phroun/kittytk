@@ -276,15 +276,17 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	_, d.graphicalFrames = backend.(core.RoundedRectDrawer)
 
 	// Resize grip: on graphical frames only the outer sliver of a
-	// window edge resizes - a quarter of a layout column, but never
-	// thinner than 4 device pixels - so edge widgets stay clickable.
+	// window edge resizes - a quarter of a layout column, scaled by
+	// the device scale so the physical grab target grows with the
+	// zoom, and never thinner than 4 device pixels - so edge widgets
+	// stay clickable.
 	d.resizeGrip = 0
 	if d.graphicalFrames {
-		grip := rootMetrics.CellWidth / 4
 		scale := 1
 		if ds, ok := backend.(core.DeviceScaler); ok && ds.Scale() > 0 {
 			scale = ds.Scale()
 		}
+		grip := rootMetrics.CellWidth / 4 * core.Unit(scale)
 		if minUnits := core.Unit((4 + scale - 1) / scale); grip < minUnits {
 			grip = minUnits
 		}
