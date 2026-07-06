@@ -1135,7 +1135,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// buttons, and content then draw over it as usual. Cell surfaces
 	// return false and take the box-drawing path below.
 	roundedStyle := frameStyle.WithBg(w.Theme().WindowBackground.Bg)
-	if p.DrawRoundedRect(localBounds, windowCornerRadius, border, roundedStyle) {
+	rounded := p.DrawRoundedRect(localBounds, windowCornerRadius, border, roundedStyle)
+	if rounded {
 		// Frame painted; fall through to title/buttons/content.
 	} else if titleFocus == TitleFocusBlur {
 		// When blur item is focused, draw dashed frame with inactive title
@@ -1324,10 +1325,15 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		}
 	}
 
-	// Fill content area with background
-	contentBounds := w.contentBounds()
-	theme := w.Theme()
-	p.FillRect(contentBounds, ' ', theme.WindowBackground)
+	// Fill content area with background. Skipped when the rounded
+	// frame painted: the whole window surface (corners included) is
+	// already filled, and a square fill here would put background
+	// pixels back outside the bottom corner arcs.
+	if !rounded {
+		contentBounds := w.contentBounds()
+		theme := w.Theme()
+		p.FillRect(contentBounds, ' ', theme.WindowBackground)
+	}
 }
 
 // buttonAtPosition returns which titlebar button is at the given local coordinates.

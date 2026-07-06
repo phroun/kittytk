@@ -68,6 +68,12 @@ type Desktop struct {
 	// core.FindGraphicalFrames to pick their client-area contract.
 	graphicalFrames bool
 
+	// Graphical wallpaper (classic MacOS style): an 8x8 two-color
+	// bitmap, each bit rendered as wallpaperChunkPx x wallpaperChunkPx
+	// device pixels. Tune via SetWallpaperPattern/SetWallpaperChunk.
+	wallpaperPattern [8]uint8
+	wallpaperChunkPx int
+
 	// Menu bar at the top (Mac-style)
 	menuBar *MenuBar
 
@@ -172,6 +178,10 @@ func NewDesktop() *Desktop {
 		updateChan:           make(chan struct{}, 100),
 		theme:                style.DefaultTheme(),
 		keyboardBlurChildren: true, // Default to enabling keyboard blur
+		// Classic MacOS-style wallpaper: 50% checkerboard dither,
+		// each pattern bit 2x2 device pixels.
+		wallpaperPattern: [8]uint8{0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55},
+		wallpaperChunkPx: 2,
 	}
 	d.WidgetBase = *core.NewWidgetBase()
 	d.Init(d)
@@ -313,6 +323,28 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 			d.windowManager.RestorePreviousActiveWindow()
 		})
 	}
+}
+
+// SetWallpaperPattern sets the graphical wallpaper's 8x8 two-color
+// bitmap (row-major, bit 7 leftmost; set bits use the desktop fill
+// foreground, clear bits its background).
+func (d *Desktop) SetWallpaperPattern(pattern [8]uint8) {
+	d.mu.Lock()
+	d.wallpaperPattern = pattern
+	d.mu.Unlock()
+	d.RequestUpdate()
+}
+
+// SetWallpaperChunk sets how many device pixels each wallpaper
+// pattern bit covers (the pattern's "pixel size"; minimum 1).
+func (d *Desktop) SetWallpaperChunk(px int) {
+	if px < 1 {
+		px = 1
+	}
+	d.mu.Lock()
+	d.wallpaperChunkPx = px
+	d.mu.Unlock()
+	d.RequestUpdate()
 }
 
 // GraphicalWindowFrames implements core.GraphicalFrameProvider: true
@@ -1706,11 +1738,16 @@ func (d *Desktop) Paint(p *core.Painter) {
 	scheme := d.GetScheme()
 	metrics := d.EffectiveCellMetrics()
 
-	// Draw background pattern
+	// Draw background pattern. Graphical targets tile the classic
+	// 8x8 two-color bitmap wallpaper (chunked to WallpaperChunkPx);
+	// cell targets keep the rune fill.
 	bgStyle := scheme.GetDesktopFill()
-	for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
-		for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
-			p.DrawCell(x, y, d.bgChar, bgStyle)
+	if !p.FillPattern(core.UnitRect{Width: bounds.Width, Height: bounds.Height},
+		d.wallpaperPattern, d.wallpaperChunkPx, bgStyle) {
+		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
+			for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
+				p.DrawCell(x, y, d.bgChar, bgStyle)
+			}
 		}
 	}
 

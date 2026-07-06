@@ -209,6 +209,13 @@ func (c *Checkbox) Paint(p *core.Painter) {
 		labelStyle = style.DefaultStyle().WithFg(scheme.GetCheckBoxLabelFG(true)).WithBg(inheritedBg)
 	}
 
+	if p.Graphical() {
+		// The label is pure text: transparent so it never clips
+		// neighboring glyphs. The [x] indicator is chrome and keeps
+		// its background.
+		labelStyle = labelStyle.WithBg(style.ColorTransparent)
+	}
+
 	// Draw checkbox indicator (decorative - use cell-based sizing)
 	// Indicator is 3 cells: "[", "x" or " " or "-", "]"
 	var middle rune

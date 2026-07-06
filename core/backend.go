@@ -141,6 +141,25 @@ type RoundedRectDrawer interface {
 	StrokeRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle)
 }
 
+// GraphicalModer is the D1 mode query: a backend reports true when
+// it paints pixels rather than character cells. Widgets branch their
+// rendering on Painter.Graphical() - e.g. label-type text passes
+// style.ColorTransparent backgrounds only on graphical targets,
+// where glyphs can blend over existing pixels.
+type GraphicalModer interface {
+	GraphicalMode() bool
+}
+
+// PatternFiller is an optional RenderBackend capability: tile an 8x8
+// two-color bitmap pattern across a rect (classic MacOS desktop
+// style). Each pattern bit covers chunkPx x chunkPx device pixels
+// (set = foreground, clear = background); the pattern is anchored at
+// the surface origin so it does not swim as rects move. Cell
+// surfaces omit it and callers fall back to rune fills.
+type PatternFiller interface {
+	FillPattern(r UnitRect, pattern [8]uint8, chunkPx int, s style.CellStyle)
+}
+
 // RoundedClipper is an optional RenderBackend capability: an
 // additional clip constraint shaped as a rounded rectangle,
 // composing with the rectangular SetClip (a pixel paints only if it
@@ -418,6 +437,29 @@ func (p *Painter) DrawRoundedRect(r UnitRect, radius Unit, border style.BorderSt
 	screenRect := p.transform.ApplyRect(r)
 	p.applyClip()
 	rd.DrawRoundedRect(screenRect, radius, border, s)
+	return true
+}
+
+// Graphical reports whether the target paints pixels rather than
+// character cells (the D1 mode query). Widgets use it to select
+// their graphical rendering material - cell targets get the cell
+// idiom, always.
+func (p *Painter) Graphical() bool {
+	gm, ok := p.backend.(GraphicalModer)
+	return ok && gm.GraphicalMode()
+}
+
+// FillPattern tiles an 8x8 two-color bitmap across the rect when the
+// backend supports it (see PatternFiller). Returns false on cell
+// surfaces; the caller then falls back to its rune fill.
+func (p *Painter) FillPattern(r UnitRect, pattern [8]uint8, chunkPx int, s style.CellStyle) bool {
+	pf, ok := p.backend.(PatternFiller)
+	if !ok {
+		return false
+	}
+	screenRect := p.transform.ApplyRect(r)
+	p.applyClip()
+	pf.FillPattern(screenRect, pattern, chunkPx, s)
 	return true
 }
 

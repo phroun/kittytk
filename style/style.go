@@ -12,8 +12,15 @@ type Color int
 const (
 	ColorDefault Color = -1
 
+	// ColorTransparent (background only, graphical targets only):
+	// draw no background - glyphs blend over whatever is already
+	// painted. Cell targets cannot express it, so widgets only pass
+	// it when the painter reports Graphical(); label-type text uses
+	// it so opaque line boxes never clip neighboring glyphs.
+	ColorTransparent Color = -2
+
 	// Standard colors (0-7)
-	ColorBlack Color = iota - 1
+	ColorBlack Color = iota - 2
 	ColorRed
 	ColorGreen
 	ColorYellow

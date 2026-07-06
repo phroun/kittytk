@@ -79,12 +79,13 @@ func TestWindowFrameHasRoundedCorners(t *testing.T) {
 	win.Paint(core.NewPainter(b).WithOffset(24, 24))
 
 	img := b.Image()
-	// The extreme window corner lies outside the arc: canvas color.
-	if got := img.RGBAAt(24, 24); got != canvas {
-		t.Errorf("top-left corner not rounded: %v", got)
-	}
-	if got := img.RGBAAt(24+319, 24); got != canvas {
-		t.Errorf("top-right corner not rounded: %v", got)
+	// The extreme window corners lie outside the arc: canvas color.
+	// (Bottom corners regression-guard the content-area fill, which
+	// once painted square corners over the arcs.)
+	for _, pt := range [][2]int{{24, 24}, {24 + 319, 24}, {24, 24 + 159}, {24 + 319, 24 + 159}} {
+		if got := img.RGBAAt(pt[0], pt[1]); got != canvas {
+			t.Errorf("corner (%d,%d) not rounded: %v", pt[0], pt[1], got)
+		}
 	}
 	// The frame edge is stroked (not canvas, not interior). Sample at
 	// x=+100: past the titlebar buttons (which end at 80 units) and

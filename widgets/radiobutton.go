@@ -153,6 +153,13 @@ func (r *RadioButton) Paint(p *core.Painter) {
 		labelStyle = style.DefaultStyle().WithFg(scheme.GetRadioButtonLabelFG(true)).WithBg(inheritedBg)
 	}
 
+	if p.Graphical() {
+		// The label is pure text: transparent so it never clips
+		// neighboring glyphs. The (*) indicator is chrome and keeps
+		// its background.
+		labelStyle = labelStyle.WithBg(style.ColorTransparent)
+	}
+
 	// Draw radio indicator (decorative - use cell-based sizing)
 	// Indicator is 3 cells: "(", "*" or " ", ")"
 	metrics := r.EffectiveCellMetrics()

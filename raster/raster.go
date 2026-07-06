@@ -359,9 +359,11 @@ func isWide(ch rune) bool {
 
 // drawRune paints one glyph inside its advance box: background fill,
 // then the glyph centered horizontally, baseline-aligned.
-func (b *Backend) drawRune(x, y core.Unit, ch rune, adv core.Unit, fg, bg color.RGBA, underline bool) {
+func (b *Backend) drawRune(x, y core.Unit, ch rune, adv core.Unit, fg, bg color.RGBA, underline, transparentBg bool) {
 	xPx, yPx, advPx := b.px(x), b.px(y), b.px(adv)
-	b.fillPx(xPx, yPx, xPx+advPx, yPx+16*b.scale, bg)
+	if !transparentBg {
+		b.fillPx(xPx, yPx, xPx+advPx, yPx+16*b.scale, bg)
+	}
 
 	if ch != ' ' && ch != 0 {
 		d := font.Drawer{
@@ -402,14 +404,18 @@ func (c *clippedRGBA) Set(x, y int, col color.Color) {
 // DrawText's shaped path below.
 func (b *Backend) DrawCell(x, y core.Unit, ch rune, s style.CellStyle) {
 	fg, bg := b.styleColors(s)
-	b.drawRune(x, y, ch, cellAdvance(ch), fg, bg, s.Attrs&style.StyleUnderline != 0)
+	b.drawRune(x, y, ch, cellAdvance(ch), fg, bg, s.Attrs&style.StyleUnderline != 0,
+		s.Bg == style.ColorTransparent)
 }
 
-// textImage is one cached rendered string: opaque pixels (background
-// included) at the backend's scale, ready to blit.
+// textImage is one cached rendered string at the backend's scale,
+// ready to blit. Opaque images include the background; transparent
+// ones (style.ColorTransparent background) carry alpha and are
+// composited over the framebuffer.
 type textImage struct {
-	img   *image.RGBA
-	width core.Unit
+	img    *image.RGBA
+	width  core.Unit
+	opaque bool
 }
 
 // textImageCache caches rendered strings across frames (and across
@@ -439,22 +445,25 @@ func textImageKey(f *core.Font, s string, fg, bg color.RGBA, underline bool, sca
 	}) + "\x00" + s
 }
 
-// renderTextImage rasterizes one string into a fresh opaque image.
-func (b *Backend) renderTextImage(f *core.Font, s string, fg, bg color.RGBA, underline bool) textImage {
+// renderTextImage rasterizes one string into a fresh image: opaque
+// (background filled) or transparent (alpha only, for compositing).
+func (b *Backend) renderTextImage(f *core.Font, s string, fg, bg color.RGBA, underline, opaque bool) textImage {
 	sp := engine().ShapeRun(f, s)
 	w := sp.Width()
 	h := engine().LineHeight(f)
 	img := image.NewRGBA(image.Rect(0, 0, b.px(w), b.px(h)))
-	for i := range img.Pix {
-		switch i % 4 {
-		case 0:
-			img.Pix[i] = bg.R
-		case 1:
-			img.Pix[i] = bg.G
-		case 2:
-			img.Pix[i] = bg.B
-		case 3:
-			img.Pix[i] = 255
+	if opaque {
+		for i := range img.Pix {
+			switch i % 4 {
+			case 0:
+				img.Pix[i] = bg.R
+			case 1:
+				img.Pix[i] = bg.G
+			case 2:
+				img.Pix[i] = bg.B
+			case 3:
+				img.Pix[i] = 255
+			}
 		}
 	}
 	text.Render(img, sp, 0, 0, b.scale, fg)
@@ -466,7 +475,38 @@ func (b *Backend) renderTextImage(f *core.Font, s string, fg, bg color.RGBA, und
 			}
 		}
 	}
-	return textImage{img: img, width: w}
+	return textImage{img: img, width: w, opaque: opaque}
+}
+
+// compositeRGBA alpha-blends a transparent text image over the
+// framebuffer (source pixels are alpha-premultiplied, as image.RGBA
+// defines), honoring every active clip.
+func (b *Backend) compositeRGBA(xPx, yPx int, src *image.RGBA) {
+	sw, sh := src.Rect.Dx(), src.Rect.Dy()
+	for row := 0; row < sh; row++ {
+		for col := 0; col < sw; col++ {
+			s := src.RGBAAt(col, row)
+			if s.A == 0 {
+				continue
+			}
+			dx, dy := xPx+col, yPx+row
+			if !b.pointVisible(dx, dy) {
+				continue
+			}
+			if s.A == 255 {
+				b.img.SetRGBA(dx, dy, s)
+				continue
+			}
+			d := b.img.RGBAAt(dx, dy)
+			inv := uint32(255 - s.A)
+			b.img.SetRGBA(dx, dy, color.RGBA{
+				R: uint8(uint32(s.R) + uint32(d.R)*inv/255),
+				G: uint8(uint32(s.G) + uint32(d.G)*inv/255),
+				B: uint8(uint32(s.B) + uint32(d.B)*inv/255),
+				A: 255,
+			})
+		}
+	}
 }
 
 // blitRGBA copies a rendered image to (xPx, yPx), honoring every
@@ -509,8 +549,12 @@ func (b *Backend) DrawText(x, y core.Unit, s string, st style.CellStyle, f *core
 	}
 	fg, bg := b.styleColors(st)
 	underline := st.Attrs&style.StyleUnderline != 0
+	opaque := st.Bg != style.ColorTransparent
 
 	key := textImageKey(f, s, fg, bg, underline, b.scale)
+	if !opaque {
+		key = "t\x00" + key
+	}
 	textImageCache.Lock()
 	if e := engine().Epoch(); e != textImageCache.epoch {
 		// Font set changed: shaped output may differ - flush.
@@ -525,7 +569,7 @@ func (b *Backend) DrawText(x, y core.Unit, s string, st style.CellStyle, f *core
 		}
 	}
 	if !ok {
-		ti = b.renderTextImage(f, s, fg, bg, underline)
+		ti = b.renderTextImage(f, s, fg, bg, underline, opaque)
 		if len(textImageCache.cur) >= textImageCacheMax {
 			textImageCache.prev = textImageCache.cur
 			textImageCache.cur = map[string]textImage{}
@@ -534,7 +578,11 @@ func (b *Backend) DrawText(x, y core.Unit, s string, st style.CellStyle, f *core
 	}
 	textImageCache.Unlock()
 
-	b.blitRGBA(b.px(x), b.px(y), ti.img)
+	if ti.opaque {
+		b.blitRGBA(b.px(x), b.px(y), ti.img)
+	} else {
+		b.compositeRGBA(b.px(x), b.px(y), ti.img)
+	}
 	return ti.width
 }
 
@@ -567,18 +615,31 @@ var shadeAlpha = map[rune]float64{
 
 func (b *Backend) FillRect(r core.UnitRect, ch rune, s style.CellStyle) {
 	fg, bg := b.styleColors(s)
+	transparent := s.Bg == style.ColorTransparent
 	switch {
 	case ch == ' ' || ch == 0:
+		if transparent {
+			return // nothing to paint: the background shows through
+		}
 		b.fillPx(b.px(r.X), b.px(r.Y), b.px(r.X+r.Width), b.px(r.Y+r.Height), bg)
 	default:
 		if a, ok := shadeAlpha[ch]; ok {
+			if transparent {
+				// Blend the shade's foreground over what is beneath.
+				for y := b.px(r.Y); y < b.px(r.Y+r.Height); y++ {
+					for x := b.px(r.X); x < b.px(r.X+r.Width); x++ {
+						b.blendPx(x, y, fg, a)
+					}
+				}
+				return
+			}
 			b.fillPx(b.px(r.X), b.px(r.Y), b.px(r.X+r.Width), b.px(r.Y+r.Height), blend(fg, bg, a))
 			return
 		}
 		// Arbitrary fill character: tile the glyph.
 		for y := r.Y; y < r.Y+r.Height; y += 16 {
 			for x := r.X; x < r.X+r.Width; x += 8 {
-				b.drawRune(x, y, ch, 8, fg, bg, false)
+				b.drawRune(x, y, ch, 8, fg, bg, false, s.Bg == style.ColorTransparent)
 			}
 		}
 	}
@@ -776,6 +837,56 @@ func (b *Backend) DrawBox(r core.UnitRect, bs style.BorderStyle, title string, s
 // SmoothPositioning implements core.SmoothPositioner: pixel surfaces
 // place window chrome at any unit position.
 func (b *Backend) SmoothPositioning() bool { return true }
+
+// GraphicalMode implements core.GraphicalModer (the D1 mode query):
+// this backend paints pixels.
+func (b *Backend) GraphicalMode() bool { return true }
+
+// FillPattern implements core.PatternFiller: an 8x8 two-color bitmap
+// tiled across the rect, each pattern bit chunked to chunkPx x
+// chunkPx device pixels, anchored at the surface origin.
+func (b *Backend) FillPattern(r core.UnitRect, pattern [8]uint8, chunkPx int, s style.CellStyle) {
+	if chunkPx < 1 {
+		chunkPx = 1
+	}
+	fg, bg := b.styleColors(s)
+	x0, y0 := b.px(r.X), b.px(r.Y)
+	x1, y1 := b.px(r.X+r.Width), b.px(r.Y+r.Height)
+
+	// Walk whole pattern blocks (origin-anchored), filling each with
+	// its color; fillPx clips each block to the rect and clips.
+	for by := y0 - mod(y0, chunkPx); by < y1; by += chunkPx {
+		row := pattern[(by/chunkPx)%8]
+		for bx := x0 - mod(x0, chunkPx); bx < x1; bx += chunkPx {
+			c := bg
+			if row&(0x80>>uint((bx/chunkPx)%8)) != 0 {
+				c = fg
+			}
+			cx0, cy0, cx1, cy1 := bx, by, bx+chunkPx, by+chunkPx
+			if cx0 < x0 {
+				cx0 = x0
+			}
+			if cy0 < y0 {
+				cy0 = y0
+			}
+			if cx1 > x1 {
+				cx1 = x1
+			}
+			if cy1 > y1 {
+				cy1 = y1
+			}
+			b.fillPx(cx0, cy0, cx1, cy1, c)
+		}
+	}
+}
+
+func mod(a, m int) int {
+	r := a % m
+	if r < 0 {
+		r += m
+	}
+	return r
+}
 
 // DrawCaret implements core.CaretDrawer: a one-unit-wide vertical bar
 // at the left edge of the glyph box - where the next character would

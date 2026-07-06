@@ -122,6 +122,14 @@ func (s *LineSeparator) Paint(p *core.Painter) {
 		titleStyle = lineStyle
 	}
 
+	if p.Graphical() {
+		// A separator is a line and (optionally) a title - it owns no
+		// background. Opaque cell boxes here were clipping the
+		// descenders of the text row above.
+		lineStyle = lineStyle.WithBg(style.ColorTransparent)
+		titleStyle = titleStyle.WithBg(style.ColorTransparent)
+	}
+
 	if s.orientation == core.Horizontal {
 		s.paintHorizontal(p, bounds, lineStyle, titleStyle, metrics)
 	} else {

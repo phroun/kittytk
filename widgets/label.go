@@ -135,8 +135,16 @@ func (l *Label) Paint(p *core.Painter) {
 		s = s.WithBg(inheritedBG) // Still inherit background
 	}
 
-	// Clear background
-	p.Clear(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, s)
+	if p.Graphical() {
+		// Labels are pure text: no background of their own on pixel
+		// targets. Glyphs blend over whatever the container painted,
+		// so a label's line box never clips a neighbor's descenders.
+		s = s.WithBg(style.ColorTransparent)
+	} else {
+		// Cell targets: clear the label's cells (a cell always
+		// carries a background).
+		p.Clear(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, s)
+	}
 
 	// Draw text
 	if l.wordWrap {
