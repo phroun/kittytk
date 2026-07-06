@@ -255,3 +255,41 @@ func TestGfxScrollbarSmoothThumbSnappedContent(t *testing.T) {
 		t.Error("release did not end the scrollbar drag")
 	}
 }
+
+// Horizontal scrollbar lanes are one column width tall on pixel
+// surfaces - the same thickness as vertical lanes - and a full row
+// on cell surfaces.
+func TestHorizontalScrollBarLaneThinOnPixelSurfaces(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	host := func(d *Desktop) *ScrollArea {
+		sa := NewScrollArea()
+		win := window.NewWindow("host")
+		win.SetContent(sa)
+		d.WindowManager().AddWindow(win)
+		win.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 300, Height: 200})
+		win.Layout()
+		// Wide, short content: horizontal bar only.
+		sa.contentWidth = 10000
+		sa.contentHeight = 10
+		return sa
+	}
+
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+	sa := host(d)
+	if lane := sa.Bounds().Height - sa.viewportBounds().Height; lane != 8 {
+		t.Errorf("pixel surface horizontal lane = %d units, want 8 (one column)", lane)
+	}
+
+	dc := NewDesktop()
+	dc.SetBackend(&nullBackend{})
+	sac := host(dc)
+	if lane := sac.Bounds().Height - sac.viewportBounds().Height; lane != 16 {
+		t.Errorf("cell surface horizontal lane = %d units, want 16 (one row)", lane)
+	}
+}

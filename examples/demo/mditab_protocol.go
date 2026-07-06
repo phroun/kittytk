@@ -84,6 +84,7 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, _ any
 	mdiH.On("minimize", func(ev *protocol.Event) {
 		winID, _ := ev.Uint("window")
 		title, _ := ev.Text("title")
+		dropEntry(winID) // never two entries for one window
 		mdiDockSeq++
 		key := fmt.Sprintf("e%d", mdiDockSeq)
 		entryUI, err := conn.Build(fmt.Sprintf(
@@ -94,10 +95,15 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, _ any
 		}
 		entry := entryUI.Object("wentry")
 		entry.On("click", func(*protocol.Event) {
-			_ = mdiH.Set(fmt.Sprintf("restore=%d", winID))
+			// D20: our own set never echoes a restore event, so the
+			// initiator drops its dock entry itself.
+			if mdiH.Set(fmt.Sprintf("restore=%d", winID)) == nil {
+				dropEntry(winID)
+			}
 		})
 		entries[winID] = entry
 	})
+	// UI-initiated restores (not echoes of our own set= above).
 	mdiH.On("restore", func(ev *protocol.Event) {
 		if id, ok := ev.Uint("window"); ok {
 			dropEntry(id)

@@ -152,13 +152,19 @@ func (s *ScrollBar) SetOnValueChanged(handler func(value int)) {
 	s.onValueChanged = handler
 }
 
-// SizeHint returns the preferred size.
+// SizeHint returns the preferred size. On pixel surfaces a
+// horizontal bar is one column width tall (the same thickness as a
+// vertical bar); on cell surfaces it cannot be thinner than a row.
 func (s *ScrollBar) SizeHint() core.UnitSize {
 	metrics := s.EffectiveCellMetrics()
 	if s.orientation == core.Horizontal {
+		height := metrics.CellHeight
+		if core.FindSmoothPositioning(s.Self()) {
+			height = metrics.CellWidth
+		}
 		return core.UnitSize{
 			Width:  metrics.CellWidth * 20,
-			Height: metrics.CellHeight,
+			Height: height,
 		}
 	}
 	return core.UnitSize{
@@ -859,6 +865,18 @@ func (s *ScrollArea) SetWidgetResizable(resizable bool) {
 	s.Update()
 }
 
+// hScrollBarHeight returns the horizontal scrollbar's lane height:
+// one column width on pixel surfaces (matching the vertical bar's
+// width), a full cell row on cell surfaces where a bar cannot be
+// thinner than a character.
+func (s *ScrollArea) hScrollBarHeight() core.Unit {
+	metrics := s.EffectiveCellMetrics()
+	if core.FindSmoothPositioning(s.Self()) {
+		return metrics.CellWidth
+	}
+	return metrics.CellHeight
+}
+
 // viewportBounds returns the viewport bounds (excluding scrollbars).
 func (s *ScrollArea) viewportBounds() core.UnitRect {
 	bounds := s.Bounds()
@@ -874,7 +892,7 @@ func (s *ScrollArea) viewportBounds() core.UnitRect {
 		width -= metrics.CellWidth
 	}
 	if needsH {
-		height -= metrics.CellHeight
+		height -= s.hScrollBarHeight()
 	}
 
 	return core.UnitRect{Width: width, Height: height}
@@ -913,7 +931,7 @@ func (s *ScrollArea) calculateScrollBarNeeds() (bool, bool) {
 		needsH = s.contentWidth > (bounds.Width - metrics.CellWidth)
 	}
 	if needsH && s.vScrollBarPolicy == ScrollBarAsNeeded {
-		needsV = s.contentHeight > (bounds.Height - metrics.CellHeight)
+		needsV = s.contentHeight > (bounds.Height - s.hScrollBarHeight())
 	}
 
 	return needsV, needsH
@@ -1036,14 +1054,20 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 			X:      0,
 			Y:      0,
 			Width:  viewport.Width,
-			Height: metrics.CellHeight,
+			Height: s.hScrollBarHeight(),
 		})
 		s.hScrollBar.Paint(p.WithOffset(0, viewport.Height))
 	}
 
-	// Draw corner if both scrollbars visible
+	// Draw corner if both scrollbars visible (sized to the lanes, not
+	// a full cell: the horizontal lane may be thinner than a row)
 	if s.needsHScrollBar() && s.needsVScrollBar() {
-		p.DrawCell(viewport.Width, viewport.Height, ' ', scheme.GetScrollbar())
+		p.FillRect(core.UnitRect{
+			X:      viewport.Width,
+			Y:      viewport.Height,
+			Width:  metrics.CellWidth,
+			Height: s.hScrollBarHeight(),
+		}, ' ', scheme.GetScrollbar())
 	}
 }
 
