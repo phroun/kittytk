@@ -123,6 +123,18 @@ type SmoothPositioningProvider interface {
 	SmoothWindowPositioning() bool
 }
 
+// CaretDrawer is an optional RenderBackend capability: pixel surfaces
+// draw the text-insertion caret as a thin vertical bar sitting at the
+// left edge of the glyph box at (x, y) - where the next character
+// would be output. Callers pass the same style they would use for a
+// block cursor; the backend renders the bar in the color that block
+// would appear (the style's background). Cell surfaces omit the
+// capability and widgets fall back to their cell-idiom caret
+// (reverse-video block).
+type CaretDrawer interface {
+	DrawCaret(x, y, height Unit, s style.CellStyle)
+}
+
 // FindSmoothPositioning walks up the widget tree for a
 // SmoothPositioningProvider. Default (no provider found): false -
 // snap to cells, the only always-safe answer.
@@ -320,6 +332,21 @@ func (p *Painter) DrawCell(x, y Unit, ch rune, s style.CellStyle) {
 	sx, sy := p.toScreen(x, y)
 	p.applyClip()
 	p.backend.DrawCell(sx, sy, ch, s)
+}
+
+// DrawCaret draws a text-insertion caret at the left edge of the
+// glyph box at (x, y) when the backend supports bar carets (see
+// CaretDrawer). Returns false on cell surfaces; the caller then
+// falls back to its cell-idiom caret (reverse-video block).
+func (p *Painter) DrawCaret(x, y, height Unit, s style.CellStyle) bool {
+	cd, ok := p.backend.(CaretDrawer)
+	if !ok {
+		return false
+	}
+	sx, sy := p.toScreen(x, y)
+	p.applyClip()
+	cd.DrawCaret(sx, sy, height, s)
+	return true
 }
 
 // DrawText draws a string using the specified font.

@@ -449,12 +449,16 @@ func (t *TextInput) Paint(p *core.Painter) {
 
 		if cursorX >= 0 && cursorX < bounds.Width {
 			cursorStyle := scheme.GetFocusedEditBoxCursor()
-			var cursorChar rune = ' '
-			if t.cursorPos < len(t.getDisplayText()) {
-				cursorChar = t.getDisplayText()[t.cursorPos]
+			// Pixel surfaces draw a vertical bar at the left edge of
+			// the glyph box; cell surfaces fall back to the block.
+			if !p.DrawCaret(cursorX, 0, font.LineHeight(), cursorStyle) {
+				var cursorChar rune = ' '
+				if t.cursorPos < len(t.getDisplayText()) {
+					cursorChar = t.getDisplayText()[t.cursorPos]
+				}
+				// Draw cursor character using DrawText for consistency
+				p.DrawText(cursorX, 0, string(cursorChar), cursorStyle, font)
 			}
-			// Draw cursor character using DrawText for consistency
-			p.DrawText(cursorX, 0, string(cursorChar), cursorStyle, font)
 		}
 	}
 }

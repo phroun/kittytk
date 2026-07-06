@@ -403,6 +403,16 @@ func (b *Backend) DrawBox(r core.UnitRect, bs style.BorderStyle, title string, s
 // place window chrome at any unit position.
 func (b *Backend) SmoothPositioning() bool { return true }
 
+// DrawCaret implements core.CaretDrawer: a one-unit-wide vertical bar
+// at the left edge of the glyph box - where the next character would
+// start. Drawn in the color a block cursor of style s would show
+// (its background), so widgets pass their block-cursor style
+// unchanged.
+func (b *Backend) DrawCaret(x, y, height core.Unit, s style.CellStyle) {
+	_, bar := b.styleColors(s)
+	b.fillPx(b.px(x), b.px(y), b.px(x)+b.scale, b.px(y+height), bar)
+}
+
 func (b *Backend) PollEvent() core.Event                  { return nil }
 func (b *Backend) WaitEvent() core.Event                  { return nil }
 func (b *Backend) SetCursorVisible(bool)                  {}
