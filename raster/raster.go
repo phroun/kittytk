@@ -20,6 +20,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
 	"sync"
 
@@ -434,6 +435,120 @@ func (b *Backend) DrawRect(r core.UnitRect, bs style.BorderStyle, s style.CellSt
 	rect(left, top, right, bottom)
 	if dbl {
 		rect(left-3*b.scale, top-3*b.scale, right+3*b.scale, bottom+3*b.scale)
+	}
+}
+
+// strokePx maps a border style to a stroke weight in device pixels:
+// 2 for double (and heavy), 1 for single - hairlines, deliberately
+// not multiplied by the unit scale.
+func strokePx(bs style.BorderStyle) int {
+	if bs == style.BorderDouble || bs == style.BorderHeavy {
+		return 2
+	}
+	return 1
+}
+
+// inClip reports whether a device pixel is inside the current clip.
+func (b *Backend) inClip(x, y int) bool {
+	if x < 0 || y < 0 || x >= b.w || y >= b.h {
+		return false
+	}
+	if !b.hasClip {
+		return true
+	}
+	return x >= b.px(b.clip.X) && y >= b.px(b.clip.Y) &&
+		x < b.px(b.clip.X+b.clip.Width) && y < b.px(b.clip.Y+b.clip.Height)
+}
+
+// blendPx composites c over the existing pixel with coverage a.
+func (b *Backend) blendPx(x, y int, c color.RGBA, a float64) {
+	if a <= 0 || !b.inClip(x, y) {
+		return
+	}
+	if a >= 1 {
+		b.img.SetRGBA(x, y, c)
+		return
+	}
+	b.img.SetRGBA(x, y, blend(c, b.img.RGBAAt(x, y), a))
+}
+
+// DrawRoundedRect implements core.RoundedRectDrawer: one pass paints
+// the fill (style background) and the stroke (style foreground, at
+// strokePx weight) with anti-aliased corners. Window frames on pixel
+// surfaces are exactly one of these.
+func (b *Backend) DrawRoundedRect(r core.UnitRect, radius core.Unit, bs style.BorderStyle, s style.CellStyle) {
+	fg, bg := b.styleColors(s)
+	x0, y0 := b.px(r.X), b.px(r.Y)
+	x1, y1 := b.px(r.X+r.Width), b.px(r.Y+r.Height)
+	w, h := x1-x0, y1-y0
+	if w <= 0 || h <= 0 {
+		return
+	}
+	th := strokePx(bs)
+	rad := int(radius) * b.scale
+	if m := min(w, h) / 2; rad > m {
+		rad = m
+	}
+
+	if rad <= 0 {
+		b.fillPx(x0+th, y0+th, x1-th, y1-th, bg)
+		b.fillPx(x0, y0, x1, y0+th, fg)
+		b.fillPx(x0, y1-th, x1, y1, fg)
+		b.fillPx(x0, y0, x0+th, y1, fg)
+		b.fillPx(x1-th, y0, x1, y1, fg)
+		return
+	}
+
+	// Straight bands (everything outside the four corner boxes).
+	b.fillPx(x0+rad, y0, x1-rad, y0+th, fg)     // top stroke
+	b.fillPx(x0+rad, y1-th, x1-rad, y1, fg)     // bottom stroke
+	b.fillPx(x0, y0+rad, x0+th, y1-rad, fg)     // left stroke
+	b.fillPx(x1-th, y0+rad, x1, y1-rad, fg)     // right stroke
+	b.fillPx(x0+th, y0+rad, x1-th, y1-rad, bg)  // center
+	b.fillPx(x0+rad, y0+th, x1-rad, y0+rad, bg) // top band
+	b.fillPx(x0+rad, y1-rad, x1-rad, y1-th, bg) // bottom band
+
+	// Corners: per-pixel coverage against the corner circle, blended
+	// for smooth edges. cx/cy is the circle center in continuous
+	// pixel coordinates; sx/sy the corner box origin.
+	corners := [4]struct {
+		cx, cy float64
+		sx, sy int
+	}{
+		{float64(x0 + rad), float64(y0 + rad), x0, y0},             // top-left
+		{float64(x1 - rad), float64(y0 + rad), x1 - rad, y0},       // top-right
+		{float64(x0 + rad), float64(y1 - rad), x0, y1 - rad},       // bottom-left
+		{float64(x1 - rad), float64(y1 - rad), x1 - rad, y1 - rad}, // bottom-right
+	}
+	clampCov := func(v float64) float64 {
+		if v < 0 {
+			return 0
+		}
+		if v > 1 {
+			return 1
+		}
+		return v
+	}
+	for _, c := range corners {
+		for py := c.sy; py < c.sy+rad; py++ {
+			for px := c.sx; px < c.sx+rad; px++ {
+				d := math.Hypot(float64(px)+0.5-c.cx, float64(py)+0.5-c.cy)
+				outer := clampCov(float64(rad) - d + 0.5)
+				if outer <= 0 {
+					continue
+				}
+				inner := clampCov(float64(rad-th) - d + 0.5)
+				// Source color: fill inside the inner boundary, stroke
+				// in the band between inner and outer.
+				src := fg
+				if inner >= outer {
+					src = bg
+				} else if inner > 0 {
+					src = blend(bg, fg, inner/outer)
+				}
+				b.blendPx(px, py, src, outer)
+			}
+		}
 	}
 }
 

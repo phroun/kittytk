@@ -35,6 +35,12 @@ const (
 	WindowFlagToolWindow                          // Smaller title bar, no taskbar entry
 )
 
+// windowCornerRadius is the corner radius (in units) of the graphical
+// window frame's single rounded-rect surface. Kept below the frame's
+// one-cell inset (8 units) so titlebar buttons and content never
+// overlap the curve; cell surfaces ignore it entirely.
+const windowCornerRadius core.Unit = 6
+
 // TitleButton identifies a titlebar button.
 type TitleButton int
 
@@ -1077,9 +1083,18 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// Draw border at local (0,0) - painter is already offset to window position
 	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 
-	// When blur item is focused, draw dashed frame with inactive title color
-	// but keep corners, horizontally adjacent chars, and buttons in active color
-	if titleFocus == TitleFocusBlur {
+	// Graphical path (D1): the window's entire surface is ONE rounded
+	// rectangle - filled with the window background, stroked with the
+	// border color (2 device px for double, 1 for single). Title,
+	// buttons, and content then draw over it as usual. Cell surfaces
+	// return false and take the box-drawing path below.
+	roundedStyle := frameStyle.WithBg(w.Theme().WindowBackground.Bg)
+	if p.DrawRoundedRect(localBounds, windowCornerRadius, border, roundedStyle) {
+		// Frame painted; fall through to title/buttons/content.
+	} else if titleFocus == TitleFocusBlur {
+		// When blur item is focused, draw dashed frame with inactive title
+		// color but keep corners, horizontally adjacent chars, and buttons
+		// in active color
 		scheme := w.GetScheme()
 		blurFrameStyle := scheme.GetWindowTitle(false)  // Inactive title color for dashed lines
 		activeFrameStyle := scheme.GetWindowBorder(true) // Active color for corners

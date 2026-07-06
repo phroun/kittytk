@@ -123,6 +123,17 @@ type SmoothPositioningProvider interface {
 	SmoothWindowPositioning() bool
 }
 
+// RoundedRectDrawer is an optional RenderBackend capability: pixel
+// surfaces paint a filled, stroked rounded rectangle in a single
+// pass - the fill in the style's background color, the stroke in its
+// foreground, with the stroke weight taken from the border style
+// (2 device pixels for double, 1 for single). Window frames use this
+// as their entire graphical surface; cell surfaces omit it and
+// frames fall back to box-drawing runes.
+type RoundedRectDrawer interface {
+	DrawRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle)
+}
+
 // CaretDrawer is an optional RenderBackend capability: pixel surfaces
 // draw the text-insertion caret as a thin vertical bar sitting at the
 // left edge of the glyph box at (x, y) - where the next character
@@ -332,6 +343,21 @@ func (p *Painter) DrawCell(x, y Unit, ch rune, s style.CellStyle) {
 	sx, sy := p.toScreen(x, y)
 	p.applyClip()
 	p.backend.DrawCell(sx, sy, ch, s)
+}
+
+// DrawRoundedRect paints a filled, stroked rounded rectangle when
+// the backend supports it (see RoundedRectDrawer). Returns false on
+// cell surfaces; the caller then falls back to its cell-idiom
+// rendering (box-drawing runes).
+func (p *Painter) DrawRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle) bool {
+	rd, ok := p.backend.(RoundedRectDrawer)
+	if !ok {
+		return false
+	}
+	screenRect := p.transform.ApplyRect(r)
+	p.applyClip()
+	rd.DrawRoundedRect(screenRect, radius, border, s)
+	return true
 }
 
 // DrawCaret draws a text-insertion caret at the left edge of the
