@@ -130,8 +130,53 @@ type SmoothPositioningProvider interface {
 // (2 device pixels for double, 1 for single). Window frames use this
 // as their entire graphical surface; cell surfaces omit it and
 // frames fall back to box-drawing runes.
+//
+// StrokeRoundedRect paints only the stroke, leaving the interior
+// untouched: window frames re-stroke over their content, because
+// graphical content extends to the window edge (only the titlebar
+// reserves a full row - the hairline border shares its boundary
+// pixels with the content beneath it).
 type RoundedRectDrawer interface {
 	DrawRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle)
+	StrokeRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle)
+}
+
+// RoundedClipper is an optional RenderBackend capability: an
+// additional clip constraint shaped as a rounded rectangle,
+// composing with the rectangular SetClip (a pixel paints only if it
+// passes both). A zero rect clears it. Window frames confine their
+// edge-to-edge content with this so nothing paints past the rounded
+// corners.
+type RoundedClipper interface {
+	SetRoundedClip(r UnitRect, radius Unit)
+}
+
+// GraphicalFrameProvider is the widget-side carrier of the frame
+// mode: the desktop reports true when its backend paints rounded
+// window frames, and windows discover it by walking their ancestry
+// with FindGraphicalFrames. It governs the client-area contract: on
+// graphical frames the content area extends to the window's left,
+// right, and bottom edges (only the titlebar reserves a full row);
+// on cell frames the border occupies a full cell on every side.
+type GraphicalFrameProvider interface {
+	GraphicalWindowFrames() bool
+}
+
+// FindGraphicalFrames walks up the widget tree for a
+// GraphicalFrameProvider. Default (no provider found): false - the
+// cell-frame client area, the only always-safe answer.
+func FindGraphicalFrames(w Widget) bool {
+	for current := Widget(w); current != nil; {
+		if p, ok := current.(GraphicalFrameProvider); ok {
+			return p.GraphicalWindowFrames()
+		}
+		parent := current.Parent()
+		if parent == nil {
+			return false
+		}
+		current = parent
+	}
+	return false
 }
 
 // CaretDrawer is an optional RenderBackend capability: pixel surfaces
@@ -253,6 +298,14 @@ type Painter struct {
 	transform Transform
 	clip      UnitRect
 	metrics   CellMetrics
+
+	// Rounded clip region (screen coordinates; zero rect = none): an
+	// additional constraint beyond the rectangular clip, honored by
+	// backends implementing RoundedClipper. Window frames set it so
+	// edge-to-edge content cannot paint past the frame's rounded
+	// corners.
+	roundClip       UnitRect
+	roundClipRadius Unit
 }
 
 // NewPainter creates a painter for a backend.
@@ -277,12 +330,9 @@ func (p *Painter) Metrics() CellMetrics {
 // translations only the order is immaterial; once scales are involved
 // it is not.)
 func (p *Painter) WithTransform(t Transform) *Painter {
-	return &Painter{
-		backend:   p.backend,
-		transform: t.Compose(p.transform),
-		clip:      p.clip,
-		metrics:   p.metrics,
-	}
+	np := *p
+	np.transform = t.Compose(p.transform)
+	return &np
 }
 
 // WithDenomination returns a Painter whose local coordinates are
@@ -312,13 +362,21 @@ func (p *Painter) WithClip(clip UnitRect) *Painter {
 	// Transform clip to screen coordinates
 	screenClip := p.transform.ApplyRect(clip)
 	// Intersect with existing clip
-	newClip := p.clip.Intersection(screenClip)
-	return &Painter{
-		backend:   p.backend,
-		transform: p.transform,
-		clip:      newClip,
-		metrics:   p.metrics,
-	}
+	np := *p
+	np.clip = p.clip.Intersection(screenClip)
+	return &np
+}
+
+// WithRoundedClipRegion returns a Painter whose drawing is
+// additionally confined to a rounded rectangle (in current local
+// coordinates). It composes with the rectangular clip chain: a pixel
+// paints only if it passes both. Backends without RoundedClipper
+// ignore it (cell surfaces have no rounded geometry to protect).
+func (p *Painter) WithRoundedClipRegion(r UnitRect, radius Unit) *Painter {
+	np := *p
+	np.roundClip = p.transform.ApplyRect(r)
+	np.roundClipRadius = radius
+	return &np
 }
 
 // Clip returns the current clip rectangle in local coordinates.
@@ -330,6 +388,9 @@ func (p *Painter) Clip() UnitRect {
 // applyClip sets the backend clip to our current clip.
 func (p *Painter) applyClip() {
 	p.backend.SetClip(p.clip)
+	if rc, ok := p.backend.(RoundedClipper); ok {
+		rc.SetRoundedClip(p.roundClip, p.roundClipRadius)
+	}
 }
 
 // toScreen transforms local coordinates to screen coordinates.
@@ -357,6 +418,20 @@ func (p *Painter) DrawRoundedRect(r UnitRect, radius Unit, border style.BorderSt
 	screenRect := p.transform.ApplyRect(r)
 	p.applyClip()
 	rd.DrawRoundedRect(screenRect, radius, border, s)
+	return true
+}
+
+// StrokeRoundedRect paints only the rounded rectangle's stroke,
+// leaving the interior untouched, when the backend supports it.
+// Returns false on cell surfaces.
+func (p *Painter) StrokeRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle) bool {
+	rd, ok := p.backend.(RoundedRectDrawer)
+	if !ok {
+		return false
+	}
+	screenRect := p.transform.ApplyRect(r)
+	p.applyClip()
+	rd.StrokeRoundedRect(screenRect, radius, border, s)
 	return true
 }
 

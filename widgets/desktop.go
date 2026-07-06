@@ -63,6 +63,11 @@ type ApplicationProvider interface {
 type Desktop struct {
 	core.WidgetBase
 
+	// graphicalFrames reports whether the backend paints rounded
+	// window frames (core.RoundedRectDrawer); windows discover it via
+	// core.FindGraphicalFrames to pick their client-area contract.
+	graphicalFrames bool
+
 	// Menu bar at the top (Mac-style)
 	menuBar *MenuBar
 
@@ -250,6 +255,12 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 		core.SetTextMeasurer(nil)
 	}
 
+	// Frame mode: when the backend paints rounded window frames, the
+	// client-area contract changes (content extends to the window
+	// edges; only the titlebar reserves a full row). Windows discover
+	// this through the desktop via core.FindGraphicalFrames.
+	_, d.graphicalFrames = backend.(core.RoundedRectDrawer)
+
 	d.windowManager = window.NewWindowManager()
 	if sp, ok := backend.(core.SmoothPositioner); ok && sp.SmoothPositioning() {
 		// Pixel surfaces place windows at unit granularity; cell-grid
@@ -302,6 +313,15 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 			d.windowManager.RestorePreviousActiveWindow()
 		})
 	}
+}
+
+// GraphicalWindowFrames implements core.GraphicalFrameProvider: true
+// when the backend paints rounded window frames, which switches the
+// window client-area contract to edge-to-edge below the titlebar.
+func (d *Desktop) GraphicalWindowFrames() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.graphicalFrames
 }
 
 // Backend returns the render backend.

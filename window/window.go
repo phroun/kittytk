@@ -698,20 +698,38 @@ func (w *Window) contentBounds() core.UnitRect {
 	// In maximized mode, no side borders (full width)
 	if state == WindowStateMaximized && flags&WindowFlagNoTitle == 0 {
 		// Only top title bar, no side borders
-		return core.UnitRect{
+		return clampClientArea(core.UnitRect{
 			X:      0,
 			Y:      metrics.CellHeight, // One row for title
 			Width:  bounds.Width,
 			Height: bounds.Height - metrics.CellHeight,
-		}
+		})
 	}
 
 	// Normal mode with full frame
 	if flags&WindowFlagFrameless != 0 {
-		return core.UnitRect{Width: bounds.Width, Height: bounds.Height}
+		return clampClientArea(core.UnitRect{Width: bounds.Width, Height: bounds.Height})
 	}
 
-	// Account for frame
+	// Graphical frames: the border is a hairline on the window's own
+	// surface, not a cell band - only the titlebar reserves a full
+	// row, and content extends to the left, right, and bottom edges
+	// (the frame re-strokes over it, and a rounded clip keeps it
+	// inside the corners).
+	if core.FindGraphicalFrames(w) {
+		top := metrics.CellHeight
+		if flags&WindowFlagNoTitle != 0 {
+			top = 0
+		}
+		return clampClientArea(core.UnitRect{
+			X:      0,
+			Y:      top,
+			Width:  bounds.Width,
+			Height: bounds.Height - top,
+		})
+	}
+
+	// Cell frames: the border occupies a full cell on every side.
 	left := metrics.CellWidth
 	top := metrics.CellHeight
 	right := metrics.CellWidth
@@ -721,12 +739,25 @@ func (w *Window) contentBounds() core.UnitRect {
 		top = metrics.CellHeight // Just border, no extra title row
 	}
 
-	return core.UnitRect{
+	return clampClientArea(core.UnitRect{
 		X:      left,
 		Y:      top,
 		Width:  bounds.Width - left - right,
 		Height: bounds.Height - top - bottom,
+	})
+}
+
+// clampClientArea guarantees the client area is never empty: a window
+// squeezed below its chrome still exposes a 1-unit sliver so content
+// paints (clipped) instead of spilling unclipped.
+func clampClientArea(r core.UnitRect) core.UnitRect {
+	if r.Width < 1 {
+		r.Width = 1
 	}
+	if r.Height < 1 {
+		r.Height = 1
+	}
+	return r
 }
 
 // ClientAreaOffset returns the offset from the window's top-left corner
@@ -915,12 +946,27 @@ func (w *Window) Paint(p *core.Painter) {
 
 	// Paint content (in the window's interior denomination)
 	outer, interior := w.denominations()
+	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
+	graphicalFrame := state != WindowStateMaximized && flags&WindowFlagFrameless == 0 &&
+		core.FindGraphicalFrames(w)
 	if content != nil {
 		contentBounds := w.contentBounds()
-		contentPainter := p.WithOffset(contentBounds.X, contentBounds.Y).
+		contentBase := p
+		if graphicalFrame {
+			// Edge-to-edge content stays inside the frame's rounded
+			// outline (bottom corners in particular).
+			contentBase = p.WithRoundedClipRegion(localBounds, windowCornerRadius)
+		}
+		contentPainter := contentBase.WithOffset(contentBounds.X, contentBounds.Y).
 			WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height}).
 			WithDenomination(outer, interior)
 		content.Paint(contentPainter)
+	}
+	if graphicalFrame {
+		// Content reaches the window edges, so the hairline border is
+		// re-stroked over it - the frame stays visible on all sides.
+		frameStyle := w.GetScheme().GetWindowBorder(focused || isPassive)
+		p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle)
 	}
 
 	// Paint child windows (within the content area, clipped)

@@ -43,6 +43,13 @@ type Backend struct {
 	clip    core.UnitRect
 	hasClip bool
 
+	// Rounded clip (core.RoundedClipper): an additional constraint on
+	// top of the rectangular clip. Window frames confine their
+	// edge-to-edge content with it.
+	roundClip       core.UnitRect
+	roundClipRadius core.Unit
+	hasRoundClip    bool
+
 	face   font.Face
 	ascent int
 
@@ -131,7 +138,68 @@ func (b *Backend) EndFrame()   {}
 
 func (b *Backend) SetClip(clip core.UnitRect) {
 	b.clip = clip
-	b.hasClip = !clip.IsEmpty()
+	// An empty clip clips EVERYTHING (a window squeezed until its
+	// client area vanishes must not spill its content); "unclipped"
+	// is only ever the state before the first SetClip.
+	b.hasClip = true
+}
+
+// SetRoundedClip implements core.RoundedClipper: a zero rect clears
+// the constraint.
+func (b *Backend) SetRoundedClip(r core.UnitRect, radius core.Unit) {
+	b.roundClip = r
+	b.roundClipRadius = radius
+	b.hasRoundClip = !r.IsEmpty()
+}
+
+// pointVisible applies every active clip constraint to a device
+// pixel: framebuffer bounds, the rectangular clip, and the rounded
+// clip's rect and corner arcs (hard-edged, pixel centers).
+func (b *Backend) pointVisible(x, y int) bool {
+	if x < 0 || y < 0 || x >= b.w || y >= b.h {
+		return false
+	}
+	if b.hasClip {
+		if x < b.px(b.clip.X) || y < b.px(b.clip.Y) ||
+			x >= b.px(b.clip.X+b.clip.Width) || y >= b.px(b.clip.Y+b.clip.Height) {
+			return false
+		}
+	}
+	if b.hasRoundClip {
+		rx0, ry0 := b.px(b.roundClip.X), b.px(b.roundClip.Y)
+		rx1, ry1 := b.px(b.roundClip.X+b.roundClip.Width), b.px(b.roundClip.Y+b.roundClip.Height)
+		if x < rx0 || y < ry0 || x >= rx1 || y >= ry1 {
+			return false
+		}
+		rad := int(b.roundClipRadius) * b.scale
+		if m := min(rx1-rx0, ry1-ry0) / 2; rad > m {
+			rad = m
+		}
+		if rad > 0 {
+			// Inside a corner box: require the pixel center within
+			// the corner arc.
+			cx, cy := 0.0, 0.0
+			inCorner := false
+			switch {
+			case x < rx0+rad && y < ry0+rad:
+				cx, cy, inCorner = float64(rx0+rad), float64(ry0+rad), true
+			case x >= rx1-rad && y < ry0+rad:
+				cx, cy, inCorner = float64(rx1-rad), float64(ry0+rad), true
+			case x < rx0+rad && y >= ry1-rad:
+				cx, cy, inCorner = float64(rx0+rad), float64(ry1-rad), true
+			case x >= rx1-rad && y >= ry1-rad:
+				cx, cy, inCorner = float64(rx1-rad), float64(ry1-rad), true
+			}
+			if inCorner {
+				dx := float64(x) + 0.5 - cx
+				dy := float64(y) + 0.5 - cy
+				if dx*dx+dy*dy > float64(rad)*float64(rad) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 // --- Color resolution ---
@@ -204,6 +272,17 @@ func (b *Backend) fillPx(x0, y0, x1, y1 int, c color.RGBA) {
 	if y1 > b.h {
 		y1 = b.h
 	}
+	if b.hasRoundClip {
+		// Rounded clip active: per-pixel test (corner arcs).
+		for y := y0; y < y1; y++ {
+			for x := x0; x < x1; x++ {
+				if b.pointVisible(x, y) {
+					b.img.SetRGBA(x, y, c)
+				}
+			}
+		}
+		return
+	}
 	for y := y0; y < y1; y++ {
 		for x := x0; x < x1; x++ {
 			b.img.SetRGBA(x, y, c)
@@ -222,9 +301,10 @@ func blend(over, under color.RGBA, alpha float64) color.RGBA {
 func (b *Backend) Clear(s style.CellStyle) {
 	_, bg := b.styleColors(s)
 	saved, savedHas := b.clip, b.hasClip
-	b.hasClip = false
+	savedRound := b.hasRoundClip
+	b.hasClip, b.hasRoundClip = false, false
 	b.fillPx(0, 0, b.w, b.h, bg)
-	b.clip, b.hasClip = saved, savedHas
+	b.clip, b.hasClip, b.hasRoundClip = saved, savedHas, savedRound
 }
 
 // --- Text ---
@@ -309,11 +389,8 @@ func (c *clippedRGBA) ColorModel() color.Model { return c.b.img.ColorModel() }
 func (c *clippedRGBA) Bounds() image.Rectangle { return c.b.img.Bounds() }
 func (c *clippedRGBA) At(x, y int) color.Color { return c.b.img.At(x, y) }
 func (c *clippedRGBA) Set(x, y int, col color.Color) {
-	if c.b.hasClip {
-		cl := c.b.clip
-		if x < c.b.px(cl.X) || y < c.b.px(cl.Y) || x >= c.b.px(cl.X+cl.Width) || y >= c.b.px(cl.Y+cl.Height) {
-			return
-		}
+	if !c.b.pointVisible(x, y) {
+		return
 	}
 	c.b.img.Set(x, y, col)
 }
@@ -448,16 +525,9 @@ func strokePx(bs style.BorderStyle) int {
 	return 1
 }
 
-// inClip reports whether a device pixel is inside the current clip.
+// inClip reports whether a device pixel is inside every active clip.
 func (b *Backend) inClip(x, y int) bool {
-	if x < 0 || y < 0 || x >= b.w || y >= b.h {
-		return false
-	}
-	if !b.hasClip {
-		return true
-	}
-	return x >= b.px(b.clip.X) && y >= b.px(b.clip.Y) &&
-		x < b.px(b.clip.X+b.clip.Width) && y < b.px(b.clip.Y+b.clip.Height)
+	return b.pointVisible(x, y)
 }
 
 // blendPx composites c over the existing pixel with coverage a.
@@ -477,6 +547,17 @@ func (b *Backend) blendPx(x, y int, c color.RGBA, a float64) {
 // strokePx weight) with anti-aliased corners. Window frames on pixel
 // surfaces are exactly one of these.
 func (b *Backend) DrawRoundedRect(r core.UnitRect, radius core.Unit, bs style.BorderStyle, s style.CellStyle) {
+	b.roundedRect(r, radius, bs, s, true)
+}
+
+// StrokeRoundedRect implements the stroke-only variant: the interior
+// is left untouched. Window frames re-stroke over their edge-to-edge
+// content with this.
+func (b *Backend) StrokeRoundedRect(r core.UnitRect, radius core.Unit, bs style.BorderStyle, s style.CellStyle) {
+	b.roundedRect(r, radius, bs, s, false)
+}
+
+func (b *Backend) roundedRect(r core.UnitRect, radius core.Unit, bs style.BorderStyle, s style.CellStyle, fill bool) {
 	fg, bg := b.styleColors(s)
 	x0, y0 := b.px(r.X), b.px(r.Y)
 	x1, y1 := b.px(r.X+r.Width), b.px(r.Y+r.Height)
@@ -491,7 +572,9 @@ func (b *Backend) DrawRoundedRect(r core.UnitRect, radius core.Unit, bs style.Bo
 	}
 
 	if rad <= 0 {
-		b.fillPx(x0+th, y0+th, x1-th, y1-th, bg)
+		if fill {
+			b.fillPx(x0+th, y0+th, x1-th, y1-th, bg)
+		}
 		b.fillPx(x0, y0, x1, y0+th, fg)
 		b.fillPx(x0, y1-th, x1, y1, fg)
 		b.fillPx(x0, y0, x0+th, y1, fg)
@@ -500,13 +583,15 @@ func (b *Backend) DrawRoundedRect(r core.UnitRect, radius core.Unit, bs style.Bo
 	}
 
 	// Straight bands (everything outside the four corner boxes).
-	b.fillPx(x0+rad, y0, x1-rad, y0+th, fg)     // top stroke
-	b.fillPx(x0+rad, y1-th, x1-rad, y1, fg)     // bottom stroke
-	b.fillPx(x0, y0+rad, x0+th, y1-rad, fg)     // left stroke
-	b.fillPx(x1-th, y0+rad, x1, y1-rad, fg)     // right stroke
-	b.fillPx(x0+th, y0+rad, x1-th, y1-rad, bg)  // center
-	b.fillPx(x0+rad, y0+th, x1-rad, y0+rad, bg) // top band
-	b.fillPx(x0+rad, y1-rad, x1-rad, y1-th, bg) // bottom band
+	b.fillPx(x0+rad, y0, x1-rad, y0+th, fg) // top stroke
+	b.fillPx(x0+rad, y1-th, x1-rad, y1, fg) // bottom stroke
+	b.fillPx(x0, y0+rad, x0+th, y1-rad, fg) // left stroke
+	b.fillPx(x1-th, y0+rad, x1, y1-rad, fg) // right stroke
+	if fill {
+		b.fillPx(x0+th, y0+rad, x1-th, y1-rad, bg)  // center
+		b.fillPx(x0+rad, y0+th, x1-rad, y0+rad, bg) // top band
+		b.fillPx(x0+rad, y1-rad, x1-rad, y1-th, bg) // bottom band
+	}
 
 	// Corners: per-pixel coverage against the corner circle, blended
 	// for smooth edges. cx/cy is the circle center in continuous
@@ -538,6 +623,14 @@ func (b *Backend) DrawRoundedRect(r core.UnitRect, radius core.Unit, bs style.Bo
 					continue
 				}
 				inner := clampCov(float64(rad-th) - d + 0.5)
+				if !fill {
+					// Stroke only: paint just the band between the
+					// inner and outer boundaries.
+					if cov := outer - inner; cov > 0 {
+						b.blendPx(px, py, fg, cov)
+					}
+					continue
+				}
 				// Source color: fill inside the inner boundary, stroke
 				// in the band between inner and outer.
 				src := fg
