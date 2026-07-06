@@ -817,15 +817,16 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 			Height: metrics.CellHeight,
 		}, ' ', s)
 
-		// Draw item text
-		x := metrics.CellWidth
-		for _, ch := range item {
-			if x >= bounds.Width-metrics.CellWidth {
-				break
-			}
-			p.DrawCell(x, itemY, ch, s)
-			x += metrics.CellWidth
-		}
+		// Draw item text through the proportional path, clipped to
+		// the row (cell surfaces render it cell-by-cell as before).
+		font := c.EffectiveFont()
+		rowPainter := p.WithClip(core.UnitRect{
+			X:      0,
+			Y:      itemY,
+			Width:  bounds.Width - metrics.CellWidth,
+			Height: metrics.CellHeight,
+		})
+		rowPainter.DrawText(metrics.CellWidth, itemY, item, s, font)
 	}
 
 	// Draw scroll indicators if needed
@@ -920,15 +921,16 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			Height: metrics.CellHeight,
 		}, ' ', s)
 
-		// Draw item text
-		x := metrics.CellWidth
-		for _, ch := range item {
-			if x >= popupBounds.Width-metrics.CellWidth {
-				break
-			}
-			popupPainter.DrawCell(x, itemY, ch, s)
-			x += metrics.CellWidth
-		}
+		// Draw item text through the proportional path, clipped to
+		// the row (cell surfaces render it cell-by-cell as before).
+		font := c.EffectiveFont()
+		rowPainter := popupPainter.WithClip(core.UnitRect{
+			X:      0,
+			Y:      itemY,
+			Width:  popupBounds.Width - metrics.CellWidth,
+			Height: metrics.CellHeight,
+		})
+		rowPainter.DrawText(metrics.CellWidth, itemY, item, s, font)
 	}
 
 	// Draw scroll down indicator or scrollbar
