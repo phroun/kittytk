@@ -106,6 +106,40 @@ type RenderBackend interface {
 	Beep()
 }
 
+// SmoothPositioner is an optional RenderBackend capability: true
+// when the surface can place window chrome at arbitrary unit
+// positions (pixel surfaces). Cell-only surfaces (terminals) omit it
+// - their painting quantizes to the cell grid, so drag/resize must
+// snap to keep hit-testing and pixels aligned.
+type SmoothPositioner interface {
+	SmoothPositioning() bool
+}
+
+// SmoothPositioningProvider is the widget-side carrier of the same
+// capability: window-manager hosts stamp it onto the windows they
+// manage, and nested window hosts (MDI panes) discover it by walking
+// their ancestry with FindSmoothPositioning.
+type SmoothPositioningProvider interface {
+	SmoothWindowPositioning() bool
+}
+
+// FindSmoothPositioning walks up the widget tree for a
+// SmoothPositioningProvider. Default (no provider found): false -
+// snap to cells, the only always-safe answer.
+func FindSmoothPositioning(w Widget) bool {
+	for current := Widget(w); current != nil; {
+		if p, ok := current.(SmoothPositioningProvider); ok {
+			return p.SmoothWindowPositioning()
+		}
+		parent := current.Parent()
+		if parent == nil {
+			return false
+		}
+		current = parent
+	}
+	return false
+}
+
 // Event is the base interface for all input events.
 type Event interface {
 	isEvent()

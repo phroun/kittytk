@@ -377,6 +377,10 @@ func (b *Backend) DrawBox(r core.UnitRect, bs style.BorderStyle, title string, s
 
 // --- Input & misc: the substrate's job; headless stubs here ---
 
+// SmoothPositioning implements core.SmoothPositioner: pixel surfaces
+// place window chrome at any unit position.
+func (b *Backend) SmoothPositioning() bool { return true }
+
 func (b *Backend) PollEvent() core.Event                  { return nil }
 func (b *Backend) WaitEvent() core.Event                  { return nil }
 func (b *Backend) SetCursorVisible(bool)                  {}

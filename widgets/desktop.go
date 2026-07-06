@@ -241,6 +241,11 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	d.WidgetBase.SetCellMetrics(&rootMetrics)
 
 	d.windowManager = window.NewWindowManager()
+	if sp, ok := backend.(core.SmoothPositioner); ok && sp.SmoothPositioning() {
+		// Pixel surfaces place windows at unit granularity; cell-grid
+		// surfaces keep the default snap-to-cell behavior.
+		d.windowManager.SetSmoothPositioning(true)
+	}
 	d.windowManager.SetOnRepaintNeeded(func() {
 		d.RequestUpdate()
 	})

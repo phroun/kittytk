@@ -74,6 +74,12 @@ type Window struct {
 	// honored when the platform can create surfaces.
 	nativeRequested bool
 
+	// smoothPositioning is stamped by the hosting window manager
+	// from the surface capability (core.SmoothPositioner): pixel
+	// surfaces drag/resize at unit granularity, cell surfaces snap.
+	// Nested hosts (MDI panes) inherit it via FindSmoothPositioning.
+	smoothPositioning bool
+
 	// Position before maximization (for restore)
 	normalBounds core.UnitRect
 
@@ -187,6 +193,23 @@ func (w *Window) NativeRequested() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.nativeRequested
+}
+
+// SetSmoothPositioning is stamped by the hosting manager from the
+// surface capability.
+func (w *Window) SetSmoothPositioning(smooth bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.smoothPositioning = smooth
+}
+
+// SmoothWindowPositioning implements core.SmoothPositioningProvider,
+// letting widgets inside this window (e.g. MDI panes) inherit the
+// surface's positioning granularity.
+func (w *Window) SmoothWindowPositioning() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.smoothPositioning
 }
 
 // Flags returns the window flags.

@@ -100,6 +100,11 @@ type WindowManager struct {
 	// Cycle order for M-Tab: tracks activation order of windows and dock.
 	// Items are *Window or nil (nil represents the dock).
 	cycleOrder []interface{}
+
+	// Smooth positioning: when the surface's backend supports sub-cell
+	// placement (pixel surfaces), drag and resize track the pointer at
+	// unit granularity instead of snapping to cell boundaries.
+	smoothPositioning bool
 }
 
 // PopupOverlay represents a popup that should be painted on top of all windows.
@@ -123,6 +128,28 @@ func NewWindowManager() *WindowManager {
 	return &WindowManager{
 		theme: style.DefaultTheme(),
 	}
+}
+
+// SetSmoothPositioning controls whether drag and resize snap to cell
+// boundaries. Pixel-capable surfaces enable smooth positioning; cell-grid
+// surfaces leave it off so windows always land on whole cells.
+func (m *WindowManager) SetSmoothPositioning(smooth bool) {
+	m.mu.Lock()
+	m.smoothPositioning = smooth
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.Unlock()
+	for _, win := range windows {
+		win.SetSmoothPositioning(smooth)
+	}
+}
+
+// SmoothPositioning reports whether drag and resize track the pointer at
+// unit granularity rather than snapping to cell boundaries.
+func (m *WindowManager) SmoothPositioning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.smoothPositioning
 }
 
 // abs returns the absolute value of an integer.
@@ -260,7 +287,10 @@ func (m *WindowManager) AddWindow(win *Window) {
 	m.cycleOrder = append(m.cycleOrder, win)
 	handler := m.onWindowAdded
 	desktop := m.desktop
+	smooth := m.smoothPositioning
 	m.mu.Unlock()
+
+	win.SetSmoothPositioning(smooth)
 
 	// Set window's parent to desktop so widgets can traverse up to find timer provider
 	if desktop != nil {
@@ -1198,8 +1228,11 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			newBounds.Height = resizeOriginal.Height + deltaY
 		}
 
-		// Align to cell boundaries
-		newBounds = metrics.AlignRect(newBounds)
+		// Align to cell boundaries (skipped on pixel surfaces, where
+		// windows resize smoothly at unit granularity)
+		if !m.SmoothPositioning() {
+			newBounds = metrics.AlignRect(newBounds)
+		}
 
 		// Enforce minimum window size (at least 3 cells wide, 2 cells tall)
 		minWidth := metrics.CellWidth * 3
@@ -1339,8 +1372,11 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			bounds.Height = clientArea.Height
 		}
 
-		// Align position to cell boundaries (important after restore from maximized)
-		bounds = metrics.AlignRect(bounds)
+		// Align position to cell boundaries (important after restore from
+		// maximized); pixel surfaces drag smoothly at unit granularity
+		if !m.SmoothPositioning() {
+			bounds = metrics.AlignRect(bounds)
+		}
 
 		dragging.SetBounds(bounds)
 

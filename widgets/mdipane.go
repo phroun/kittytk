@@ -1377,7 +1377,11 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 			newBounds.Height = resizeOriginal.Height + deltaY
 		}
 
-		newBounds = metrics.AlignRect(newBounds)
+		// Snap to cell boundaries unless the surface supports smooth
+		// (unit-granular) positioning, as pixel surfaces do
+		if !core.FindSmoothPositioning(m.Self()) {
+			newBounds = metrics.AlignRect(newBounds)
+		}
 
 		// Enforce minimum size
 		minWidth := metrics.CellWidth * 3
@@ -1477,7 +1481,11 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 			bounds.X = maxX
 		}
 
-		bounds = metrics.AlignRect(bounds)
+		// Snap to cell boundaries unless the surface supports smooth
+		// (unit-granular) positioning, as pixel surfaces do
+		if !core.FindSmoothPositioning(m.Self()) {
+			bounds = metrics.AlignRect(bounds)
+		}
 		dragging.SetBounds(bounds)
 		m.Update()
 		return true
