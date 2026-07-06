@@ -623,9 +623,19 @@ milestone for whole windows.
 6. **Shared text engine** (D5/D6) — Pango-class shaped-paragraph module
    (shaping, bidi, fallback, segmentation, rasterization); also serves
    as G1's server-side TextMeasurer for graphical mode.
-7. First graphical substrate (order per O1): native windows, input,
-   DPI; rendering path per O4. Second substrate lands before the
-   substrate interface is declared stable.
+7. First graphical substrate — **SDL core landed 2026-07-05** (D23).
+   The `raster` package is the pixel implementation of the rendering
+   primitives (real TTF glyphs at Monday-matching advance, real
+   lines for borders, shade-rune alpha blends; cgo-free, headless-
+   testable, PNG-provable). The `sdl` package (build tag `sdl`)
+   wraps it: SDL2 window, streaming-texture blit, D21 loop, D3 key
+   translation; `examples/sdldesktop` is the graphical display
+   service serving the same socket (selection-by-binary per O3).
+   Verified headless via SDL's dummy driver incl. a full-stack smoke
+   (remoteapp connected to the SDL desktop). Remaining in this
+   phase: on-screen verification by the owner, HiDPI scale, cursor,
+   multi-surface (G4 granting), then Gio as the second substrate
+   before the interface is declared stable.
 8. **G5 + G6** native popups and `PlatformIntegration` for menus/dialogs/
    clipboard with rendered fallback; native macOS menus first.
 9. **D1 rollout** widget-by-widget graphical paint paths with real fonts.
