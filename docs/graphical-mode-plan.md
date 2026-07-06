@@ -620,9 +620,28 @@ milestone for whole windows.
    dispatch, disconnect teardown), race-detector clean. Remaining:
    D4 reattach, O6 bulk frames, TCP/SSH endpoints, per-connection
    auth beyond socket perms.
-6. **Shared text engine** (D5/D6) — Pango-class shaped-paragraph module
-   (shaping, bidi, fallback, segmentation, rasterization); also serves
-   as G1's server-side TextMeasurer for graphical mode.
+6. ✅ **Shared text engine** (D5/D6) — **core landed 2026-07-06**.
+   The `text` package: `Engine` over go-text/typesetting (HarfBuzz
+   shaping, bidi + script + face segmentation, UAX #14 wrapping) with
+   embedded default fonts ("Go" sans + "Go Mono"; TUI-era names
+   "Monday"/"Tuesday" aliased; `RegisterFont` extends the fallback
+   chain — registered fonts only, never the host system, so layout
+   stays deterministic per D5). Both D6 tiers: fast path
+   (`Measure`/`ShapeRun`) and full shaped-paragraph path
+   (`ShapeParagraph`: attributed spans, base direction with UAX #9
+   auto-detection, wrapping). Contract altitude held: the shaping
+   library appears nowhere in the API; runs carry logical rune
+   ranges + resolved direction, and the cluster map is exposed as
+   operations (`Line.CaretX`, `Line.RuneForX` — ligature/combining
+   snapping, RTL-correct). `text.Render` rasterizes shaped output at
+   any integer scale (crisp outlines, not upsampling) via
+   go-text/render. Tested: proportional vs mono metrics, cross-engine
+   determinism, wrapping invariants, bidi run structure (LTR/RTL/LTR
+   and RTL-base), caret round-trips both directions, cluster
+   snapping, span splitting, render ink at 1x/2x. Remaining in this
+   phase: adoption (raster backend text path + G1 TextMeasurer
+   wiring, D1 widget rollout), height-for-width via shaping,
+   fontscan-style optional system-font discovery.
 7. First graphical substrate — **SDL core landed 2026-07-05** (D23).
    The `raster` package is the pixel implementation of the rendering
    primitives (real TTF glyphs at Monday-matching advance, real

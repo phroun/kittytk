@@ -1,0 +1,370 @@
+// Package text is tuitk's shared text engine (plan decisions D5/D6):
+// one tuitk-owned module for text shaping, measurement, and
+// rasterization, used identically by every graphical backend, so
+// server-side layout is deterministic and measurement can never
+// disagree with painting.
+//
+// The engine offers two tiers behind one roof (D6):
+//
+//   - a fast simple path - Measure and ShapeRun - for single-font,
+//     single-direction glyph runs (button labels, menu items, titles);
+//   - the full shaped-paragraph path - ShapeParagraph - with OpenType
+//     shaping (GSUB/GPOS), bidirectional text (UAX #9), per-rune font
+//     fallback, and UAX #14 line breaking.
+//
+// The contract altitude is the shaped paragraph: attributed text in;
+// lines of positioned glyph runs plus cluster mapping out. Widgets'
+// graphical paint paths consume shaped lines and use the cluster-map
+// operations (CaretX, RuneForX) - never per-rune arithmetic - which
+// is what keeps caret movement, selection, and hit-testing correct in
+// RTL text and inside ligatures. The shaping library is an
+// implementation detail and does not appear in the API.
+//
+// Terminal-style regions (PurfecTerm) are a deliberate carve-out and
+// do not go through this engine; TUI mode keeps its cell metrics
+// (D6's accepted asymmetry).
+package text
+
+import (
+	"math"
+	"sync"
+
+	"github.com/go-text/typesetting/di"
+	"github.com/go-text/typesetting/shaping"
+	"golang.org/x/image/math/fixed"
+	xbidi "golang.org/x/text/unicode/bidi"
+
+	"github.com/phroun/tuitk/core"
+)
+
+// Direction is the paragraph base direction.
+type Direction uint8
+
+const (
+	// DirectionAuto derives the base direction from the first strong
+	// character (UAX #9 rule P2), defaulting to left-to-right.
+	DirectionAuto Direction = iota
+	DirectionLTR
+	DirectionRTL
+)
+
+// Span attributes a rune range of a paragraph with a font. Ranges are
+// rune indices, half-open [Start, End).
+type Span struct {
+	Start, End int
+	Font       *core.Font
+}
+
+// Paragraph is the input to the full shaping path: one paragraph of
+// logical text (no newlines) with optional attribute spans.
+type Paragraph struct {
+	Text string
+	// Font is the default font for text not covered by Spans.
+	// nil means core.DefaultFont().
+	Font *core.Font
+	// Spans style sub-ranges; they must be sorted and non-overlapping.
+	Spans []Span
+	// Direction is the paragraph base direction.
+	Direction Direction
+}
+
+// RuneRange is a half-open range [Start, End) of rune indices into
+// the paragraph text.
+type RuneRange struct {
+	Start, End int
+}
+
+// Run is one directional stretch of shaped glyphs in a single face.
+type Run struct {
+	// Runes is the logical text range this run covers.
+	Runes RuneRange
+	// RTL reports the run's resolved direction.
+	RTL bool
+	// X is the run's left edge within its line, Width its advance.
+	X, Width core.Unit
+
+	raw shaping.Output // shaped glyphs; deliberately not exposed
+}
+
+// Line is one wrapped line: runs stored in visual order (leftmost
+// first), with metrics for stacking.
+type Line struct {
+	Runs []Run
+	// Runes is the logical text range of the whole line.
+	Runes RuneRange
+	// Width is the line's total advance.
+	Width core.Unit
+	// Ascent and Descent are distances above/below the baseline (both
+	// positive); Gap is the leading below the descent.
+	Ascent, Descent, Gap core.Unit
+	// Baseline is the line's baseline Y relative to the paragraph top.
+	Baseline core.Unit
+}
+
+// Height returns the vertical space the line occupies.
+func (l *Line) Height() core.Unit { return l.Ascent + l.Descent + l.Gap }
+
+// ShapedParagraph is the full-path output: wrapped, shaped, positioned.
+type ShapedParagraph struct {
+	Lines []Line
+	// Text is the paragraph's logical text as runes (cluster indices
+	// and RuneRanges index into it).
+	Text []rune
+}
+
+// Height returns the total stacked height of all lines.
+func (p *ShapedParagraph) Height() core.Unit {
+	h := core.Unit(0)
+	for i := range p.Lines {
+		h += p.Lines[i].Height()
+	}
+	return h
+}
+
+// Width returns the widest line's advance.
+func (p *ShapedParagraph) Width() core.Unit {
+	w := core.Unit(0)
+	for i := range p.Lines {
+		if p.Lines[i].Width > w {
+			w = p.Lines[i].Width
+		}
+	}
+	return w
+}
+
+// Engine is the shared text engine. One Engine per display service;
+// safe for concurrent use.
+type Engine struct {
+	mu      sync.Mutex
+	db      *fontDB
+	shaper  shaping.HarfbuzzShaper
+	seg     shaping.Segmenter
+	wrapper shaping.LineWrapper
+}
+
+// NewEngine creates an engine with the embedded default fonts: the
+// "Go" family (sans, default) and "Go Mono", with the TUI-era names
+// "Monday" and "Tuesday" aliased onto them.
+func NewEngine() *Engine {
+	return &Engine{db: newFontDB()}
+}
+
+// RegisterFont adds a font variant (TTF/OTF bytes) under a family
+// name, extending the fallback chain in registration order. Data is
+// parsed once; registering the same family+aspect again replaces it.
+func (e *Engine) RegisterFont(familyName string, a Aspect, ttf []byte) error {
+	return e.db.register(familyName, a, ttf)
+}
+
+// sizeToFixed converts a point size to the engine's unit space
+// (units are CSS-like px: 96 per inch, so px = pt * 4/3; 12pt = 16
+// units, matching the toolkit's 16-unit line grid).
+func sizeToFixed(f *core.Font) fixed.Int26_6 {
+	if f == nil {
+		f = core.DefaultFont()
+	}
+	size := f.Size
+	if size <= 0 {
+		size = 12
+	}
+	return fixed.Int26_6(size * 256 / 3)
+}
+
+// resolveDirection applies UAX #9 P2/P3: first strong character wins.
+func resolveDirection(d Direction, runes []rune) di.Direction {
+	switch d {
+	case DirectionLTR:
+		return di.DirectionLTR
+	case DirectionRTL:
+		return di.DirectionRTL
+	}
+	for _, r := range runes {
+		props, _ := xbidi.LookupRune(r)
+		switch props.Class() {
+		case xbidi.L:
+			return di.DirectionLTR
+		case xbidi.R, xbidi.AL:
+			return di.DirectionRTL
+		}
+	}
+	return di.DirectionLTR
+}
+
+// spanPiece is a normalized attribute run covering the paragraph.
+type spanPiece struct {
+	start, end int
+	font       *core.Font
+}
+
+// normalizeSpans covers [0, n) completely: gaps get the default font.
+func normalizeSpans(spans []Span, def *core.Font, n int) []spanPiece {
+	if def == nil {
+		def = core.DefaultFont()
+	}
+	var pieces []spanPiece
+	pos := 0
+	for _, s := range spans {
+		start, end := s.Start, s.End
+		if start < 0 {
+			start = 0
+		}
+		if end > n {
+			end = n
+		}
+		if start >= end || start < pos {
+			continue
+		}
+		if start > pos {
+			pieces = append(pieces, spanPiece{pos, start, def})
+		}
+		f := s.Font
+		if f == nil {
+			f = def
+		}
+		pieces = append(pieces, spanPiece{start, end, f})
+		pos = end
+	}
+	if pos < n {
+		pieces = append(pieces, spanPiece{pos, n, def})
+	}
+	return pieces
+}
+
+// shapeOutputs runs segmentation (bidi + script + face fallback) and
+// shaping over the paragraph, returning shaped runs in logical order.
+func (e *Engine) shapeOutputs(runes []rune, pieces []spanPiece, base di.Direction) []shaping.Output {
+	var outs []shaping.Output
+	for _, pc := range pieces {
+		face := e.db.resolve(pc.font)
+		in := shaping.Input{
+			Text:      runes,
+			RunStart:  pc.start,
+			RunEnd:    pc.end,
+			Direction: base,
+			Face:      face,
+			Size:      sizeToFixed(pc.font),
+		}
+		for _, si := range e.seg.Split(in, fallbackMap{db: e.db, primary: face}) {
+			outs = append(outs, e.shaper.Shape(si))
+		}
+	}
+	return outs
+}
+
+// ShapeParagraph runs the full path: attributed text + available
+// width in, wrapped lines of positioned shaped runs out. width <= 0
+// means unbounded (single line unless the text forces breaks).
+func (e *Engine) ShapeParagraph(p Paragraph, width core.Unit) *ShapedParagraph {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	runes := []rune(p.Text)
+	base := resolveDirection(p.Direction, runes)
+	pieces := normalizeSpans(p.Spans, p.Font, len(runes))
+	outs := e.shapeOutputs(runes, pieces, base)
+
+	maxW := fixed.Int26_6(math.MaxInt32)
+	if width > 0 {
+		maxW = fixed.I(int(width))
+	}
+	cfg := shaping.WrapConfig{Direction: base}
+	wrapped, _ := e.wrapper.WrapParagraphF(cfg, maxW, runes, shaping.NewSliceIterator(outs))
+
+	sp := &ShapedParagraph{Text: runes}
+	y := core.Unit(0)
+	for _, lineRuns := range wrapped {
+		line := buildLine(lineRuns)
+		line.Baseline = y + line.Ascent
+		y += line.Height()
+		sp.Lines = append(sp.Lines, line)
+	}
+	if len(sp.Lines) == 0 {
+		// Empty text still has one empty line with font metrics.
+		face := e.db.resolve(p.Font)
+		ext, _ := face.FontHExtents()
+		size := sizeToFixed(p.Font)
+		scale := float32(size) / float32(face.Upem()) / 64
+		asc := core.Unit(math.Ceil(float64(ext.Ascender * scale)))
+		desc := core.Unit(math.Ceil(float64(-ext.Descender * scale)))
+		gap := core.Unit(math.Ceil(float64(ext.LineGap * scale)))
+		sp.Lines = []Line{{Ascent: asc, Descent: desc, Gap: gap, Baseline: asc}}
+	}
+	return sp
+}
+
+// buildLine converts one wrapped line to the contract type: runs in
+// visual order with x positions assigned left to right.
+func buildLine(runs shaping.Line) Line {
+	line := Line{Runes: RuneRange{Start: math.MaxInt, End: 0}}
+	// Sort into visual order (leftmost first).
+	visual := make([]shaping.Output, len(runs))
+	copy(visual, runs)
+	for i := 1; i < len(visual); i++ {
+		for j := i; j > 0 && visual[j].VisualIndex < visual[j-1].VisualIndex; j-- {
+			visual[j], visual[j-1] = visual[j-1], visual[j]
+		}
+	}
+
+	pen := fixed.Int26_6(0)
+	for _, out := range visual {
+		r := Run{
+			Runes: RuneRange{Start: out.Runes.Offset, End: out.Runes.Offset + out.Runes.Count},
+			RTL:   out.Direction.Progression() == di.TowardTopLeft,
+			X:     core.Unit(pen.Round()),
+			raw:   out,
+		}
+		pen += out.Advance
+		r.Width = core.Unit(pen.Round()) - r.X
+
+		if r.Runes.Start < line.Runes.Start {
+			line.Runes.Start = r.Runes.Start
+		}
+		if r.Runes.End > line.Runes.End {
+			line.Runes.End = r.Runes.End
+		}
+		if a := core.Unit(out.LineBounds.Ascent.Ceil()); a > line.Ascent {
+			line.Ascent = a
+		}
+		if d := core.Unit((-out.LineBounds.Descent).Ceil()); d > line.Descent {
+			line.Descent = d
+		}
+		if g := core.Unit(out.LineBounds.Gap.Ceil()); g > line.Gap {
+			line.Gap = g
+		}
+		line.Runs = append(line.Runs, r)
+	}
+	line.Width = core.Unit(pen.Round())
+	if line.Runes.Start == math.MaxInt {
+		line.Runes = RuneRange{}
+	}
+	return line
+}
+
+// ShapeRun is the fast simple tier: one font, base direction from the
+// text, no wrapping. Fallback still applies per rune. The result is a
+// single-line ShapedParagraph.
+func (e *Engine) ShapeRun(f *core.Font, s string) *ShapedParagraph {
+	return e.ShapeParagraph(Paragraph{Text: s, Font: f}, 0)
+}
+
+// Measure is the fast simple tier's measurement: the advance width of
+// s in font f, by real shaping (so it always agrees with painting).
+func (e *Engine) Measure(f *core.Font, s string) core.Unit {
+	return e.ShapeRun(f, s).Width()
+}
+
+// LineHeight returns the line height (ascent + descent + line gap)
+// of font f.
+func (e *Engine) LineHeight(f *core.Font) core.Unit {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	face := e.db.resolve(f)
+	ext, ok := face.FontHExtents()
+	if !ok {
+		return 16
+	}
+	size := sizeToFixed(f)
+	scale := float32(size) / float32(face.Upem()) / 64
+	total := float64((ext.Ascender - ext.Descender + ext.LineGap) * scale)
+	return core.Unit(math.Ceil(total))
+}
