@@ -105,6 +105,11 @@ type WindowManager struct {
 	// placement (pixel surfaces), drag and resize track the pointer at
 	// unit granularity instead of snapping to cell boundaries.
 	smoothPositioning bool
+
+	// resizeGrip narrows the resize-handle zones on graphical frames
+	// to the outer sliver of each edge (units; 0 = classic cell-wide
+	// zones), so widgets at a window's edge remain clickable.
+	resizeGrip core.Unit
 }
 
 // PopupOverlay represents a popup that should be painted on top of all windows.
@@ -144,6 +149,15 @@ func (m *WindowManager) SetSmoothPositioning(smooth bool) {
 	}
 }
 
+// SetResizeGrip sets the resize-handle thickness in units for
+// graphical frames. Zero restores the cell-frame behavior (the whole
+// border row/column is the grip - it IS the frame there).
+func (m *WindowManager) SetResizeGrip(grip core.Unit) {
+	m.mu.Lock()
+	m.resizeGrip = grip
+	m.mu.Unlock()
+}
+
 // SmoothPositioning reports whether drag and resize track the pointer at
 // unit granularity rather than snapping to cell boundaries.
 func (m *WindowManager) SmoothPositioning() bool {
@@ -180,11 +194,25 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	edgeThreshold := metrics.CellWidth
 	// Corner detection threshold (2 cells for corners)
 	cornerThreshold := metrics.CellWidth * 2
+	// Bottom band thickness (one row on cell frames)
+	bottomBand := metrics.CellHeight
+
+	// Graphical frames: only the outer sliver of an edge is the grip,
+	// so edge widgets stay clickable (the frame is a hairline, not a
+	// cell band).
+	m.mu.RLock()
+	grip := m.resizeGrip
+	m.mu.RUnlock()
+	if grip > 0 {
+		edgeThreshold = grip
+		cornerThreshold = grip * 2
+		bottomBand = grip
+	}
 
 	edge := ResizeEdgeNone
 
 	// Check if at bottom edge
-	atBottom := y >= bounds.Y+bounds.Height-metrics.CellHeight && y < bounds.Y+bounds.Height
+	atBottom := y >= bounds.Y+bounds.Height-bottomBand && y < bounds.Y+bounds.Height
 
 	// Check horizontal edges (left/right)
 	if x >= bounds.X && x < bounds.X+edgeThreshold {

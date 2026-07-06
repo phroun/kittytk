@@ -894,11 +894,21 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, localX, localY core.Unit)
 
 	edgeThreshold := metrics.CellWidth
 	cornerThreshold := metrics.CellWidth * 2
+	bottomBand := metrics.CellHeight
+
+	// Graphical frames: only the outer sliver of an edge is the grip
+	// (quarter-column, min 4 device px), so edge widgets stay
+	// clickable. The desktop provides the thickness.
+	if grip := core.FindResizeGrip(m.Self()); grip > 0 {
+		edgeThreshold = grip
+		cornerThreshold = grip * 2
+		bottomBand = grip
+	}
 
 	edge := window.ResizeEdgeNone
 
 	// Check if at bottom edge
-	atBottom := y >= bounds.Y+bounds.Height-metrics.CellHeight && y < bounds.Y+bounds.Height
+	atBottom := y >= bounds.Y+bounds.Height-bottomBand && y < bounds.Y+bounds.Height
 
 	// Check horizontal edges
 	if x >= bounds.X && x < bounds.X+edgeThreshold {

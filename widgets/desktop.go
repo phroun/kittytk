@@ -68,6 +68,10 @@ type Desktop struct {
 	// core.FindGraphicalFrames to pick their client-area contract.
 	graphicalFrames bool
 
+	// resizeGrip is the graphical resize-handle thickness in units
+	// (0 on cell frames, where the whole border cell is the grip).
+	resizeGrip core.Unit
+
 	// Graphical wallpaper (classic MacOS style): an 8x8 two-color
 	// bitmap, each bit rendered as wallpaperChunkPx x wallpaperChunkPx
 	// device pixels. Tune via SetWallpaperPattern/SetWallpaperChunk.
@@ -271,7 +275,24 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	// this through the desktop via core.FindGraphicalFrames.
 	_, d.graphicalFrames = backend.(core.RoundedRectDrawer)
 
+	// Resize grip: on graphical frames only the outer sliver of a
+	// window edge resizes - a quarter of a layout column, but never
+	// thinner than 4 device pixels - so edge widgets stay clickable.
+	d.resizeGrip = 0
+	if d.graphicalFrames {
+		grip := rootMetrics.CellWidth / 4
+		scale := 1
+		if ds, ok := backend.(core.DeviceScaler); ok && ds.Scale() > 0 {
+			scale = ds.Scale()
+		}
+		if minUnits := core.Unit((4 + scale - 1) / scale); grip < minUnits {
+			grip = minUnits
+		}
+		d.resizeGrip = grip
+	}
+
 	d.windowManager = window.NewWindowManager()
+	d.windowManager.SetResizeGrip(d.resizeGrip)
 	if sp, ok := backend.(core.SmoothPositioner); ok && sp.SmoothPositioning() {
 		// Pixel surfaces place windows at unit granularity; cell-grid
 		// surfaces keep the default snap-to-cell behavior.
@@ -345,6 +366,14 @@ func (d *Desktop) SetWallpaperChunk(px int) {
 	d.wallpaperChunkPx = px
 	d.mu.Unlock()
 	d.RequestUpdate()
+}
+
+// GraphicalResizeGrip implements core.ResizeGripProvider: the
+// resize-handle thickness for graphical frames (0 on cell frames).
+func (d *Desktop) GraphicalResizeGrip() core.Unit {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.resizeGrip
 }
 
 // GraphicalWindowFrames implements core.GraphicalFrameProvider: true
