@@ -280,6 +280,26 @@ All three are virtual (data records); the application installs the
 result. `protocol.Quote` renders arbitrary text as a protocol string
 literal for script builders (dynamic status updates).
 
+### mdipane *(registered 2026-07-05)*
+| Property | Type | Notes |
+|---|---|---|
+| children | {} | `window` children are hosted documents (spawn later with `set pane children={new window …}`); one non-window child is the background content |
+| `fill` | string (1 char) | Background fill character |
+| `pattern` | flag | Pattern background |
+| `tile`, `cascade`, `next`, `prev` | flag (action) | Window-management verbs as action properties |
+| `restore`, `minimize`, `remove` | numeric (action) | Id-directed actions on a hosted window |
+
+Events: `minimize`/`restore`/`remove` with `window=` + `title=`;
+`active window=` (0 = none) + `title=`. Note: a hosted window's own
+`window_closed` is superseded by the pane's `remove` (the pane owns
+the close-complete hook).
+
+### dockrow / dockentry *(registered 2026-07-05)*
+| Type | Property | Notes |
+|---|---|---|
+| `dockrow` | `entry_width`, children of `dockentry` | |
+| `dockentry` (virtual, live-proxy) | `caption`, `window` (id) | Add with `set dock children={e=new dockentry …}`, remove with `destroy dock.e`; clicks arrive as `click widget=<entry> window=<win>` |
+
 ### canvas *(deferred, D7)*
 Reserved: `mode` (`commands`/`pixels`), plus its command stream — designed
 when the widget is built.

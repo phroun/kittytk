@@ -272,10 +272,20 @@ the wire (span `fg=`/`bg=`) — used for the main bar, the secondary
 apps' bars, and the dynamic cell-debug readout (built per-update
 with `protocol.Quote`, the new exported string-literal quoter).
 
+**MDI tab converted (2026-07-05):** `mdipane` and `dockrow`/
+`dockentry` registered; the tab is a script + veneer handlers.
+Spawning documents is `set mdi children={new window …}` (D19 append
+of a whole window subtree); Tile/Cascade/Next/Prev are flag-action
+properties and restore/minimize/remove are id-directed actions; the
+dock choreography (minimize event → dockentry, entry click →
+restore, restore/remove → destroy entry) runs entirely over
+pane/dock events with per-child buttons on click events — no
+command-ID collisions. ~250 lines of imperative MDI wiring deleted.
+
 Remaining: `state` window property, listview row set/destroy
-routing, terminal input direction (`data` events, raw-key), MDI
-(after G1 residuals) — at this point the demo's only imperative UI
-is the MDI tab and the secondary app's window construction.
+routing, terminal input direction (`data` events, raw-key) — the
+demo's only remaining imperative UI is the secondary app's window
+body.
 
 ## Slice 1 — Menu command identity & dispatch  *(done 2026-07-05)*
 

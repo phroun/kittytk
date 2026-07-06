@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -247,6 +248,107 @@ new panel layout=hbox children={
 	}
 	if a, set := btn.LayoutAlignment(); !set || a != core.AlignRight {
 		t.Errorf("button align = %v/%v, want AlignRight", a, set)
+	}
+}
+
+func TestMDIPaneAndDockFromProtocol(t *testing.T) {
+	session := protocol.NewSession()
+	events := &[]*protocol.Event{}
+	ctx := &protocol.BindContext{
+		Emit: func(ev *protocol.Event) { *events = append(*events, ev) },
+	}
+	ctx.Subscribe(0, "")
+	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
+
+	script, _ := protocol.Parse(`
+mdi=new mdipane fill="░" children={
+	new panel layout=vbox children={new label caption="background"}
+}
+dock=new dockrow entry_width=20
+`)
+	if _, err := session.Execute(script, f); err != nil {
+		t.Fatal(err)
+	}
+	pane := f.targets[0].(*MDIPane)
+	dock := f.targets[3].(*DockRow)
+
+	// Spawn a document via set-append of a window subtree (D19).
+	spawn, _ := protocol.Parse(`
+set mdi children={d1=new window title="Doc 1" x=8 y=16 width=240 height=128 children={new label caption="body"}}
+wdoc=mdi.d1
+`)
+	reply, err := session.Execute(spawn, f)
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if len(pane.Windows()) != 1 {
+		t.Fatalf("pane windows = %d", len(pane.Windows()))
+	}
+	docID := reply.IDs["wdoc"]
+
+	// Minimize by id-directed action; the pane reports it with title.
+	*events = nil
+	min, _ := protocol.Parse(fmt.Sprintf("set mdi minimize=%d", docID))
+	if _, err := session.Execute(min, f); err != nil {
+		t.Fatalf("minimize: %v", err)
+	}
+	// D20: wire-initiated minimize is suppressed - no echo. Verify
+	// the state changed instead.
+	if !pane.Windows()[0].IsMinimized() {
+		t.Fatal("window not minimized")
+	}
+
+	// A USER restore (imperative call = user interaction path) emits.
+	pane.RestoreWindow(pane.Windows()[0])
+	restores := eventsOfType(*events, "restore")
+	if len(restores) != 1 {
+		t.Fatalf("restore events = %d", len(restores))
+	}
+	if id, _ := restores[0].Uint("window"); id != docID {
+		t.Errorf("restore window = %d, want %d", id, docID)
+	}
+	if title, _ := restores[0].Text("title"); title != "Doc 1" {
+		t.Errorf("restore title = %q", title)
+	}
+
+	// Dock entries: wire objects with click events.
+	addEntry, _ := protocol.Parse(fmt.Sprintf(
+		`set dock children={e1=new dockentry caption="Doc 1" window=%d}
+wentry=dock.e1`, docID))
+	entryReply, err := session.Execute(addEntry, f)
+	if err != nil {
+		t.Fatalf("dock entry: %v", err)
+	}
+	if dock.EntryCount() != 1 {
+		t.Fatalf("dock entries = %d", dock.EntryCount())
+	}
+
+	*events = nil
+	dock.Entries()[0].OnClick()
+	clicks := eventsOfType(*events, "click")
+	if len(clicks) != 1 {
+		t.Fatalf("click events = %d", len(clicks))
+	}
+	if id, _ := clicks[0].Widget(); id != entryReply.IDs["wentry"] {
+		t.Errorf("click widget = %d, want %d", id, entryReply.IDs["wentry"])
+	}
+	if id, _ := clicks[0].Uint("window"); id != docID {
+		t.Errorf("click window = %d, want %d", id, docID)
+	}
+
+	// destroy removes the entry from the live dock.
+	kill, _ := protocol.Parse(`destroy dock.e1`)
+	if _, err := session.Execute(kill, f); err != nil {
+		t.Fatalf("destroy entry: %v", err)
+	}
+	if dock.EntryCount() != 0 {
+		t.Errorf("dock entries after destroy = %d", dock.EntryCount())
+	}
+
+	// Flag actions parse and run (tile with one window: no crash).
+	tile, _ := protocol.Parse(`set mdi tile`)
+	if _, err := session.Execute(tile, f); err != nil {
+		t.Fatalf("tile: %v", err)
 	}
 }
 
