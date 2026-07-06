@@ -25,6 +25,10 @@ type Splitter struct {
 
 	// Divider dragging state
 	dragging bool
+	// Offset of the press point within the divider band, so the
+	// divider tracks the grab position instead of jumping its
+	// leading edge to the pointer.
+	dragOffset core.Unit
 
 	// Optional title displayed in the divider
 	title string
@@ -401,6 +405,7 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 		// Hit area is just the divider itself (no extension into child areas)
 		if divider.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
 			s.dragging = true
+			s.dragOffset = event.X - divider.X
 			s.Update()
 			return true
 		}
@@ -408,6 +413,7 @@ func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 		// Hit area is just the divider itself
 		if divider.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
 			s.dragging = true
+			s.dragOffset = event.Y - divider.Y
 			s.Update()
 			return true
 		}
@@ -477,7 +483,7 @@ func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 			dividerSize := metrics.CellWidth
 			totalWidth := bounds.Width - dividerSize
 			if totalWidth > 0 {
-				newPos := float64(event.X) / float64(totalWidth)
+				newPos := float64(event.X-s.dragOffset) / float64(totalWidth)
 				if newPos < 0.1 {
 					newPos = 0.1
 				} else if newPos > 0.9 {
@@ -490,7 +496,7 @@ func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 			dividerSize := metrics.CellHeight
 			totalHeight := bounds.Height - dividerSize
 			if totalHeight > 0 {
-				newPos := float64(event.Y) / float64(totalHeight)
+				newPos := float64(event.Y-s.dragOffset) / float64(totalHeight)
 				if newPos < 0.1 {
 					newPos = 0.1
 				} else if newPos > 0.9 {

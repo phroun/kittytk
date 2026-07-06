@@ -89,6 +89,14 @@ type TreeView struct {
 	scrollbarDragStart  int  // Y position where drag started
 	scrollbarDragOffset int  // Scroll offset when drag started
 
+	// Smooth (pixel-surface) scrollbar drag: the thumb follows the
+	// pointer at unit granularity while scrollOffset snaps to whole
+	// rows. scrollbarGrabOff is where the press landed within the
+	// thumb; scrollbarThumbPos is the unsnapped thumb origin.
+	smoothScrollbarDrag bool
+	scrollbarGrabOff    float64
+	scrollbarThumbPos   float64
+
 	// Callbacks
 	onCurrentChanged  func(item *TreeItem)
 	onItemActivated   func(item *TreeItem)
@@ -609,6 +617,40 @@ func (t *TreeView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 	return
 }
 
+// scrollbarUnits returns the scrollbar track length, thumb length,
+// and thumb origin in units for pixel surfaces - the same proportions
+// as scrollbarGeometry without row quantization. Mid-drag the thumb
+// origin is the smooth (pointer-tracked) position.
+func (t *TreeView) scrollbarUnits(visibleCount int) (trackU, thumbU, posU float64) {
+	metrics := t.EffectiveCellMetrics()
+	trackU = float64(core.Unit(visibleCount) * metrics.CellHeight)
+	totalItems := len(t.flatList)
+	if totalItems <= visibleCount || visibleCount <= 0 {
+		return trackU, trackU, 0
+	}
+	thumbU = trackU * float64(visibleCount) / float64(totalItems)
+	if thumbU < 8 {
+		thumbU = 8
+	}
+	if thumbU > trackU {
+		thumbU = trackU
+	}
+	scrollable := trackU - thumbU
+	maxScroll := totalItems - visibleCount
+	if t.scrollbarDragging && t.smoothScrollbarDrag {
+		posU = t.scrollbarThumbPos
+	} else if maxScroll > 0 {
+		posU = float64(t.scrollOffset) * scrollable / float64(maxScroll)
+	}
+	if posU < 0 {
+		posU = 0
+	}
+	if posU > scrollable {
+		posU = scrollable
+	}
+	return trackU, thumbU, posU
+}
+
 // paintScrollbar draws a vertical scrollbar.
 func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 	scheme := t.GetScheme()
@@ -623,8 +665,22 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 		p.DrawCell(scrollbarX, y, '│', trackStyle)
 	}
 
-	// Draw scrollbar thumb
 	thumbStyle := scheme.GetScrollbarThumb()
+
+	// Pixel surfaces paint the thumb at unit granularity so it can
+	// sit (and move) between row boundaries.
+	if p.Graphical() {
+		_, thumbU, posU := t.scrollbarUnits(visibleCount)
+		p.FillRect(core.UnitRect{
+			X:      scrollbarX,
+			Y:      core.Unit(posU + 0.5),
+			Width:  metrics.CellWidth,
+			Height: core.Unit(thumbU + 0.5),
+		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
+		return
+	}
+
+	// Draw scrollbar thumb
 	for i := 0; i < thumbHeight; i++ {
 		y := core.Unit(thumbStart+i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)
@@ -803,6 +859,28 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	if event.X >= scrollbarX && len(t.flatList) > t.visibleCount() {
 		clickedRow := int(event.Y / metrics.CellHeight)
 
+		// Pixel surfaces anchor the drag to the grab point within
+		// the unit-granular thumb.
+		if core.FindSmoothPositioning(t.Self()) {
+			_, thumbU, posU := t.scrollbarUnits(t.visibleCount())
+			pos := float64(event.Y)
+			if pos >= posU && pos < posU+thumbU {
+				t.scrollbarDragging = true
+				t.smoothScrollbarDrag = true
+				t.isDragging = false
+				t.scrollbarGrabOff = pos - posU
+				t.scrollbarThumbPos = posU
+				return true
+			}
+			// Track click falls through to page up/down below,
+			// keyed off the smooth thumb position.
+			if pos < posU {
+				clickedRow = thumbStart - 1
+			} else {
+				clickedRow = thumbStart + thumbHeight
+			}
+		}
+
 		// Check if on thumb
 		if clickedRow >= thumbStart && clickedRow < thumbStart+thumbHeight {
 			// Start scrollbar drag - clear content drag flag
@@ -906,6 +984,31 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Handle scrollbar thumb drag
 	// Note: Once drag is captured on press, we don't check horizontal bounds during drag
 	if t.scrollbarDragging {
+		// Smooth drag: the thumb follows the pointer in units, the
+		// scroll offset snaps to the nearest whole row.
+		if t.smoothScrollbarDrag {
+			visibleCount := t.visibleCount()
+			trackU, thumbU, _ := t.scrollbarUnits(visibleCount)
+			scrollable := trackU - thumbU
+			newPos := float64(event.Y) - t.scrollbarGrabOff
+			if newPos < 0 {
+				newPos = 0
+			}
+			if newPos > scrollable {
+				newPos = scrollable
+			}
+			t.scrollbarThumbPos = newPos
+			maxScroll := len(t.flatList) - visibleCount
+			newOffset := 0
+			if scrollable > 0 && maxScroll > 0 {
+				newOffset = int(newPos*float64(maxScroll)/scrollable + 0.5)
+			}
+			t.scrollOffset = newOffset
+			// The thumb moves even when the snapped offset does not.
+			t.Update()
+			return true
+		}
+
 		currentRow := int(event.Y / metrics.CellHeight)
 		rowDelta := currentRow - t.scrollbarDragStart
 
@@ -962,10 +1065,18 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 }
 
 // HandleMouseRelease handles mouse release.
+// Only consumes the event when a drag was actually in progress:
+// containers broadcast releases to every child, so an unconditional
+// true here would starve sibling widgets of their release.
 func (t *TreeView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
-	t.isDragging = false
-	t.scrollbarDragging = false
-	return true
+	if t.isDragging || t.scrollbarDragging {
+		t.isDragging = false
+		t.scrollbarDragging = false
+		t.smoothScrollbarDrag = false
+		t.Update()
+		return true
+	}
+	return false
 }
 
 // HandleMouseWheel handles mouse wheel scrolling.

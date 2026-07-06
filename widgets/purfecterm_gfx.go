@@ -57,9 +57,16 @@ type purfecTermGfx struct {
 	autoVert  int
 	autoHoriz int
 
-	// Scrollbar drag.
+	// Scrollbar drag. The thumb follows the pointer smoothly (unit
+	// granularity) while the content offset snaps to whole lines and
+	// columns: grab offset is where the press landed within the
+	// thumb; thumb pos is the unsnapped thumb origin along the track.
 	vDragging bool
 	hDragging bool
+	vGrabOff  core.Unit
+	hGrabOff  core.Unit
+	vThumbPos float64
+	hThumbPos float64
 
 	// Mouse reporting toggle (context menu).
 	reportingDisabled bool
@@ -1157,6 +1164,18 @@ func (t *PurfecTerm) vScrollGeometry(bounds core.UnitRect) (track, thumb core.Un
 	if span > 0 {
 		thumbY = core.Unit(int(track.Height-thumbLen) * value / span)
 	}
+	if t.gfx.vDragging {
+		// Mid-drag the thumb tracks the pointer smoothly; only the
+		// content offset above snapped to whole lines.
+		pos := t.gfx.vThumbPos
+		if limit := float64(track.Height - thumbLen); pos > limit {
+			pos = limit
+		}
+		if pos < 0 {
+			pos = 0
+		}
+		thumbY = core.Unit(pos + 0.5)
+	}
 	thumb = core.UnitRect{X: track.X, Y: thumbY, Width: gfxScrollbarLane, Height: thumbLen}
 	ok = true
 	return
@@ -1191,6 +1210,18 @@ func (t *PurfecTerm) hScrollGeometry(bounds core.UnitRect) (track, thumb core.Un
 	if span > 0 {
 		thumbX = core.Unit(int(track.Width-thumbLen) * value / span)
 	}
+	if t.gfx.hDragging {
+		// Mid-drag the thumb tracks the pointer smoothly; only the
+		// content offset above snapped to whole columns.
+		pos := t.gfx.hThumbPos
+		if limit := float64(track.Width - thumbLen); pos > limit {
+			pos = limit
+		}
+		if pos < 0 {
+			pos = 0
+		}
+		thumbX = core.Unit(pos + 0.5)
+	}
 	thumb = core.UnitRect{X: thumbX, Y: track.Y, Width: thumbLen, Height: gfxScrollbarLane}
 	ok = true
 	return
@@ -1213,14 +1244,26 @@ func (t *PurfecTerm) paintScrollbarsGfx(p *core.Painter, bounds core.UnitRect, b
 // lane. Returns true when consumed.
 func (t *PurfecTerm) scrollbarPress(event core.MousePressEvent) bool {
 	bounds := t.Bounds()
-	if track, _, _, _, _, ok := t.vScrollGeometry(bounds); ok &&
+	if track, thumb, _, _, _, ok := t.vScrollGeometry(bounds); ok &&
 		event.X >= track.X && event.Y >= track.Y && event.Y < track.Y+track.Height {
+		// Anchor the drag to the grab point within the thumb; a
+		// press on the track jumps the thumb center to the pointer.
+		if event.Y >= thumb.Y && event.Y < thumb.Y+thumb.Height {
+			t.gfx.vGrabOff = event.Y - thumb.Y
+		} else {
+			t.gfx.vGrabOff = thumb.Height / 2
+		}
 		t.gfx.vDragging = true
 		t.scrollbarDragTo(event.X, event.Y)
 		return true
 	}
-	if track, _, _, _, _, ok := t.hScrollGeometry(bounds); ok &&
+	if track, thumb, _, _, _, ok := t.hScrollGeometry(bounds); ok &&
 		event.Y >= track.Y && event.X >= track.X && event.X < track.X+track.Width {
+		if event.X >= thumb.X && event.X < thumb.X+thumb.Width {
+			t.gfx.hGrabOff = event.X - thumb.X
+		} else {
+			t.gfx.hGrabOff = thumb.Width / 2
+		}
 		t.gfx.hDragging = true
 		t.scrollbarDragTo(event.X, event.Y)
 		return true
@@ -1233,16 +1276,17 @@ func (t *PurfecTerm) scrollbarDragTo(x, y core.Unit) {
 	buf := t.terminal.Buffer()
 	if t.gfx.vDragging {
 		if track, thumb, upper, page, _, ok := t.vScrollGeometry(bounds); ok {
-			span := int(track.Height - thumb.Height)
+			span := float64(track.Height - thumb.Height)
 			if span > 0 {
-				pos := int(y - track.Y - thumb.Height/2)
+				pos := float64(y - track.Y - t.gfx.vGrabOff)
 				if pos < 0 {
 					pos = 0
 				}
 				if pos > span {
 					pos = span
 				}
-				value := pos * (upper - page) / span
+				t.gfx.vThumbPos = pos
+				value := int(pos*float64(upper-page)/span + 0.5)
 				maxOffset := buf.GetMaxScrollOffset()
 				buf.SetScrollOffset(maxOffset - value)
 				buf.NotifyManualVertScroll()
@@ -1251,16 +1295,17 @@ func (t *PurfecTerm) scrollbarDragTo(x, y core.Unit) {
 	}
 	if t.gfx.hDragging {
 		if track, thumb, contentW, cols, _, ok := t.hScrollGeometry(bounds); ok {
-			span := int(track.Width - thumb.Width)
+			span := float64(track.Width - thumb.Width)
 			if span > 0 {
-				pos := int(x - track.X - thumb.Width/2)
+				pos := float64(x - track.X - t.gfx.hGrabOff)
 				if pos < 0 {
 					pos = 0
 				}
 				if pos > span {
 					pos = span
 				}
-				buf.SetHorizOffset(pos * (contentW - cols) / span)
+				t.gfx.hThumbPos = pos
+				buf.SetHorizOffset(int(pos*float64(contentW-cols)/span + 0.5))
 			}
 		}
 	}
@@ -1364,6 +1409,7 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 
 	if event.Button == core.RightButton {
 		if forwardToPTY {
+			t.gfx.mouseDown = true
 			t.sendMouseEventGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), cellX, cellY, true)
 			return true
 		}
@@ -1469,6 +1515,13 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 		t.gfx.vDragging = false
 		t.gfx.hDragging = false
 		return true
+	}
+	// Containers broadcast releases to every child; only act on a
+	// release whose press we actually saw (gtk's implicit grab), so
+	// sibling widgets are not starved and the PTY never receives a
+	// release for a press that landed elsewhere.
+	if !t.gfx.mouseDown && !t.gfx.selecting {
+		return false
 	}
 	buf := t.terminal.Buffer()
 	hasShift := event.Modifiers&core.ShiftModifier != 0

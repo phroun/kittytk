@@ -25,6 +25,14 @@ type ScrollBar struct {
 	dragging   bool
 	dragOffset int
 
+	// Smooth (pixel-surface) drag state: the thumb follows the
+	// pointer at unit granularity while the value still snaps to
+	// whole steps. grabOff is where the press landed within the
+	// thumb; smoothThumbPos is the unsnapped thumb origin in units.
+	smoothDrag     bool
+	grabOff        float64
+	smoothThumbPos float64
+
 	// Callbacks
 	onValueChanged func(value int)
 }
@@ -159,6 +167,50 @@ func (s *ScrollBar) SizeHint() core.UnitSize {
 	}
 }
 
+// thumbSpanUnits returns the track length, thumb length, and thumb
+// origin along the scroll axis in units - the same proportions as the
+// cell-based painter but without cell quantization. Mid-drag the
+// thumb origin is the smooth (pointer-tracked) position rather than
+// the value-derived one.
+func (s *ScrollBar) thumbSpanUnits(bounds core.UnitRect, metrics core.CellMetrics) (trackU, thumbU, posU float64, ok bool) {
+	if s.maximum <= s.minimum {
+		return 0, 0, 0, false
+	}
+	var trackCells int
+	if s.orientation == core.Horizontal {
+		trackU = float64(bounds.Width)
+		trackCells = metrics.CharsForWidth(bounds.Width)
+	} else {
+		trackU = float64(bounds.Height)
+		trackCells = int(bounds.Height / metrics.CellHeight)
+	}
+	totalItems := s.maximum - s.minimum + trackCells
+	if trackU <= 0 || totalItems <= 0 {
+		return 0, 0, 0, false
+	}
+	thumbU = trackU * float64(trackCells) / float64(totalItems)
+	if thumbU < 8 {
+		thumbU = 8
+	}
+	if thumbU > trackU {
+		thumbU = trackU
+	}
+	scrollable := trackU - thumbU
+	maxScroll := s.maximum - s.minimum
+	if s.dragging && s.smoothDrag {
+		posU = s.smoothThumbPos
+	} else if maxScroll > 0 && scrollable > 0 {
+		posU = float64(s.value-s.minimum) * scrollable / float64(maxScroll)
+	}
+	if posU < 0 {
+		posU = 0
+	}
+	if posU > scrollable {
+		posU = scrollable
+	}
+	return trackU, thumbU, posU, true
+}
+
 // Paint renders the scrollbar.
 func (s *ScrollBar) Paint(p *core.Painter) {
 	bounds := s.Bounds()
@@ -176,6 +228,20 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, schem
 	// Draw track
 	trackStyle := scheme.GetScrollbar()
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, '░', trackStyle)
+
+	// Pixel surfaces paint the thumb at unit granularity so it can
+	// sit (and move) between cell boundaries.
+	if p.Graphical() {
+		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
+			thumbStyle := scheme.GetScrollbarThumb()
+			p.FillRect(core.UnitRect{
+				X:      core.Unit(posU + 0.5),
+				Width:  core.Unit(thumbU + 0.5),
+				Height: bounds.Height,
+			}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
+		}
+		return
+	}
 
 	// Calculate thumb using ListView-style formula:
 	// thumbSize = visibleCount² / totalItems
@@ -216,6 +282,20 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme 
 	// Draw track
 	trackStyle := scheme.GetScrollbar()
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, '░', trackStyle)
+
+	// Pixel surfaces paint the thumb at unit granularity so it can
+	// sit (and move) between cell boundaries.
+	if p.Graphical() {
+		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
+			thumbStyle := scheme.GetScrollbarThumb()
+			p.FillRect(core.UnitRect{
+				Y:      core.Unit(posU + 0.5),
+				Width:  bounds.Width,
+				Height: core.Unit(thumbU + 0.5),
+			}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
+		}
+		return
+	}
 
 	// Calculate thumb using ListView-style formula:
 	// thumbSize = visibleCount² / totalItems
@@ -260,6 +340,29 @@ func (s *ScrollBar) HandleMousePress(event core.MousePressEvent) bool {
 
 	metrics := s.EffectiveCellMetrics()
 	bounds := s.Bounds()
+
+	// Pixel surfaces track the thumb at unit granularity: anchor the
+	// drag to the grab point within the thumb; the value still snaps
+	// to whole steps.
+	if core.FindSmoothPositioning(s.Self()) {
+		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
+			pos := float64(event.Y)
+			if s.orientation == core.Horizontal {
+				pos = float64(event.X)
+			}
+			if pos >= posU && pos < posU+thumbU {
+				s.dragging = true
+				s.smoothDrag = true
+				s.grabOff = pos - posU
+				s.smoothThumbPos = posU
+			} else if pos < posU {
+				s.SetValue(s.value - s.pageStep)
+			} else {
+				s.SetValue(s.value + s.pageStep)
+			}
+		}
+		return true
+	}
 
 	if s.orientation == core.Horizontal {
 		clickPos := metrics.UnitsToCellX(event.X)
@@ -329,6 +432,37 @@ func (s *ScrollBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 	metrics := s.EffectiveCellMetrics()
 	bounds := s.Bounds()
 
+	// Smooth drag: the thumb follows the pointer in units, the value
+	// snaps to the nearest whole step.
+	if s.smoothDrag {
+		if trackU, thumbU, _, ok := s.thumbSpanUnits(bounds, metrics); ok {
+			scrollable := trackU - thumbU
+			pos := float64(event.Y)
+			if s.orientation == core.Horizontal {
+				pos = float64(event.X)
+			}
+			newPos := pos - s.grabOff
+			if newPos < 0 {
+				newPos = 0
+			}
+			if newPos > scrollable {
+				newPos = scrollable
+			}
+			s.smoothThumbPos = newPos
+			maxScroll := s.maximum - s.minimum
+			newValue := s.minimum
+			if scrollable > 0 {
+				newValue = s.minimum + int(newPos*float64(maxScroll)/scrollable+0.5)
+			}
+			if s.tracking {
+				s.SetValue(newValue)
+			}
+			// The thumb moves even when the snapped value does not.
+			s.Update()
+		}
+		return true
+	}
+
 	if s.orientation == core.Horizontal {
 		dragPos := metrics.UnitsToCellX(event.X)
 		trackCells := metrics.CharsForWidth(bounds.Width)
@@ -394,6 +528,8 @@ func (s *ScrollBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 func (s *ScrollBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if s.dragging {
 		s.dragging = false
+		s.smoothDrag = false
+		s.Update()
 		return true
 	}
 	return false
@@ -452,14 +588,17 @@ func NewScrollArea() *ScrollArea {
 	s.SetFocusPolicy(core.StrongFocus)
 	s.SetAccessibleRole(core.RoleGroup)
 
-	// Create scrollbars
+	// Create scrollbars. They are parented so ancestry-based
+	// capability lookups (smooth positioning, metrics) resolve.
 	s.hScrollBar = NewScrollBar(core.Horizontal)
+	s.hScrollBar.SetParent(s)
 	s.hScrollBar.SetOnValueChanged(func(value int) {
 		s.scrollX = value
 		s.Update()
 	})
 
 	s.vScrollBar = NewScrollBar(core.Vertical)
+	s.vScrollBar.SetParent(s)
 	s.vScrollBar.SetOnValueChanged(func(value int) {
 		s.scrollY = value
 		s.Update()

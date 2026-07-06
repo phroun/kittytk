@@ -438,10 +438,14 @@ func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		return t.gfxMouseRelease(event)
 	}
 
-	// Clear held button
-	if t.heldButton == event.Button {
-		t.heldButton = core.NoButton
+	// Containers broadcast releases to every child; only act on a
+	// release whose press we actually saw, so sibling widgets are not
+	// starved and the terminal never receives a release for a press
+	// that landed elsewhere.
+	if t.heldButton != event.Button {
+		return false
 	}
+	t.heldButton = core.NoButton
 
 	// Convert unit coordinates to 1-based cell coordinates
 	cw, chh := t.cellDims()

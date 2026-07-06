@@ -47,6 +47,14 @@ type ListView struct {
 	scrollbarDragStart int     // Y position where drag started
 	scrollbarDragOffset int    // Scroll offset when drag started
 
+	// Smooth (pixel-surface) scrollbar drag: the thumb follows the
+	// pointer at unit granularity while scrollOffset snaps to whole
+	// rows. scrollbarGrabOff is where the press landed within the
+	// thumb; scrollbarThumbPos is the unsnapped thumb origin.
+	smoothScrollbarDrag bool
+	scrollbarGrabOff    float64
+	scrollbarThumbPos   float64
+
 	// Callbacks
 	onCurrentChanged  func(index int)
 	onItemActivated   func(index int)
@@ -507,6 +515,40 @@ func (l *ListView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 	return
 }
 
+// scrollbarUnits returns the scrollbar track length, thumb length,
+// and thumb origin in units for pixel surfaces - the same proportions
+// as scrollbarGeometry without row quantization. Mid-drag the thumb
+// origin is the smooth (pointer-tracked) position.
+func (l *ListView) scrollbarUnits(visibleCount int) (trackU, thumbU, posU float64) {
+	metrics := l.EffectiveCellMetrics()
+	trackU = float64(core.Unit(visibleCount) * metrics.CellHeight)
+	totalItems := len(l.items)
+	if totalItems <= visibleCount || visibleCount <= 0 {
+		return trackU, trackU, 0
+	}
+	thumbU = trackU * float64(visibleCount) / float64(totalItems)
+	if thumbU < 8 {
+		thumbU = 8
+	}
+	if thumbU > trackU {
+		thumbU = trackU
+	}
+	scrollable := trackU - thumbU
+	maxScroll := totalItems - visibleCount
+	if l.scrollbarDragging && l.smoothScrollbarDrag {
+		posU = l.scrollbarThumbPos
+	} else if maxScroll > 0 {
+		posU = float64(l.scrollOffset) * scrollable / float64(maxScroll)
+	}
+	if posU < 0 {
+		posU = 0
+	}
+	if posU > scrollable {
+		posU = scrollable
+	}
+	return trackU, thumbU, posU
+}
+
 // paintScrollbar draws a vertical scrollbar.
 func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 	scheme := l.GetScheme()
@@ -521,8 +563,22 @@ func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 		p.DrawCell(scrollbarX, y, '│', trackStyle)
 	}
 
-	// Draw scrollbar thumb
 	thumbStyle := scheme.GetScrollbarThumb()
+
+	// Pixel surfaces paint the thumb at unit granularity so it can
+	// sit (and move) between row boundaries.
+	if p.Graphical() {
+		_, thumbU, posU := l.scrollbarUnits(visibleCount)
+		p.FillRect(core.UnitRect{
+			X:      scrollbarX,
+			Y:      core.Unit(posU + 0.5),
+			Width:  metrics.CellWidth,
+			Height: core.Unit(thumbU + 0.5),
+		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
+		return
+	}
+
+	// Draw scrollbar thumb
 	for i := 0; i < thumbHeight; i++ {
 		y := core.Unit(thumbStart+i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)
@@ -667,6 +723,28 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	if event.X >= scrollbarX && len(l.items) > l.visibleCount() {
 		clickedRow := int(event.Y / metrics.CellHeight)
 
+		// Pixel surfaces anchor the drag to the grab point within
+		// the unit-granular thumb.
+		if core.FindSmoothPositioning(l.Self()) {
+			_, thumbU, posU := l.scrollbarUnits(l.visibleCount())
+			pos := float64(event.Y)
+			if pos >= posU && pos < posU+thumbU {
+				l.scrollbarDragging = true
+				l.smoothScrollbarDrag = true
+				l.isDragging = false
+				l.scrollbarGrabOff = pos - posU
+				l.scrollbarThumbPos = posU
+				return true
+			}
+			// Track click falls through to page up/down below,
+			// keyed off the smooth thumb position.
+			if pos < posU {
+				clickedRow = thumbStart - 1
+			} else {
+				clickedRow = thumbStart + thumbHeight
+			}
+		}
+
 		// Check if on thumb
 		if clickedRow >= thumbStart && clickedRow < thumbStart+thumbHeight {
 			// Start scrollbar drag - clear content drag flag
@@ -735,6 +813,31 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Handle scrollbar thumb drag
 	// Note: Once drag is captured on press, we don't check horizontal bounds during drag
 	if l.scrollbarDragging {
+		// Smooth drag: the thumb follows the pointer in units, the
+		// scroll offset snaps to the nearest whole row.
+		if l.smoothScrollbarDrag {
+			visibleCount := l.visibleCount()
+			trackU, thumbU, _ := l.scrollbarUnits(visibleCount)
+			scrollable := trackU - thumbU
+			newPos := float64(event.Y) - l.scrollbarGrabOff
+			if newPos < 0 {
+				newPos = 0
+			}
+			if newPos > scrollable {
+				newPos = scrollable
+			}
+			l.scrollbarThumbPos = newPos
+			maxScroll := len(l.items) - visibleCount
+			newOffset := 0
+			if scrollable > 0 && maxScroll > 0 {
+				newOffset = int(newPos*float64(maxScroll)/scrollable + 0.5)
+			}
+			l.scrollOffset = newOffset
+			// The thumb moves even when the snapped offset does not.
+			l.Update()
+			return true
+		}
+
 		currentRow := int(event.Y / metrics.CellHeight)
 		rowDelta := currentRow - l.scrollbarDragStart
 
@@ -791,10 +894,18 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 }
 
 // HandleMouseRelease handles mouse release.
+// Only consumes the event when a drag was actually in progress:
+// containers broadcast releases to every child, so an unconditional
+// true here would starve sibling widgets of their release.
 func (l *ListView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
-	l.isDragging = false
-	l.scrollbarDragging = false
-	return true
+	if l.isDragging || l.scrollbarDragging {
+		l.isDragging = false
+		l.scrollbarDragging = false
+		l.smoothScrollbarDrag = false
+		l.Update()
+		return true
+	}
+	return false
 }
 
 // HandleMouseWheel handles mouse wheel scrolling.
