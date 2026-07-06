@@ -590,7 +590,17 @@ milestone for whole windows.
    enumeration, multi-surface creation, native dialogs/menus hooks
    (G5/G6), and per-damage-region frames when a substrate can use
    them.
-4. **G4** dual-mode Window; WindowManager scoped to in-surface use.
+4. ✅ **G4** seam — **done 2026-07-05**. Dual-mode Window:
+   `window.SurfaceHost` runs one Window as the entire content of one
+   Surface (chrome suppressed — the OS provides it; window tracks
+   surface size; input forwards 1:1; damage flows through
+   Surface.Invalidate). `Window.NativeRequested` (+ wire `native`
+   flag) records the app's REQUEST; granting it is host policy —
+   single-surface platforms keep windows in-surface. WindowManager
+   explicitly scoped to compositing within one surface. Tested
+   against a fake surface (bounds/flags/layout, paint, click
+   routing, resize tracking, invalidation). Desktop-side granting
+   policy activates when a multi-surface platform exists.
 5. **D2 transport** — client library + wire format + display-service
    connection handling (unix socket rendezvous per D4, client
    lifecycle, cell-grid surface widget). The TUI desktop-as-display-

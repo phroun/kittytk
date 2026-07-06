@@ -66,9 +66,13 @@ type Window struct {
 	mu sync.RWMutex
 
 	// Window properties
-	title      string
-	flags      WindowFlags
-	state      WindowState
+	title string
+	flags WindowFlags
+	state WindowState
+
+	// G4 dual mode: the app's request for a native OS window,
+	// honored when the platform can create surfaces.
+	nativeRequested bool
 
 	// Position before maximization (for restore)
 	normalBounds core.UnitRect
@@ -165,6 +169,24 @@ func (w *Window) SetTitle(title string) {
 	w.title = title
 	w.mu.Unlock()
 	w.Update()
+}
+
+// SetNativeRequested records the app's preference for a native OS
+// window (G4 dual mode). It is a REQUEST, honored when the hosting
+// platform can create surfaces (see SurfaceHost); single-surface
+// platforms (the terminal) keep the window in-surface under the
+// WindowManager. Matches the wire's `native` flag.
+func (w *Window) SetNativeRequested(native bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.nativeRequested = native
+}
+
+// NativeRequested reports whether a native window was requested.
+func (w *Window) NativeRequested() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.nativeRequested
 }
 
 // Flags returns the window flags.

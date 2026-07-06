@@ -32,6 +32,13 @@ type DockProvider interface {
 
 // WindowManager manages all windows in the application.
 // It handles z-ordering, focus, modal windows, and window positioning.
+//
+// Scope (G4): the WindowManager composites windows WITHIN ONE
+// surface - its "screen" bounds are that surface's bounds, set by
+// the desktop from Surface.Size. Windows granted native mode live
+// outside its jurisdiction entirely (one window per surface, hosted
+// by SurfaceHost with OS-provided chrome); which mode a window gets
+// is host policy consulting Window.NativeRequested.
 type WindowManager struct {
 	mu sync.RWMutex
 

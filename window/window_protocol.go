@@ -39,6 +39,17 @@ func init() {
 			target.(*Window).SetTitle(s)
 			return nil
 		},
+		// native requests an OS window when the platform can create
+		// surfaces (G4 dual mode); single-surface platforms keep the
+		// window in-surface.
+		"native": func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+			b, err := protocol.AsBool("native", v, f)
+			if err != nil {
+				return err
+			}
+			target.(*Window).SetNativeRequested(b)
+			return nil
+		},
 	}
 
 	for _, dim := range []string{"x", "y", "width", "height"} {

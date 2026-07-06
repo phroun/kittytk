@@ -297,7 +297,7 @@ when the widget is built.
 | children | {} | Exactly one content widget (wrap several in a panel) |
 | `min_width`, `min_height` | numeric (units) | Via common properties |
 | `font`, `column_units`, `row_units` | | Per-window overrides (D8) |
-| `native` | flag | G4 dual-mode: request an OS window when available (future) |
+| `native` | flag | G4 dual-mode: REQUEST an OS window; honored when the platform creates surfaces (SurfaceHost, OS chrome, window fills the surface), ignored on single-surface platforms (in-surface under the WindowManager). Registered 2026-07-05. |
 
 Events: `window_closed window=<id>` (after close completes); moved/
 resized/state events land when the window grows those callbacks.
