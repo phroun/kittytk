@@ -152,9 +152,10 @@ type Engine struct {
 	epoch uint64 // bumped when the font set changes
 }
 
-// NewEngine creates an engine with the embedded default fonts: the
-// "Go" family (sans, default) and "Go Mono", with the TUI-era names
-// "Monday" and "Tuesday" aliased onto them.
+// NewEngine creates an engine with the embedded default fonts:
+// "Noto Sans" (default UI face) and "Noto Sans Mono", with the
+// TUI-era names "Monday" and "Tuesday" aliased onto them and the Go
+// families kept as fallbacks.
 func NewEngine() *Engine {
 	return &Engine{db: newFontDB(), cache: newShapeCache(2048)}
 }

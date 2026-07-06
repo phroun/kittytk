@@ -11,10 +11,10 @@ import (
 	"github.com/phroun/tuitk/core"
 )
 
-func sans(size int) *core.Font { return &core.Font{Name: "Go", Size: size} }
-func mono(size int) *core.Font { return &core.Font{Name: "Go Mono", Size: size} }
+func sans(size int) *core.Font { return &core.Font{Name: "Noto Sans", Size: size} }
+func mono(size int) *core.Font { return &core.Font{Name: "Noto Sans Mono", Size: size} }
 func boldSans(size int) *core.Font {
-	return &core.Font{Name: "Go", Size: size, Style: core.FontStyleBold}
+	return &core.Font{Name: "Noto Sans", Size: size, Style: core.FontStyleBold}
 }
 
 func TestMeasureProportionalVsMono(t *testing.T) {

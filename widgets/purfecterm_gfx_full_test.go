@@ -180,10 +180,11 @@ func TestGfxDoubleWidthLine(t *testing.T) {
 	green := 0
 	img := b.Image()
 	// Ink beyond the normal 2-cell extent (16px) proves 2x width.
+	// Tolerant color match: antialiased coverage varies by typeface.
 	for y := 16; y < 32; y++ {
 		for x := 16; x < 32; x++ {
 			c := img.RGBAAt(x, y)
-			if c.G > 200 && c.R < 60 {
+			if c.G > 150 && c.R < 100 {
 				green++
 			}
 		}

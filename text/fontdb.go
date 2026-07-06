@@ -17,6 +17,7 @@ import (
 	"golang.org/x/image/font/gofont/goregular"
 
 	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/text/fonts"
 )
 
 // Aspect selects a style variant within a family.
@@ -66,12 +67,21 @@ func newFontDB() *fontDB {
 		families: map[string]*family{},
 		aliases:  map[string]string{},
 	}
-	// The embedded defaults: the Go font family (sans) and Go Mono.
+	// The embedded defaults: Noto Sans (UI) and Noto Sans Mono,
+	// chosen for Unicode coverage. The Go families stay registered
+	// after them purely as fallback faces, and remain addressable by
+	// name. Registration order is the per-rune fallback order.
 	must := func(err error) {
 		if err != nil {
 			panic(err) // embedded fonts cannot fail to parse
 		}
 	}
+	must(db.register("Noto Sans", Aspect{}, fonts.SansRegular))
+	must(db.register("Noto Sans", Aspect{Bold: true}, fonts.SansBold))
+	must(db.register("Noto Sans", Aspect{Italic: true}, fonts.SansItalic))
+	must(db.register("Noto Sans", Aspect{Bold: true, Italic: true}, fonts.SansBoldItalic))
+	must(db.register("Noto Sans Mono", Aspect{}, fonts.MonoRegular))
+	must(db.register("Noto Sans Mono", Aspect{Bold: true}, fonts.MonoBold))
 	must(db.register("Go", Aspect{}, goregular.TTF))
 	must(db.register("Go", Aspect{Bold: true}, gobold.TTF))
 	must(db.register("Go", Aspect{Italic: true}, goitalic.TTF))
@@ -80,15 +90,15 @@ func newFontDB() *fontDB {
 	must(db.register("Go Mono", Aspect{Bold: true}, gomonobold.TTF))
 	must(db.register("Go Mono", Aspect{Italic: true}, gomonoitalic.TTF))
 	must(db.register("Go Mono", Aspect{Bold: true, Italic: true}, gomonobolditalic.TTF))
-	db.def = canonical("Go")
+	db.def = canonical("Noto Sans")
 	// "ui-text" is the internal UI font name: each renderer maps it
 	// to its own face. Here (the graphical engine) it is the default
 	// proportional family; the text-based system maps it to Monday.
-	db.aliases[canonical("ui-text")] = canonical("Go")
+	db.aliases[canonical("ui-text")] = canonical("Noto Sans")
 	// The TUI-era font names keep meaning on the graphical side:
 	// Monday has always been the monospace cell font.
-	db.aliases[canonical("Monday")] = canonical("Go Mono")
-	db.aliases[canonical("Tuesday")] = canonical("Go")
+	db.aliases[canonical("Monday")] = canonical("Noto Sans Mono")
+	db.aliases[canonical("Tuesday")] = canonical("Noto Sans")
 	return db
 }
 
