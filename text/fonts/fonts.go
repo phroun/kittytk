@@ -23,3 +23,16 @@ var MonoRegular []byte
 
 //go:embed NotoSansMono-Bold.ttf
 var MonoBold []byte
+
+// Fallback-only faces: never selected by name in the UI, but they
+// extend per-rune coverage (geometric shapes and other symbols used
+// by widget chrome; Hebrew).
+
+//go:embed NotoSansSymbols2-Regular.ttf
+var Symbols2Regular []byte
+
+//go:embed NotoSansHebrew-Regular.ttf
+var HebrewRegular []byte
+
+//go:embed NotoSansHebrew-Bold.ttf
+var HebrewBold []byte
