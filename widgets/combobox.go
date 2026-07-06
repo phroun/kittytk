@@ -826,13 +826,14 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 			Height: metrics.CellHeight,
 		}, ' ', s)
 
-		// Draw item text through the proportional path, clipped to
-		// the row (cell surfaces render it cell-by-cell as before).
+		// Draw item text through the proportional path, clipped only
+		// at the popup edge - labels flow under the scrollbar lane
+		// (painted after the items).
 		font := c.EffectiveFont()
 		rowPainter := p.WithClip(core.UnitRect{
 			X:      0,
 			Y:      itemY,
-			Width:  bounds.Width - metrics.CellWidth,
+			Width:  bounds.Width,
 			Height: metrics.CellHeight,
 		})
 		rowPainter.DrawText(metrics.CellWidth, itemY, item, s, font)
@@ -930,13 +931,14 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			Height: metrics.CellHeight,
 		}, ' ', s)
 
-		// Draw item text through the proportional path, clipped to
-		// the row (cell surfaces render it cell-by-cell as before).
+		// Draw item text through the proportional path, clipped only
+		// at the popup edge - labels flow under the scrollbar lane
+		// (painted after the items).
 		font := c.EffectiveFont()
 		rowPainter := popupPainter.WithClip(core.UnitRect{
 			X:      0,
 			Y:      itemY,
-			Width:  popupBounds.Width - metrics.CellWidth,
+			Width:  popupBounds.Width,
 			Height: metrics.CellHeight,
 		})
 		rowPainter.DrawText(metrics.CellWidth, itemY, item, s, font)
