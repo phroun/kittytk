@@ -1090,6 +1090,12 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		if core.DeliverLatchedWheel(e) {
 			return true
 		}
+		// Open menus scroll before anything beneath them.
+		if d.menuBar != nil && d.menuBar.ActiveMenu() != nil {
+			if d.menuBar.HandleMouseWheel(e) {
+				return true
+			}
+		}
 		return wm.HandleMouseWheel(e)
 	}
 	return false

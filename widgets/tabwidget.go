@@ -2956,7 +2956,64 @@ func (t *TabWidget) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	}
 	contentBounds := t.contentBounds()
 	if !contentBounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
-		return false
+		// Over the tab bar: wheel steps the first visible tab when
+		// the strip overflows ([<] [>] visible). Horizontal strips
+		// take either axis (two-finger pans are often diagonal-ish);
+		// vertical lists take the vertical axis.
+		step := event.DeltaY
+		if event.DeltaX != 0 {
+			step = event.DeltaX
+		} else if event.PreciseX != 0 || event.PreciseY != 0 {
+			// Whole-tab steps from precise deltas: sign only.
+			p := event.PreciseY
+			if event.PreciseX != 0 {
+				p = event.PreciseX
+			}
+			if p < 0 {
+				step = -1
+			} else if p > 0 {
+				step = 1
+			}
+		}
+		if step == 0 {
+			return false
+		}
+		vertical := t.tabPosition == TabsLeft || t.tabPosition == TabsRight
+		if vertical {
+			visible := t.vertVisibleCount()
+			maxOffset := len(t.tabs) - visible
+			if maxOffset <= 0 {
+				return false
+			}
+			off := t.vertScrollOffset
+			if step < 0 {
+				off--
+			} else {
+				off++
+			}
+			if off < 0 {
+				off = 0
+			}
+			if off > maxOffset {
+				off = maxOffset
+			}
+			if off == t.vertScrollOffset {
+				return true // consumed: strip is scrollable
+			}
+			t.vertScrollOffset = off
+			t.Update()
+			return true
+		}
+		if !t.canScrollLeft() && !t.canScrollRight() {
+			return false
+		}
+		if step < 0 && t.canScrollLeft() {
+			t.tabScrollOffset--
+		} else if step > 0 && t.canScrollRight() {
+			t.tabScrollOffset++
+		}
+		t.Update()
+		return true
 	}
 	localEvent := event
 	localEvent.X -= contentBounds.X

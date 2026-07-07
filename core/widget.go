@@ -258,6 +258,8 @@ type PopupRequest struct {
 	HandleMouseMove func(event MouseMoveEvent) bool
 	// HandleMouseRelease function to handle mouse release (returns true if handled)
 	HandleMouseRelease func(event MouseReleaseEvent) bool
+	// HandleMouseWheel function to handle wheel scrolling (returns true if handled)
+	HandleMouseWheel func(event MouseWheelEvent) bool
 }
 
 // PopupController is an interface for managing popup overlays.

@@ -54,6 +54,9 @@ type ComboBox struct {
 	sbSmoothDrag bool
 	sbGrabOff    float64
 	sbThumbPos   float64
+
+	// Fractional rows carried between trackpad wheel events.
+	wheelAccum float64
 	scrollbarDragOffset int   // Scroll offset when drag started
 
 	// Timer for scroll repeating
@@ -645,6 +648,9 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 		HandleMouseMove: func(event core.MouseMoveEvent) bool {
 			return c.handlePopupMouseMove(event, popupBounds)
 		},
+		HandleMouseWheel: func(event core.MouseWheelEvent) bool {
+			return c.handlePopupMouseWheel(event)
+		},
 		HandleMouseRelease: func(event core.MouseReleaseEvent) bool {
 			return c.handlePopupMouseRelease(event, popupBounds)
 		},
@@ -1087,6 +1093,35 @@ func (c *ComboBox) paintScrollbar(p *core.Painter, popupWidth core.Unit, visible
 		y := core.Unit(thumbStart+i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)
 	}
+}
+
+// handlePopupMouseWheel scrolls the open popup by whole rows.
+func (c *ComboBox) handlePopupMouseWheel(event core.MouseWheelEvent) bool {
+	maxVis := c.effectiveMaxVisible()
+	maxScroll := len(c.items) - maxVis
+	if maxScroll <= 0 {
+		return false
+	}
+	step := event.DeltaY
+	if step == 0 && event.PreciseY != 0 {
+		c.wheelAccum += event.PreciseY * 3
+		step = int(c.wheelAccum)
+		c.wheelAccum -= float64(step)
+	} else {
+		step *= 3
+	}
+	off := c.scrollOffset + step
+	if off < 0 {
+		off = 0
+	}
+	if off > maxScroll {
+		off = maxScroll
+	}
+	if off != c.scrollOffset {
+		c.scrollOffset = off
+		c.Update()
+	}
+	return true
 }
 
 // handlePopupMousePress handles mouse clicks on the popup overlay.

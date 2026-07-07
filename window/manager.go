@@ -126,6 +126,8 @@ type PopupOverlay struct {
 	HandleMouseMove func(event core.MouseMoveEvent) bool
 	// HandleMouseRelease function to handle mouse release (returns true if handled)
 	HandleMouseRelease func(event core.MouseReleaseEvent) bool
+	// HandleMouseWheel function to handle wheel scrolling (returns true if handled)
+	HandleMouseWheel func(event core.MouseWheelEvent) bool
 }
 
 // NewWindowManager creates a new window manager.
@@ -757,6 +759,7 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,
+		HandleMouseWheel:   request.HandleMouseWheel,
 	}
 	m.popups = append(m.popups, overlay)
 }
@@ -1819,6 +1822,22 @@ func (m *WindowManager) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	m.mu.RUnlock()
 
 	pos := core.UnitPoint{X: event.X, Y: event.Y}
+
+	// Popup overlays float above everything.
+	m.mu.RLock()
+	popups := make([]*PopupOverlay, len(m.popups))
+	copy(popups, m.popups)
+	m.mu.RUnlock()
+	for i := len(popups) - 1; i >= 0; i-- {
+		popup := popups[i]
+		if popup.HandleMouseWheel != nil && popup.Bounds.Contains(pos) {
+			if popup.HandleMouseWheel(event) {
+				m.RequestRepaint()
+				return true
+			}
+		}
+	}
+
 	for i := len(windows) - 1; i >= 0; i-- {
 		win := windows[i]
 		if !win.IsVisible() || win.IsMinimized() || !win.Bounds().Contains(pos) {

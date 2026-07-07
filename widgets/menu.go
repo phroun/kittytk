@@ -2489,6 +2489,23 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 }
 
 // HandleMouseRelease handles mouse release during drag.
+// HandleMouseWheel scrolls the active dropdown when it overflows.
+func (m *MenuBar) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	menu := m.activeMenu
+	if menu == nil || !menu.visible || !menu.needsScrolling() {
+		return false
+	}
+	down := event.DeltaY > 0 || event.PreciseY > 0
+	up := event.DeltaY < 0 || event.PreciseY < 0
+	if down && menu.canScrollDown() {
+		menu.scrollDown(1)
+	} else if up && menu.canScrollUp() {
+		menu.scrollUp(1)
+	}
+	m.Update()
+	return true
+}
+
 func (m *MenuBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	wasMouseDown := m.mouseDown
 	wasDragging := m.dragging
