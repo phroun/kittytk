@@ -578,6 +578,9 @@ type ScrollArea struct {
 	hScrollBarPolicy ScrollBarPolicy
 	vScrollBarPolicy ScrollBarPolicy
 
+	// Sub-unit wheel remainders carried between trackpad events.
+	wheelCarryX, wheelCarryY float64
+
 	// Appearance
 	widgetResizable bool // If true, content widget is resized to viewport
 }
@@ -1324,7 +1327,8 @@ func (s *ScrollArea) scrollSelfWheel(event core.MouseWheelEvent) bool {
 	metrics := s.EffectiveCellMetrics()
 	if s.smoothScroll() {
 		// Unit-granular: precise (trackpad) deltas map to fractions
-		// of the 3-cells-per-notch step.
+		// of the 3-cells-per-notch step, with sub-unit remainders
+		// carried between events so slow pans stay smooth.
 		if horizontal {
 			delta := float64(event.DeltaY) // Shift+vertical wheel
 			if nativeHoriz {
@@ -1335,13 +1339,19 @@ func (s *ScrollArea) scrollSelfWheel(event core.MouseWheelEvent) bool {
 			} else if event.PreciseY != 0 {
 				delta = event.PreciseY
 			}
-			s.SetScrollX(s.scrollX + int(delta*3*float64(metrics.CellWidth)))
+			s.wheelCarryX += delta * 3 * float64(metrics.CellWidth)
+			step := int(s.wheelCarryX)
+			s.wheelCarryX -= float64(step)
+			s.SetScrollX(s.scrollX + step)
 		} else {
 			delta := float64(event.DeltaY)
 			if event.PreciseY != 0 {
 				delta = event.PreciseY
 			}
-			s.SetScrollY(s.scrollY + int(delta*3*float64(metrics.CellHeight)))
+			s.wheelCarryY += delta * 3 * float64(metrics.CellHeight)
+			step := int(s.wheelCarryY)
+			s.wheelCarryY -= float64(step)
+			s.SetScrollY(s.scrollY + step)
 		}
 	} else if horizontal {
 		dx := event.DeltaY // Shift+vertical wheel
