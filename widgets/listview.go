@@ -553,29 +553,38 @@ func (l *ListView) scrollbarUnits(visibleCount int) (trackU, thumbU, posU float6
 func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 	scheme := l.GetScheme()
 	metrics := l.EffectiveCellMetrics()
+	trackStyle := scheme.GetScrollbar()
+	thumbStyle := scheme.GetScrollbarThumb()
+
+	// Pixel surfaces: a single hairline stripe blended at 50%
+	// opacity behind, and one solid full-opacity rectangle for the
+	// thumb, at unit granularity - same treatment as the combobox
+	// popup lane.
+	if p.Graphical() {
+		trackU, thumbU, posU := l.scrollbarUnits(visibleCount)
+		laneX := l.Bounds().Width - metrics.CellWidth
+		stripeX := laneX + metrics.CellWidth/2
+		p.FillRect(core.UnitRect{
+			X:      stripeX,
+			Y:      0,
+			Width:  1,
+			Height: core.Unit(trackU + 0.5),
+		}, '▒', trackStyle.WithBg(style.ColorTransparent))
+		p.FillRect(core.UnitRect{
+			X:      laneX + 1,
+			Y:      core.Unit(posU + 0.5),
+			Width:  metrics.CellWidth - 2,
+			Height: core.Unit(thumbU + 0.5),
+		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
+		return
+	}
 
 	scrollbarX, thumbStart, thumbHeight, trackHeight := l.scrollbarGeometry(visibleCount)
 
 	// Draw scrollbar track
-	trackStyle := scheme.GetScrollbar()
 	for i := 0; i < trackHeight; i++ {
 		y := core.Unit(i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '│', trackStyle)
-	}
-
-	thumbStyle := scheme.GetScrollbarThumb()
-
-	// Pixel surfaces paint the thumb at unit granularity so it can
-	// sit (and move) between row boundaries.
-	if p.Graphical() {
-		_, thumbU, posU := l.scrollbarUnits(visibleCount)
-		p.FillRect(core.UnitRect{
-			X:      scrollbarX,
-			Y:      core.Unit(posU + 0.5),
-			Width:  metrics.CellWidth,
-			Height: core.Unit(thumbU + 0.5),
-		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
-		return
 	}
 
 	// Draw scrollbar thumb
