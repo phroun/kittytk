@@ -2938,6 +2938,32 @@ func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
 	return false
 }
 
+// HandleMouseWheel forwards a wheel event to the current tab's
+// content when the pointer is over it.
+func (t *TabWidget) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	if t.currentIndex < 0 || t.currentIndex >= len(t.tabs) {
+		return false
+	}
+	content := t.tabs[t.currentIndex].Content
+	if content == nil {
+		return false
+	}
+	handler, ok := content.(interface {
+		HandleMouseWheel(core.MouseWheelEvent) bool
+	})
+	if !ok {
+		return false
+	}
+	contentBounds := t.contentBounds()
+	if !contentBounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+		return false
+	}
+	localEvent := event
+	localEvent.X -= contentBounds.X
+	localEvent.Y -= contentBounds.Y
+	return handler.HandleMouseWheel(localEvent)
+}
+
 // HandleMouseRelease handles mouse button release.
 func (t *TabWidget) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Clear vertical scrollbar drag state

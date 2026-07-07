@@ -1273,6 +1273,63 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 	return false
 }
 
+// HandleMouseWheel scrolls the viewport. The content under the
+// pointer gets first claim (the topmost scrollable wins); the area
+// scrolls itself only when it has a scrollbar on the wheel's axis.
+func (s *ScrollArea) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	viewport := s.viewportBounds()
+	if s.content != nil && event.X >= 0 && event.X < viewport.Width &&
+		event.Y >= 0 && event.Y < viewport.Height {
+		if handler, ok := s.content.(interface {
+			HandleMouseWheel(core.MouseWheelEvent) bool
+		}); ok {
+			offX, offY := s.scrollOffsetUnits()
+			contentEvent := event
+			contentEvent.X += offX
+			contentEvent.Y += offY
+			if handler.HandleMouseWheel(contentEvent) {
+				return true
+			}
+		}
+	}
+
+	horizontal := event.Modifiers&core.ShiftModifier != 0
+	if horizontal {
+		if !s.needsHScrollBar() {
+			return false
+		}
+	} else if !s.needsVScrollBar() {
+		return false
+	}
+
+	metrics := s.EffectiveCellMetrics()
+	if s.smoothScroll() {
+		// Unit-granular: precise (trackpad) deltas map to fractions
+		// of the 3-cells-per-notch step.
+		delta := float64(event.DeltaY)
+		if event.PreciseY != 0 {
+			delta = event.PreciseY
+		}
+		if horizontal {
+			if event.PreciseX != 0 || event.DeltaX != 0 {
+				delta = float64(event.DeltaX)
+				if event.PreciseX != 0 {
+					delta = event.PreciseX
+				}
+			}
+			s.SetScrollX(s.scrollX + int(delta*3*float64(metrics.CellWidth)))
+		} else {
+			s.SetScrollY(s.scrollY + int(delta*3*float64(metrics.CellHeight)))
+		}
+	} else if horizontal {
+		s.SetScrollX(s.scrollX + event.DeltaY*3)
+	} else {
+		s.SetScrollY(s.scrollY + event.DeltaY*3)
+	}
+	core.ClaimWheelGesture(event, s.HandleMouseWheel)
+	return true
+}
+
 // HandleMouseRelease handles mouse release events.
 func (s *ScrollArea) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	viewport := s.viewportBounds()

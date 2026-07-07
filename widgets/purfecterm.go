@@ -511,6 +511,9 @@ func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	if t.terminal == nil {
 		return false
 	}
+	// Terminals consume every wheel over them; claim the gesture so
+	// pointer drift mid-scroll cannot re-target (core wheel latch).
+	core.ClaimWheelGesture(event, t.HandleMouseWheel)
 	if t.gfxInputActive() {
 		return t.gfxMouseWheel(event)
 	}

@@ -97,6 +97,9 @@ type TreeView struct {
 	scrollbarGrabOff    float64
 	scrollbarThumbPos   float64
 
+	// Fractional rows carried between trackpad wheel events.
+	wheelAccum float64
+
 	// Callbacks
 	onCurrentChanged  func(item *TreeItem)
 	onItemActivated   func(item *TreeItem)
@@ -1100,22 +1103,27 @@ func (t *TreeView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		return false
 	}
 
-	// Scroll by 3 lines per wheel click
-	scrollAmount := 3
-	if event.DeltaY < 0 {
-		// Scroll up
-		t.scrollOffset -= scrollAmount
-		if t.scrollOffset < 0 {
-			t.scrollOffset = 0
-		}
+	// 3 rows per notch; trackpad precise deltas accumulate so slow
+	// two-finger pans still move one row at a time.
+	rows := 0
+	if event.PreciseY != 0 {
+		t.wheelAccum += event.PreciseY * 3
+		rows = int(t.wheelAccum)
+		t.wheelAccum -= float64(rows)
+	} else if event.DeltaY < 0 {
+		rows = -3
 	} else if event.DeltaY > 0 {
-		// Scroll down
-		t.scrollOffset += scrollAmount
-		if t.scrollOffset > maxScroll {
-			t.scrollOffset = maxScroll
-		}
+		rows = 3
+	}
+	t.scrollOffset += rows
+	if t.scrollOffset < 0 {
+		t.scrollOffset = 0
+	}
+	if t.scrollOffset > maxScroll {
+		t.scrollOffset = maxScroll
 	}
 
+	core.ClaimWheelGesture(event, t.HandleMouseWheel)
 	t.Update()
 	return true
 }

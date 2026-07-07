@@ -243,7 +243,11 @@ func (p *Platform) pumpEvents() bool {
 			x, y := p.toUnits(mx, my)
 			s.handler.Event(core.MouseWheelEvent{
 				X: x, Y: y,
-				DeltaX: int(e.X), DeltaY: int(e.Y),
+				// Toolkit convention: negative DeltaY = scroll up
+				// (matches the TUI backend); SDL reports the inverse.
+				DeltaX: int(e.X), DeltaY: -int(e.Y),
+				PreciseX:  float64(e.PreciseX),
+				PreciseY:  -float64(e.PreciseY),
 				Modifiers: currentKeyModifiers(),
 			})
 		}

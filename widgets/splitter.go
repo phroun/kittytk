@@ -614,6 +614,32 @@ func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 	return false
 }
 
+// HandleMouseWheel forwards a wheel event to the pane under the
+// pointer.
+func (s *Splitter) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	firstBounds, secondBounds := s.childBounds()
+	pos := core.UnitPoint{X: event.X, Y: event.Y}
+	forward := func(w core.Widget, b core.UnitRect) bool {
+		if w == nil || !b.Contains(pos) {
+			return false
+		}
+		handler, ok := w.(interface {
+			HandleMouseWheel(core.MouseWheelEvent) bool
+		})
+		if !ok {
+			return false
+		}
+		localEvent := event
+		localEvent.X -= b.X
+		localEvent.Y -= b.Y
+		return handler.HandleMouseWheel(localEvent)
+	}
+	if forward(s.first, firstBounds) {
+		return true
+	}
+	return forward(s.second, secondBounds)
+}
+
 // HandleMouseRelease handles mouse button releases.
 func (s *Splitter) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if s.dragging {

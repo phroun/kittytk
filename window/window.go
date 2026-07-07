@@ -2194,3 +2194,26 @@ func (w *Window) SizeHint() core.UnitSize {
 
 // verify Window implements Container
 var _ core.Container = (*Window)(nil)
+
+// HandleMouseWheel forwards a wheel event to the content (in the
+// window's interior denomination).
+func (w *Window) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	w.mu.RLock()
+	content := w.content
+	w.mu.RUnlock()
+	if content == nil {
+		return false
+	}
+	handler, ok := content.(interface {
+		HandleMouseWheel(core.MouseWheelEvent) bool
+	})
+	if !ok {
+		return false
+	}
+	contentBounds := w.contentBounds()
+	outer, interior := w.denominations()
+	local := event
+	local.X = core.ExchangeX(event.X-contentBounds.X, outer, interior)
+	local.Y = core.ExchangeY(event.Y-contentBounds.Y, outer, interior)
+	return handler.HandleMouseWheel(local)
+}

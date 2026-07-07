@@ -328,10 +328,16 @@ func (MouseMoveEvent) isEvent() {}
 
 // MouseWheelEvent represents mouse wheel scrolling.
 type MouseWheelEvent struct {
-	X, Y      Unit
-	DeltaX    int          // Horizontal scroll
-	DeltaY    int          // Vertical scroll (positive = up)
-	Modifiers KeyModifiers // Active keyboard modifiers
+	X, Y   Unit
+	DeltaX int // Horizontal scroll
+	DeltaY int // Vertical scroll (positive = up)
+	// Precise deltas (trackpad two-finger pan); zero when the source
+	// only reports whole notches. Sign convention matches DeltaX/Y.
+	PreciseX, PreciseY float64
+	// Screen-space position, stamped once at the top of routing and
+	// preserved through coordinate translation (wheel-gesture latch).
+	ScreenX, ScreenY Unit
+	Modifiers        KeyModifiers // Active keyboard modifiers
 }
 
 func (MouseWheelEvent) isEvent() {}

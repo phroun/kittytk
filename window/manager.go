@@ -1808,3 +1808,31 @@ func (m *WindowManager) RequestRepaint() {
 		handler()
 	}
 }
+
+// HandleMouseWheel routes a wheel event to the topmost visible
+// window under the pointer (position routing; gesture latching
+// happens above, in the desktop).
+func (m *WindowManager) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	m.mu.RLock()
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.RUnlock()
+
+	pos := core.UnitPoint{X: event.X, Y: event.Y}
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		if !win.IsVisible() || win.IsMinimized() || !win.Bounds().Contains(pos) {
+			continue
+		}
+		local := event
+		b := win.Bounds()
+		local.X -= b.X
+		local.Y -= b.Y
+		if win.HandleMouseWheel(local) {
+			m.RequestRepaint()
+			return true
+		}
+		return false // topmost window under the pointer owns the point
+	}
+	return false
+}

@@ -329,6 +329,31 @@ func (p *Panel) HandleMouseMove(event core.MouseMoveEvent) bool {
 	return false
 }
 
+// HandleMouseWheel forwards a wheel event to the topmost child under
+// the pointer.
+func (p *Panel) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	interiorPos := p.toInterior(core.UnitPoint{X: event.X, Y: event.Y})
+	event.X, event.Y = interiorPos.X, interiorPos.Y
+	for i := len(p.children) - 1; i >= 0; i-- {
+		child := p.children[i]
+		b := child.Bounds()
+		if !b.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+			continue
+		}
+		if handler, ok := child.(interface {
+			HandleMouseWheel(core.MouseWheelEvent) bool
+		}); ok {
+			childEvent := event
+			childEvent.X -= b.X
+			childEvent.Y -= b.Y
+			if handler.HandleMouseWheel(childEvent) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // HandleMouseRelease handles mouse button release.
 func (p *Panel) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	interiorPos := p.toInterior(core.UnitPoint{X: event.X, Y: event.Y})

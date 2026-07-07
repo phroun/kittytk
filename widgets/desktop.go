@@ -1077,10 +1077,20 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		return wm.HandleMousePress(e)
 
 	case core.MouseMoveEvent:
+		core.WheelPointerMoved()
 		return wm.HandleMouseMove(e)
 
 	case core.MouseReleaseEvent:
 		return wm.HandleMouseRelease(e)
+
+	case core.MouseWheelEvent:
+		// Stamp the screen position once; translations preserve it.
+		e.ScreenX, e.ScreenY = e.X, e.Y
+		// An active gesture stays latched to its claimant.
+		if core.DeliverLatchedWheel(e) {
+			return true
+		}
+		return wm.HandleMouseWheel(e)
 	}
 	return false
 }

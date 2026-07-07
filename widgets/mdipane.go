@@ -1540,6 +1540,39 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 	return false
 }
 
+// HandleMouseWheel forwards a wheel event to the hosted window under
+// the pointer (topmost first), else the background content.
+func (m *MDIPane) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	event.X, event.Y = m.toInterior(event.X, event.Y)
+	pos := core.UnitPoint{X: event.X, Y: event.Y}
+
+	m.mu.RLock()
+	windows := make([]*window.Window, len(m.windows))
+	copy(windows, m.windows)
+	content := m.content
+	m.mu.RUnlock()
+
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		if !win.IsVisible() || win.IsMinimized() || !win.Bounds().Contains(pos) {
+			continue
+		}
+		local := event
+		b := win.Bounds()
+		local.X -= b.X
+		local.Y -= b.Y
+		return win.HandleMouseWheel(local)
+	}
+	if content != nil {
+		if handler, ok := content.(interface {
+			HandleMouseWheel(core.MouseWheelEvent) bool
+		}); ok {
+			return handler.HandleMouseWheel(event)
+		}
+	}
+	return false
+}
+
 // HandleMouseRelease handles mouse release.
 func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Outer -> interior at the boundary (see HandleMousePress).

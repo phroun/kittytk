@@ -55,6 +55,9 @@ type ListView struct {
 	scrollbarGrabOff    float64
 	scrollbarThumbPos   float64
 
+	// Fractional rows carried between trackpad wheel events.
+	wheelAccum float64
+
 	// Callbacks
 	onCurrentChanged  func(index int)
 	onItemActivated   func(index int)
@@ -929,22 +932,27 @@ func (l *ListView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		return false
 	}
 
-	// Scroll by 3 lines per wheel click
-	scrollAmount := 3
-	if event.DeltaY < 0 {
-		// Scroll up
-		l.scrollOffset -= scrollAmount
-		if l.scrollOffset < 0 {
-			l.scrollOffset = 0
-		}
+	// 3 rows per notch; trackpad precise deltas accumulate so slow
+	// two-finger pans still move one row at a time.
+	rows := 0
+	if event.PreciseY != 0 {
+		l.wheelAccum += event.PreciseY * 3
+		rows = int(l.wheelAccum)
+		l.wheelAccum -= float64(rows)
+	} else if event.DeltaY < 0 {
+		rows = -3
 	} else if event.DeltaY > 0 {
-		// Scroll down
-		l.scrollOffset += scrollAmount
-		if l.scrollOffset > maxScroll {
-			l.scrollOffset = maxScroll
-		}
+		rows = 3
+	}
+	l.scrollOffset += rows
+	if l.scrollOffset < 0 {
+		l.scrollOffset = 0
+	}
+	if l.scrollOffset > maxScroll {
+		l.scrollOffset = maxScroll
 	}
 
+	core.ClaimWheelGesture(event, l.HandleMouseWheel)
 	l.Update()
 	return true
 }
