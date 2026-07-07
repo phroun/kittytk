@@ -322,10 +322,17 @@ func (p *Platform) pumpEvents() bool {
 			if s == nil || s.handler == nil {
 				continue
 			}
-			if e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
+			switch e.Event {
+			case sdl2.WINDOWEVENT_SIZE_CHANGED:
 				// The event watch usually handled this live; this is
 				// the no-op-if-current backstop.
 				p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
+			case sdl2.WINDOWEVENT_FOCUS_GAINED:
+				s.handler.Event(core.FocusEvent{Focused: true})
+				s.Invalidate(core.UnitRect{})
+			case sdl2.WINDOWEVENT_FOCUS_LOST:
+				s.handler.Event(core.FocusEvent{Focused: false})
+				s.Invalidate(core.UnitRect{})
 			}
 		case *sdl2.TextInputEvent:
 			s := p.surfaceFor(e.WindowID)
@@ -497,6 +504,7 @@ func translateKey(sym sdl2.Keysym) string {
 	ctrl := sym.Mod&sdl2.KMOD_CTRL != 0
 	alt := sym.Mod&sdl2.KMOD_ALT != 0
 	shift := sym.Mod&sdl2.KMOD_SHIFT != 0
+	gui := sym.Mod&sdl2.KMOD_GUI != 0
 
 	if name, ok := specialKeys[sym.Sym]; ok {
 		prefix := ""
@@ -508,6 +516,9 @@ func translateKey(sym sdl2.Keysym) string {
 		}
 		if shift {
 			prefix += "S-"
+		}
+		if gui {
+			prefix += "s-"
 		}
 		return prefix + name
 	}
@@ -567,6 +578,17 @@ func translateKey(sym sdl2.Keysym) string {
 			return prefix + string(ch)
 		case alt:
 			return "M-" + string(ch)
+		case gui:
+			// Command-modified printables never arrive via TextInput;
+			// "s-" is the toolkit's Meta/Cmd prefix.
+			prefix := ""
+			if ctrl {
+				prefix += "C-"
+			}
+			if shift {
+				prefix += "S-"
+			}
+			return prefix + "s-" + string(ch)
 		default:
 			// Plain (possibly shifted) printable: TextInput delivers it.
 			return ""

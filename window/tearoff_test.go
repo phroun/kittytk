@@ -315,3 +315,26 @@ func TestTearOffHostMinimizeButton(t *testing.T) {
 		t.Error("minimize button did not miniaturize the OS window")
 	}
 }
+
+// A torn window's chrome follows its OS window's focus, and Cmd+M
+// (key "s-m") miniaturizes it like any macOS document window.
+func TestTearOffHostFocusAndCmdM(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+
+	h.Event(core.FocusEvent{Focused: false})
+	if win.IsActive() {
+		t.Error("torn window still active after its OS window blurred")
+	}
+	h.Event(core.FocusEvent{Focused: true})
+	if !win.IsActive() {
+		t.Error("torn window not active after its OS window focused")
+	}
+
+	mods, _ := core.ParseKeyModifiers("s-m")
+	h.Event(core.KeyPressEvent{Key: "s-m", Modifiers: mods})
+	if !surf.minimized {
+		t.Error("Cmd+M did not miniaturize the OS window")
+	}
+}

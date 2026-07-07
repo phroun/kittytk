@@ -452,3 +452,41 @@ func TestClosingTornWindowDisposesSurface(t *testing.T) {
 
 	d.RunOn(plat)
 }
+
+// When the desktop's own OS window loses focus, its active window's
+// chrome dims; re-focusing lights the same window back up.
+func TestDesktopBlurDimsActiveWindow(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	win := window.NewWindow("focused")
+	d.SetOnStartup(func() {
+		d.WindowManager().AddWindow(win)
+		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
+		win.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		desk := plat.surfaces[0]
+		if !win.IsActive() {
+			t.Fatal("window not active after AddWindow")
+		}
+		desk.handler.Event(core.FocusEvent{Focused: false})
+		if win.IsActive() {
+			t.Error("active window still lit while the desktop is blurred")
+		}
+		desk.handler.Event(core.FocusEvent{Focused: true})
+		if !win.IsActive() {
+			t.Error("active window not re-lit when the desktop re-focused")
+		}
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}

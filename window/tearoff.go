@@ -206,7 +206,19 @@ func (h *TearOffHost) Frame(p *core.Painter) {
 func (h *TearOffHost) Event(ev core.Event) bool {
 	var handled bool
 	switch e := ev.(type) {
+	case core.FocusEvent:
+		// The torn window's chrome follows its OS window's focus,
+		// exactly as it would follow activation in the desktop.
+		h.win.SetActive(e.Focused)
+		handled = true
 	case core.KeyPressEvent:
+		if h.native != nil && (e.Key == "s-m" ||
+			(e.Modifiers&core.MetaModifier != 0 && e.Key == "m")) {
+			// Cmd+M miniaturizes, like any macOS document window.
+			h.native.Minimize()
+			handled = true
+			break
+		}
 		handled = h.win.HandleKeyPress(e)
 	case core.KeyReleaseEvent:
 		handled = h.win.HandleKeyRelease(e)

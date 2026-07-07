@@ -1092,6 +1092,16 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// Pass to window manager
 		return wm.HandleKeyPress(e)
 
+	case core.FocusEvent:
+		// The desktop's OS window gained or lost focus: its active
+		// window's chrome follows, the same way a torn-off window's
+		// chrome follows its own OS window. WM state is untouched -
+		// re-focusing lights the same window back up.
+		if aw := wm.ActiveWindow(); aw != nil {
+			aw.SetActive(e.Focused)
+		}
+		return true
+
 	case core.MousePressEvent:
 		return wm.HandleMousePress(e)
 
