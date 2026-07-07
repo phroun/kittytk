@@ -293,3 +293,66 @@ func TestHorizontalScrollBarLaneThinOnPixelSurfaces(t *testing.T) {
 		t.Errorf("cell surface horizontal lane = %d units, want 16 (one row)", lane)
 	}
 }
+
+// tallStub is a bare widget with a fixed, tall size hint.
+type tallStub struct{ core.WidgetBase }
+
+func (t *tallStub) SizeHint() core.UnitSize { return core.UnitSize{Width: 100, Height: 2000} }
+
+func newTallStub() *tallStub {
+	s := &tallStub{}
+	s.WidgetBase = *core.NewWidgetBase()
+	s.Init(s)
+	return s
+}
+
+// ScrollArea content scrolls at unit granularity on pixel surfaces:
+// the scrollbars are unit-denominated, so offsets need not land on
+// cell boundaries. (Content that wants quantized output - the
+// terminal - snaps itself; the scroll area does not impose it.)
+func TestScrollAreaSmoothContentOffsets(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	sa := NewScrollArea()
+	sa.SetContent(newTallStub()) // tall content: vertical scrolling only
+	win := window.NewWindow("host")
+	win.SetContent(sa)
+	d.WindowManager().AddWindow(win)
+	win.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 300, Height: 200})
+	win.Layout()
+	sa.updateScrollBars()
+
+	viewport := sa.viewportBounds()
+	if got, want := sa.vScrollBar.Maximum(), int(2000-viewport.Height); got != want {
+		t.Errorf("smooth vertical range max = %d, want %d (unit-denominated)", got, want)
+	}
+	sa.SetScrollY(13) // not a multiple of any cell dimension
+	_, offY := sa.scrollOffsetUnits()
+	if offY != 13 {
+		t.Errorf("content offset = %d units, want 13 (unquantized)", offY)
+	}
+
+	// Cell surface: ranges stay cell-denominated and offsets are
+	// whole rows.
+	dc := NewDesktop()
+	dc.SetBackend(&nullBackend{})
+	sac := NewScrollArea()
+	sac.SetContent(newTallStub())
+	winc := window.NewWindow("host")
+	winc.SetContent(sac)
+	dc.WindowManager().AddWindow(winc)
+	winc.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 300, Height: 200})
+	winc.Layout()
+	sac.updateScrollBars()
+	sac.SetScrollY(3)
+	_, offYC := sac.scrollOffsetUnits()
+	if offYC != 3*16 {
+		t.Errorf("cell surface offset = %d units, want 48 (three rows)", offYC)
+	}
+}

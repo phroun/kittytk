@@ -190,11 +190,19 @@ func (s *ScrollBar) thumbSpanUnits(bounds core.UnitRect, metrics core.CellMetric
 		trackU = float64(bounds.Height)
 		trackCells = int(bounds.Height / metrics.CellHeight)
 	}
-	totalItems := s.maximum - s.minimum + trackCells
-	if trackU <= 0 || totalItems <= 0 {
+	// The visible amount: pageStep when the owner set one (ScrollArea
+	// keeps it at the viewport size in the bar's own denomination -
+	// cells or units), the track's cell count as the classic proxy
+	// otherwise.
+	page := s.pageStep
+	if page <= 0 {
+		page = trackCells
+	}
+	totalSpan := s.maximum - s.minimum + page
+	if trackU <= 0 || totalSpan <= 0 {
 		return 0, 0, 0, false
 	}
-	thumbU = trackU * float64(trackCells) / float64(totalItems)
+	thumbU = trackU * float64(page) / float64(totalSpan)
 	if thumbU < 8 {
 		thumbU = 8
 	}
@@ -718,6 +726,26 @@ func (s *ScrollArea) ScrollOffset() (x, y int) {
 	return s.scrollX, s.scrollY
 }
 
+// smoothScroll reports whether this surface scrolls content at unit
+// granularity (pixel surfaces). Cell surfaces stay quantized to
+// whole rows and columns. Content that WANTS quantized output (the
+// terminal) implements its own snapping - the scroll area does not
+// impose it.
+func (s *ScrollArea) smoothScroll() bool {
+	return core.FindSmoothPositioning(s.Self())
+}
+
+// scrollOffsetUnits returns the scroll offsets in layout units: the
+// scrollbar values are unit-denominated on smooth surfaces and
+// cell-denominated otherwise.
+func (s *ScrollArea) scrollOffsetUnits() (core.Unit, core.Unit) {
+	if s.smoothScroll() {
+		return core.Unit(s.scrollX), core.Unit(s.scrollY)
+	}
+	metrics := s.EffectiveCellMetrics()
+	return core.Unit(s.scrollX) * metrics.CellWidth, core.Unit(s.scrollY) * metrics.CellHeight
+}
+
 // EnsureVisible scrolls to make a point visible.
 func (s *ScrollArea) EnsureVisible(x, y core.Unit) {
 	s.EnsureRectVisible(core.UnitRect{X: x, Y: y, Width: 1, Height: 1})
@@ -728,6 +756,29 @@ func (s *ScrollArea) EnsureVisible(x, y core.Unit) {
 func (s *ScrollArea) EnsureRectVisible(rect core.UnitRect) {
 	viewport := s.viewportBounds()
 	metrics := s.EffectiveCellMetrics()
+
+	// Smooth surfaces scroll the minimum distance in units.
+	if s.smoothScroll() {
+		if rect.X < core.Unit(s.scrollX) {
+			s.SetScrollX(int(rect.X))
+		} else if rect.X+rect.Width > core.Unit(s.scrollX)+viewport.Width {
+			newX := rect.X + rect.Width - viewport.Width
+			if newX > rect.X {
+				newX = rect.X // never hide the left edge
+			}
+			s.SetScrollX(int(newX))
+		}
+		if rect.Y < core.Unit(s.scrollY) {
+			s.SetScrollY(int(rect.Y))
+		} else if rect.Y+rect.Height > core.Unit(s.scrollY)+viewport.Height {
+			newY := rect.Y + rect.Height - viewport.Height
+			if newY > rect.Y {
+				newY = rect.Y // never hide the top edge
+			}
+			s.SetScrollY(int(newY))
+		}
+		return
+	}
 
 	// Calculate cell positions
 	cellX := metrics.UnitsToCellX(rect.X)
@@ -960,6 +1011,28 @@ func (s *ScrollArea) updateScrollBars() {
 	viewport := s.viewportBounds()
 	metrics := s.EffectiveCellMetrics()
 
+	// Smooth surfaces denominate the scrollbars in units: content
+	// scrolls at pixel granularity, stepping one cell per wheel or
+	// arrow notch.
+	if s.smoothScroll() {
+		maxScrollX := int(s.contentWidth - viewport.Width)
+		if maxScrollX < 0 {
+			maxScrollX = 0
+		}
+		s.hScrollBar.SetRange(0, maxScrollX)
+		s.hScrollBar.SetPageStep(int(viewport.Width))
+		s.hScrollBar.SetSingleStep(int(metrics.CellWidth))
+
+		maxScrollY := int(s.contentHeight - viewport.Height)
+		if maxScrollY < 0 {
+			maxScrollY = 0
+		}
+		s.vScrollBar.SetRange(0, maxScrollY)
+		s.vScrollBar.SetPageStep(int(viewport.Height))
+		s.vScrollBar.SetSingleStep(int(metrics.CellHeight))
+		return
+	}
+
 	// Update horizontal scrollbar using ListView-style calculation
 	// visible = viewport cells, total = content cells
 	viewCellWidth := metrics.CharsForWidth(viewport.Width)
@@ -970,6 +1043,7 @@ func (s *ScrollArea) updateScrollBars() {
 	}
 	s.hScrollBar.SetRange(0, maxScrollX)
 	s.hScrollBar.SetPageStep(viewCellWidth)
+	s.hScrollBar.SetSingleStep(1)
 
 	// Update vertical scrollbar using ListView-style calculation
 	viewCellHeight := int(viewport.Height / metrics.CellHeight)
@@ -980,6 +1054,7 @@ func (s *ScrollArea) updateScrollBars() {
 	}
 	s.vScrollBar.SetRange(0, maxScrollY)
 	s.vScrollBar.SetPageStep(viewCellHeight)
+	s.vScrollBar.SetSingleStep(1)
 }
 
 // SizeHint returns the preferred size.
@@ -1007,8 +1082,7 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 
 	// Draw content
 	if s.content != nil {
-		scrollOffsetX := core.Unit(s.scrollX) * metrics.CellWidth
-		scrollOffsetY := core.Unit(s.scrollY) * metrics.CellHeight
+		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
 
 		contentBounds := core.UnitRect{
 			X:      -scrollOffsetX,
@@ -1155,9 +1229,7 @@ func (s *ScrollArea) HandleMousePress(event core.MousePressEvent) bool {
 
 	// Pass to content
 	if s.content != nil {
-		metrics := s.EffectiveCellMetrics()
-		scrollOffsetX := core.Unit(s.scrollX) * metrics.CellWidth
-		scrollOffsetY := core.Unit(s.scrollY) * metrics.CellHeight
+		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
 
 		return s.content.HandleMousePress(core.MousePressEvent{
 			X:      event.X + scrollOffsetX,
@@ -1190,9 +1262,7 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Forward to content widget
 	if s.content != nil {
-		metrics := s.EffectiveCellMetrics()
-		scrollOffsetX := core.Unit(s.scrollX) * metrics.CellWidth
-		scrollOffsetY := core.Unit(s.scrollY) * metrics.CellHeight
+		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
 
 		return s.content.HandleMouseMove(core.MouseMoveEvent{
 			X: event.X + scrollOffsetX,
@@ -1226,9 +1296,7 @@ func (s *ScrollArea) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 	// Forward to content widget
 	if s.content != nil {
-		metrics := s.EffectiveCellMetrics()
-		scrollOffsetX := core.Unit(s.scrollX) * metrics.CellWidth
-		scrollOffsetY := core.Unit(s.scrollY) * metrics.CellHeight
+		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
 
 		return s.content.HandleMouseRelease(core.MouseReleaseEvent{
 			X:      event.X + scrollOffsetX,
