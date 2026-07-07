@@ -121,6 +121,17 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 
 	sdl2.StartTextInput()
 
+	// Interactive resize runs a modal loop (macOS): PollEvent stalls
+	// until release and SDL stretches the stale texture meanwhile. An
+	// event WATCH fires from inside that loop, so the framebuffer can
+	// re-lay out and present live at every size change.
+	sdl2.AddEventWatchFunc(func(ev sdl2.Event, _ interface{}) bool {
+		if e, ok := ev.(*sdl2.WindowEvent); ok && e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
+			p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
+		}
+		return true
+	}, nil)
+
 	if init != nil {
 		init(p)
 	}
@@ -258,6 +269,31 @@ func (p *Platform) paintAndPresent(w *nativeWin) {
 	w.renderer.Present()
 }
 
+// liveResize re-sizes one window's framebuffer, re-lays out its
+// handler, and presents immediately. Idempotent: a size the
+// framebuffer already has is a no-op, so the event-watch call (live,
+// inside the modal resize loop) and the queued WindowEvent don't do
+// the work twice.
+func (p *Platform) liveResize(id uint32, wPx, hPx int) {
+	w, ok := p.wins[id]
+	if !ok || wPx <= 0 || hPx <= 0 {
+		return
+	}
+	if img := w.backend.Image(); img != nil &&
+		img.Bounds().Dx() == wPx && img.Bounds().Dy() == hPx {
+		return
+	}
+	if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
+		return
+	}
+	w.applyShape()
+	if s := w.surface; s != nil && s.handler != nil {
+		s.handler.Resized(w.backend.Size())
+		p.paintAndPresent(w)
+		s.dirty.Store(false)
+	}
+}
+
 // surfaceFor routes an event's window ID to its surface.
 func (p *Platform) surfaceFor(id uint32) *sdlSurface {
 	if w, ok := p.wins[id]; ok {
@@ -286,13 +322,9 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			if e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
-				if w, ok := p.wins[e.WindowID]; ok {
-					if err := p.sizeFramebuffer(w, int(e.Data1), int(e.Data2)); err == nil {
-						w.applyShape()
-						s.handler.Resized(w.backend.Size())
-						s.Invalidate(core.UnitRect{})
-					}
-				}
+				// The event watch usually handled this live; this is
+				// the no-op-if-current backstop.
+				p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
 			}
 		case *sdl2.TextInputEvent:
 			s := p.surfaceFor(e.WindowID)
