@@ -273,7 +273,12 @@ func blend(over, under color.RGBA, alpha float64) color.RGBA {
 	mix := func(a, b uint8) uint8 {
 		return uint8(float64(a)*alpha + float64(b)*(1-alpha))
 	}
-	return color.RGBA{mix(over.R, under.R), mix(over.G, under.G), mix(over.B, under.B), 255}
+	// Alpha mixes like the channels (over is always painted at 255):
+	// opaque ground stays opaque - the historical result - while
+	// antialiased edges over an untouched (alpha-0) framebuffer carry
+	// partial alpha, so transparent torn-window corners composite
+	// with smooth rims instead of dark fringes.
+	return color.RGBA{mix(over.R, under.R), mix(over.G, under.G), mix(over.B, under.B), mix(255, under.A)}
 }
 
 // Clear fills the entire surface.

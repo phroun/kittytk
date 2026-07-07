@@ -5,6 +5,7 @@ import (
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/platform"
+	"github.com/phroun/tuitk/raster"
 )
 
 // nativeFakeSurface is an OS window's worth of fake: unit size, px
@@ -224,5 +225,32 @@ func TestManagerArmedDragEndsWithoutButton(t *testing.T) {
 	m.HandleMouseMove(core.MouseMoveEvent{X: 400, Y: 300, Buttons: core.LeftButton})
 	if b := win.Bounds(); b.X != 120 || b.Y != 112 {
 		t.Errorf("stale armed drag kept following: %d,%d", b.X, b.Y)
+	}
+}
+
+// A torn window's frame leaves the framebuffer's corners at alpha 0
+// (and its antialiased rim at partial alpha), so a transparent OS
+// window composites rounded corners instead of opaque black ones.
+func TestTornFrameLeavesCornersTransparent(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(400, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(px)
+
+	win := NewWindow("torn")
+	win.SetBounds(core.UnitRect{Width: 400, Height: 200})
+	win.Layout()
+	win.Paint(core.NewPainter(px))
+
+	img := px.Image()
+	for _, c := range [][2]int{{0, 0}, {399, 0}, {0, 199}, {399, 199}} {
+		if _, _, _, a := img.At(c[0], c[1]).RGBA(); a != 0 {
+			t.Errorf("corner %d,%d not transparent: alpha %d", c[0], c[1], a)
+		}
+	}
+	if _, _, _, a := img.At(200, 100).RGBA(); a != 0xffff {
+		t.Errorf("interior not opaque: alpha %d", a)
 	}
 }

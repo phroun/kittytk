@@ -50,6 +50,11 @@ type nativeWin struct {
 	// shapeRadiusPx > 0 shapes the OS window with rounded corners
 	// (borderless torn-off windows); reapplied on every resize.
 	shapeRadiusPx int
+
+	// transparent marks a window with real per-pixel alpha (macOS):
+	// the framebuffer's alpha-0 corners composite through, so no
+	// shape mask is needed and the frame's antialiasing survives.
+	transparent bool
 }
 
 type timerEntry struct {
@@ -178,6 +183,12 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 		w.window.Destroy()
 		return nil, err
 	}
+	// Rounded corners, best mechanism first: per-pixel window alpha
+	// (macOS - antialiased), else the binary shape mask.
+	if w.shapeRadiusPx > 0 && makeWindowTransparent(w.window) {
+		w.transparent = true
+		w.shapeRadiusPx = 0
+	}
 	w.applyShape()
 	w.id, _ = w.window.GetID()
 	p.wins[w.id] = w
@@ -237,6 +248,11 @@ func (p *Platform) paintAndPresent(w *nativeWin) {
 
 	img := w.backend.Image()
 	_ = w.texture.Update(nil, unsafe.Pointer(&img.Pix[0]), img.Stride)
+	if w.transparent {
+		// Alpha-0 clear so unpainted pixels (the frame's corner
+		// cutouts) stay transparent through the composite.
+		_ = w.renderer.SetDrawColor(0, 0, 0, 0)
+	}
 	_ = w.renderer.Clear()
 	_ = w.renderer.Copy(w.texture, nil, nil)
 	w.renderer.Present()
