@@ -53,6 +53,17 @@ type TearOffHost struct {
 	lastClickAt time.Time
 	lastClickX  core.Unit
 	lastClickY  core.Unit
+
+	// Ghost mode: the desktop has re-adopted the window mid-drag, but
+	// THIS window still owns the OS mouse session (the press happened
+	// here). The surface goes invisible instead of being destroyed,
+	// and the rest of the gesture relays to the desktop; the release
+	// finishes it and the desktop then closes the surface. Destroying
+	// the session's window mid-gesture loses the release and wedges
+	// the platform's button state.
+	ghost       bool
+	onGhostMove func(gx, gy int)
+	onGhostEnd  func()
 }
 
 // Resize edge bits. The top edge is the title bar (drag handle), so
@@ -126,6 +137,23 @@ func (h *TearOffHost) BeginDrag(grabX, grabY core.Unit) {
 // Dragging reports whether a title drag is moving the OS window.
 func (h *TearOffHost) Dragging() bool { return h.dragging }
 
+// SetGhostRelay installs the desktop's continuation for a gesture
+// that outlives its window: move relays motion (global px), end
+// finishes the drag and disposes of the ghost surface.
+func (h *TearOffHost) SetGhostRelay(move func(gx, gy int), end func()) {
+	h.onGhostMove = move
+	h.onGhostEnd = end
+}
+
+// finishGhost ends the relayed gesture.
+func (h *TearOffHost) finishGhost() {
+	h.ghost = false
+	h.dragging = false
+	if h.onGhostEnd != nil {
+		h.onGhostEnd()
+	}
+}
+
 // EndDrag disarms the drag. The desktop calls it when the gesture's
 // end shows up on its side of the split event stream (release, or a
 // move with the button no longer held) - without it a later drag
@@ -134,6 +162,11 @@ func (h *TearOffHost) EndDrag() { h.dragging = false }
 
 // Frame implements platform.SurfaceHandler.
 func (h *TearOffHost) Frame(p *core.Painter) {
+	if h.ghost {
+		// The window lives on the desktop again; this surface only
+		// survives (invisibly) to finish its mouse session.
+		return
+	}
 	h.win.Paint(p)
 }
 
@@ -149,6 +182,13 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 	case core.KeyReleaseEvent:
 		handled = h.win.HandleKeyRelease(e)
 	case core.MousePressEvent:
+		if h.ghost {
+			// A press reaching a ghost means its release was lost:
+			// finish the relay and swallow the stray press.
+			h.finishGhost()
+			handled = true
+			break
+		}
 		// A press while a drag/resize is still armed means the
 		// gesture's release was lost in the split event stream:
 		// disarm and process the press normally.
@@ -177,7 +217,15 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			handled = true
 		}
 	case core.MouseMoveEvent:
-		if (h.resizing || h.dragging) && e.Buttons&core.LeftButton == 0 {
+		if h.ghost {
+			if e.Buttons&core.LeftButton == 0 {
+				h.finishGhost()
+			} else if h.global != nil && h.onGhostMove != nil {
+				gx, gy := h.global()
+				h.onGhostMove(gx, gy)
+			}
+			handled = true
+		} else if (h.resizing || h.dragging) && e.Buttons&core.LeftButton == 0 {
 			// Button no longer held: the release happened where we
 			// couldn't see it. The gesture is over - do not move the
 			// window on a mere hover.
@@ -192,7 +240,10 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			handled = h.win.HandleMouseMove(e)
 		}
 	case core.MouseReleaseEvent:
-		if h.resizing || h.dragging {
+		if h.ghost {
+			h.finishGhost()
+			handled = true
+		} else if h.resizing || h.dragging {
 			h.resizing = false
 			h.dragging = false
 			handled = true
@@ -218,7 +269,9 @@ func (h *TearOffHost) dragMove() bool {
 	}
 	gx, gy := h.global()
 	if h.onRedock != nil && h.onRedock(gx, gy, h.grabX, h.grabY) {
-		h.dragging = false
+		// The desktop took the window; this surface stays (invisible)
+		// to relay the rest of its live mouse session.
+		h.ghost = true
 		return true
 	}
 	h.native.SetScreenPositionPx(gx-int(h.grabX)*h.scale, gy-int(h.grabY)*h.scale)

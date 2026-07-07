@@ -17,6 +17,7 @@ type msSurface struct {
 	x, y        int
 	closed      bool
 	invalidated bool
+	opacity     float64
 	opts        platform.SurfaceOptions
 }
 
@@ -29,6 +30,7 @@ func (s *msSurface) SetCursorPosition(x, y core.Unit)     {}
 func (s *msSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *msSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *msSurface) Close()                               { s.closed = true }
+func (s *msSurface) SetOpacity(o float64)                 { s.opacity = o }
 func (s *msSurface) WorkAreaPx() (int, int, int, int)     { return 0, 0, 1600, 1000 }
 
 // SetScreenSizePx mimics the real platform: the size change reports
@@ -211,11 +213,16 @@ func TestTornWindowTitleDragAndRedock(t *testing.T) {
 			t.Errorf("torn window at %d,%d; want %d,%d", torn.x, torn.y, 1200-120, 700-8)
 		}
 
-		// Pointer over the desktop mid-drag: re-dock there.
+		// Pointer over the desktop mid-drag: re-dock there. The torn
+		// surface must survive as an invisible ghost - it still owns
+		// the OS mouse session - not be destroyed mid-gesture.
 		plat.gx, plat.gy = 400, 300
 		torn.handler.Event(core.MouseMoveEvent{X: 25, Y: 9, Buttons: core.LeftButton})
-		if !torn.closed {
-			t.Error("torn surface not closed on host-driven re-dock")
+		if torn.closed {
+			t.Fatal("ghost surface destroyed while its mouse session is live")
+		}
+		if torn.opacity != 0 {
+			t.Error("ghost surface still visible")
 		}
 		if !containsWindow(wm, win) {
 			t.Fatal("window not re-adopted on host-driven re-dock")
@@ -223,7 +230,24 @@ func TestTornWindowTitleDragAndRedock(t *testing.T) {
 		if b := win.Bounds(); b.X != (400-50)-120 || b.Y != (300-60)-8 {
 			t.Errorf("re-docked at %d,%d; want %d,%d", b.X, b.Y, (400-50)-120, (300-60)-8)
 		}
-		send(core.MouseReleaseEvent{X: 330, Y: 232, Button: core.LeftButton})
+
+		// The ghost relays the rest of the gesture: motion keeps
+		// dragging the re-docked window, the release ends the drag
+		// and closes the ghost.
+		plat.gx, plat.gy = 410, 310
+		torn.handler.Event(core.MouseMoveEvent{X: 26, Y: 10, Buttons: core.LeftButton})
+		if b := win.Bounds(); b.X != (410-50)-120 || b.Y != (310-60)-8 {
+			t.Errorf("ghost relay did not drag: window at %d,%d", b.X, b.Y)
+		}
+		torn.handler.Event(core.MouseReleaseEvent{X: 26, Y: 10, Button: core.LeftButton})
+		if !torn.closed {
+			t.Error("ghost surface not closed after the release")
+		}
+		// The gesture is fully over: hovering must not drag.
+		send(core.MouseMoveEvent{X: 500, Y: 350})
+		if b := win.Bounds(); b.X != (410-50)-120 {
+			t.Errorf("drag survived the ghost release: window at %d,%d", b.X, b.Y)
+		}
 
 		d.QuitWithCode(0)
 	}

@@ -16,6 +16,7 @@ type nativeFakeSurface struct {
 	handler platform.SurfaceHandler
 	x, y    int
 	closed  bool
+	opacity float64
 }
 
 func (s *nativeFakeSurface) Size() core.UnitSize                  { return s.size }
@@ -28,6 +29,7 @@ func (s *nativeFakeSurface) ScreenPositionPx() (int, int)         { return s.x, 
 func (s *nativeFakeSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *nativeFakeSurface) WorkAreaPx() (int, int, int, int)     { return 0, 0, 1600, 1000 }
 func (s *nativeFakeSurface) Close()                               { s.closed = true }
+func (s *nativeFakeSurface) SetOpacity(o float64)                 { s.opacity = o }
 
 func (s *nativeFakeSurface) SetScreenSizePx(w, h int) {
 	s.size = core.UnitSize{Width: core.Unit(w), Height: core.Unit(h)}

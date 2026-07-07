@@ -95,6 +95,10 @@ type NativeSurface interface {
 	// WorkAreaPx returns the usable bounds (menu bar and taskbar
 	// excluded) of the display the surface currently occupies.
 	WorkAreaPx() (x, y, w, h int)
+	// SetOpacity sets whole-window opacity (0 invisible, 1 opaque).
+	// Re-dock ghosting turns the old window invisible while its live
+	// mouse session finishes, instead of destroying it mid-gesture.
+	SetOpacity(opacity float64)
 	// Close destroys the surface and its OS window.
 	Close()
 }

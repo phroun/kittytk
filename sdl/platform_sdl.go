@@ -639,6 +639,11 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 	if opts.Borderless {
 		radius = opts.CornerRadiusPx
 	}
+	// Never activate extra windows on show: a torn-off window appears
+	// under a HELD pointer, and stealing key status from the desktop
+	// window kills its live mouse session (the drag dies and SDL's
+	// button state wedges). Click-to-focus still works.
+	_ = sdl2.SetHint("SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN", "1")
 	w, err := p.createWindow(opts.Title, x, y, wPx, hPx, flags, radius)
 	if err != nil {
 		return nil, err
@@ -772,6 +777,14 @@ func min32(a, b int32) int32 {
 		return a
 	}
 	return b
+}
+
+// SetOpacity implements platform.NativeSurface.
+func (s *sdlSurface) SetOpacity(opacity float64) {
+	if s.closed || s.win.window == nil {
+		return
+	}
+	_ = s.win.window.SetWindowOpacity(float32(opacity))
 }
 
 // Close implements platform.NativeSurface: destroys the OS window.

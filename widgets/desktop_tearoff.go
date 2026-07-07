@@ -102,6 +102,24 @@ func (d *Desktop) tearOffWindow(win *window.Window, e core.MouseMoveEvent, offX,
 		func(gx, gy int, grabX, grabY core.Unit) bool {
 			return d.redockAt(host, gx, gy, grabX, grabY)
 		})
+	// After a host-driven re-dock the torn surface lives on as an
+	// invisible ghost, relaying the rest of its live mouse session
+	// into the desktop's dispatch; the release closes it.
+	host.SetGhostRelay(
+		func(gx, gy int) {
+			ux, uy := d.globalToDesktopUnits(gx, gy)
+			d.dispatchEvent(core.MouseMoveEvent{X: ux, Y: uy, Buttons: core.LeftButton})
+			d.invalidateSurface()
+		},
+		func() {
+			gx, gy := gp.GlobalPointerPx()
+			ux, uy := d.globalToDesktopUnits(gx, gy)
+			d.dispatchEvent(core.MouseReleaseEvent{X: ux, Y: uy, Button: core.LeftButton})
+			if native, ok := newSurf.(platform.NativeSurface); ok {
+				native.Close()
+			}
+			d.invalidateSurface()
+		})
 
 	// Arm the host too: once the torn window exists under the held
 	// pointer, the platform may hand it the rest of the gesture
@@ -149,7 +167,9 @@ func (d *Desktop) handleTornDrag(event core.Event) bool {
 			// Pointer came home: re-dock and hand the drag straight
 			// back to the window manager.
 			d.clearTornDrag(td)
-			d.adoptTornWindow(td.host, e.X-td.offX, e.Y-td.offY)
+			// The desktop owns this gesture's mouse session, so the
+			// torn surface can be destroyed immediately.
+			d.adoptTornWindow(td.host, e.X-td.offX, e.Y-td.offY, false)
 			d.windowManager.BeginDrag(td.host.Window(), td.offX, td.offY)
 			return true
 		}
@@ -207,14 +227,44 @@ func (d *Desktop) redockAt(host *window.TearOffHost, gx, gy int, grabX, grabY co
 	if ux < 0 || uy < 0 || ux >= size.Width || uy >= size.Height {
 		return false
 	}
-	d.adoptTornWindow(host, ux-grabX, uy-grabY)
+	// The TORN window owns this gesture's mouse session: keep its
+	// surface alive (invisible) so the session can finish; the host
+	// ghost-relays the rest of the drag into the desktop.
+	d.adoptTornWindow(host, ux-grabX, uy-grabY, true)
 	d.windowManager.BeginDrag(host.Window(), grabX, grabY)
 	return true
 }
 
-// adoptTornWindow closes the torn surface and puts the window back
-// under the window manager at the given desktop-unit position.
-func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit) {
+// globalToDesktopUnits converts a global pixel position to desktop
+// surface units.
+func (d *Desktop) globalToDesktopUnits(gx, gy int) (core.Unit, core.Unit) {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	native, ok := surf.(platform.NativeSurface)
+	if !ok {
+		return 0, 0
+	}
+	scale := d.deviceScale()
+	deskX, deskY := native.ScreenPositionPx()
+	return core.Unit((gx - deskX) / scale), core.Unit((gy - deskY) / scale)
+}
+
+// invalidateSurface requests a desktop repaint.
+func (d *Desktop) invalidateSurface() {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	if surf != nil {
+		surf.Invalidate(core.UnitRect{})
+	}
+}
+
+// adoptTornWindow puts the window back under the window manager at
+// the given desktop-unit position. ghost keeps the torn surface
+// alive but invisible (its mouse session must finish before it can
+// be destroyed); otherwise it closes immediately.
+func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghost bool) {
 	d.mu.Lock()
 	if d.tornDrag != nil && d.tornDrag.host == host {
 		d.tornDrag = nil
@@ -232,7 +282,11 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit) {
 	b := win.Bounds()
 
 	if native, ok := hostSurface(host).(platform.NativeSurface); ok {
-		native.Close()
+		if ghost {
+			native.SetOpacity(0)
+		} else {
+			native.Close()
+		}
 	}
 
 	win.SetFlags(host.SavedFlags())
