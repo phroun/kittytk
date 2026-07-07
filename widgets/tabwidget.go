@@ -714,9 +714,13 @@ func (t *TabWidget) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX, 
 	}
 	// Concave feet in the slash cells, convex shoulders carving the
 	// body's outer corners, joined by the straight edge segments into
-	// one continuous line between the two colors.
-	hline(0, leadX+cw-rSmall, barEdgeY)
-	arc(leadX+cw-rSmall, footY, rSmall, false, !top, tab)
+	// one continuous line between the two colors. The feet sit one
+	// stroke width toward the tab's interior: their edge line runs on
+	// the bar side of the arc while the shoulders' runs on the tab
+	// side, and the offset makes the two land in the same column at
+	// the tangent point.
+	hline(0, leadX+cw-rSmall+hairW, barEdgeY)
+	arc(leadX+cw-rSmall+hairW, footY, rSmall, false, !top, tab)
 	arc(bodyLeft, shoY, rBig, true, top, bar)
 	// Straight vertical run on the tab's side where the two radii
 	// don't span the full row height.
@@ -726,16 +730,16 @@ func (t *TabWidget) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX, 
 		gapY = rowY + rBig
 	}
 	if gapLen > 0 {
-		p.FillRect(core.UnitRect{X: bodyLeft - hairW, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
+		p.FillRect(core.UnitRect{X: bodyLeft, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
 	}
 	if hasTrail {
 		hline(bodyLeft+rBig, bodyRight-rBig, tabEdgeY)
 		arc(bodyRight-rBig, shoY, rBig, false, top, bar)
-		arc(bodyRight, footY, rSmall, true, !top, tab)
+		arc(bodyRight-hairW, footY, rSmall, true, !top, tab)
 		if gapLen > 0 {
-			p.FillRect(core.UnitRect{X: bodyRight, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
+			p.FillRect(core.UnitRect{X: bodyRight - hairW, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
 		}
-		hline(bodyRight+rSmall, stripW, barEdgeY)
+		hline(bodyRight+rSmall-hairW, stripW, barEdgeY)
 		return
 	}
 	// Partial tab cut off before its trailing slash: sudden color
