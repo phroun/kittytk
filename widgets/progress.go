@@ -2,6 +2,8 @@
 package widgets
 
 import (
+	"time"
+
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
 )
@@ -19,9 +21,7 @@ type ProgressBar struct {
 	format      string // e.g., "%p%" for percentage
 
 	// Indeterminate mode (unknown progress)
-	indeterminate     bool
-	indeterminatePos  int
-	indeterminateDir  int
+	indeterminate bool
 }
 
 // NewProgressBar creates a new progress bar.
@@ -32,7 +32,6 @@ func NewProgressBar() *ProgressBar {
 		orientation: core.Horizontal,
 		textVisible: true,
 		format:      "%p%",
-		indeterminateDir: 1,
 	}
 	p.WidgetBase = *core.NewWidgetBase()
 	p.Init(p)
@@ -217,19 +216,15 @@ func (p *ProgressBar) paintHorizontal(painter *core.Painter, bounds core.UnitRec
 	totalCells := metrics.CharsForWidth(bounds.Width)
 
 	if p.indeterminate {
-		// Animate indeterminate bar - moving part uses completed style
+		// The moving block's position comes from wall time, not the
+		// repaint count, so its speed doesn't fluctuate with input
+		// activity (mouse moves repaint far more often than the tick).
 		blockSize := 5
-		if p.indeterminatePos+blockSize >= totalCells {
-			p.indeterminateDir = -1
-		} else if p.indeterminatePos <= 0 {
-			p.indeterminateDir = 1
-		}
-
-		for i := 0; i < blockSize && p.indeterminatePos+i < totalCells; i++ {
-			x := core.Unit(p.indeterminatePos+i) * metrics.CellWidth
+		pos := indeterminateSweepPos(totalCells, blockSize)
+		for i := 0; i < blockSize && pos+i < totalCells; i++ {
+			x := core.Unit(pos+i) * metrics.CellWidth
 			painter.DrawCell(x, 0, '▓', completedStyle)
 		}
-		p.indeterminatePos += p.indeterminateDir
 	} else {
 		// Calculate filled portion
 		filledCells := totalCells * p.Percentage() / 100
@@ -312,12 +307,33 @@ func (p *ProgressBar) formatText() string {
 	}
 }
 
-// AnimateIndeterminate advances the indeterminate animation.
-// Call this periodically (e.g., every 100ms) when in indeterminate mode.
+// AnimateIndeterminate requests a repaint while in indeterminate
+// mode. Call it periodically; the block's position itself is derived
+// from wall time (indeterminateSweepPos), so the call cadence only
+// affects smoothness, never speed.
 func (p *ProgressBar) AnimateIndeterminate() {
 	if p.indeterminate {
 		p.Update()
 	}
+}
+
+// indeterminateEpoch anchors the sweep to wall time.
+var indeterminateEpoch = time.Now()
+
+// indeterminateSweepPos places the indeterminate block for a bar of
+// totalCells at this instant: a triangle wave (bounce) at a fixed
+// cells-per-second rate, identical on cell and pixel surfaces.
+func indeterminateSweepPos(totalCells, blockSize int) int {
+	travel := totalCells - blockSize
+	if travel <= 0 {
+		return 0
+	}
+	const cellsPerSecond = 12
+	ph := int(time.Since(indeterminateEpoch).Milliseconds()*cellsPerSecond/1000) % (2 * travel)
+	if ph > travel {
+		ph = 2*travel - ph
+	}
+	return ph
 }
 
 // AccessibleInfo returns accessibility information.
