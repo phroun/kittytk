@@ -356,3 +356,67 @@ func TestScrollAreaSmoothContentOffsets(t *testing.T) {
 		t.Errorf("cell surface offset = %d units, want 48 (three rows)", offYC)
 	}
 }
+
+// tallPanel is a Panel with a fixed tall size hint.
+type tallPanel struct{ Panel }
+
+func (t *tallPanel) SizeHint() core.UnitSize { return core.UnitSize{Width: 100, Height: 2000} }
+
+// Mid-gesture, a child scrolling under the pointer must NOT steal
+// the wheel: the latched handler is the scroll area's self-scroll,
+// which never re-routes to content.
+func TestWheelGestureStaysOnScrollArea(t *testing.T) {
+	t.Cleanup(func() {
+		core.SetTextMeasurer(nil)
+		core.ResetWheelGesture()
+	})
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	// Tall panel content holding a list further down the panel.
+	panel := &tallPanel{Panel: *NewPanel()}
+	panel.Init(panel)
+	lv := NewListView()
+	for i := 0; i < 40; i++ {
+		lv.AddItem(NewListItem(fmt.Sprintf("item %d", i)))
+	}
+	panel.AddChild(lv)
+	sa := NewScrollArea()
+	sa.SetContent(panel)
+	win := window.NewWindow("host")
+	win.SetContent(sa)
+	d.WindowManager().AddWindow(win)
+	win.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 300, Height: 200})
+	win.Layout()
+	sa.updateScrollBars()
+	panel.SetBounds(core.UnitRect{Width: 100, Height: 2000})
+	lv.SetBounds(core.UnitRect{X: 0, Y: 300, Width: 100, Height: 320})
+
+	// Gesture starts over plain panel area (Y=100 local; list is at 300+).
+	ev := core.MouseWheelEvent{X: 50, Y: 100, ScreenX: 50, ScreenY: 100, DeltaY: 1}
+	if !sa.HandleMouseWheel(ev) {
+		t.Fatal("scroll area did not consume the first wheel event")
+	}
+	firstScroll := sa.scrollY
+	if firstScroll == 0 {
+		t.Fatal("scroll area did not scroll")
+	}
+
+	// Content scrolled: the list may now sit under the pointer. The
+	// latched delivery must keep scrolling the AREA, not the list.
+	lvBefore := lv.scrollOffset
+	next := core.MouseWheelEvent{ScreenX: 50, ScreenY: 100, DeltaY: 1}
+	if !core.DeliverLatchedWheel(next) {
+		t.Fatal("gesture not latched to the scroll area")
+	}
+	if lv.scrollOffset != lvBefore {
+		t.Error("child list stole the latched wheel event")
+	}
+	if sa.scrollY <= firstScroll {
+		t.Errorf("scroll area did not keep scrolling (was %d, now %d)", firstScroll, sa.scrollY)
+	}
+}

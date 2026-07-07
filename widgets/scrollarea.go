@@ -1293,7 +1293,26 @@ func (s *ScrollArea) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		}
 	}
 
-	horizontal := event.Modifiers&core.ShiftModifier != 0
+	return s.scrollSelfWheel(event)
+}
+
+// scrollSelfWheel scrolls the area itself and is ALSO the latched
+// gesture handler: it must never re-route to content, or a child
+// scrolling under the pointer mid-gesture would steal the scroll
+// from the container the gesture started on.
+func (s *ScrollArea) scrollSelfWheel(event core.MouseWheelEvent) bool {
+	// Horizontal when Shift is held (classic wheel) or when the event
+	// itself is predominantly horizontal (trackpad two-finger pan).
+	absf := func(f float64) float64 {
+		if f < 0 {
+			return -f
+		}
+		return f
+	}
+	nativeHoriz := absf(event.PreciseX) > absf(event.PreciseY) ||
+		(event.PreciseX == 0 && event.PreciseY == 0 &&
+			event.DeltaX != 0 && event.DeltaY == 0)
+	horizontal := event.Modifiers&core.ShiftModifier != 0 || nativeHoriz
 	if horizontal {
 		if !s.needsHScrollBar() {
 			return false
@@ -1306,27 +1325,34 @@ func (s *ScrollArea) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	if s.smoothScroll() {
 		// Unit-granular: precise (trackpad) deltas map to fractions
 		// of the 3-cells-per-notch step.
-		delta := float64(event.DeltaY)
-		if event.PreciseY != 0 {
-			delta = event.PreciseY
-		}
 		if horizontal {
-			if event.PreciseX != 0 || event.DeltaX != 0 {
+			delta := float64(event.DeltaY) // Shift+vertical wheel
+			if nativeHoriz {
 				delta = float64(event.DeltaX)
 				if event.PreciseX != 0 {
 					delta = event.PreciseX
 				}
+			} else if event.PreciseY != 0 {
+				delta = event.PreciseY
 			}
 			s.SetScrollX(s.scrollX + int(delta*3*float64(metrics.CellWidth)))
 		} else {
+			delta := float64(event.DeltaY)
+			if event.PreciseY != 0 {
+				delta = event.PreciseY
+			}
 			s.SetScrollY(s.scrollY + int(delta*3*float64(metrics.CellHeight)))
 		}
 	} else if horizontal {
-		s.SetScrollX(s.scrollX + event.DeltaY*3)
+		dx := event.DeltaY // Shift+vertical wheel
+		if nativeHoriz {
+			dx = event.DeltaX
+		}
+		s.SetScrollX(s.scrollX + dx*3)
 	} else {
 		s.SetScrollY(s.scrollY + event.DeltaY*3)
 	}
-	core.ClaimWheelGesture(event, s.HandleMouseWheel)
+	core.ClaimWheelGesture(event, s.scrollSelfWheel)
 	return true
 }
 
