@@ -570,6 +570,18 @@ func (t *TabWidget) scrollButtonWidth() core.Unit {
 	return t.EffectiveCellMetrics().TextWidth(3) // [<] or [>]
 }
 
+// overflowEllipsisWidth is the tab strip's "..." width: measured
+// proportionally on pixel surfaces (painting draws it through the
+// text engine there), three cells on cell surfaces. Layout,
+// need-for-ellipsis checks, and painting must all use this one
+// number so the strip math connects.
+func (t *TabWidget) overflowEllipsisWidth() core.Unit {
+	if core.FindSmoothPositioning(t.Self()) {
+		return t.EffectiveFont().MeasureText("...")
+	}
+	return t.EffectiveCellMetrics().TextWidth(3)
+}
+
 // ensureCurrentTabVisible adjusts scroll offset to make current tab visible.
 func (t *TabWidget) ensureCurrentTabVisible() {
 	if t.currentIndex < 0 || !t.tabsNeedScrolling() {
@@ -619,7 +631,7 @@ func (t *TabWidget) isLastTabFullyVisible() bool {
 	}
 	leftEllipseWidth := core.Unit(0)
 	if t.tabScrollOffset > 0 {
-		leftEllipseWidth = metrics.TextWidth(3)
+		leftEllipseWidth = t.overflowEllipsisWidth()
 	}
 	// Available width is the absolute position where tabs must stop
 	availableWidth := bounds.Width - scrollButtonsWidth
@@ -1017,7 +1029,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 	// If scrolled right, show left ellipse indicator (clickable to scroll left)
 	leftEllipseWidth := core.Unit(0)
 	if t.tabScrollOffset > 0 {
-		leftEllipseWidth = metrics.TextWidth(3) // "..."
+		leftEllipseWidth = t.overflowEllipsisWidth() // "..."
 		// Draw the left ellipse (underlined; proportional on pixel
 		// surfaces - the reserve width stays cell-based)
 		if p.Graphical() {
@@ -1272,7 +1284,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 				// Calculate how much text we can show (leave room for ellipsis)
 				ellipsisReserve := core.Unit(0)
 				if needsScrolling {
-					ellipsisReserve = metrics.TextWidth(3)
+					ellipsisReserve = t.overflowEllipsisWidth()
 				}
 				maxTextWidth := availableWidth - x - ellipsisReserve
 				if maxTextWidth < 0 {
@@ -1325,7 +1337,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 								p.DrawCell(x+core.Unit(i)*metrics.CellWidth, 0, '.', s)
 							}
 						}
-						x += metrics.TextWidth(3)
+						x += t.overflowEllipsisWidth()
 						truncatedTabStyle = s
 						tabWasTruncated = true
 					}
@@ -1458,7 +1470,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 
 	if needsEllipsis {
 		// Calculate where ellipsis should ideally start
-		ellipsisWidth := metrics.TextWidth(3)
+		ellipsisWidth := t.overflowEllipsisWidth()
 		idealEllipsisX := scrollAreaStart - ellipsisWidth
 
 		// Determine fill style
@@ -1516,7 +1528,7 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 			// Draw as many dots as will fit before scroll buttons
 			dotsDrawn := 0
 			if p.Graphical() {
-				if ellipsisX+font.MeasureText("...") <= scrollAreaStart {
+				if ellipsisX+ellipsisWidth <= scrollAreaStart {
 					p.DrawText(ellipsisX, 0, "...", ellipsisStyle, font)
 					dotsDrawn = 3
 				}
@@ -1532,6 +1544,9 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 
 			// Fill remaining space after ellipsis to scroll buttons
 			fillX := ellipsisX + core.Unit(dotsDrawn)*metrics.CellWidth
+			if p.Graphical() && dotsDrawn > 0 {
+				fillX = ellipsisX + ellipsisWidth
+			}
 			for fillX < scrollAreaStart {
 				p.DrawCell(fillX, 0, ' ', tabBarUnderlined)
 				fillX += metrics.CellWidth
@@ -1630,7 +1645,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 	// If scrolled right, show left ellipse indicator (clickable to scroll left)
 	leftEllipseWidth := core.Unit(0)
 	if t.tabScrollOffset > 0 {
-		leftEllipseWidth = metrics.TextWidth(3) // "..."
+		leftEllipseWidth = t.overflowEllipsisWidth() // "..."
 		// Draw the left ellipse (with overline)
 		if p.Graphical() {
 			p.DrawText(0, tabY, "...", tabBarOverlined, font)
@@ -1776,7 +1791,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 				// Calculate how much text we can show (leave room for ellipsis)
 				ellipsisReserve := core.Unit(0)
 				if needsScrolling {
-					ellipsisReserve = metrics.TextWidth(3)
+					ellipsisReserve = t.overflowEllipsisWidth()
 				}
 				maxTextWidth := availableWidth - x - ellipsisReserve
 				if maxTextWidth < 0 {
@@ -1830,7 +1845,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 								p.DrawCell(x+core.Unit(i)*metrics.CellWidth, tabY, '.', s)
 							}
 						}
-						x += metrics.TextWidth(3)
+						x += t.overflowEllipsisWidth()
 						truncatedTabStyle = s
 						tabWasTruncated = true
 					}
@@ -1950,7 +1965,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 
 	if needsEllipsis {
 		// Calculate where ellipsis should ideally start
-		ellipsisWidth := metrics.TextWidth(3)
+		ellipsisWidth := t.overflowEllipsisWidth()
 		idealEllipsisX := scrollAreaStart - ellipsisWidth
 
 		// Determine fill style
@@ -2012,7 +2027,7 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 			// Draw as many dots as will fit before scroll buttons
 			dotsDrawn := 0
 			if p.Graphical() {
-				if ellipsisX+font.MeasureText("...") <= scrollAreaStart {
+				if ellipsisX+ellipsisWidth <= scrollAreaStart {
 					p.DrawText(ellipsisX, tabY, "...", ellipsisStyle, font)
 					dotsDrawn = 3
 				}
@@ -2028,6 +2043,9 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 
 			// Fill remaining space after ellipsis to scroll buttons
 			fillX := ellipsisX + core.Unit(dotsDrawn)*metrics.CellWidth
+			if p.Graphical() && dotsDrawn > 0 {
+				fillX = ellipsisX + ellipsisWidth
+			}
 			for fillX < scrollAreaStart {
 				p.DrawCell(fillX, tabY, ' ', tabBarOverlined)
 				fillX += metrics.CellWidth
@@ -2642,7 +2660,7 @@ func (t *TabWidget) handleTabBarClick(x core.Unit) {
 	}
 	leftEllipseWidth := core.Unit(0)
 	if t.tabScrollOffset > 0 {
-		leftEllipseWidth = metrics.TextWidth(3)
+		leftEllipseWidth = t.overflowEllipsisWidth()
 	}
 	// Available width is the absolute position where tabs must stop (before scroll buttons)
 	availableWidth := bounds.Width - scrollButtonsWidth
@@ -2844,7 +2862,7 @@ func (t *TabWidget) ensureTabFullyVisible(index int) {
 	for t.tabScrollOffset <= index {
 		leftEllipseWidth := core.Unit(0)
 		if t.tabScrollOffset > 0 {
-			leftEllipseWidth = metrics.TextWidth(3)
+			leftEllipseWidth = t.overflowEllipsisWidth()
 		}
 		// Available width is the absolute position where tabs must stop
 		availableWidth := bounds.Width - scrollButtonsWidth

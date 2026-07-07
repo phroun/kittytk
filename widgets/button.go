@@ -419,11 +419,11 @@ func (b *Button) HandleKeyPress(event core.KeyPressEvent) bool {
 		b.AnimatePress()
 		return true
 	case " ", "Space":
-		// Space shows pressed state, waits for release to trigger
-		if !b.spacePressed {
-			b.spacePressed = true
-			b.Update()
-		}
+		// Space triggers like Enter, with the same brief press
+		// animation. (It used to latch pressed until a key-release
+		// event, but neither backend delivers key releases - the TUI
+		// cannot at all - so the button stuck depressed.)
+		b.AnimatePress()
 		return true
 	case "Escape":
 		// Escape cancels space press first
