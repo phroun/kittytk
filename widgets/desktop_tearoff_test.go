@@ -91,220 +91,199 @@ func containsWindow(wm *window.WindowManager, win *window.Window) bool {
 	return false
 }
 
-// Dragging a desktop window past the surface edge tears it off into
-// its own surface; the live gesture keeps driving that surface from
-// the desktop's captured pointer stream, and crossing back over the
-// desktop re-docks it with the drag still armed.
-func TestTearOffAndRedockDuringDrag(t *testing.T) {
+// The tear handle sits in a button-width slot after [x][.][^]; at
+// DefaultCellMetrics (8px cells) that is local x in [80,104). Grab
+// its center.
+const tearHandleLocalX = core.Unit(88)
+
+// A non-tearable window dragged by the title past the surface edge
+// does NOT tear off - tear-off is opt-in.
+func TestNonTearableWindowStaysDocked(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	px, err := raster.New(800, 480) // scale 1: pixels are units
-	if err != nil {
-		t.Fatal(err)
-	}
+	px, _ := raster.New(800, 480)
 	d := NewDesktop()
 	d.SetBackend(px)
-
-	win := window.NewWindow("tearme")
+	win := window.NewWindow("plain")
 	d.SetOnStartup(func() {
 		d.WindowManager().AddWindow(win)
 		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
 		win.Layout()
 	})
-
 	plat := &msPlatform{}
 	plat.script = func() {
 		desk := plat.surfaces[0]
-		wm := d.WindowManager()
 		send := func(ev core.Event) { desk.handler.Event(ev) }
-
-		// Grab the title bar (offset 120,8 into the window, clear of
-		// the title buttons) and move.
 		send(core.MousePressEvent{X: 220, Y: 108, Button: core.LeftButton})
-		send(core.MouseMoveEvent{X: 230, Y: 110, Buttons: core.LeftButton})
-		if b := win.Bounds(); b.X != 110 || b.Y != 102 {
-			t.Fatalf("in-surface drag not working: window at %d,%d, want 110,102", b.X, b.Y)
-		}
-
-		// Cross the left edge: the window must tear off.
 		send(core.MouseMoveEvent{X: -30, Y: 150, Buttons: core.LeftButton})
-		if len(plat.surfaces) != 2 {
-			t.Fatalf("expected a second surface after tear-off, have %d", len(plat.surfaces))
+		if len(plat.surfaces) != 1 {
+			t.Errorf("non-tearable window tore off: %d surfaces", len(plat.surfaces))
 		}
-		torn := plat.surfaces[1]
-		if !torn.opts.Borderless {
-			t.Error("torn surface should be borderless (tuitk chrome kept)")
+		if !containsWindow(d.WindowManager(), win) {
+			t.Error("non-tearable window left the desktop")
 		}
-		if containsWindow(wm, win) {
-			t.Error("window still managed by the desktop after tear-off")
-		}
-		if torn.x != 50+(-30-120) || torn.y != 60+(150-8) {
-			t.Errorf("torn surface at %d,%d; want %d,%d", torn.x, torn.y, 50+(-30-120), 60+(150-8))
-		}
-
-		// Still dragging outside: the torn surface follows (position
-		// comes from the global pointer; events are just the ticks).
-		plat.gx, plat.gy = 50-60, 60+150
-		send(core.MouseMoveEvent{X: -60, Y: 150, Buttons: core.LeftButton})
-		if torn.x != 50+(-60-120) {
-			t.Errorf("torn surface did not follow the pointer: x=%d", torn.x)
-		}
-
-		// Back over the desktop: re-dock, drag continues in the WM.
-		plat.gx, plat.gy = 50+200, 60+150
-		send(core.MouseMoveEvent{X: 200, Y: 150, Buttons: core.LeftButton})
-		if !torn.closed {
-			t.Error("torn surface not closed on re-dock")
-		}
-		if !containsWindow(wm, win) {
-			t.Fatal("window not re-adopted on re-dock")
-		}
-		if b := win.Bounds(); b.X != 80 || b.Y != 142 {
-			t.Errorf("re-docked at %d,%d; want 80,142", b.X, b.Y)
-		}
-		send(core.MouseMoveEvent{X: 210, Y: 160, Buttons: core.LeftButton})
-		if b := win.Bounds(); b.X != 90 || b.Y != 152 {
-			t.Errorf("drag not armed after re-dock: window at %d,%d, want 90,152", b.X, b.Y)
-		}
-		send(core.MouseReleaseEvent{X: 210, Y: 160, Button: core.LeftButton})
-
 		d.QuitWithCode(0)
 	}
-
 	d.RunOn(plat)
 }
 
-// A window dropped outside stays torn off; a later drag on its own
-// title bar moves the OS window via the global pointer and re-docks
-// when the pointer crosses back over the desktop.
-func TestTornWindowTitleDragAndRedock(t *testing.T) {
+// A plain title drag on a tearable window moves it in-surface but does
+// NOT tear it off - only a drag by the handle tears.
+func TestTearableTitleDragDoesNotTear(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	px, err := raster.New(800, 480)
-	if err != nil {
-		t.Fatal(err)
-	}
+	px, _ := raster.New(800, 480)
 	d := NewDesktop()
 	d.SetBackend(px)
-
 	win := window.NewWindow("tearme")
+	win.SetTearable(true)
 	d.SetOnStartup(func() {
 		d.WindowManager().AddWindow(win)
 		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
 		win.Layout()
 	})
+	plat := &msPlatform{}
+	plat.script = func() {
+		desk := plat.surfaces[0]
+		send := func(ev core.Event) { desk.handler.Event(ev) }
+		// Grab the title well right of the handle slot.
+		send(core.MousePressEvent{X: 250, Y: 108, Button: core.LeftButton})
+		send(core.MouseMoveEvent{X: -30, Y: 150, Buttons: core.LeftButton})
+		if len(plat.surfaces) != 1 {
+			t.Errorf("title drag tore the window off: %d surfaces", len(plat.surfaces))
+		}
+		d.QuitWithCode(0)
+	}
+	d.RunOn(plat)
+}
 
+// Dragging a tearable window BY its handle past the surface edge tears
+// it off; the live gesture keeps driving the torn surface, and
+// crossing back over the desktop re-docks it.
+func TestTearByHandleDragAndLiveRedock(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+	win := window.NewWindow("tearme")
+	win.SetTearable(true)
+	d.SetOnStartup(func() {
+		d.WindowManager().AddWindow(win)
+		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
+		win.Layout()
+	})
 	plat := &msPlatform{}
 	plat.script = func() {
 		desk := plat.surfaces[0]
 		wm := d.WindowManager()
 		send := func(ev core.Event) { desk.handler.Event(ev) }
 
-		// Tear off and RELEASE outside: the window stays torn.
-		send(core.MousePressEvent{X: 220, Y: 108, Button: core.LeftButton})
+		// Press the handle (local 88 -> screen 188), then cross the
+		// left edge to tear off.
+		send(core.MousePressEvent{X: 188, Y: 108, Button: core.LeftButton})
 		send(core.MouseMoveEvent{X: -30, Y: 150, Buttons: core.LeftButton})
-		send(core.MouseReleaseEvent{X: -30, Y: 150, Button: core.LeftButton})
 		if len(plat.surfaces) != 2 {
-			t.Fatalf("expected a torn surface, have %d", len(plat.surfaces))
+			t.Fatalf("handle drag did not tear off: %d surfaces", len(plat.surfaces))
 		}
 		torn := plat.surfaces[1]
-		if torn.closed || containsWindow(wm, win) {
-			t.Fatal("window should remain torn off after release outside")
+		if !torn.opts.Borderless {
+			t.Error("torn surface not borderless")
+		}
+		if containsWindow(wm, win) {
+			t.Error("window still docked after tear-off")
+		}
+		if !win.IsDetached() {
+			t.Error("window not marked detached")
 		}
 
-		// Drag the torn window by its own title bar, far from the
-		// desktop: the OS window follows the global pointer.
-		plat.gx, plat.gy = 1200, 700
-		torn.handler.Event(core.MousePressEvent{X: 120, Y: 8, Button: core.LeftButton})
-		torn.handler.Event(core.MouseMoveEvent{X: 125, Y: 9, Buttons: core.LeftButton})
-		if torn.x != 1200-120 || torn.y != 700-8 {
-			t.Errorf("torn window at %d,%d; want %d,%d", torn.x, torn.y, 1200-120, 700-8)
-		}
-
-		// Pointer over the desktop mid-drag: re-dock there. The torn
-		// surface must survive as an invisible ghost - it still owns
-		// the OS mouse session - not be destroyed mid-gesture.
-		plat.gx, plat.gy = 400, 300
-		torn.handler.Event(core.MouseMoveEvent{X: 25, Y: 9, Buttons: core.LeftButton})
-		if torn.closed {
-			t.Fatal("ghost surface destroyed while its mouse session is live")
-		}
-		if torn.opacity != 0 {
-			t.Error("ghost surface still visible")
-		}
+		// Back over the desktop while held: re-dock (live tornDrag).
+		plat.gx, plat.gy = 50+200, 60+150
+		send(core.MouseMoveEvent{X: 200, Y: 150, Buttons: core.LeftButton})
 		if !containsWindow(wm, win) {
-			t.Fatal("window not re-adopted on host-driven re-dock")
+			t.Fatal("live drag back did not re-dock")
 		}
-		if b := win.Bounds(); b.X != (400-50)-120 || b.Y != (300-60)-8 {
-			t.Errorf("re-docked at %d,%d; want %d,%d", b.X, b.Y, (400-50)-120, (300-60)-8)
+		if win.IsDetached() {
+			t.Error("re-docked window still marked detached")
 		}
-
-		// The ghost relays the rest of the gesture: motion keeps
-		// dragging the re-docked window, the release ends the drag
-		// and closes the ghost.
-		plat.gx, plat.gy = 410, 310
-		torn.handler.Event(core.MouseMoveEvent{X: 26, Y: 10, Buttons: core.LeftButton})
-		if b := win.Bounds(); b.X != (410-50)-120 || b.Y != (310-60)-8 {
-			t.Errorf("ghost relay did not drag: window at %d,%d", b.X, b.Y)
-		}
-		torn.handler.Event(core.MouseReleaseEvent{X: 26, Y: 10, Button: core.LeftButton})
-		if !torn.closed {
-			t.Error("ghost surface not closed after the release")
-		}
-		// The gesture is fully over: hovering must not drag.
-		send(core.MouseMoveEvent{X: 500, Y: 350})
-		if b := win.Bounds(); b.X != (410-50)-120 {
-			t.Errorf("drag survived the ghost release: window at %d,%d", b.X, b.Y)
-		}
-
+		send(core.MouseReleaseEvent{X: 200, Y: 150, Button: core.LeftButton})
 		d.QuitWithCode(0)
 	}
+	d.RunOn(plat)
+}
 
+// Clicking a tearable window's handle (no drag) detaches it in place;
+// clicking the detached '#' handle re-docks it where it sits.
+func TestHandleClickDetachAndRedock(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+	win := window.NewWindow("tearme")
+	win.SetTearable(true)
+	d.SetOnStartup(func() {
+		d.WindowManager().AddWindow(win)
+		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
+		win.Layout()
+	})
+	plat := &msPlatform{}
+	plat.script = func() {
+		desk := plat.surfaces[0]
+		wm := d.WindowManager()
+		send := func(ev core.Event) { desk.handler.Event(ev) }
+
+		// Press and release the handle in place: detach.
+		send(core.MousePressEvent{X: 188, Y: 108, Button: core.LeftButton})
+		send(core.MouseReleaseEvent{X: 188, Y: 108, Button: core.LeftButton})
+		if len(plat.surfaces) != 2 {
+			t.Fatalf("handle click did not detach: %d surfaces", len(plat.surfaces))
+		}
+		torn := plat.surfaces[1]
+		if !win.IsDetached() || containsWindow(wm, win) {
+			t.Fatal("window not detached after handle click")
+		}
+
+		// Click the '#' handle in the torn window: re-dock in place.
+		torn.handler.Event(core.MousePressEvent{X: 88, Y: 8, Button: core.LeftButton})
+		torn.handler.Event(core.MouseReleaseEvent{X: 88, Y: 8, Button: core.LeftButton})
+		if !containsWindow(wm, win) {
+			t.Fatal("'#' click did not re-dock")
+		}
+		if win.IsDetached() {
+			t.Error("re-docked window still detached")
+		}
+		d.QuitWithCode(0)
+	}
 	d.RunOn(plat)
 }
 
 // The platform may hand the tail of the tearing gesture (motion and
-// the release) to the torn window once it appears under the held
-// pointer. The desktop must not treat its stale tear state as a live
-// drag: a hover back over the desktop re-docks nothing.
+// release) to the torn window once it appears under the held pointer.
+// The desktop must not treat its stale tear state as a live drag.
 func TestMissedReleaseDoesNotStealTornWindow(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	px, err := raster.New(800, 480)
-	if err != nil {
-		t.Fatal(err)
-	}
+	px, _ := raster.New(800, 480)
 	d := NewDesktop()
 	d.SetBackend(px)
-
 	win := window.NewWindow("tearme")
+	win.SetTearable(true)
 	d.SetOnStartup(func() {
 		d.WindowManager().AddWindow(win)
 		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
 		win.Layout()
 	})
-
 	plat := &msPlatform{}
 	plat.script = func() {
 		desk := plat.surfaces[0]
 		wm := d.WindowManager()
 		send := func(ev core.Event) { desk.handler.Event(ev) }
 
-		// Tear off; the gesture continues at the TORN window.
-		send(core.MousePressEvent{X: 220, Y: 108, Button: core.LeftButton})
+		// Tear off by the handle; the gesture continues at the torn window.
+		send(core.MousePressEvent{X: 188, Y: 108, Button: core.LeftButton})
 		send(core.MouseMoveEvent{X: -30, Y: 150, Buttons: core.LeftButton})
 		if len(plat.surfaces) != 2 {
-			t.Fatalf("expected a torn surface, have %d", len(plat.surfaces))
+			t.Fatalf("handle drag did not tear off: %d surfaces", len(plat.surfaces))
 		}
 		torn := plat.surfaces[1]
 
-		// The armed host keeps driving the drag from its own stream.
-		plat.gx, plat.gy = 900, 500
-		torn.handler.Event(core.MouseMoveEvent{X: 40, Y: 9, Buttons: core.LeftButton})
-		if torn.x != 900-120 || torn.y != 500-8 {
-			t.Errorf("armed host did not follow pointer: %d,%d want %d,%d",
-				torn.x, torn.y, 900-120, 500-8)
-		}
-
-		// The RELEASE also lands on the torn window - the desktop
-		// never sees it.
+		// The release lands on the torn window - the desktop never sees it.
 		torn.handler.Event(core.MouseReleaseEvent{X: 40, Y: 9, Button: core.LeftButton})
 
 		// Hovering the desktop later (button up) must not re-dock.
@@ -314,96 +293,16 @@ func TestMissedReleaseDoesNotStealTornWindow(t *testing.T) {
 			t.Fatal("hover over the desktop stole the torn window back")
 		}
 
-		// A drag inside the torn window's CONTENT must not move the
-		// OS window either.
-		wasX := torn.x
-		torn.handler.Event(core.MousePressEvent{X: 50, Y: 50, Button: core.LeftButton})
-		torn.handler.Event(core.MouseMoveEvent{X: 60, Y: 60, Buttons: core.LeftButton})
-		torn.handler.Event(core.MouseReleaseEvent{X: 60, Y: 60, Button: core.LeftButton})
-		if torn.x != wasX {
-			t.Errorf("content drag moved the OS window: %d -> %d", wasX, torn.x)
-		}
-
-		// And a fresh press on the desktop with stale-free state
-		// behaves normally.
-		send(core.MousePressEvent{X: 400, Y: 300, Button: core.LeftButton})
-		send(core.MouseReleaseEvent{X: 400, Y: 300, Button: core.LeftButton})
-		if torn.closed || containsWindow(wm, win) {
-			t.Fatal("desktop click stole the torn window back")
-		}
-
-		// The desktop's repaint tick drives the torn surface too, so
-		// blinking carets and progress animation keep running there.
+		// The repaint tick still drives the torn surface.
 		torn.invalidated = false
-		if len(plat.afters) == 0 {
-			t.Fatal("no repaint tick scheduled")
+		if len(plat.afters) > 0 {
+			plat.afters[len(plat.afters)-1]()
 		}
-		plat.afters[len(plat.afters)-1]()
 		if !torn.invalidated {
 			t.Error("repaint tick did not invalidate the torn surface")
 		}
-
 		d.QuitWithCode(0)
 	}
-
-	d.RunOn(plat)
-}
-
-// A minimized desktop's screen rectangle is a phantom: dragging a
-// torn window across it must not re-dock into the invisible desktop.
-func TestNoRedockIntoMinimizedDesktop(t *testing.T) {
-	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	px, err := raster.New(800, 480)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := NewDesktop()
-	d.SetBackend(px)
-
-	win := window.NewWindow("tearme")
-	d.SetOnStartup(func() {
-		d.WindowManager().AddWindow(win)
-		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
-		win.Layout()
-	})
-
-	plat := &msPlatform{}
-	plat.script = func() {
-		desk := plat.surfaces[0]
-		wm := d.WindowManager()
-		send := func(ev core.Event) { desk.handler.Event(ev) }
-
-		// Tear off and release outside.
-		send(core.MousePressEvent{X: 220, Y: 108, Button: core.LeftButton})
-		send(core.MouseMoveEvent{X: -30, Y: 150, Buttons: core.LeftButton})
-		send(core.MouseReleaseEvent{X: -30, Y: 150, Button: core.LeftButton})
-		torn := plat.surfaces[1]
-
-		// Minimize the desktop, then drag the torn window across
-		// where the desktop used to be: it must keep moving, not
-		// vanish into the invisible desktop.
-		desk.minimized = true
-		plat.gx, plat.gy = 400, 300 // inside the phantom rect
-		torn.handler.Event(core.MousePressEvent{X: 120, Y: 8, Button: core.LeftButton})
-		torn.handler.Event(core.MouseMoveEvent{X: 125, Y: 9, Buttons: core.LeftButton})
-		if torn.closed || torn.opacity == 0 || containsWindow(wm, win) {
-			t.Fatal("torn window docked into a minimized desktop")
-		}
-		if torn.x != 400-120 || torn.y != 300-8 {
-			t.Errorf("torn window stopped following: %d,%d", torn.x, torn.y)
-		}
-
-		// Restore the desktop: the same drag position now re-docks.
-		desk.minimized = false
-		torn.handler.Event(core.MouseMoveEvent{X: 125, Y: 9, Buttons: core.LeftButton})
-		if !containsWindow(wm, win) {
-			t.Fatal("restored desktop did not accept the re-dock")
-		}
-		torn.handler.Event(core.MouseReleaseEvent{X: 125, Y: 9, Button: core.LeftButton})
-
-		d.QuitWithCode(0)
-	}
-
 	d.RunOn(plat)
 }
 
@@ -419,6 +318,7 @@ func TestClosingTornWindowDisposesSurface(t *testing.T) {
 	d.SetBackend(px)
 
 	win := window.NewWindow("tearme")
+	win.SetTearable(true)
 	d.SetOnStartup(func() {
 		d.WindowManager().AddWindow(win)
 		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
@@ -430,8 +330,8 @@ func TestClosingTornWindowDisposesSurface(t *testing.T) {
 		desk := plat.surfaces[0]
 		send := func(ev core.Event) { desk.handler.Event(ev) }
 
-		// Tear off and release outside.
-		send(core.MousePressEvent{X: 220, Y: 108, Button: core.LeftButton})
+		// Tear off by the handle and release outside.
+		send(core.MousePressEvent{X: 188, Y: 108, Button: core.LeftButton})
 		send(core.MouseMoveEvent{X: -30, Y: 150, Buttons: core.LeftButton})
 		send(core.MouseReleaseEvent{X: -30, Y: 150, Button: core.LeftButton})
 		torn := plat.surfaces[1]

@@ -437,6 +437,7 @@ func createMainWindow(desktop *widgets.Desktop, application *app.Application) *w
 	}
 
 	mainWindow := factory.byID[reply.IDs["w"]].(*window.Window)
+	mainWindow.SetTearable(true) // main window shows the %/# tear handle
 	tabWidget := factory.byID[reply.IDs["tabs"]].(*widgets.TabWidget)
 
 	// Basic Widgets: buttons dispatch commands (slice-1 seam); the

@@ -323,6 +323,11 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 		if fm := win.FocusManager(); fm != nil {
 			fm.SetAccessibilityManager(d.accessibilityManager)
 		}
+		// A tearable window's handle activation (click/keyboard)
+		// detaches it into its own surface at its current position.
+		if win.IsTearable() {
+			win.SetOnTearRequest(func() { d.tearOffInPlace(win) })
+		}
 	})
 
 	d.windowManager.SetDesktop(d)

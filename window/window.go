@@ -33,6 +33,7 @@ const (
 	WindowFlagModal                              // Blocks input to other windows
 	WindowFlagStaysOnTop                         // Always on top
 	WindowFlagToolWindow                         // Smaller title bar, no taskbar entry
+	WindowFlagTearable                           // Shows the %/# tear-off handle; window may detach
 )
 
 // windowCornerRadius is the corner radius (in units) of the graphical
@@ -53,6 +54,7 @@ const (
 	TitleButtonClose                // [x] button
 	TitleButtonMinimize             // [.] button
 	TitleButtonMaximize             // [^] or [o] button
+	TitleButtonTear                 // [%] docked / [#] detached handle
 )
 
 // TitleFocus identifies which title bar element has keyboard focus.
@@ -64,6 +66,7 @@ const (
 	TitleFocusClose                      // Close button focused
 	TitleFocusMinimize                   // Minimize button focused
 	TitleFocusMaximize                   // Maximize button focused
+	TitleFocusTear                       // Tear-off handle focused (between [^] and title)
 	TitleFocusBlur                       // Blur item focused (exit window)
 )
 
@@ -124,9 +127,14 @@ type Window struct {
 	onActivate    func(active bool)
 	onStateChange func(state WindowState)
 
+	// detached is true while the window lives in its own torn-off
+	// surface; the tear handle then shows '#' and re-docks on click.
+	detached bool
+
 	// Request callbacks (for WindowManager integration)
 	onMinimizeRequest     func()                   // Called when user clicks minimize button
 	onMaximizeRequest     func()                   // Called when user clicks maximize button
+	onTearRequest         func()                   // Called when the tear handle is activated (dock<->detach)
 	onBoundsRequest       func(core.UnitRect) bool // Takes title-focus keyboard geometry whole (torn-off hosts)
 	onCloseComplete       func()                   // Called when window is closed, to remove from manager
 	getConstrainingBounds func() core.UnitRect     // Returns the client area for movement constraints
@@ -549,6 +557,60 @@ func (w *Window) SetOnMaximizeRequest(handler func()) {
 	w.mu.Lock()
 	w.onMaximizeRequest = handler
 	w.mu.Unlock()
+}
+
+// SetOnTearRequest sets the handler for the tear-off handle: fired
+// when the %/# handle is activated by click or keyboard. The host
+// detaches the window (retaining position/size) or re-docks it.
+func (w *Window) SetOnTearRequest(handler func()) {
+	w.mu.Lock()
+	w.onTearRequest = handler
+	w.mu.Unlock()
+}
+
+// SetTearable enables the tear-off handle on the title bar.
+func (w *Window) SetTearable(tearable bool) {
+	w.mu.Lock()
+	if tearable {
+		w.flags |= WindowFlagTearable
+	} else {
+		w.flags &^= WindowFlagTearable
+	}
+	w.mu.Unlock()
+	w.Update()
+}
+
+// IsTearable reports whether the tear-off handle is shown.
+func (w *Window) IsTearable() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.flags&WindowFlagTearable != 0
+}
+
+// SetDetached marks whether the window currently lives in its own
+// torn-off surface (the handle then shows '#' and re-docks on click).
+func (w *Window) SetDetached(detached bool) {
+	w.mu.Lock()
+	w.detached = detached
+	w.mu.Unlock()
+	w.Update()
+}
+
+// IsDetached reports whether the window is currently torn off.
+func (w *Window) IsDetached() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.detached
+}
+
+// requestTear fires the tear-off handle's activation callback.
+func (w *Window) requestTear() {
+	w.mu.RLock()
+	handler := w.onTearRequest
+	w.mu.RUnlock()
+	if handler != nil {
+		handler()
+	}
 }
 
 // SetOnCloseComplete sets the callback for when the window is fully closed.
@@ -1072,6 +1134,9 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		controlX += buttonWidth
 	}
 
+	// Tear-off handle sits between the controls and the title.
+	controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, focused, titleFocus)
+
 	// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 	if titleFocus == TitleFocusTitle {
 		// Title has focus - draw with decorative angle brackets
@@ -1278,6 +1343,9 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			Height: metrics.CellHeight,
 		}
 
+		// Tear-off handle sits between the controls and the title.
+		controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, focused, titleFocus)
+
 		// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 		if titleFocus == TitleFocusTitle {
 			// Title has focus - draw with decorative angle brackets
@@ -1391,6 +1459,38 @@ func (w *Window) paintTitleText(p *core.Painter, title string, ts style.CellStyl
 	p.DrawText(x, 0, display, ts, font)
 }
 
+// paintTearHandle draws the tear-off handle (the %/# glyph) in its
+// button-width slot at controlX when the window is tearable, and
+// returns the X just past the slot (the title's left boundary). The
+// glyph carries the button foreground over the title-bar background;
+// when the handle is the focused title element it draws [%]/[#] in
+// the focused-button style like the other buttons. Not tearable:
+// controlX is returned unchanged.
+func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleStyle style.CellStyle, metrics core.CellMetrics, controlX core.Unit, windowActive bool, titleFocus TitleFocus) core.Unit {
+	w.mu.RLock()
+	tearable := w.flags&WindowFlagTearable != 0
+	detached := w.detached
+	w.mu.RUnlock()
+	if tearable == false || w.flags&WindowFlagNoTitle != 0 {
+		return controlX
+	}
+	glyph := '%'
+	if detached {
+		glyph = '#'
+	}
+	if titleFocus == TitleFocusTear {
+		st := scheme.GetTitleBarButton(windowActive, true, false)
+		p.DrawCell(controlX, 0, '[', st)
+		p.DrawCell(controlX+metrics.CellWidth, 0, glyph, st)
+		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', st)
+	} else {
+		btn := scheme.GetTitleBarButton(windowActive, false, false)
+		st := titleStyle.WithFg(btn.Fg)
+		p.DrawCell(controlX+metrics.CellWidth, 0, glyph, st)
+	}
+	return controlX + metrics.TextWidth(3)
+}
+
 // buttonAtPosition returns which titlebar button is at the given local coordinates.
 // Returns TitleButtonNone if not on a button.
 func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
@@ -1434,6 +1534,15 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	if flags&WindowFlagNoMaximize == 0 {
 		if x >= controlX && x < controlX+buttonWidth {
 			return TitleButtonMaximize
+		}
+		controlX += buttonWidth
+	}
+
+	// Check tear-off handle [%]/[#] (one button-width slot after the
+	// controls).
+	if flags&WindowFlagTearable != 0 {
+		if x >= controlX && x < controlX+buttonWidth {
+			return TitleButtonTear
 		}
 	}
 
@@ -1604,6 +1713,10 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				if handler != nil {
 					handler()
 				}
+			}
+		case TitleFocusTear:
+			if flags&WindowFlagTearable != 0 {
+				w.requestTear()
 			}
 		case TitleFocusTitle:
 			// Confirm resize - clear edges so next Shift+arrow starts fresh
@@ -1925,6 +2038,11 @@ func (w *Window) nextTitleFocus(current TitleFocus) TitleFocus {
 		}
 		fallthrough
 	case TitleFocusMaximize:
+		if flags&WindowFlagTearable != 0 {
+			return TitleFocusTear
+		}
+		return TitleFocusTitle
+	case TitleFocusTear:
 		return TitleFocusTitle
 	case TitleFocusTitle:
 		// If keyboard blur is enabled, go to blur item next
@@ -1949,6 +2067,14 @@ func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
 	case TitleFocusBlur:
 		return TitleFocusTitle
 	case TitleFocusTitle:
+		if flags&WindowFlagTearable != 0 {
+			return TitleFocusTear
+		}
+		if flags&WindowFlagNoMaximize == 0 {
+			return TitleFocusMaximize
+		}
+		fallthrough
+	case TitleFocusTear:
 		if flags&WindowFlagNoMaximize == 0 {
 			return TitleFocusMaximize
 		}
@@ -2195,6 +2321,10 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 				} else {
 					w.Maximize()
 				}
+			case TitleButtonTear:
+				// Click on the %/# handle: toggle detach/dock. In the
+				// detached host this is the re-dock path.
+				w.requestTear()
 			}
 		}
 		return true

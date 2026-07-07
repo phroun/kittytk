@@ -81,6 +81,13 @@ type WindowManager struct {
 	// historical behavior (terminal backends don't always report
 	// button state on motion).
 	dragNeedsButton bool
+	// dragIsTearHandle marks a drag begun on the %/# tear handle: only
+	// such a drag may tear the window off (or re-dock it); a plain
+	// title drag just moves it in-surface. dragMoved tracks whether the
+	// pointer left the press point, so a handle press released in place
+	// is a click (toggles detach) rather than a drag.
+	dragIsTearHandle bool
+	dragMoved        bool
 
 	// Resize state
 	resizing       *Window
@@ -1191,6 +1198,25 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				// Activate (focus + raise) for titlebar interaction
 				m.ActivateWindow(win)
 
+				// The tear handle is draggable AND clickable: grab it to
+				// begin a tear-capable drag; a release in place is a click
+				// that toggles detach/dock.
+				if win.Flags()&WindowFlagTearable != 0 &&
+					win.buttonAtPosition(event.X-bounds.X, event.Y-bounds.Y) == TitleButtonTear {
+					m.mu.Lock()
+					m.dragging = win
+					m.dragStartX = event.X
+					m.dragStartY = event.Y
+					m.dragOffsetX = event.X - bounds.X
+					m.dragOffsetY = event.Y - bounds.Y
+					m.dragIsTearHandle = true
+					m.dragMoved = false
+					m.dragNeedsButton = false
+					m.pressedWindow = nil
+					m.mu.Unlock()
+					return true
+				}
+
 				// First, let the window handle button clicks (close, minimize, maximize)
 				// Pass the event to the window - if it handles a button click, don't drag
 				localEvent := event
@@ -1246,6 +1272,8 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 					m.dragOffsetX = event.X - bounds.X
 					m.dragOffsetY = event.Y - bounds.Y
 					m.dragNeedsButton = false
+					m.dragIsTearHandle = false
+					m.dragMoved = false
 					m.pressedWindow = nil // Clear pressed window for drag
 					m.mu.Unlock()
 				}
@@ -1391,13 +1419,24 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		// Tear-off: past the surface edge, the host may lift the
-		// window out into its own OS surface (G4 granting).
+		// Any motion during a drag marks it moved (a handle press that
+		// never moves is a click, not a drag).
+		m.mu.Lock()
+		if m.dragging == dragging {
+			m.dragMoved = true
+		}
+		isTearHandle := m.dragIsTearHandle
+		m.mu.Unlock()
+
+		// Tear-off: past the surface edge, the host may lift the window
+		// out into its own OS surface (G4 granting) - but ONLY when the
+		// drag was begun on the tear handle. A plain title drag just
+		// moves the window in-surface.
 		m.mu.RLock()
 		tear := m.tearOff
 		screen := m.screenBounds
 		m.mu.RUnlock()
-		if tear != nil && !dragging.IsMaximized() &&
+		if tear != nil && isTearHandle && !dragging.IsMaximized() &&
 			(event.X < screen.X || event.Y < screen.Y ||
 				event.X >= screen.X+screen.Width || event.Y >= screen.Y+screen.Height) {
 			if tear(dragging, event, offsetX, offsetY) {
@@ -1556,13 +1595,21 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	resizing := m.resizing
 	pressedWin := m.pressedWindow
 	popups := m.popups
+	tearHandleClick := m.dragIsTearHandle && !m.dragMoved
 	m.dragging = nil
 	m.resizing = nil
 	m.resizeEdge = ResizeEdgeNone
 	m.pressedWindow = nil
+	m.dragIsTearHandle = false
+	m.dragMoved = false
 	m.mu.Unlock()
 
 	if dragging != nil || resizing != nil {
+		// A tear-handle press released in place is a click: toggle the
+		// window between docked and detached (retaining position/size).
+		if dragging != nil && tearHandleClick {
+			dragging.requestTear()
+		}
 		return true
 	}
 

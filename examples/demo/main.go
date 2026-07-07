@@ -299,6 +299,9 @@ func createDemoWindow(desktop *widgets.Desktop, application *app.Application) *w
 	}
 
 	w := factory.byID[reply.IDs["w"]].(*window.Window)
+	// Main demo windows can be torn off (the %/# title handle);
+	// dialogs deliberately can't, so the difference is visible.
+	w.SetTearable(true)
 	// The close button is subscribed per-connection, so any number of
 	// demo windows coexist without command-ID collisions.
 	dispatcher.On(reply.IDs["closer"], "click", func(*protocol.Event) {
