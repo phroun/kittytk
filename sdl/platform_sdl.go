@@ -649,7 +649,18 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 		return nil, err
 	}
 	w.surface = &sdlSurface{platform: p, win: w}
+	reassertCapture()
 	return w.surface, nil
+}
+
+// reassertCapture re-enables mouse capture if a button is still held:
+// SDL can silently drop capture when windows are created or destroyed
+// mid-gesture, after which it CLAMPS motion coordinates to the window
+// rect - the tear-off drag would fence itself in.
+func reassertCapture() {
+	if _, _, state := sdl2.GetGlobalMouseState(); state&sdl2.ButtonLMask() != 0 {
+		_ = sdl2.CaptureMouse(true)
+	}
 }
 
 // Clipboard implements platform.Platform.
@@ -806,4 +817,5 @@ func (s *sdlSurface) Close() {
 	s.handler = nil
 	delete(s.platform.wins, s.win.id)
 	s.win.destroy()
+	reassertCapture()
 }

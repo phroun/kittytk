@@ -140,13 +140,16 @@ func TestTearOffAndRedockDuringDrag(t *testing.T) {
 			t.Errorf("torn surface at %d,%d; want %d,%d", torn.x, torn.y, 50+(-30-120), 60+(150-8))
 		}
 
-		// Still dragging outside: the torn surface follows.
+		// Still dragging outside: the torn surface follows (position
+		// comes from the global pointer; events are just the ticks).
+		plat.gx, plat.gy = 50-60, 60+150
 		send(core.MouseMoveEvent{X: -60, Y: 150, Buttons: core.LeftButton})
 		if torn.x != 50+(-60-120) {
 			t.Errorf("torn surface did not follow the pointer: x=%d", torn.x)
 		}
 
 		// Back over the desktop: re-dock, drag continues in the WM.
+		plat.gx, plat.gy = 50+200, 60+150
 		send(core.MouseMoveEvent{X: 200, Y: 150, Buttons: core.LeftButton})
 		if !torn.closed {
 			t.Error("torn surface not closed on re-dock")

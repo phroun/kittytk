@@ -162,20 +162,39 @@ func (d *Desktop) handleTornDrag(event core.Event) bool {
 			d.clearTornDrag(td)
 			return false
 		}
+		// Position from the GLOBAL pointer, not the event: when OS
+		// mouse capture is lost mid-gesture (window churn can drop
+		// it), SDL clamps window-relative motion to the window rect,
+		// which would fence the torn window into a small range around
+		// the desktop. The events remain the ticks; the global
+		// pointer is the truth.
+		ux, uy := e.X, e.Y
+		gx, gy := 0, 0
+		haveGlobal := false
+		d.mu.RLock()
+		plat := d.platform
+		d.mu.RUnlock()
+		if gp, ok := plat.(platform.GlobalPointerPlatform); ok {
+			gx, gy = gp.GlobalPointerPx()
+			ux, uy = d.globalToDesktopUnits(gx, gy)
+			haveGlobal = true
+		}
 		size := surf.Size()
-		if e.X >= 0 && e.Y >= 0 && e.X < size.Width && e.Y < size.Height {
+		if ux >= 0 && uy >= 0 && ux < size.Width && uy < size.Height {
 			// Pointer came home: re-dock and hand the drag straight
 			// back to the window manager.
 			d.clearTornDrag(td)
 			// The desktop owns this gesture's mouse session, so the
 			// torn surface can be destroyed immediately.
-			d.adoptTornWindow(td.host, e.X-td.offX, e.Y-td.offY, false)
+			d.adoptTornWindow(td.host, ux-td.offX, uy-td.offY, false)
 			d.windowManager.BeginDrag(td.host.Window(), td.offX, td.offY)
 			return true
 		}
 		if native, ok := td.surf.(platform.NativeSurface); ok {
-			if deskNative, ok := surf.(platform.NativeSurface); ok {
-				scale := d.deviceScale()
+			scale := d.deviceScale()
+			if haveGlobal {
+				native.SetScreenPositionPx(gx-int(td.offX)*scale, gy-int(td.offY)*scale)
+			} else if deskNative, ok := surf.(platform.NativeSurface); ok {
 				deskX, deskY := deskNative.ScreenPositionPx()
 				native.SetScreenPositionPx(
 					deskX+int(e.X-td.offX)*scale,
