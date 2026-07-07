@@ -121,6 +121,11 @@ func (d *Desktop) tearOffWindow(win *window.Window, e core.MouseMoveEvent, offX,
 			d.invalidateSurface()
 		})
 
+	// The [x] button on a torn window must take its OS window with it.
+	host.SetOnClosed(func() {
+		d.dropTornHost(host)
+	})
+
 	// Arm the host too: once the torn window exists under the held
 	// pointer, the platform may hand it the rest of the gesture
 	// (motion and the release) instead of the desktop. Whichever
@@ -258,6 +263,26 @@ func (d *Desktop) redockAt(host *window.TearOffHost, gx, gy int, grabX, grabY co
 	d.adoptTornWindow(host, ux-grabX, uy-grabY, true)
 	d.windowManager.BeginDrag(host.Window(), grabX, grabY)
 	return true
+}
+
+// dropTornHost disposes of a torn window's surface and forgets the
+// host (the window closed itself while torn).
+func (d *Desktop) dropTornHost(host *window.TearOffHost) {
+	d.mu.Lock()
+	if d.tornDrag != nil && d.tornDrag.host == host {
+		d.tornDrag = nil
+	}
+	for i, th := range d.tornHosts {
+		if th == host {
+			d.tornHosts = append(d.tornHosts[:i], d.tornHosts[i+1:]...)
+			break
+		}
+	}
+	d.mu.Unlock()
+	if native, ok := host.Surface().(platform.NativeSurface); ok {
+		native.Close()
+	}
+	d.invalidateSurface()
 }
 
 // globalToDesktopUnits converts a global pixel position to desktop

@@ -47,12 +47,21 @@ type TearOffHost struct {
 	// area, second press restores the saved rect.
 	zoomed    bool
 	zoomSaved [4]int // x, y, w, h in px
+	// dragRestored latches after a title drag un-zooms the window, so
+	// the same drag can't snap-zoom right back until the pointer has
+	// clearly left the top strip.
+	dragRestored bool
 
 	// Double-click tracking for the title bar (zoom toggle), matching
 	// the in-surface manager's maximize double-click.
 	lastClickAt time.Time
 	lastClickX  core.Unit
 	lastClickY  core.Unit
+
+	// onClosed runs when the hosted window closes itself (the [x]
+	// button): the desktop disposes of the surface. Without it the
+	// closed window would keep showing in its orphaned OS window.
+	onClosed func()
 
 	// Ghost mode: the desktop has re-adopted the window mid-drag, but
 	// THIS window still owns the OS mouse session (the press happened
@@ -97,6 +106,11 @@ func NewTearOffHost(win *Window, surf platform.Surface, scale int,
 	win.SetFlags(h.savedFlags | WindowFlagNoMinimize)
 	win.SetOnMaximizeRequest(h.ToggleZoom)
 	win.SetOnBoundsRequest(h.applyKeyboardBounds)
+	win.SetOnCloseComplete(func() {
+		if h.onClosed != nil {
+			h.onClosed()
+		}
+	})
 
 	size := surf.Size()
 	win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
@@ -137,6 +151,10 @@ func (h *TearOffHost) BeginDrag(grabX, grabY core.Unit) {
 // Dragging reports whether a title drag is moving the OS window.
 func (h *TearOffHost) Dragging() bool { return h.dragging }
 
+// SetOnClosed installs the desktop's disposal for a torn window that
+// closes itself.
+func (h *TearOffHost) SetOnClosed(fn func()) { h.onClosed = fn }
+
 // SetGhostRelay installs the desktop's continuation for a gesture
 // that outlives its window: move relays motion (global px), end
 // finishes the drag and disposes of the ghost surface.
@@ -154,11 +172,14 @@ func (h *TearOffHost) finishGhost() {
 	}
 }
 
-// EndDrag disarms the drag. The desktop calls it when the gesture's
+// EndDrag disarms the drag and its restore latch. The desktop calls it when the gesture's
 // end shows up on its side of the split event stream (release, or a
 // move with the button no longer held) - without it a later drag
 // inside the torn window's content would move the OS window.
-func (h *TearOffHost) EndDrag() { h.dragging = false }
+func (h *TearOffHost) EndDrag() {
+	h.dragging = false
+	h.dragRestored = false
+}
 
 // Frame implements platform.SurfaceHandler.
 func (h *TearOffHost) Frame(p *core.Painter) {
@@ -246,6 +267,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		} else if h.resizing || h.dragging {
 			h.resizing = false
 			h.dragging = false
+			h.dragRestored = false
 			handled = true
 		} else {
 			handled = h.win.HandleMouseRelease(e)
@@ -262,7 +284,9 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 // dragMove follows the global pointer: first the desktop gets a
 // chance to reclaim the window (pointer back over the desktop
 // surface), otherwise the OS window moves to keep the grab point
-// under the pointer.
+// under the pointer. In-surface parity for the zoom state: dragging
+// a zoomed window down restores it (grab kept proportional), and
+// dragging the pointer above the work area's top snap-zooms.
 func (h *TearOffHost) dragMove() bool {
 	if h.global == nil || h.native == nil {
 		return true
@@ -272,6 +296,36 @@ func (h *TearOffHost) dragMove() bool {
 		// The desktop took the window; this surface stays (invisible)
 		// to relay the rest of its live mouse session.
 		h.ghost = true
+		return true
+	}
+	_, way, ww, wh := h.native.WorkAreaPx()
+	if h.zoomed {
+		// A zoomed window doesn't slide; dragging its title below the
+		// work area's top restores it, with the grab point staying
+		// proportionally placed on the narrower title bar.
+		if gy-int(h.grabY)*h.scale >= way {
+			if ww > 0 {
+				h.grabX = core.Unit(float64(h.grabX) * float64(h.zoomSaved[2]) / float64(ww))
+			}
+			h.zoomed = false
+			h.dragRestored = true
+			h.win.Restore()
+			h.native.SetScreenSizePx(h.zoomSaved[2], h.zoomSaved[3])
+			h.native.SetScreenPositionPx(gx-int(h.grabX)*h.scale, gy-int(h.grabY)*h.scale)
+		}
+		return true
+	}
+	if h.dragRestored && gy >= way+int(core.DefaultCellMetrics().CellHeight)*h.scale {
+		// Pointer clearly below the top strip: re-arm the snap.
+		h.dragRestored = false
+	}
+	if ww > 0 && wh > 0 && !h.dragRestored &&
+		(gy < way || (way <= 0 && gy <= 0)) {
+		// Into the strip above the work area (the macOS menu bar):
+		// snap-zoom, exactly like dragging into the desktop's menu
+		// bar maximizes in-surface. Keep dragging so the user can
+		// pull back down to restore.
+		h.zoomToWorkArea()
 		return true
 	}
 	h.native.SetScreenPositionPx(gx-int(h.grabX)*h.scale, gy-int(h.grabY)*h.scale)
@@ -364,6 +418,12 @@ func (h *TearOffHost) ToggleZoom() {
 		h.native.SetScreenSizePx(h.zoomSaved[2], h.zoomSaved[3])
 		return
 	}
+	h.zoomToWorkArea()
+}
+
+// zoomToWorkArea saves the current rect and fills the display's work
+// area.
+func (h *TearOffHost) zoomToWorkArea() {
 	wx, wy, ww, wh := h.native.WorkAreaPx()
 	if ww <= 0 || wh <= 0 {
 		return

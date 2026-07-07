@@ -27,7 +27,7 @@ func (s *nativeFakeSurface) SetCursorVisible(bool)                {}
 func (s *nativeFakeSurface) SetCursorPosition(x, y core.Unit)     {}
 func (s *nativeFakeSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *nativeFakeSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
-func (s *nativeFakeSurface) WorkAreaPx() (int, int, int, int)     { return 0, 0, 1600, 1000 }
+func (s *nativeFakeSurface) WorkAreaPx() (int, int, int, int)     { return 0, 30, 1600, 970 }
 func (s *nativeFakeSurface) Close()                               { s.closed = true }
 func (s *nativeFakeSurface) SetOpacity(o float64)                 { s.opacity = o }
 func (s *nativeFakeSurface) Minimized() bool                      { return false }
@@ -106,7 +106,7 @@ func TestTearOffHostZoom(t *testing.T) {
 	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
 
 	h.ToggleZoom()
-	if surf.x != 0 || surf.y != 0 || surf.size.Width != 1600 || surf.size.Height != 1000 {
+	if surf.x != 0 || surf.y != 30 || surf.size.Width != 1600 || surf.size.Height != 970 {
 		t.Errorf("zoom did not fill the work area: %d,%d %dx%d",
 			surf.x, surf.y, surf.size.Width, surf.size.Height)
 	}
@@ -256,4 +256,42 @@ func TestTornFrameLeavesCornersTransparent(t *testing.T) {
 	if _, _, _, a := img.At(200, 100).RGBA(); a != 0xffff {
 		t.Errorf("interior not opaque: alpha %d", a)
 	}
+}
+
+// Dragging a zoomed torn window's title restores it (grab point kept
+// proportional), and dragging the pointer above the work area's top
+// snap-zooms it again - in-surface maximize-drag parity.
+func TestTearOffHostZoomDragRestoreAndSnap(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	gx, gy := 0, 0
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, 1, func() (int, int) { return gx, gy }, nil)
+
+	h.ToggleZoom() // 0,30 1600x970
+
+	// Grab the zoomed title at its center and drag down: restore,
+	// with the grab re-proportioned onto the restored width.
+	gx, gy = 800, 200
+	h.Event(core.MousePressEvent{X: 800, Y: 8, Button: core.LeftButton})
+	h.Event(core.MouseMoveEvent{X: 800, Y: 170, Buttons: core.LeftButton})
+	if win.IsMaximized() || surf.size.Width != 200 {
+		t.Fatalf("drag did not restore the zoomed window: maximized=%v width=%d",
+			win.IsMaximized(), surf.size.Width)
+	}
+	// Grab was at the title's center: it stays centered (800/1600*200 = 100).
+	if surf.x != 800-100 || surf.y != 200-8 {
+		t.Errorf("restored window at %d,%d; want %d,%d", surf.x, surf.y, 800-100, 200-8)
+	}
+
+	// Motion below the top strip re-arms the snap latch...
+	gx, gy = 800, 220
+	h.Event(core.MouseMoveEvent{X: 100, Y: 190, Buttons: core.LeftButton})
+	// ...then dragging up past the work area's top snap-zooms.
+	gx, gy = 800, 20 // above way=30
+	h.Event(core.MouseMoveEvent{X: 100, Y: 5, Buttons: core.LeftButton})
+	if !win.IsMaximized() || surf.size.Width != 1600 || surf.y != 30 {
+		t.Errorf("snap-zoom did not fire: maximized=%v %dx%d at %d,%d",
+			win.IsMaximized(), surf.size.Width, surf.size.Height, surf.x, surf.y)
+	}
+	h.Event(core.MouseReleaseEvent{X: 100, Y: 5, Button: core.LeftButton})
 }

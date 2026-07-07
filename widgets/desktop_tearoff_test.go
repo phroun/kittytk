@@ -405,3 +405,49 @@ func TestNoRedockIntoMinimizedDesktop(t *testing.T) {
 
 	d.RunOn(plat)
 }
+
+// Closing a torn window with its [x] button disposes of its OS
+// window immediately - it must not linger until a re-dock.
+func TestClosingTornWindowDisposesSurface(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	win := window.NewWindow("tearme")
+	d.SetOnStartup(func() {
+		d.WindowManager().AddWindow(win)
+		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
+		win.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		desk := plat.surfaces[0]
+		send := func(ev core.Event) { desk.handler.Event(ev) }
+
+		// Tear off and release outside.
+		send(core.MousePressEvent{X: 220, Y: 108, Button: core.LeftButton})
+		send(core.MouseMoveEvent{X: -30, Y: 150, Buttons: core.LeftButton})
+		send(core.MouseReleaseEvent{X: -30, Y: 150, Button: core.LeftButton})
+		torn := plat.surfaces[1]
+
+		// The window closes itself (the [x] button path).
+		win.Close()
+		if !torn.closed {
+			t.Error("torn surface still open after the window closed")
+		}
+
+		// The repaint tick must not resurrect the dead host.
+		if len(plat.afters) > 0 {
+			plat.afters[len(plat.afters)-1]()
+		}
+
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
