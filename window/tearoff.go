@@ -32,6 +32,12 @@ type TearOffHost struct {
 	dragging bool
 	grabX    core.Unit
 	grabY    core.Unit
+	// dragIsHandle marks a drag begun on the '#' tear handle: only such
+	// a drag re-docks (over the desktop); a plain title drag just moves
+	// the OS window. dragMoved distinguishes a handle CLICK (re-dock in
+	// place) from a handle DRAG.
+	dragIsHandle bool
+	dragMoved    bool
 
 	// Edge-resize drag: the OS window resizes with the pointer.
 	resizing    bool
@@ -168,6 +174,8 @@ func (h *TearOffHost) SavedFlags() WindowFlags { return h.savedFlags }
 // seamlessly in the new surface.
 func (h *TearOffHost) BeginDrag(grabX, grabY core.Unit) {
 	h.dragging = true
+	h.dragIsHandle = false
+	h.dragMoved = false
 	h.grabX, h.grabY = grabX, grabY
 }
 
@@ -371,6 +379,15 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			handled = true
 			break
 		}
+		// The '#' handle is host-managed: a drag re-docks over the
+		// desktop, a click re-docks in place. Grab it before the window
+		// tracks it as a button.
+		if e.Button == core.LeftButton && h.win.buttonAtPosition(e.X, e.Y) == TitleButtonTear {
+			h.BeginDrag(e.X, e.Y)
+			h.dragIsHandle = true
+			handled = true
+			break
+		}
 		handled = h.win.HandleMousePress(e)
 		if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) {
 			// Double-click on the title bar toggles the zoom, exactly
@@ -425,9 +442,14 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			h.finishGhost()
 			handled = true
 		} else if h.resizing || h.dragging {
+			handleClick := h.dragging && h.dragIsHandle && !h.dragMoved
 			h.resizing = false
 			h.dragging = false
 			h.dragRestored = false
+			if handleClick {
+				// Click on the '#' handle: re-dock in place.
+				h.win.requestTear()
+			}
 			handled = true
 		} else {
 			handled = h.win.HandleMouseRelease(e)
@@ -456,9 +478,11 @@ func (h *TearOffHost) dragMove() bool {
 		return true
 	}
 	gx, gy := h.global()
-	if h.onRedock != nil && h.onRedock(gx, gy, h.grabX, h.grabY) {
-		// The desktop took the window; this surface stays (invisible)
-		// to relay the rest of its live mouse session.
+	h.dragMoved = true
+	if h.dragIsHandle && h.onRedock != nil && h.onRedock(gx, gy, h.grabX, h.grabY) {
+		// Handle drag over the desktop: the desktop took the window;
+		// this surface stays (invisible) to relay the rest of its live
+		// mouse session.
 		h.ghost = true
 		return true
 	}

@@ -322,6 +322,14 @@ func (m *WindowManager) SetScreenBounds(bounds core.UnitRect) {
 }
 
 // ClientArea returns the area available for windows (excluding desktop chrome like menu bars).
+// ClampToClientArea keeps a window within reach on re-dock or
+// placement: title bar vertically inside the client area (below any
+// menu bar, above any dock/status bar) and a couple of columns
+// visible horizontally.
+func (m *WindowManager) ClampToClientArea(bounds core.UnitRect) core.UnitRect {
+	return clampWindowToClientArea(bounds, m.ClientArea(), m.ScreenCellMetrics())
+}
+
 func (m *WindowManager) ClientArea() core.UnitRect {
 	m.mu.RLock()
 	screen := m.screenBounds
@@ -1214,6 +1222,7 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 					m.dragNeedsButton = false
 					m.pressedWindow = nil
 					m.mu.Unlock()
+					win.SetTearHighlight(true) // Show the tear-off halo while grabbed.
 					return true
 				}
 
@@ -1416,6 +1425,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 				m.dragNeedsButton = false
 			}
 			m.mu.Unlock()
+			dragging.SetTearHighlight(false)
 			return true
 		}
 
@@ -1445,6 +1455,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 					m.dragging = nil
 				}
 				m.mu.Unlock()
+				dragging.SetTearHighlight(false)
 				return true
 			}
 		}
@@ -1499,10 +1510,10 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		bounds.X = newX
 		bounds.Y = newY
 
-		// Dragging into menu bar area = maximize gesture
-		// But keep dragging so user can drag back down to restore
-		// Don't re-maximize immediately after restoring (wait for next mouse move)
-		if bounds.Y < clientArea.Y && dragging.Flags()&WindowFlagNoMaximize == 0 && !justRestored {
+		// Dragging into menu bar area = maximize gesture. Skipped for a
+		// tear-handle drag: that gesture tears the window off, so it
+		// must not snap-maximize on the way up.
+		if !isTearHandle && bounds.Y < clientArea.Y && dragging.Flags()&WindowFlagNoMaximize == 0 && !justRestored {
 			if !dragging.IsMaximized() {
 				m.MaximizeWindow(dragging)
 				m.RequestRepaint()
@@ -1510,32 +1521,11 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		// Keep titlebar visible vertically (within client area)
-		// Don't allow titlebar above client area
-		if bounds.Y < clientArea.Y {
-			bounds.Y = clientArea.Y
-		}
-		// Don't allow titlebar below client area
-		maxY := clientArea.Y + clientArea.Height - metrics.CellHeight
-		if bounds.Y > maxY {
-			bounds.Y = maxY
-		}
-
-		// Allow window to go almost completely off-screen horizontally
-		// Just keep 1 unit (border) visible for retrieval
-		minVisibleX := core.Unit(1)        // Just border visible on right
-		minVisibleFromLeft := core.Unit(1) // Just border visible on left
-
-		// Left constraint: window can go so far left that only right border is visible
-		minX := clientArea.X - bounds.Width + minVisibleFromLeft
-		if bounds.X < minX {
-			bounds.X = minX
-		}
-		// Right constraint: window can go so far right that only left border is visible
-		maxX := clientArea.X + clientArea.Width - minVisibleX
-		if bounds.X > maxX {
-			bounds.X = maxX
-		}
+		// Keep the window retrievable: title bar vertically within the
+		// client area, at least a couple of columns visible horizontally
+		// on each side (dragging it down to a few pixels made it
+		// impossible to grab back).
+		bounds = clampWindowToClientArea(bounds, clientArea, metrics)
 
 		// Limit height to client area height (windows can be wider but not taller)
 		if bounds.Height > clientArea.Height {
@@ -1605,6 +1595,10 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	m.mu.Unlock()
 
 	if dragging != nil || resizing != nil {
+		// The tear-off halo only shows while the handle is grabbed.
+		if dragging != nil {
+			dragging.SetTearHighlight(false)
+		}
 		// A tear-handle press released in place is a click: toggle the
 		// window between docked and detached (retaining position/size).
 		if dragging != nil && tearHandleClick {
@@ -1880,6 +1874,15 @@ func (m *WindowManager) Paint(p *core.Painter) {
 			visibleBounds := bounds.Intersection(clientArea)
 			if visibleBounds.IsEmpty() {
 				continue
+			}
+
+			// Tear-off affordance: a black halo just larger than the
+			// window, drawn in desktop space (not clipped to the client
+			// area) so a maximized window bleeds it over the menu and
+			// status bars. Painted before the window so only the ring
+			// beyond the frame shows.
+			if win.TearIndicatorActive() {
+				win.PaintTearHalo(p, bounds)
 			}
 
 			// Offset into window's local coordinates

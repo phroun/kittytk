@@ -132,11 +132,13 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	wm.RemoveWindow(win)
 
 	var host *window.TearOffHost
-	// A detached window re-docks only by CLICKING its '#' handle (or a
-	// live tear-drag returning), never by a plain title drag - so no
-	// host-driven redock-on-hover.
-	host = window.NewTearOffHost(win, newSurf, scale, gp.GlobalPointerPx, nil)
-	_ = host
+	// A detached window re-docks by dragging its '#' handle back over
+	// the desktop, or by clicking it. The host only calls this during
+	// a HANDLE drag - a plain title drag just moves the OS window.
+	host = window.NewTearOffHost(win, newSurf, scale, gp.GlobalPointerPx,
+		func(gx, gy int, grabX, grabY core.Unit) bool {
+			return d.redockAt(host, gx, gy, grabX, grabY)
+		})
 	host.SetGhostRelay(
 		func(gx, gy int) {
 			ux, uy := d.globalToDesktopUnits(gx, gy)
@@ -278,6 +280,31 @@ func (d *Desktop) clearTornDrag(td *tornDrag) {
 	td.host.EndDrag()
 }
 
+// redockAt serves a TearOffHost handle drag: when the global pointer
+// is over the desktop surface, reclaim the window there (retaining
+// size), enforcing the reachability bounds. The torn surface stays
+// alive as a ghost until its live mouse session finishes.
+func (d *Desktop) redockAt(host *window.TearOffHost, gx, gy int, grabX, grabY core.Unit) bool {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	native, ok := surf.(platform.NativeSurface)
+	if !ok || native.Minimized() {
+		return false
+	}
+	scale := d.deviceScale()
+	deskX, deskY := native.ScreenPositionPx()
+	size := surf.Size()
+	ux := core.Unit((gx - deskX) / scale)
+	uy := core.Unit((gy - deskY) / scale)
+	if ux < 0 || uy < 0 || ux >= size.Width || uy >= size.Height {
+		return false
+	}
+	d.adoptTornWindow(host, ux-grabX, uy-grabY, true)
+	d.windowManager.BeginDrag(host.Window(), grabX, grabY)
+	return true
+}
+
 // dropTornHost disposes of a torn window's surface and forgets the
 // host (the window closed itself while torn).
 func (d *Desktop) dropTornHost(host *window.TearOffHost) {
@@ -358,7 +385,9 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghos
 	win.SetDetached(false)
 	win.SetOnTearRequest(func() { d.tearOffInPlace(win) })
 	d.windowManager.AddWindow(win)
-	win.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
+	// Keep the re-docked window reachable: title bar within the client
+	// area, a couple of columns visible horizontally.
+	win.SetBounds(d.windowManager.ClampToClientArea(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height}))
 	win.Layout()
 	d.windowManager.ActivateWindow(win)
 

@@ -36,8 +36,14 @@ func TestTearHandleHitTestAndActivate(t *testing.T) {
 	win.SetTearable(true)
 	win.SetBounds(core.UnitRect{Width: 300, Height: 120})
 
-	// Local x in [80,104) is the handle slot (8px cells).
-	if got := win.buttonAtPosition(88, 4); got != TitleButtonTear {
+	// The handle floats immediately left of the centered title; probe
+	// the same slot buttonAtPosition/paintTearHandle compute.
+	metrics := core.DefaultCellMetrics()
+	buttonWidth := metrics.TextWidth(3)
+	controlsRight := metrics.CellWidth + buttonWidth*3
+	titleW := win.EffectiveFont().MeasureText("w")
+	handleX := tearHandleSlotX(win.Bounds().Width, controlsRight, titleW, buttonWidth)
+	if got := win.buttonAtPosition(handleX+buttonWidth/2, 4); got != TitleButtonTear {
 		t.Errorf("hit-test at handle = %v, want TitleButtonTear", got)
 	}
 	if got := win.buttonAtPosition(64, 4); got == TitleButtonTear {
@@ -57,5 +63,37 @@ func TestTearHandleHitTestAndActivate(t *testing.T) {
 	win.SetDetached(true)
 	if !win.IsDetached() {
 		t.Error("SetDetached not reflected")
+	}
+}
+
+// The tear-off halo shows while the handle is grabbed or the tear
+// button holds keyboard focus, and never for a non-tearable window.
+func TestTearIndicatorActive(t *testing.T) {
+	win := NewWindow("w")
+	win.SetTearable(true)
+
+	if win.TearIndicatorActive() {
+		t.Error("indicator active with no press or focus")
+	}
+	win.SetTearHighlight(true)
+	if !win.TearIndicatorActive() {
+		t.Error("indicator not active while handle grabbed")
+	}
+	win.SetTearHighlight(false)
+	if win.TearIndicatorActive() {
+		t.Error("indicator stayed active after release")
+	}
+	win.SetTitleFocus(TitleFocusTear)
+	if !win.TearIndicatorActive() {
+		t.Error("indicator not active while tear button focused")
+	}
+	win.SetTitleFocus(TitleFocusNone)
+
+	// A non-tearable window never shows the halo, even if forced.
+	plain := NewWindow("p")
+	plain.SetTearHighlight(true)
+	plain.SetTitleFocus(TitleFocusTear)
+	if plain.TearIndicatorActive() {
+		t.Error("non-tearable window reported indicator active")
 	}
 }

@@ -131,6 +131,10 @@ type Window struct {
 	// surface; the tear handle then shows '#' and re-docks on click.
 	detached bool
 
+	// tearHighlight is set while the tear handle is pressed or dragged
+	// so the frame draws its black tear-off halo (see TearIndicatorActive).
+	tearHighlight bool
+
 	// Request callbacks (for WindowManager integration)
 	onMinimizeRequest     func()                   // Called when user clicks minimize button
 	onMaximizeRequest     func()                   // Called when user clicks maximize button
@@ -601,6 +605,58 @@ func (w *Window) IsDetached() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.detached
+}
+
+// SetTearHighlight toggles the tear-off halo shown while the tear
+// handle is being pressed or dragged. The window manager sets it on
+// mousedown/drag of the '%'/'#' handle and clears it on release.
+func (w *Window) SetTearHighlight(on bool) {
+	w.mu.Lock()
+	changed := w.tearHighlight != on
+	w.tearHighlight = on
+	w.mu.Unlock()
+	if changed {
+		w.Update()
+	}
+}
+
+// TearIndicatorActive reports whether the tear-off halo should be
+// drawn: the handle is pressed/dragged, or the tear button holds
+// keyboard focus. Only tearable windows ever qualify.
+func (w *Window) TearIndicatorActive() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.flags&WindowFlagTearable == 0 {
+		return false
+	}
+	return w.tearHighlight || w.titleFocus == TitleFocusTear
+}
+
+// tearHaloMargin is how far the black tear-off halo extends beyond the
+// window frame, in units - a thin outline reading as a ~2px stroke.
+const tearHaloMargin core.Unit = 2
+
+// PaintTearHalo draws the black tear-off halo behind the window. p is
+// the parent (desktop) painter and bounds is the window's rect in that
+// space; the manager calls it just before painting the window so the
+// halo shows only as a thin black outline. It is intentionally left
+// unclipped to the client area, so a maximized window bleeds the stroke
+// over the menu bar (top) and status bar (bottom). No-op on cell
+// surfaces (the affordance is graphical only).
+func (w *Window) PaintTearHalo(p *core.Painter, bounds core.UnitRect) {
+	m := tearHaloMargin
+	halo := core.UnitRect{
+		X:      bounds.X - m,
+		Y:      bounds.Y - m,
+		Width:  bounds.Width + 2*m,
+		Height: bounds.Height + 2*m,
+	}
+	radius := windowCornerRadius + m
+	if w.IsMaximized() {
+		radius = 0 // Square frame -> square halo.
+	}
+	black := style.DefaultStyle().WithFg(style.ColorBlack).WithBg(style.ColorBlack)
+	p.DrawRoundedRect(halo, radius, style.BorderHeavy, black)
 }
 
 // requestTear fires the tear-off handle's activation callback.
@@ -1134,8 +1190,12 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		controlX += buttonWidth
 	}
 
-	// Tear-off handle sits between the controls and the title.
-	controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, focused, titleFocus)
+	// Tear-off handle floats immediately left of the (centered) title.
+	tearTitleW := font.MeasureText(title)
+	if titleFocus == TitleFocusTitle {
+		tearTitleW += metrics.CellWidth * 4 // account for "< " / " >" brackets
+	}
+	controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, bounds.Width, tearTitleW, focused, titleFocus)
 
 	// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 	if titleFocus == TitleFocusTitle {
@@ -1343,8 +1403,12 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			Height: metrics.CellHeight,
 		}
 
-		// Tear-off handle sits between the controls and the title.
-		controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, focused, titleFocus)
+		// Tear-off handle floats immediately left of the (centered) title.
+		tearTitleW := font.MeasureText(title)
+		if titleFocus == TitleFocusTitle {
+			tearTitleW += metrics.CellWidth * 4 // account for "< " / " >" brackets
+		}
+		controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, bounds.Width, tearTitleW, focused, titleFocus)
 
 		// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 		if titleFocus == TitleFocusTitle {
@@ -1459,36 +1523,59 @@ func (w *Window) paintTitleText(p *core.Painter, title string, ts style.CellStyl
 	p.DrawText(x, 0, display, ts, font)
 }
 
-// paintTearHandle draws the tear-off handle (the %/# glyph) in its
-// button-width slot at controlX when the window is tearable, and
-// returns the X just past the slot (the title's left boundary). The
-// glyph carries the button foreground over the title-bar background;
-// when the handle is the focused title element it draws [%]/[#] in
-// the focused-button style like the other buttons. Not tearable:
-// controlX is returned unchanged.
-func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleStyle style.CellStyle, metrics core.CellMetrics, controlX core.Unit, windowActive bool, titleFocus TitleFocus) core.Unit {
+// tearHandleSlotX returns the X of the tear handle's button-width slot.
+// The handle floats immediately left of where the title would center in
+// the bar, and only butts against the control buttons (controlsRight)
+// when the centered title leaves no room to its left.
+func tearHandleSlotX(barWidth, controlsRight, titleW, buttonWidth core.Unit) core.Unit {
+	x := (barWidth-titleW)/2 - buttonWidth
+	if x < controlsRight {
+		x = controlsRight
+	}
+	return x
+}
+
+// paintTearHandle draws the tear-off handle (the %/# glyph) in a
+// button-width slot floating immediately left of the (centered) title,
+// and returns the leftUsed value paintTitleText expects (its +CellWidth
+// gap lands the title just past the handle slot). The glyph carries the
+// button foreground over the title-bar background; when the handle is
+// the focused title element it draws [%]/[#] in the focused-button
+// style like the other buttons. Not tearable: controlsRight is returned
+// unchanged (title keeps its normal gap past the controls).
+func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleStyle style.CellStyle, metrics core.CellMetrics, controlsRight, barWidth, titleW core.Unit, windowActive bool, titleFocus TitleFocus) core.Unit {
 	w.mu.RLock()
 	tearable := w.flags&WindowFlagTearable != 0
 	detached := w.detached
 	w.mu.RUnlock()
 	if tearable == false || w.flags&WindowFlagNoTitle != 0 {
-		return controlX
+		return controlsRight
 	}
+	buttonWidth := metrics.TextWidth(3)
+	handleX := tearHandleSlotX(barWidth, controlsRight, titleW, buttonWidth)
 	glyph := '%'
 	if detached {
 		glyph = '#'
 	}
 	if titleFocus == TitleFocusTear {
 		st := scheme.GetTitleBarButton(windowActive, true, false)
-		p.DrawCell(controlX, 0, '[', st)
-		p.DrawCell(controlX+metrics.CellWidth, 0, glyph, st)
-		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', st)
+		p.DrawCell(handleX, 0, '[', st)
+		p.DrawCell(handleX+metrics.CellWidth, 0, glyph, st)
+		p.DrawCell(handleX+metrics.CellWidth*2, 0, ']', st)
 	} else {
 		btn := scheme.GetTitleBarButton(windowActive, false, false)
 		st := titleStyle.WithFg(btn.Fg)
-		p.DrawCell(controlX+metrics.CellWidth, 0, glyph, st)
+		// Fill the slot's flanking cells with the title-bar background so
+		// the frame's top-border stroke does not peek through the gaps
+		// on either side of the floating glyph.
+		p.DrawCell(handleX, 0, ' ', titleStyle)
+		p.DrawCell(handleX+metrics.CellWidth, 0, glyph, st)
+		p.DrawCell(handleX+metrics.CellWidth*2, 0, ' ', titleStyle)
 	}
-	return controlX + metrics.TextWidth(3)
+	// The title butts against the right edge of the handle slot; the
+	// -CellWidth cancels paintTitleText's +CellWidth gap so a centered
+	// title lands exactly one slot right of the handle.
+	return handleX + buttonWidth - metrics.CellWidth
 }
 
 // buttonAtPosition returns which titlebar button is at the given local coordinates.
@@ -1497,6 +1584,8 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	w.mu.RLock()
 	flags := w.flags
 	state := w.state
+	title := w.title
+	titleFocus := w.titleFocus
 	w.mu.RUnlock()
 
 	metrics := core.DefaultCellMetrics()
@@ -1538,10 +1627,15 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 		controlX += buttonWidth
 	}
 
-	// Check tear-off handle [%]/[#] (one button-width slot after the
-	// controls).
-	if flags&WindowFlagTearable != 0 {
-		if x >= controlX && x < controlX+buttonWidth {
+	// Check tear-off handle [%]/[#]. It floats immediately left of the
+	// centered title, so hit-test the same slot paintTearHandle draws.
+	if flags&WindowFlagTearable != 0 && flags&WindowFlagNoTitle == 0 {
+		titleW := w.EffectiveFont().MeasureText(title)
+		if titleFocus == TitleFocusTitle {
+			titleW += metrics.CellWidth * 4
+		}
+		handleX := tearHandleSlotX(w.Bounds().Width, controlX, titleW, buttonWidth)
+		if x >= handleX && x < handleX+buttonWidth {
 			return TitleButtonTear
 		}
 	}
@@ -1984,32 +2078,10 @@ func (w *Window) constrainBoundsForMovement(newBounds core.UnitRect) core.UnitRe
 	clientArea := getBounds()
 	metrics := core.DefaultCellMetrics()
 
-	// Keep titlebar visible vertically
-	// Don't allow titlebar above client area
-	if newBounds.Y < clientArea.Y {
-		newBounds.Y = clientArea.Y
-	}
-	// Don't allow titlebar below client area
-	maxY := clientArea.Y + clientArea.Height - metrics.CellHeight
-	if newBounds.Y > maxY {
-		newBounds.Y = maxY
-	}
-
-	// Allow window to go almost completely off-screen horizontally
-	// Just keep 1 unit (border) visible for retrieval
-	minVisibleX := core.Unit(1)
-	minVisibleFromLeft := core.Unit(1)
-
-	// Left constraint: window can go so far left that only right border is visible
-	minX := clientArea.X - newBounds.Width + minVisibleFromLeft
-	if newBounds.X < minX {
-		newBounds.X = minX
-	}
-	// Right constraint: window can go so far right that only left border is visible
-	maxX := clientArea.X + clientArea.Width - minVisibleX
-	if newBounds.X > maxX {
-		newBounds.X = maxX
-	}
+	// Title bar vertically within the client area, at least a couple of
+	// columns visible horizontally on each side (shared with the mouse
+	// drag and re-dock paths).
+	newBounds = clampWindowToClientArea(newBounds, clientArea, metrics)
 
 	// Limit height to client area height (windows can be wider but not taller)
 	if newBounds.Height > clientArea.Height {
@@ -2017,6 +2089,36 @@ func (w *Window) constrainBoundsForMovement(newBounds core.UnitRect) core.UnitRe
 	}
 
 	return newBounds
+}
+
+// minVisibleColumns is how much of a window must stay within the
+// client area horizontally so it can always be grabbed back.
+const minVisibleColumns core.Unit = 2
+
+// clampWindowToClientArea keeps a window retrievable: its title bar
+// vertically within the client area (below any menu bar, above any
+// dock/status bar - the client area already excludes them), and at
+// least minVisibleColumns of width within it on each side.
+func clampWindowToClientArea(bounds, clientArea core.UnitRect, metrics core.CellMetrics) core.UnitRect {
+	minVisible := metrics.CellWidth * minVisibleColumns
+
+	if bounds.Y < clientArea.Y {
+		bounds.Y = clientArea.Y
+	}
+	maxY := clientArea.Y + clientArea.Height - metrics.CellHeight
+	if bounds.Y > maxY {
+		bounds.Y = maxY
+	}
+
+	minX := clientArea.X - bounds.Width + minVisible
+	if bounds.X < minX {
+		bounds.X = minX
+	}
+	maxX := clientArea.X + clientArea.Width - minVisible
+	if bounds.X > maxX {
+		bounds.X = maxX
+	}
+	return bounds
 }
 
 // nextTitleFocus returns the next title bar element after the given one.

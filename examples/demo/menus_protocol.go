@@ -49,6 +49,7 @@ bar=new menubar children={
 		cutitem=new menuitem caption="Cu&t" shortcut="^X" action=demo.edit.cut
 		new menuitem caption="&Copy" shortcut="^C" action=demo.edit.copy
 		new menuitem caption="&Paste" shortcut="^V" action=demo.edit.paste
+		new menuitem separator
 		new menuitem caption="Select &All" action=demo.edit.selectall
 		new menuitem separator
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.edit.rawkey
@@ -244,10 +245,12 @@ bar=new menubar children={
 	new menu caption="&App %d" children={
 		new menuitem caption="&Close Window" shortcut="^W" action=demo.app.close
 	}
-	new menu caption="&Edit" children={
-		new menuitem caption="Cu&t" shortcut="^X"
-		new menuitem caption="&Copy" shortcut="^C"
-		new menuitem caption="&Paste" shortcut="^V"
+	editmenu=new menu caption="&Edit" children={
+		cutitem=new menuitem caption="Cu&t" shortcut="^X" action=demo.app.cut
+		new menuitem caption="&Copy" shortcut="^C" action=demo.app.copy
+		new menuitem caption="&Paste" shortcut="^V" action=demo.app.paste
+		new menuitem separator
+		new menuitem caption="Select &All" action=demo.app.selectall
 		new menuitem separator
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.app.rawkey
 	}
@@ -258,11 +261,13 @@ bar=new menubar children={
 		new menuitem caption="&About" action=demo.app.about
 	}
 }
+editmenu=bar.editmenu
+cutitem=bar.editmenu.cutitem
 `, appNum)
 }
 
 func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application, appNum int) []*widgets.Menu {
-	menus, _, _ := buildMenuBar(secondaryMenuScript(appNum))
+	menus, byID, reply := buildMenuBar(secondaryMenuScript(appNum))
 
 	// Each secondary application has its OWN registry, so the same
 	// action IDs bind per-app without collision.
@@ -273,6 +278,62 @@ func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application
 			windows[0].Close()
 		}
 	})
+
+	// Edit actions operate on the focused widget, just like the main
+	// menu; the context menus on edit boxes invoke the same methods.
+	type editActor interface {
+		Cut()
+		Copy()
+		Paste()
+		SelectAll()
+	}
+	editTarget := func() editActor {
+		if fw := desktop.FocusedWidget(); fw != nil {
+			if ea, ok := fw.(editActor); ok {
+				return ea
+			}
+		}
+		return nil
+	}
+	commands.Register("demo.app.cut", func() {
+		if ea := editTarget(); ea != nil {
+			ea.Cut()
+		}
+	})
+	commands.Register("demo.app.copy", func() {
+		if ea := editTarget(); ea != nil {
+			ea.Copy()
+		}
+	})
+	commands.Register("demo.app.paste", func() {
+		if ea := editTarget(); ea != nil {
+			ea.Paste()
+		}
+	})
+	commands.Register("demo.app.selectall", func() {
+		if ea := editTarget(); ea != nil {
+			ea.SelectAll()
+		}
+	})
+
+	// Grey out Cut when the focused widget reports it doesn't apply
+	// (a terminal's output can't be cut), matching the main Edit menu.
+	if em, ok := byID[reply.IDs["editmenu"]].(*widgets.Menu); ok {
+		cut, _ := byID[reply.IDs["cutitem"]].(*widgets.MenuItem)
+		em.SetOnAboutToShow(func() {
+			if cut == nil {
+				return
+			}
+			enabled := true
+			if fw := desktop.FocusedWidget(); fw != nil {
+				if cq, ok := fw.(interface{ CutEnabled() bool }); ok {
+					enabled = cq.CutEnabled()
+				}
+			}
+			cut.SetEnabled(enabled)
+		})
+	}
+
 	commands.Register("demo.app.rawkey", func() {
 		desktop.ActivatePassNextKeyToWidget()
 	})
