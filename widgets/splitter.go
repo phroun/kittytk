@@ -426,24 +426,37 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 	line := dividerStyle.WithBg(dividerStyle.Fg)
 	p.FillRect(divider, ' ', dividerStyle)
 
+	// Hairline thickness and dot sizes are screen-space quantities:
+	// inside a re-denominated interior, a 1-local-unit line would
+	// scale below one pixel and vanish.
+	hairW := p.ScreenWidthToLocal(1)
+	if hairW < 1 {
+		hairW = 1
+	}
+	hairH := p.ScreenHeightToLocal(1)
+	if hairH < 1 {
+		hairH = 1
+	}
+
 	if sp.orientation == core.Horizontal {
 		// Vertical band: hairline down the middle, broken by the ':'
 		// grab dots at the exact center.
-		lineX := divider.X + (divider.Width-1)/2
+		lineX := divider.X + (divider.Width-hairW)/2
 		cx := divider.X + divider.Width/2
 		cy := divider.Y + divider.Height/2
-		gapHalf := core.Unit(6)
-		p.FillRect(core.UnitRect{X: lineX, Y: divider.Y, Width: 1, Height: cy - gapHalf - divider.Y}, ' ', line)
-		p.FillRect(core.UnitRect{X: lineX, Y: cy + gapHalf, Width: 1, Height: divider.Y + divider.Height - cy - gapHalf}, ' ', line)
-		dot := core.Unit(2)
-		p.FillRect(core.UnitRect{X: cx - dot/2, Y: cy - dot - 1, Width: dot, Height: dot}, ' ', line)
-		p.FillRect(core.UnitRect{X: cx - dot/2, Y: cy + 1, Width: dot, Height: dot}, ' ', line)
+		gapHalf := p.ScreenHeightToLocal(6)
+		p.FillRect(core.UnitRect{X: lineX, Y: divider.Y, Width: hairW, Height: cy - gapHalf - divider.Y}, ' ', line)
+		p.FillRect(core.UnitRect{X: lineX, Y: cy + gapHalf, Width: hairW, Height: divider.Y + divider.Height - cy - gapHalf}, ' ', line)
+		dotW := p.ScreenWidthToLocal(2)
+		dotH := p.ScreenHeightToLocal(2)
+		p.FillRect(core.UnitRect{X: cx - dotW/2, Y: cy - dotH - hairH, Width: dotW, Height: dotH}, ' ', line)
+		p.FillRect(core.UnitRect{X: cx - dotW/2, Y: cy + hairH, Width: dotW, Height: dotH}, ' ', line)
 		return
 	}
 
 	// Horizontal band: hairline across, broken by the centered caption
 	// (title or the classic four grab dots) in the 75% caption face.
-	lineY := divider.Y + (divider.Height-1)/2
+	lineY := divider.Y + (divider.Height-hairH)/2
 	label := "····"
 	if sp.title != "" {
 		label = "·· " + sp.title + " ··"
@@ -459,8 +472,8 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 		boxW = divider.Width
 	}
 	boxX := divider.X + (divider.Width-boxW)/2
-	p.FillRect(core.UnitRect{X: divider.X, Y: lineY, Width: boxX - divider.X, Height: 1}, ' ', line)
-	p.FillRect(core.UnitRect{X: boxX + boxW, Y: lineY, Width: divider.X + divider.Width - boxX - boxW, Height: 1}, ' ', line)
+	p.FillRect(core.UnitRect{X: divider.X, Y: lineY, Width: boxX - divider.X, Height: hairH}, ' ', line)
+	p.FillRect(core.UnitRect{X: boxX + boxW, Y: lineY, Width: divider.X + divider.Width - boxX - boxW, Height: hairH}, ' ', line)
 	// Caption box on the band background, text exactly centered on
 	// the band's centerline.
 	boxY := divider.Y + (divider.Height-h)/2
@@ -471,6 +484,22 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 // HandleMousePress handles mouse button presses.
 func (s *Splitter) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button != core.LeftButton {
+		// The divider only drags with the left button, but other
+		// buttons still belong to the children (context menus).
+		firstBounds, secondBounds := s.childBounds()
+		pos := core.UnitPoint{X: event.X, Y: event.Y}
+		if firstBounds.Contains(pos) && s.first != nil {
+			e := event
+			e.X -= firstBounds.X
+			e.Y -= firstBounds.Y
+			return s.first.HandleMousePress(e)
+		}
+		if secondBounds.Contains(pos) && s.second != nil {
+			e := event
+			e.X -= secondBounds.X
+			e.Y -= secondBounds.Y
+			return s.second.HandleMousePress(e)
+		}
 		return false
 	}
 

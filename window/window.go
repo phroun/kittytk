@@ -1095,8 +1095,11 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		p.DrawCell(x, 0, ' ', titleDisplayStyle)
 		p.DrawCell(x+metrics.CellWidth, 0, '>', titleDisplayStyle)
 	} else {
-		// Normal title - just draw centered
-		p.DrawTextAligned(titleRect, title, core.AlignCenter, core.AlignMiddle, titleStyle, font)
+		rightLimit := bounds.Width
+		if titleFocus == TitleFocusBlur {
+			rightLimit = bounds.Width - buttonWidth
+		}
+		w.paintTitleText(p, title, titleStyle, font, metrics, controlX, rightLimit, bounds.Width)
 	}
 
 	// Draw blur button on far right when blur item is focused
@@ -1298,20 +1301,17 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			p.DrawCell(x, 0, ' ', titleDisplayStyle)
 			p.DrawCell(x+metrics.CellWidth, 0, '>', titleDisplayStyle)
 		} else {
-			// Normal title or blur focused - just draw centered
+			// Normal title or blur focused
 			titleDisplayStyle := titleStyle
 			if titleFocus == TitleFocusBlur {
 				// Blur item focused - use inactive title style for the title text
 				titleDisplayStyle = scheme.GetWindowTitle(false)
 			}
-			// Calculate max title width - leave room for controls on both sides (use cell-based for controls)
-			controlsWidth := buttonWidth * 4 // Estimate: 4 buttons max
-			maxTitleWidth := int((bounds.Width - controlsWidth*2) / metrics.CellWidth)
-			displayTitle := title
-			if len(displayTitle) > maxTitleWidth && maxTitleWidth > 0 {
-				displayTitle = displayTitle[:maxTitleWidth-1] + "…"
+			rightLimit := bounds.Width - metrics.CellWidth
+			if titleFocus == TitleFocusBlur {
+				rightLimit = localBounds.Width - metrics.CellWidth - buttonWidth
 			}
-			p.DrawTextAligned(titleRect, displayTitle, core.AlignCenter, core.AlignMiddle, titleDisplayStyle, font)
+			w.paintTitleText(p, title, titleDisplayStyle, font, metrics, controlX, rightLimit, bounds.Width)
 		}
 
 		// Draw blur button on far right when blur item is focused
@@ -1334,6 +1334,55 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		theme := w.Theme()
 		p.FillRect(contentBounds, ' ', theme.WindowBackground)
 	}
+}
+
+
+// ellipsizeToWidth trims s so that with a trailing ellipsis it fits
+// within avail; empty when not even the ellipsis fits.
+func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
+	const ell = "\u2026"
+	if font.MeasureText(s) <= avail {
+		return s
+	}
+	runes := []rune(s)
+	for len(runes) > 0 {
+		runes = runes[:len(runes)-1]
+		if font.MeasureText(string(runes)+ell) <= avail {
+			return string(runes) + ell
+		}
+	}
+	return ""
+}
+
+// paintTitleText draws the (unfocused) titlebar title. Centered when
+// a centered title fits between the left buttons and the right limit
+// (the blur button when shown, else the right edge); otherwise its
+// left edge sits just past the buttons and the text ellipsizes so
+// the "\u2026" butts against the right limit - the right side keeps no
+// mirrored reserve. A span of zero or less clips the title entirely.
+func (w *Window) paintTitleText(p *core.Painter, title string, ts style.CellStyle, font *core.Font, metrics core.CellMetrics, leftUsed, rightLimit, barWidth core.Unit) {
+	leftEdge := leftUsed + metrics.CellWidth
+	avail := rightLimit - leftEdge
+	if avail <= 0 || title == "" {
+		return
+	}
+	display := title
+	titleW := font.MeasureText(display)
+	if titleW > avail {
+		display = ellipsizeToWidth(title, avail, font)
+		if display == "" {
+			return
+		}
+		titleW = font.MeasureText(display)
+	}
+	x := (barWidth - titleW) / 2
+	if x < leftEdge {
+		x = leftEdge
+	}
+	if x+titleW > rightLimit {
+		x = rightLimit - titleW
+	}
+	p.DrawText(x, 0, display, ts, font)
 }
 
 // buttonAtPosition returns which titlebar button is at the given local coordinates.

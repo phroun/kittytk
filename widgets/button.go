@@ -312,25 +312,34 @@ func (b *Button) Paint(p *core.Painter) {
 	// Total button width (content only, no shadow)
 	buttonWidth := bracketWidth + textWidth + iconWidth
 
-	// X offset: pressed state shifts right by 1 cell
+	graphical := p.Graphical()
+
+	// Pressed offset: on pixel surfaces the face scoots down-right to
+	// land exactly where the shadow rectangle was; cell surfaces keep
+	// the classic one-column shift.
+	shadowOff := metrics.CellWidth / 2
 	xOffset := core.Unit(0)
+	yOffset := core.Unit(0)
 	if showPressed {
-		xOffset = metrics.CellWidth
+		if graphical {
+			xOffset = shadowOff
+			yOffset = shadowOff
+		} else {
+			xOffset = metrics.CellWidth
+		}
 	}
 
 	// Clear the entire button area first (to handle pressed state transition)
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', clearStyle)
 
-	graphical := p.Graphical()
-
 	// Pixel surfaces: the drop shadow is one filled rectangle beneath
-	// the face, offset down-right; the face paints over it. The
-	// half-block construction below is the cell-surface rendering of
-	// the same geometry.
+	// the face, offset down-right by half a column; the face paints
+	// over it. The half-block construction below is the cell-surface
+	// rendering of the same idea.
 	if graphical && !showPressed {
 		p.FillRect(core.UnitRect{
-			X:      xOffset + metrics.CellWidth,
-			Y:      metrics.CellHeight / 2,
+			X:      shadowOff,
+			Y:      shadowOff,
 			Width:  buttonWidth,
 			Height: metrics.CellHeight,
 		}, ' ', style.DefaultStyle().WithBg(shadowFg))
@@ -340,7 +349,7 @@ func (b *Button) Paint(p *core.Painter) {
 	if !b.flat || focused || showPressed {
 		p.FillRect(core.UnitRect{
 			X:      xOffset,
-			Y:      0,
+			Y:      yOffset,
 			Width:  buttonWidth,
 			Height: metrics.CellHeight,
 		}, ' ', s)
@@ -372,7 +381,7 @@ func (b *Button) Paint(p *core.Painter) {
 
 		if textIcon.Width > 0 {
 			x := xOffset + metrics.CellWidth // After left bracket (1 cell)
-			y := core.Unit(0)
+			y := yOffset
 			for row := 0; row < textIcon.Height; row++ {
 				for col := 0; col < textIcon.Width; col++ {
 					cell := textIcon.CellAt(col, row)
@@ -384,17 +393,17 @@ func (b *Button) Paint(p *core.Painter) {
 	}
 
 	// Draw left bracket/space (decorative - use DrawCell, not DrawText)
-	p.DrawCell(xOffset, 0, leftBracket, s)
+	p.DrawCell(xOffset, yOffset, leftBracket, s)
 
 	// Draw text using font
 	if b.text != "" {
 		textX := xOffset + metrics.CellWidth + iconWidth // After left bracket (1 cell)
-		p.DrawText(textX, 0, b.text, s, font)
+		p.DrawText(textX, yOffset, b.text, s, font)
 	}
 
 	// Draw right bracket/space (decorative - use DrawCell, not DrawText)
 	rightX := xOffset + buttonWidth - metrics.CellWidth // Before right edge (1 cell)
-	p.DrawCell(rightX, 0, rightBracket, s)
+	p.DrawCell(rightX, yOffset, rightBracket, s)
 }
 
 // HandleKeyPress handles keyboard input.

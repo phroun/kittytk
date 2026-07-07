@@ -171,7 +171,13 @@ func (t *PurfecTerm) updateTerminalSize() {
 	bounds := t.Bounds()
 	cw, ch := t.cellDims()
 
-	newCols := int(bounds.Width / cw)
+	width := bounds.Width
+	if t.gfxInputActive() {
+		// The vertical scrollbar lane is always present on pixel
+		// surfaces: reserve its width so it never covers text.
+		width -= gfxScrollbarLane
+	}
+	newCols := int(width / cw)
 	newRows := int(bounds.Height / ch)
 
 	if newCols > 0 && newRows > 0 && (newCols != t.cols || newRows != t.rows) {

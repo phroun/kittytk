@@ -1018,9 +1018,14 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 	leftEllipseWidth := core.Unit(0)
 	if t.tabScrollOffset > 0 {
 		leftEllipseWidth = metrics.TextWidth(3) // "..."
-		// Draw the left ellipse (underlined)
-		for i := 0; i < 3; i++ {
-			p.DrawCell(metrics.CellToUnitsX(i), 0, '.', tabBarUnderlined)
+		// Draw the left ellipse (underlined; proportional on pixel
+		// surfaces - the reserve width stays cell-based)
+		if p.Graphical() {
+			p.DrawText(0, 0, "...", tabBarUnderlined, font)
+		} else {
+			for i := 0; i < 3; i++ {
+				p.DrawCell(metrics.CellToUnitsX(i), 0, '.', tabBarUnderlined)
+			}
 		}
 	}
 
@@ -1313,8 +1318,12 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 					// If text is complete, let the "more tabs" ellipsis handle it (external style)
 					actuallyTruncated := charsToShow < len(textRunes)
 					if actuallyTruncated && needsScrolling {
-						for i := 0; i < 3; i++ {
-							p.DrawCell(x+core.Unit(i)*metrics.CellWidth, 0, '.', s)
+						if p.Graphical() {
+							p.DrawText(x, 0, "...", s, font)
+						} else {
+							for i := 0; i < 3; i++ {
+								p.DrawCell(x+core.Unit(i)*metrics.CellWidth, 0, '.', s)
+							}
 						}
 						x += metrics.TextWidth(3)
 						truncatedTabStyle = s
@@ -1506,11 +1515,18 @@ func (t *TabWidget) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme *
 
 			// Draw as many dots as will fit before scroll buttons
 			dotsDrawn := 0
-			for i := 0; i < 3; i++ {
-				dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
-				if dotX+metrics.CellWidth <= scrollAreaStart {
-					p.DrawCell(dotX, 0, '.', ellipsisStyle)
-					dotsDrawn++
+			if p.Graphical() {
+				if ellipsisX+font.MeasureText("...") <= scrollAreaStart {
+					p.DrawText(ellipsisX, 0, "...", ellipsisStyle, font)
+					dotsDrawn = 3
+				}
+			} else {
+				for i := 0; i < 3; i++ {
+					dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
+					if dotX+metrics.CellWidth <= scrollAreaStart {
+						p.DrawCell(dotX, 0, '.', ellipsisStyle)
+						dotsDrawn++
+					}
 				}
 			}
 
@@ -1616,8 +1632,12 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 	if t.tabScrollOffset > 0 {
 		leftEllipseWidth = metrics.TextWidth(3) // "..."
 		// Draw the left ellipse (with overline)
-		for i := 0; i < 3; i++ {
-			p.DrawCell(metrics.CellToUnitsX(i), tabY, '.', tabBarOverlined)
+		if p.Graphical() {
+			p.DrawText(0, tabY, "...", tabBarOverlined, font)
+		} else {
+			for i := 0; i < 3; i++ {
+				p.DrawCell(metrics.CellToUnitsX(i), tabY, '.', tabBarOverlined)
+			}
 		}
 	}
 
@@ -1803,8 +1823,12 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 					// If text is complete, let the "more tabs" ellipsis handle it (external style)
 					actuallyTruncated := charsToShow < len(textRunes)
 					if actuallyTruncated && needsScrolling {
-						for i := 0; i < 3; i++ {
-							p.DrawCell(x+core.Unit(i)*metrics.CellWidth, tabY, '.', s)
+						if p.Graphical() {
+							p.DrawText(x, tabY, "...", s, font)
+						} else {
+							for i := 0; i < 3; i++ {
+								p.DrawCell(x+core.Unit(i)*metrics.CellWidth, tabY, '.', s)
+							}
 						}
 						x += metrics.TextWidth(3)
 						truncatedTabStyle = s
@@ -1987,11 +2011,18 @@ func (t *TabWidget) paintBottomTabs(p *core.Painter, bounds core.UnitRect, schem
 
 			// Draw as many dots as will fit before scroll buttons
 			dotsDrawn := 0
-			for i := 0; i < 3; i++ {
-				dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
-				if dotX+metrics.CellWidth <= scrollAreaStart {
-					p.DrawCell(dotX, tabY, '.', ellipsisStyle)
-					dotsDrawn++
+			if p.Graphical() {
+				if ellipsisX+font.MeasureText("...") <= scrollAreaStart {
+					p.DrawText(ellipsisX, tabY, "...", ellipsisStyle, font)
+					dotsDrawn = 3
+				}
+			} else {
+				for i := 0; i < 3; i++ {
+					dotX := ellipsisX + core.Unit(i)*metrics.CellWidth
+					if dotX+metrics.CellWidth <= scrollAreaStart {
+						p.DrawCell(dotX, tabY, '.', ellipsisStyle)
+						dotsDrawn++
+					}
 				}
 			}
 
@@ -2464,6 +2495,19 @@ func (t *TabWidget) lastTab() {
 // HandleMousePress handles mouse clicks.
 func (t *TabWidget) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button != core.LeftButton {
+		// Tab-bar chrome only reacts to the left button, but other
+		// buttons still belong to the content (context menus).
+		if t.currentIndex >= 0 && t.currentIndex < len(t.tabs) {
+			if content := t.tabs[t.currentIndex].Content; content != nil {
+				cb := t.contentBounds()
+				if cb.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+					e := event
+					e.X -= cb.X
+					e.Y -= cb.Y
+					return content.HandleMousePress(e)
+				}
+			}
+		}
 		return false
 	}
 

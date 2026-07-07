@@ -159,9 +159,13 @@ func (s *LineSeparator) Paint(p *core.Painter) {
 // exactly-centered title in the 75% caption face.
 func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle) {
 	line := lineStyle.WithBg(lineStyle.Fg)
-	midY := bounds.Height / 2
+	hairH := p.ScreenHeightToLocal(1)
+	if hairH < 1 {
+		hairH = 1
+	}
+	midY := (bounds.Height - hairH) / 2
 	if s.title == "" {
-		p.FillRect(core.UnitRect{Y: midY, Width: bounds.Width, Height: 1}, ' ', line)
+		p.FillRect(core.UnitRect{Y: midY, Width: bounds.Width, Height: hairH}, ' ', line)
 		return
 	}
 	font := captionFont75(s.EffectiveFont())
@@ -175,9 +179,9 @@ func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.Un
 	}
 	boxX := (bounds.Width - boxW) / 2
 	// The line in two segments: the mid-section belongs to the title.
-	p.FillRect(core.UnitRect{X: 0, Y: midY, Width: boxX, Height: 1}, ' ', line)
-	p.FillRect(core.UnitRect{X: boxX + boxW, Y: midY, Width: bounds.Width - boxX - boxW, Height: 1}, ' ', line)
-	p.DrawText(boxX+pad, midY-h/2, s.title, titleStyle, font)
+	p.FillRect(core.UnitRect{X: 0, Y: midY, Width: boxX, Height: hairH}, ' ', line)
+	p.FillRect(core.UnitRect{X: boxX + boxW, Y: midY, Width: bounds.Width - boxX - boxW, Height: hairH}, ' ', line)
+	p.DrawText(boxX+pad, midY+hairH/2-h/2, s.title, titleStyle, font)
 }
 
 // paintVerticalGraphical draws the vertical rule: a hairline spanning
@@ -185,9 +189,13 @@ func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.Un
 // title runes in the 75% caption face.
 func (s *LineSeparator) paintVerticalGraphical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle) {
 	line := lineStyle.WithBg(lineStyle.Fg)
-	midX := bounds.Width / 2
+	hairW := p.ScreenWidthToLocal(1)
+	if hairW < 1 {
+		hairW = 1
+	}
+	midX := (bounds.Width - hairW) / 2
 	if s.title == "" {
-		p.FillRect(core.UnitRect{X: midX, Width: 1, Height: bounds.Height}, ' ', line)
+		p.FillRect(core.UnitRect{X: midX, Width: hairW, Height: bounds.Height}, ' ', line)
 		return
 	}
 	font := captionFont75(s.EffectiveFont())
@@ -199,8 +207,8 @@ func (s *LineSeparator) paintVerticalGraphical(p *core.Painter, bounds core.Unit
 		boxH = bounds.Height
 	}
 	boxY := (bounds.Height - boxH) / 2
-	p.FillRect(core.UnitRect{X: midX, Y: 0, Width: 1, Height: boxY}, ' ', line)
-	p.FillRect(core.UnitRect{X: midX, Y: boxY + boxH, Width: 1, Height: bounds.Height - boxY - boxH}, ' ', line)
+	p.FillRect(core.UnitRect{X: midX, Y: 0, Width: hairW, Height: boxY}, ' ', line)
+	p.FillRect(core.UnitRect{X: midX, Y: boxY + boxH, Width: hairW, Height: bounds.Height - boxY - boxH}, ' ', line)
 	y := boxY + pad
 	for _, r := range runes {
 		rw := p.ScreenWidthToLocal(font.MeasureText(string(r)))
