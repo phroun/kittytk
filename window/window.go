@@ -22,17 +22,17 @@ const (
 type WindowFlags int
 
 const (
-	WindowFlagNone        WindowFlags = 0
-	WindowFlagFrameless   WindowFlags = 1 << iota // No window frame
-	WindowFlagNoTitle                             // No title bar
-	WindowFlagNoResize                            // Cannot be resized
-	WindowFlagNoMove                              // Cannot be moved
-	WindowFlagNoClose                             // No close button
-	WindowFlagNoMinimize                          // No minimize button
-	WindowFlagNoMaximize                          // No maximize button
-	WindowFlagModal                               // Blocks input to other windows
-	WindowFlagStaysOnTop                          // Always on top
-	WindowFlagToolWindow                          // Smaller title bar, no taskbar entry
+	WindowFlagNone       WindowFlags = 0
+	WindowFlagFrameless  WindowFlags = 1 << iota // No window frame
+	WindowFlagNoTitle                            // No title bar
+	WindowFlagNoResize                           // Cannot be resized
+	WindowFlagNoMove                             // Cannot be moved
+	WindowFlagNoClose                            // No close button
+	WindowFlagNoMinimize                         // No minimize button
+	WindowFlagNoMaximize                         // No maximize button
+	WindowFlagModal                              // Blocks input to other windows
+	WindowFlagStaysOnTop                         // Always on top
+	WindowFlagToolWindow                         // Smaller title bar, no taskbar entry
 )
 
 // windowCornerRadius is the corner radius (in units) of the graphical
@@ -67,7 +67,6 @@ const (
 	TitleFocusBlur                       // Blur item focused (exit window)
 )
 
-
 // Window represents a floating window with frame, title bar, and content area.
 // Windows support maximization, minimization, MDI-style child windows,
 // and optional Mac-like menu integration.
@@ -94,29 +93,29 @@ type Window struct {
 	normalBounds core.UnitRect
 
 	// Content
-	content      core.Widget
-	layout       core.LayoutManager
+	content core.Widget
+	layout  core.LayoutManager
 
 	// Focus management
 	focusManager *core.FocusManager
 
 	// Child windows (MDI support)
-	parent       *Window
-	children     []*Window
+	parent   *Window
+	children []*Window
 
 	// Window chrome
-	borderStyle  style.BorderStyle
-	titleStyle   style.CellStyle
-	frameStyle   style.CellStyle
+	borderStyle style.BorderStyle
+	titleStyle  style.CellStyle
+	frameStyle  style.CellStyle
 
 	// Font (nil = inherit from desktop/MDI pane)
 	font *core.Font
 
 	// Sizing
-	minWidth     core.Unit
-	minHeight    core.Unit
-	maxWidth     core.Unit
-	maxHeight    core.Unit
+	minWidth  core.Unit
+	minHeight core.Unit
+	maxWidth  core.Unit
+	maxHeight core.Unit
 
 	// Callbacks
 	onClose       func() bool // Return false to prevent close
@@ -126,11 +125,12 @@ type Window struct {
 	onStateChange func(state WindowState)
 
 	// Request callbacks (for WindowManager integration)
-	onMinimizeRequest     func()               // Called when user clicks minimize button
-	onMaximizeRequest     func()               // Called when user clicks maximize button
-	onCloseComplete       func()               // Called when window is closed, to remove from manager
-	getConstrainingBounds func() core.UnitRect // Returns the client area for movement constraints
-	popupController       core.PopupController // Popup controller for ComboBox etc.
+	onMinimizeRequest     func()                   // Called when user clicks minimize button
+	onMaximizeRequest     func()                   // Called when user clicks maximize button
+	onBoundsRequest       func(core.UnitRect) bool // Takes title-focus keyboard geometry whole (torn-off hosts)
+	onCloseComplete       func()                   // Called when window is closed, to remove from manager
+	getConstrainingBounds func() core.UnitRect     // Returns the client area for movement constraints
+	popupController       core.PopupController     // Popup controller for ComboBox etc.
 
 	// Button press tracking
 	pressedButton TitleButton // Currently pressed titlebar button
@@ -153,8 +153,8 @@ func NewWindow(title string) *Window {
 		borderStyle: style.BorderDouble,
 		titleStyle:  style.DefaultStyle().WithFg(style.ColorWhite).WithBg(style.ColorBlue).Bold(),
 		frameStyle:  style.DefaultStyle().WithFg(style.ColorBrightCyan).WithBg(style.ColorBlue),
-		minWidth:    80,  // 10 characters minimum
-		minHeight:   48,  // 3 lines minimum
+		minWidth:    80, // 10 characters minimum
+		minHeight:   48, // 3 lines minimum
 		maxWidth:    1<<30 - 1,
 		maxHeight:   1<<30 - 1,
 	}
@@ -1150,7 +1150,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		// color but keep corners, horizontally adjacent chars, and buttons
 		// in active color
 		scheme := w.GetScheme()
-		blurFrameStyle := scheme.GetWindowTitle(false)  // Inactive title color for dashed lines
+		blurFrameStyle := scheme.GetWindowTitle(false)   // Inactive title color for dashed lines
 		activeFrameStyle := scheme.GetWindowBorder(true) // Active color for corners
 
 		// Dashed line characters
@@ -1321,7 +1321,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		// Draw blur button on far right when blur item is focused
 		// This is a decorative button - use cell-based sizing (3 cells)
 		if titleFocus == TitleFocusBlur {
-			blurBtnStyle := scheme.GetTitleBarButton(true, true, false) // Focused button style
+			blurBtnStyle := scheme.GetTitleBarButton(true, true, false)  // Focused button style
 			blurX := localBounds.Width - metrics.CellWidth - buttonWidth // Position before right border
 			p.DrawCell(blurX, 0, '[', blurBtnStyle)
 			p.DrawCell(blurX+metrics.CellWidth, 0, '~', blurBtnStyle)
@@ -1339,7 +1339,6 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		p.FillRect(contentBounds, ' ', theme.WindowBackground)
 	}
 }
-
 
 // ellipsizeToWidth trims s so that with a trailing ellipsis it fits
 // within avail; empty when not even the ellipsis fits.
@@ -1660,13 +1659,13 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					newBounds := bounds
 					newBounds.X -= horizStep
 					newBounds.Width += horizStep
-					w.SetBounds(newBounds)
+					w.requestKeyboardBounds(newBounds, false)
 				} else if resizeEdges&ResizeEdgeRight != 0 {
 					// Continue right resize: shrink right edge
 					newBounds := bounds
 					newBounds.Width -= horizStep
 					if newBounds.Width >= w.minWidth {
-						w.SetBounds(newBounds)
+						w.requestKeyboardBounds(newBounds, false)
 					}
 				} else {
 					// Start: expand left edge
@@ -1679,13 +1678,13 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					newBounds := bounds
 					newBounds.X -= horizStep
 					newBounds.Width += horizStep
-					w.SetBounds(newBounds)
+					w.requestKeyboardBounds(newBounds, false)
 				}
 			} else {
 				// Move window left
 				newBounds := bounds
 				newBounds.X -= horizStep
-				w.SetBounds(w.constrainBoundsForMovement(newBounds))
+				w.requestKeyboardBounds(newBounds, true)
 			}
 			return true
 
@@ -1696,14 +1695,14 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					// Continue right resize: expand right
 					newBounds := bounds
 					newBounds.Width += horizStep
-					w.SetBounds(newBounds)
+					w.requestKeyboardBounds(newBounds, false)
 				} else if resizeEdges&ResizeEdgeLeft != 0 {
 					// Continue left resize: shrink left edge
 					newBounds := bounds
 					newBounds.X += horizStep
 					newBounds.Width -= horizStep
 					if newBounds.Width >= w.minWidth {
-						w.SetBounds(newBounds)
+						w.requestKeyboardBounds(newBounds, false)
 					}
 				} else {
 					// Start: expand right edge
@@ -1715,13 +1714,13 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					w.mu.Unlock()
 					newBounds := bounds
 					newBounds.Width += horizStep
-					w.SetBounds(newBounds)
+					w.requestKeyboardBounds(newBounds, false)
 				}
 			} else {
 				// Move window right
 				newBounds := bounds
 				newBounds.X += horizStep
-				w.SetBounds(w.constrainBoundsForMovement(newBounds))
+				w.requestKeyboardBounds(newBounds, true)
 			}
 			return true
 
@@ -1733,13 +1732,13 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					newBounds := bounds
 					newBounds.Y -= vertStep
 					newBounds.Height += vertStep
-					w.SetBounds(newBounds)
+					w.requestKeyboardBounds(newBounds, false)
 				} else if resizeEdges&ResizeEdgeBottom != 0 {
 					// Continue bottom resize: shrink bottom edge
 					newBounds := bounds
 					newBounds.Height -= vertStep
 					if newBounds.Height >= w.minHeight {
-						w.SetBounds(newBounds)
+						w.requestKeyboardBounds(newBounds, false)
 					}
 				} else {
 					// Start: expand top edge
@@ -1752,13 +1751,13 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					newBounds := bounds
 					newBounds.Y -= vertStep
 					newBounds.Height += vertStep
-					w.SetBounds(newBounds)
+					w.requestKeyboardBounds(newBounds, false)
 				}
 			} else {
 				// Move window up
 				newBounds := bounds
 				newBounds.Y -= vertStep
-				w.SetBounds(w.constrainBoundsForMovement(newBounds))
+				w.requestKeyboardBounds(newBounds, true)
 			}
 			return true
 
@@ -1769,14 +1768,14 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					// Continue bottom resize: expand bottom
 					newBounds := bounds
 					newBounds.Height += vertStep
-					w.SetBounds(newBounds)
+					w.requestKeyboardBounds(newBounds, false)
 				} else if resizeEdges&ResizeEdgeTop != 0 {
 					// Continue top resize: shrink top edge
 					newBounds := bounds
 					newBounds.Y += vertStep
 					newBounds.Height -= vertStep
 					if newBounds.Height >= w.minHeight {
-						w.SetBounds(newBounds)
+						w.requestKeyboardBounds(newBounds, false)
 					}
 				} else {
 					// Start: expand bottom edge
@@ -1788,13 +1787,13 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					w.mu.Unlock()
 					newBounds := bounds
 					newBounds.Height += vertStep
-					w.SetBounds(newBounds)
+					w.requestKeyboardBounds(newBounds, false)
 				}
 			} else {
 				// Move window down
 				newBounds := bounds
 				newBounds.Y += vertStep
-				w.SetBounds(w.constrainBoundsForMovement(newBounds))
+				w.requestKeyboardBounds(newBounds, true)
 			}
 			return true
 
@@ -1816,7 +1815,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				startBounds := w.resizeStartBounds
 				w.resizeEdges = ResizeEdgeNone
 				w.mu.Unlock()
-				w.SetBounds(startBounds)
+				w.requestKeyboardBounds(startBounds, false)
 			} else {
 				w.mu.Unlock()
 			}
@@ -1825,6 +1824,33 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 	}
 
 	return false
+}
+
+// SetOnBoundsRequest installs a delegate for title-focus keyboard
+// geometry changes (arrow moves, Shift-arrow resizes, Escape
+// reverts). A torn-off window's host maps the deltas onto its OS
+// window; nil restores normal in-surface SetBounds handling.
+func (w *Window) SetOnBoundsRequest(handler func(core.UnitRect) bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onBoundsRequest = handler
+}
+
+// requestKeyboardBounds applies a title-focus keyboard geometry
+// change: the bounds delegate takes it whole when installed,
+// otherwise it applies in-surface - constrained to the client area
+// when the change is a pure move.
+func (w *Window) requestKeyboardBounds(b core.UnitRect, isMove bool) {
+	w.mu.RLock()
+	delegate := w.onBoundsRequest
+	w.mu.RUnlock()
+	if delegate != nil && delegate(b) {
+		return
+	}
+	if isMove {
+		b = w.constrainBoundsForMovement(b)
+	}
+	w.SetBounds(b)
 }
 
 // constrainBoundsForMovement adjusts bounds to keep titlebar visible within client area.
@@ -2228,7 +2254,7 @@ func (w *Window) SizeHint() core.UnitSize {
 
 	// Add frame
 	if flags&WindowFlagFrameless == 0 {
-		width += metrics.CellWidth * 2  // Left and right borders
+		width += metrics.CellWidth * 2   // Left and right borders
 		height += metrics.CellHeight * 2 // Top and bottom borders
 	}
 

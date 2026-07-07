@@ -77,6 +77,7 @@ func NewTearOffHost(win *Window, surf platform.Surface, scale int,
 	// zooms to the display's work area, macOS option-zoom style).
 	win.SetFlags(h.savedFlags | WindowFlagNoMinimize)
 	win.SetOnMaximizeRequest(h.ToggleZoom)
+	win.SetOnBoundsRequest(h.applyKeyboardBounds)
 
 	size := surf.Size()
 	win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
@@ -93,6 +94,13 @@ func (h *TearOffHost) Window() *Window { return h.win }
 
 // Surface returns the hosted surface.
 func (h *TearOffHost) Surface() platform.Surface { return h.surf }
+
+// Invalidate requests a repaint of the hosted window. The desktop's
+// repaint tick calls it so animation (blinking carets, indeterminate
+// progress) keeps running in torn-off windows.
+func (h *TearOffHost) Invalidate() {
+	h.surf.Invalidate(core.UnitRect{})
+}
 
 // SavedFlags returns the window's flags from before the tear-off,
 // for the desktop to restore on re-dock.
@@ -281,6 +289,31 @@ func (h *TearOffHost) ToggleZoom() {
 	h.win.Maximize()
 	h.native.SetScreenPositionPx(wx, wy)
 	h.native.SetScreenSizePx(ww, wh)
+}
+
+// applyKeyboardBounds maps a title-focus keyboard geometry change
+// (arrow move, Shift-arrow resize, Escape revert) onto the OS
+// window: position deltas move it across the real desktop, size
+// deltas resize it, exactly as the same keys move an in-surface
+// window around the tuitk desktop.
+func (h *TearOffHost) applyKeyboardBounds(b core.UnitRect) bool {
+	if h.native == nil || h.zoomed {
+		return h.zoomed // zoomed: swallow, geometry is the work area's
+	}
+	cur := h.win.Bounds()
+	dx := int(b.X-cur.X) * h.scale
+	dy := int(b.Y-cur.Y) * h.scale
+	dw := int(b.Width-cur.Width) * h.scale
+	dh := int(b.Height-cur.Height) * h.scale
+	if dx != 0 || dy != 0 {
+		x, y := h.native.ScreenPositionPx()
+		h.native.SetScreenPositionPx(x+dx, y+dy)
+	}
+	if (dw != 0 || dh != 0) && h.win.Flags()&WindowFlagNoResize == 0 {
+		size := h.surf.Size()
+		h.native.SetScreenSizePx(int(size.Width)*h.scale+dw, int(size.Height)*h.scale+dh)
+	}
+	return true
 }
 
 // inTitleBar reports whether the point sits in the window's title

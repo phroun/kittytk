@@ -111,6 +111,7 @@ func (d *Desktop) tearOffWindow(win *window.Window, e core.MouseMoveEvent, offX,
 
 	d.mu.Lock()
 	d.tornDrag = &tornDrag{host: host, surf: newSurf, offX: offX, offY: offY}
+	d.tornHosts = append(d.tornHosts, host)
 	d.mu.Unlock()
 	return true
 }
@@ -218,6 +219,12 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit) {
 	if d.tornDrag != nil && d.tornDrag.host == host {
 		d.tornDrag = nil
 	}
+	for i, th := range d.tornHosts {
+		if th == host {
+			d.tornHosts = append(d.tornHosts[:i], d.tornHosts[i+1:]...)
+			break
+		}
+	}
 	d.mu.Unlock()
 	host.EndDrag()
 
@@ -229,6 +236,7 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit) {
 	}
 
 	win.SetFlags(host.SavedFlags())
+	win.SetOnBoundsRequest(nil)
 	d.windowManager.AddWindow(win)
 	win.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
 	win.Layout()

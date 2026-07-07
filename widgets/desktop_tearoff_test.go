@@ -12,17 +12,18 @@ import (
 
 // msSurface is a fake native surface: an OS window's worth of state.
 type msSurface struct {
-	size    core.UnitSize
-	handler platform.SurfaceHandler
-	x, y    int
-	closed  bool
-	opts    platform.SurfaceOptions
+	size        core.UnitSize
+	handler     platform.SurfaceHandler
+	x, y        int
+	closed      bool
+	invalidated bool
+	opts        platform.SurfaceOptions
 }
 
 func (s *msSurface) Size() core.UnitSize                  { return s.size }
 func (s *msSurface) Metrics() core.CellMetrics            { return core.DefaultCellMetrics() }
 func (s *msSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
-func (s *msSurface) Invalidate(core.UnitRect)             {}
+func (s *msSurface) Invalidate(core.UnitRect)             { s.invalidated = true }
 func (s *msSurface) SetCursorVisible(bool)                {}
 func (s *msSurface) SetCursorPosition(x, y core.Unit)     {}
 func (s *msSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
@@ -44,6 +45,7 @@ func (s *msSurface) SetScreenSizePx(w, h int) {
 type msPlatform struct {
 	surfaces []*msSurface
 	script   func()
+	afters   []func() // PostAfter callbacks, fired by the script
 	gx, gy   int
 }
 
@@ -54,14 +56,14 @@ func (p *msPlatform) Run(init func(platform.Platform)) int {
 	}
 	return 0
 }
-func (p *msPlatform) Post(fn func())                  { fn() }
-func (p *msPlatform) PostAfter(time.Duration, func()) {}
-func (p *msPlatform) Quit(int)                        {}
-func (p *msPlatform) Clipboard() string               { return "" }
-func (p *msPlatform) SetClipboard(string)             {}
-func (p *msPlatform) Beep()                           {}
-func (p *msPlatform) SupportsMultipleSurfaces() bool  { return true }
-func (p *msPlatform) GlobalPointerPx() (int, int)     { return p.gx, p.gy }
+func (p *msPlatform) Post(fn func())                       { fn() }
+func (p *msPlatform) PostAfter(_ time.Duration, fn func()) { p.afters = append(p.afters, fn) }
+func (p *msPlatform) Quit(int)                             {}
+func (p *msPlatform) Clipboard() string                    { return "" }
+func (p *msPlatform) SetClipboard(string)                  {}
+func (p *msPlatform) Beep()                                {}
+func (p *msPlatform) SupportsMultipleSurfaces() bool       { return true }
+func (p *msPlatform) GlobalPointerPx() (int, int)          { return p.gx, p.gy }
 func (p *msPlatform) CreateSurface(o platform.SurfaceOptions) (platform.Surface, error) {
 	s := &msSurface{opts: o, x: o.XPx, y: o.YPx}
 	if len(p.surfaces) == 0 {
@@ -298,6 +300,17 @@ func TestMissedReleaseDoesNotStealTornWindow(t *testing.T) {
 		send(core.MouseReleaseEvent{X: 400, Y: 300, Button: core.LeftButton})
 		if torn.closed || containsWindow(wm, win) {
 			t.Fatal("desktop click stole the torn window back")
+		}
+
+		// The desktop's repaint tick drives the torn surface too, so
+		// blinking carets and progress animation keep running there.
+		torn.invalidated = false
+		if len(plat.afters) == 0 {
+			t.Fatal("no repaint tick scheduled")
+		}
+		plat.afters[len(plat.afters)-1]()
+		if !torn.invalidated {
+			t.Error("repaint tick did not invalidate the torn surface")
 		}
 
 		d.QuitWithCode(0)

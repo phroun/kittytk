@@ -132,6 +132,10 @@ type Desktop struct {
 	// desktop window owns the capture until the button is released).
 	tornDrag *tornDrag
 
+	// Every window currently torn off into its own surface: the
+	// repaint tick drives their animation alongside the desktop's.
+	tornHosts []*window.TearOffHost
+
 	// Running state
 	running atomic.Bool
 
@@ -972,9 +976,13 @@ func (d *Desktop) scheduleTick(p platform.Platform) {
 		d.ProcessTimers()
 		d.mu.RLock()
 		s := d.surface
+		torn := append([]*window.TearOffHost(nil), d.tornHosts...)
 		d.mu.RUnlock()
 		if s != nil {
 			s.Invalidate(core.UnitRect{})
+		}
+		for _, h := range torn {
+			h.Invalidate()
 		}
 		d.scheduleTick(p)
 	})
@@ -2033,10 +2041,10 @@ type StatusTextSpan struct {
 
 // StatusSection represents a section of the status bar.
 type StatusSection struct {
-	Text      string            // Plain text (used if Spans is empty)
-	Spans     []StatusTextSpan  // Styled text spans (takes precedence over Text)
-	Width     int               // 0 = auto, -1 = stretch
-	Alignment int               // 0 = left, 1 = center, 2 = right
+	Text      string           // Plain text (used if Spans is empty)
+	Spans     []StatusTextSpan // Styled text spans (takes precedence over Text)
+	Width     int              // 0 = auto, -1 = stretch
+	Alignment int              // 0 = left, 1 = center, 2 = right
 }
 
 // NewStatusBar creates a new status bar.

@@ -122,3 +122,27 @@ func TestTearOffHostZoom(t *testing.T) {
 		t.Errorf("window did not track the restored surface: %dx%d", b.Width, b.Height)
 	}
 }
+
+// Title-focus keyboard geometry (arrow moves, Shift-arrow resizes)
+// maps onto the OS window while torn: the same keys that walk an
+// in-surface window around the tuitk desktop walk the torn window
+// around the real one.
+func TestTearOffHostKeyboardGeometry(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, 2, func() (int, int) { return 0, 0 }, nil)
+
+	// Arrow move: -8 units at scale 2 = -16 px.
+	if !h.applyKeyboardBounds(core.UnitRect{X: -8, Y: 0, Width: 200, Height: 100}) {
+		t.Fatal("bounds delegate not taken")
+	}
+	if surf.x != 500-16 || surf.y != 300 {
+		t.Errorf("keyboard move: window at %d,%d, want %d,%d", surf.x, surf.y, 500-16, 300)
+	}
+
+	// Shift-arrow resize: +16 units wide at scale 2 = +32 px.
+	h.applyKeyboardBounds(core.UnitRect{X: 0, Y: 0, Width: 216, Height: 100})
+	if surf.size.Width != 200*2+32 {
+		t.Errorf("keyboard resize: width %d px, want %d", surf.size.Width, 200*2+32)
+	}
+}
