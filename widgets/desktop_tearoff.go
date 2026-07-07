@@ -219,6 +219,12 @@ func (d *Desktop) redockAt(host *window.TearOffHost, gx, gy int, grabX, grabY co
 	if !ok {
 		return false
 	}
+	if native.Minimized() {
+		// A minimized desktop's rectangle is a phantom: dragging a
+		// torn window across it must not dock into an invisible
+		// desktop.
+		return false
+	}
 	scale := d.deviceScale()
 	deskX, deskY := native.ScreenPositionPx()
 	size := surf.Size()

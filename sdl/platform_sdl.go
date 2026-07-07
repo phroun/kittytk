@@ -779,6 +779,15 @@ func min32(a, b int32) int32 {
 	return b
 }
 
+// Minimized implements platform.NativeSurface.
+func (s *sdlSurface) Minimized() bool {
+	if s.closed || s.win.window == nil {
+		return true
+	}
+	flags := s.win.window.GetFlags()
+	return flags&sdl2.WINDOW_MINIMIZED != 0 || flags&sdl2.WINDOW_HIDDEN != 0
+}
+
 // SetOpacity implements platform.NativeSurface.
 func (s *sdlSurface) SetOpacity(opacity float64) {
 	if s.closed || s.win.window == nil {

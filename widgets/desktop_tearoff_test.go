@@ -18,6 +18,7 @@ type msSurface struct {
 	closed      bool
 	invalidated bool
 	opacity     float64
+	minimized   bool
 	opts        platform.SurfaceOptions
 }
 
@@ -31,6 +32,7 @@ func (s *msSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *msSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *msSurface) Close()                               { s.closed = true }
 func (s *msSurface) SetOpacity(o float64)                 { s.opacity = o }
+func (s *msSurface) Minimized() bool                      { return s.minimized }
 func (s *msSurface) WorkAreaPx() (int, int, int, int)     { return 0, 0, 1600, 1000 }
 
 // SetScreenSizePx mimics the real platform: the size change reports
@@ -67,7 +69,7 @@ func (p *msPlatform) Beep()                                {}
 func (p *msPlatform) SupportsMultipleSurfaces() bool       { return true }
 func (p *msPlatform) GlobalPointerPx() (int, int)          { return p.gx, p.gy }
 func (p *msPlatform) CreateSurface(o platform.SurfaceOptions) (platform.Surface, error) {
-	s := &msSurface{opts: o, x: o.XPx, y: o.YPx}
+	s := &msSurface{opts: o, x: o.XPx, y: o.YPx, opacity: 1}
 	if len(p.surfaces) == 0 {
 		// The desktop window: 800x480 units at 50,60 px, scale 1.
 		s.size = core.UnitSize{Width: 800, Height: 480}
@@ -336,6 +338,64 @@ func TestMissedReleaseDoesNotStealTornWindow(t *testing.T) {
 		if !torn.invalidated {
 			t.Error("repaint tick did not invalidate the torn surface")
 		}
+
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
+// A minimized desktop's screen rectangle is a phantom: dragging a
+// torn window across it must not re-dock into the invisible desktop.
+func TestNoRedockIntoMinimizedDesktop(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	win := window.NewWindow("tearme")
+	d.SetOnStartup(func() {
+		d.WindowManager().AddWindow(win)
+		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
+		win.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		desk := plat.surfaces[0]
+		wm := d.WindowManager()
+		send := func(ev core.Event) { desk.handler.Event(ev) }
+
+		// Tear off and release outside.
+		send(core.MousePressEvent{X: 220, Y: 108, Button: core.LeftButton})
+		send(core.MouseMoveEvent{X: -30, Y: 150, Buttons: core.LeftButton})
+		send(core.MouseReleaseEvent{X: -30, Y: 150, Button: core.LeftButton})
+		torn := plat.surfaces[1]
+
+		// Minimize the desktop, then drag the torn window across
+		// where the desktop used to be: it must keep moving, not
+		// vanish into the invisible desktop.
+		desk.minimized = true
+		plat.gx, plat.gy = 400, 300 // inside the phantom rect
+		torn.handler.Event(core.MousePressEvent{X: 120, Y: 8, Button: core.LeftButton})
+		torn.handler.Event(core.MouseMoveEvent{X: 125, Y: 9, Buttons: core.LeftButton})
+		if torn.closed || torn.opacity == 0 || containsWindow(wm, win) {
+			t.Fatal("torn window docked into a minimized desktop")
+		}
+		if torn.x != 400-120 || torn.y != 300-8 {
+			t.Errorf("torn window stopped following: %d,%d", torn.x, torn.y)
+		}
+
+		// Restore the desktop: the same drag position now re-docks.
+		desk.minimized = false
+		torn.handler.Event(core.MouseMoveEvent{X: 125, Y: 9, Buttons: core.LeftButton})
+		if !containsWindow(wm, win) {
+			t.Fatal("restored desktop did not accept the re-dock")
+		}
+		torn.handler.Event(core.MouseReleaseEvent{X: 125, Y: 9, Button: core.LeftButton})
 
 		d.QuitWithCode(0)
 	}
