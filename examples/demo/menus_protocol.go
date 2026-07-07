@@ -106,7 +106,7 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		SelectAll()
 	}
 	editTarget := func() editActor {
-		if fw := desktop.FocusManager().FocusedWidget(); fw != nil {
+		if fw := desktop.FocusedWidget(); fw != nil {
 			if ea, ok := fw.(editActor); ok {
 				return ea
 			}

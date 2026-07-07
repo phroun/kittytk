@@ -870,6 +870,26 @@ func (d *Desktop) SetOnShutdown(handler func()) {
 	d.mu.Unlock()
 }
 
+// FocusedWidget returns the widget with keyboard focus in the active
+// window, or nil. Window focus lives in each window's own focus
+// manager (the desktop's GlobalFocusManager tracks scopes, not the
+// per-window focused widget), so this reaches through the active
+// window. Menu actions run after window focus is restored
+// (Menu.onWillTrigger fires RestorePreviousActiveWindow before the
+// action), so the active window is valid when a menu command asks.
+func (d *Desktop) FocusedWidget() core.Widget {
+	d.mu.RLock()
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if wm == nil {
+		return nil
+	}
+	if aw := wm.ActiveWindow(); aw != nil {
+		return aw.FocusManager().FocusedWidget()
+	}
+	return nil
+}
+
 // ActivatePassNextKeyToWidget activates pass-next-key-to-widget mode for the active app.
 // The next keypress will bypass all global shortcut handling and go directly
 // to the focused widget. This can be called from menu items or other UI elements.
