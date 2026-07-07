@@ -2,6 +2,7 @@
 package widgets
 
 import (
+	"fmt"
 	"time"
 	"unicode/utf8"
 
@@ -21,13 +22,13 @@ type TextInput struct {
 	readOnly    bool
 
 	// Cursor and selection
-	cursorPos   int
-	selStart    int
-	selEnd      int
+	cursorPos    int
+	selStart     int
+	selEnd       int
 	scrollOffset int
 
 	// Callbacks
-	onTextChanged func(text string)
+	onTextChanged   func(text string)
 	onReturnPressed func()
 
 	// Graphical caret blink: the bar toggles while focused and
@@ -35,16 +36,23 @@ type TextInput struct {
 	// (cell surfaces, no desktop) the caret is steady.
 	caretTimer *DesktopTimer
 	caretOn    bool
+
+	// Drag selection in progress (armed by a left press, extended by
+	// motion while the button is held).
+	selecting bool
+
+	// Context menu hover row (-1 = none).
+	menuHover int
 }
 
 // EchoMode controls how text is displayed.
 type EchoMode int
 
 const (
-	EchoNormal       EchoMode = iota // Show text normally
-	EchoPassword                     // Show bullets/asterisks
-	EchoPasswordOnEdit               // Show char briefly, then bullet
-	EchoNoEcho                       // Show nothing
+	EchoNormal         EchoMode = iota // Show text normally
+	EchoPassword                       // Show bullets/asterisks
+	EchoPasswordOnEdit                 // Show char briefly, then bullet
+	EchoNoEcho                         // Show nothing
 )
 
 // NewTextInput creates a new text input.
@@ -429,11 +437,12 @@ func (t *TextInput) Paint(p *core.Painter) {
 			start, end = end, start
 		}
 
+		selStyle := scheme.GetEditBoxSelection(focused && t.IsEnabled(), paneType)
 		for i, r := range displayText {
 			charStyle := s
 			textPos := t.scrollOffset + i
 			if textPos >= start && textPos < end {
-				charStyle = scheme.GetSelection()
+				charStyle = selStyle
 			}
 
 			// Draw single character using DrawText for font rendering
@@ -584,8 +593,20 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Any keystroke makes the caret immediately visible.
 	t.resetCaretBlink()
 
+	// Both backends deliver navigation keys with their "S-" prefix
+	// intact (e.g. "S-Left") alongside the parsed modifier. Fold the
+	// prefix into the bare name so shift-extends the selection; the
+	// caret-anchor logic in each case reads Modifiers. Control/Meta
+	// spellings ("^A", "C-S-a") stay literal - they are matched whole.
+	key := event.Key
+	switch key {
+	case "S-Left", "S-Right", "S-Home", "S-End", "S-Up", "S-Down":
+		event.Modifiers |= core.ShiftModifier
+		key = key[2:]
+	}
+
 	// Handle special keys
-	switch event.Key {
+	switch key {
 	case "Left":
 		if t.cursorPos > 0 {
 			t.cursorPos--
@@ -692,6 +713,23 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.ensureCursorVisible()
 		t.Update()
 		return true
+
+	case "C-S-a", "C-S-A":
+		// Shift+Ctrl+A: extend the selection to the beginning (the
+		// anchor is wherever the caret was when the selection began).
+		t.cursorPos = 0
+		t.selEnd = 0
+		t.ensureCursorVisible()
+		t.Update()
+		return true
+
+	case "C-S-e", "C-S-E":
+		// Shift+Ctrl+E: extend the selection to the end.
+		t.cursorPos = len(t.text)
+		t.selEnd = t.cursorPos
+		t.ensureCursorVisible()
+		t.Update()
+		return true
 	}
 
 	// Handle printable characters
@@ -707,14 +745,56 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.LeftButton {
 		font := t.EffectiveFont()
-		t.cursorPos = t.findCharAtX(event.X, font)
-		if t.cursorPos > len(t.text) {
-			t.cursorPos = len(t.text)
+		pos := t.findCharAtX(event.X, font)
+		if pos > len(t.text) {
+			pos = len(t.text)
 		}
-		t.selStart = t.cursorPos
-		t.selEnd = t.cursorPos
+		if event.Modifiers&core.ShiftModifier != 0 {
+			// Shift+click extends: the previous caret position is
+			// (already) the anchor; only the moving end follows.
+			t.cursorPos = pos
+			t.selEnd = pos
+		} else {
+			t.cursorPos = pos
+			t.selStart = pos
+			t.selEnd = pos
+		}
+		t.selecting = true
 		t.SetFocus()
 		t.Update()
+		return true
+	}
+	if event.Button == core.RightButton {
+		t.SetFocus()
+		t.showContextMenu(event)
+		return true
+	}
+	return false
+}
+
+// HandleMouseMove extends the selection while the button is held.
+func (t *TextInput) HandleMouseMove(event core.MouseMoveEvent) bool {
+	if !t.selecting || event.Buttons&core.LeftButton == 0 {
+		return false
+	}
+	font := t.EffectiveFont()
+	pos := t.findCharAtX(event.X, font)
+	if pos > len(t.text) {
+		pos = len(t.text)
+	}
+	if pos != t.cursorPos {
+		t.cursorPos = pos
+		t.selEnd = pos
+		t.ensureCursorVisible()
+		t.Update()
+	}
+	return true
+}
+
+// HandleMouseRelease ends a drag selection.
+func (t *TextInput) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	if t.selecting {
+		t.selecting = false
 		return true
 	}
 	return false
@@ -728,7 +808,9 @@ func (t *TextInput) HandleFocusIn() {
 // HandleFocusOut is called when focus is lost.
 func (t *TextInput) HandleFocusOut() {
 	t.stopCaretTimer()
-	t.ClearSelection()
+	t.selecting = false
+	// The selection survives - it shows in the resting selection
+	// colors until the box is edited again.
 	t.Update()
 }
 
@@ -748,4 +830,181 @@ func (t *TextInput) AccessibleInfo() core.AccessibleInfo {
 		info.State |= core.StateDisabled
 	}
 	return info
+}
+
+// ---------------------------------------------------------------
+// Clipboard actions + context menu
+// ---------------------------------------------------------------
+
+// clipboardAccess finds the clipboard for this widget: the desktop
+// when the widget lives in one, otherwise the popup controller (a
+// torn-off window's host bridges the platform clipboard).
+func (t *TextInput) clipboardAccess() (get func() string, set func(string)) {
+	if d := findDesktopFor(t); d != nil {
+		return d.Clipboard, d.SetClipboard
+	}
+	type clipper interface {
+		Clipboard() string
+		SetClipboard(string)
+	}
+	if c, ok := t.PopupController().(clipper); ok {
+		return c.Clipboard, c.SetClipboard
+	}
+	return nil, nil
+}
+
+// Copy puts the selected text on the clipboard.
+func (t *TextInput) Copy() {
+	sel := t.SelectedText()
+	if sel == "" {
+		return
+	}
+	if _, set := t.clipboardAccess(); set != nil {
+		set(sel)
+	}
+}
+
+// Cut copies the selected text to the clipboard and removes it.
+func (t *TextInput) Cut() {
+	if t.readOnly || !t.HasSelection() {
+		return
+	}
+	t.Copy()
+	t.deleteSelection()
+	t.textChanged()
+}
+
+// Paste inserts the clipboard at the caret, replacing any selection.
+// A single-line input flattens newlines to spaces.
+func (t *TextInput) Paste() {
+	if t.readOnly {
+		return
+	}
+	get, _ := t.clipboardAccess()
+	if get == nil {
+		return
+	}
+	s := get()
+	if s == "" {
+		return
+	}
+	flat := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r == '\n' || r == '\r' {
+			r = ' '
+		}
+		flat = append(flat, r)
+	}
+	t.insert(string(flat))
+}
+
+// contextMenuID names this input's popup uniquely.
+func (t *TextInput) contextMenuID() string {
+	return fmt.Sprintf("textinput-menu-%d", t.ObjectID())
+}
+
+// contextMenuItems builds the right-click menu, each item equivalent
+// to the matching Edit-menu action.
+func (t *TextInput) contextMenuItems() []termMenuItem {
+	return []termMenuItem{
+		{label: "Cut", action: t.Cut},
+		{label: "Copy", action: t.Copy},
+		{label: "Paste", action: t.Paste},
+		{separator: true},
+		{label: "Select All", action: t.SelectAll},
+	}
+}
+
+// showContextMenu opens the right-click menu as a popup overlay,
+// using the same presentation as PurfecTerm's terminal menu.
+func (t *TextInput) showContextMenu(event core.MousePressEvent) {
+	pc := t.PopupController()
+	if pc == nil {
+		return
+	}
+	items := t.contextMenuItems()
+	height := core.Unit(0)
+	for _, it := range items {
+		if it.separator {
+			height += 4
+		} else {
+			height += gfxMenuItemHeight
+		}
+	}
+	height += 4 // padding
+	at := pc.MapToScreen(t.Self(), core.UnitPoint{X: event.X, Y: event.Y})
+	screen := pc.ScreenBounds()
+	if at.X+gfxMenuWidth > screen.X+screen.Width {
+		at.X = screen.X + screen.Width - gfxMenuWidth
+	}
+	if at.Y+height > screen.Y+screen.Height {
+		at.Y = screen.Y + screen.Height - height
+	}
+	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: gfxMenuWidth, Height: height}
+	t.menuHover = -1
+
+	itemAt := func(y core.Unit) int {
+		pos := core.Unit(2)
+		for i, it := range items {
+			h := gfxMenuItemHeight
+			if it.separator {
+				h = 4
+			}
+			if y >= pos && y < pos+h {
+				if it.separator {
+					return -1
+				}
+				return i
+			}
+			pos += h
+		}
+		return -1
+	}
+
+	pc.RegisterPopup(&core.PopupRequest{
+		ID:     t.contextMenuID(),
+		Bounds: menuBounds,
+		Paint: func(p *core.Painter) {
+			bg := style.DefaultStyle().WithFg(style.RGB(32, 32, 32)).WithBg(style.RGB(238, 238, 238))
+			hover := style.DefaultStyle().WithFg(style.RGB(255, 255, 255)).WithBg(style.RGB(56, 120, 220))
+			p.FillRect(core.UnitRect{X: menuBounds.X, Y: menuBounds.Y, Width: menuBounds.Width, Height: menuBounds.Height}, ' ', bg)
+			pos := menuBounds.Y + 2
+			for i, it := range items {
+				if it.separator {
+					p.FillRect(core.UnitRect{X: menuBounds.X + 4, Y: pos + 2, Width: menuBounds.Width - 8, Height: 1}, ' ',
+						style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
+					pos += 4
+					continue
+				}
+				st := bg
+				if i == t.menuHover {
+					st = hover
+					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: gfxMenuItemHeight}, ' ', st)
+				}
+				p.DrawText(menuBounds.X+8, pos, it.label, st.WithBg(style.ColorTransparent), nil)
+				pos += gfxMenuItemHeight
+			}
+		},
+		HandleMouseMove: func(event core.MouseMoveEvent) bool {
+			if !menuBounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+				return false
+			}
+			idx := itemAt(event.Y - menuBounds.Y)
+			if idx != t.menuHover {
+				t.menuHover = idx
+				t.Update()
+			}
+			return true
+		},
+		HandleMousePress: func(event core.MousePressEvent) bool {
+			idx := itemAt(event.Y - menuBounds.Y)
+			pc.UnregisterPopup(t.contextMenuID())
+			if idx >= 0 && items[idx].action != nil {
+				items[idx].action()
+			}
+			t.Update()
+			return true
+		},
+	})
+	t.Update()
 }

@@ -126,6 +126,10 @@ func (d *Desktop) tearOffWindow(win *window.Window, e core.MouseMoveEvent, offX,
 		d.dropTornHost(host)
 	})
 
+	// Widgets in the torn window reach the platform clipboard through
+	// the host (no desktop in their ancestry out there).
+	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)
+
 	// Arm the host too: once the torn window exists under the held
 	// pointer, the platform may hand it the rest of the gesture
 	// (motion and the release) instead of the desktop. Whichever

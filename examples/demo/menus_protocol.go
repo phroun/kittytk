@@ -46,9 +46,10 @@ bar=new menubar children={
 		new menuitem caption="&Save" shortcut="^S"
 	}
 	new menu caption="&Edit" children={
-		new menuitem caption="Cu&t" shortcut="^X"
-		new menuitem caption="&Copy" shortcut="^C"
-		new menuitem caption="&Paste" shortcut="^V"
+		new menuitem caption="Cu&t" shortcut="^X" action=demo.edit.cut
+		new menuitem caption="&Copy" shortcut="^C" action=demo.edit.copy
+		new menuitem caption="&Paste" shortcut="^V" action=demo.edit.paste
+		new menuitem caption="Select &All" action=demo.edit.selectall
 		new menuitem separator
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.edit.rawkey
 	}
@@ -95,6 +96,42 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 	})
 	commands.Register("demo.edit.rawkey", func() {
 		desktop.ActivatePassNextKeyToWidget()
+	})
+	// Edit actions operate on the focused widget; the context menus
+	// on edit boxes invoke the same methods.
+	type editActor interface {
+		Cut()
+		Copy()
+		Paste()
+		SelectAll()
+	}
+	editTarget := func() editActor {
+		if fw := desktop.FocusManager().FocusedWidget(); fw != nil {
+			if ea, ok := fw.(editActor); ok {
+				return ea
+			}
+		}
+		return nil
+	}
+	commands.Register("demo.edit.cut", func() {
+		if ea := editTarget(); ea != nil {
+			ea.Cut()
+		}
+	})
+	commands.Register("demo.edit.copy", func() {
+		if ea := editTarget(); ea != nil {
+			ea.Copy()
+		}
+	})
+	commands.Register("demo.edit.paste", func() {
+		if ea := editTarget(); ea != nil {
+			ea.Paste()
+		}
+	})
+	commands.Register("demo.edit.selectall", func() {
+		if ea := editTarget(); ea != nil {
+			ea.SelectAll()
+		}
 	})
 	commands.Register("demo.window.new", func() {
 		newApp := createSecondaryApplication(desktop)

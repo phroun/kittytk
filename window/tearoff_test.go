@@ -338,3 +338,46 @@ func TestTearOffHostFocusAndCmdM(t *testing.T) {
 		t.Error("Cmd+M did not miniaturize the OS window")
 	}
 }
+
+// Popups from a torn window's widgets register on the host surface,
+// paint there, and route their mouse events there - not on the
+// desktop.
+func TestTearOffHostOwnsPopups(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 300, Height: 200}, x: 0, y: 0}
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+
+	// The host is a PopupController and bridges the clipboard.
+	var pc core.PopupController = h
+	h.SetClipboardAccess(func() string { return "cb" }, func(string) {})
+	if h.Clipboard() != "cb" {
+		t.Error("clipboard bridge not wired")
+	}
+
+	pressed := false
+	pc.RegisterPopup(&core.PopupRequest{
+		ID:     "menu",
+		Bounds: core.UnitRect{X: 50, Y: 40, Width: 80, Height: 60},
+		HandleMousePress: func(core.MousePressEvent) bool {
+			pressed = true
+			return true
+		},
+	})
+
+	// A press inside the popup routes to it (not to the window).
+	if !h.Event(core.MousePressEvent{X: 60, Y: 50, Button: core.LeftButton}) {
+		t.Error("press inside popup not handled")
+	}
+	if !pressed {
+		t.Error("popup did not receive the press")
+	}
+
+	// A press outside closes the popup without consuming; a second
+	// press then reaches the window normally.
+	h.Event(core.MousePressEvent{X: 5, Y: 5, Button: core.LeftButton})
+	pressed = false
+	h.Event(core.MousePressEvent{X: 60, Y: 50, Button: core.LeftButton})
+	if pressed {
+		t.Error("popup still active after an outside press closed it")
+	}
+}

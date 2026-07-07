@@ -58,6 +58,15 @@ type TearOffHost struct {
 	lastClickX  core.Unit
 	lastClickY  core.Unit
 
+	// Popup overlays (combobox dropdowns, context menus) opened by
+	// widgets inside the torn window: they belong to THIS surface.
+	popups []*PopupOverlay
+
+	// Clipboard bridge for widgets that have no desktop in their
+	// ancestry while torn (the desktop wires the platform clipboard).
+	clipGet func() string
+	clipSet func(string)
+
 	// onClosed runs when the hosted window closes itself (the [x]
 	// button): the desktop disposes of the surface. Without it the
 	// closed window would keep showing in its orphaned OS window.
@@ -97,6 +106,12 @@ func NewTearOffHost(win *Window, surf platform.Surface, scale int,
 	h.native, _ = surf.(platform.NativeSurface)
 	if h.scale < 1 {
 		h.scale = 1
+	}
+
+	// Popups from the torn window's widgets open on this surface.
+	win.SetPopupController(h)
+	if content := win.Content(); content != nil {
+		stampPopupController(content, h)
 	}
 
 	h.savedFlags = win.Flags()
@@ -163,6 +178,114 @@ func (h *TearOffHost) Dragging() bool { return h.dragging }
 // closes itself.
 func (h *TearOffHost) SetOnClosed(fn func()) { h.onClosed = fn }
 
+// SetClipboardAccess bridges the platform clipboard to widgets in the
+// torn window (their ancestry has no desktop to ask).
+func (h *TearOffHost) SetClipboardAccess(get func() string, set func(string)) {
+	h.clipGet = get
+	h.clipSet = set
+}
+
+// Clipboard exposes the bridge (widgets discover it through their
+// popup controller).
+func (h *TearOffHost) Clipboard() string {
+	if h.clipGet == nil {
+		return ""
+	}
+	return h.clipGet()
+}
+
+// SetClipboard exposes the bridge.
+func (h *TearOffHost) SetClipboard(s string) {
+	if h.clipSet != nil {
+		h.clipSet(s)
+	}
+}
+
+// --- core.PopupController: popups composite on the torn surface ---
+
+// RegisterPopup implements core.PopupController.
+func (h *TearOffHost) RegisterPopup(request *core.PopupRequest) {
+	h.UnregisterPopup(request.ID)
+	h.popups = append(h.popups, &PopupOverlay{
+		ID:                 request.ID,
+		Bounds:             request.Bounds,
+		Paint:              request.Paint,
+		HandleMousePress:   request.HandleMousePress,
+		HandleMouseMove:    request.HandleMouseMove,
+		HandleMouseRelease: request.HandleMouseRelease,
+		HandleMouseWheel:   request.HandleMouseWheel,
+	})
+	h.surf.Invalidate(core.UnitRect{})
+}
+
+// UnregisterPopup implements core.PopupController.
+func (h *TearOffHost) UnregisterPopup(id string) {
+	for i, p := range h.popups {
+		if p.ID == id {
+			h.popups = append(h.popups[:i], h.popups[i+1:]...)
+			h.surf.Invalidate(core.UnitRect{})
+			return
+		}
+	}
+}
+
+// MapToScreen implements core.PopupController: the torn window fills
+// its surface at the origin, so ancestry coordinates ARE surface
+// coordinates.
+func (h *TearOffHost) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
+	return MapWidgetToScreen(widget, local)
+}
+
+// ScreenBounds implements core.PopupController.
+func (h *TearOffHost) ScreenBounds() core.UnitRect {
+	size := h.surf.Size()
+	return core.UnitRect{Width: size.Width, Height: size.Height}
+}
+
+// popupsHandleMouse offers a mouse event to the popups (topmost
+// first), mirroring the WindowManager's routing: a press outside
+// every popup closes them all and does NOT consume the event.
+func (h *TearOffHost) popupsHandleMouse(ev core.Event) (handled bool) {
+	if len(h.popups) == 0 {
+		return false
+	}
+	switch e := ev.(type) {
+	case core.MousePressEvent:
+		for i := len(h.popups) - 1; i >= 0; i-- {
+			popup := h.popups[i]
+			if popup.Bounds.Contains(core.UnitPoint{X: e.X, Y: e.Y}) {
+				if popup.HandleMousePress != nil {
+					return popup.HandleMousePress(e)
+				}
+				return true
+			}
+		}
+		h.popups = nil
+		h.surf.Invalidate(core.UnitRect{})
+		return false
+	case core.MouseMoveEvent:
+		for i := len(h.popups) - 1; i >= 0; i-- {
+			if fn := h.popups[i].HandleMouseMove; fn != nil && fn(e) {
+				return true
+			}
+		}
+	case core.MouseReleaseEvent:
+		for i := len(h.popups) - 1; i >= 0; i-- {
+			if fn := h.popups[i].HandleMouseRelease; fn != nil && fn(e) {
+				return true
+			}
+		}
+	case core.MouseWheelEvent:
+		for i := len(h.popups) - 1; i >= 0; i-- {
+			popup := h.popups[i]
+			if popup.Bounds.Contains(core.UnitPoint{X: e.X, Y: e.Y}) && popup.HandleMouseWheel != nil {
+				return popup.HandleMouseWheel(e)
+			}
+		}
+	}
+	return false
+}
+
 // SetGhostRelay installs the desktop's continuation for a gesture
 // that outlives its window: move relays motion (global px), end
 // finishes the drag and disposes of the ghost surface.
@@ -197,6 +320,11 @@ func (h *TearOffHost) Frame(p *core.Painter) {
 		return
 	}
 	h.win.Paint(p)
+	for _, popup := range h.popups {
+		if popup.Paint != nil {
+			popup.Paint(p)
+		}
+	}
 }
 
 // Event implements platform.SurfaceHandler: surface coordinates ARE
@@ -223,6 +351,10 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 	case core.KeyReleaseEvent:
 		handled = h.win.HandleKeyRelease(e)
 	case core.MousePressEvent:
+		if !h.ghost && h.popupsHandleMouse(e) {
+			handled = true
+			break
+		}
 		if h.ghost {
 			// A press reaching a ghost means its release was lost:
 			// finish the relay and swallow the stray press.
@@ -258,6 +390,10 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			handled = true
 		}
 	case core.MouseMoveEvent:
+		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {
+			handled = true
+			break
+		}
 		if h.ghost {
 			if e.Buttons&core.LeftButton == 0 {
 				h.finishGhost()
@@ -281,6 +417,10 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			handled = h.win.HandleMouseMove(e)
 		}
 	case core.MouseReleaseEvent:
+		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {
+			handled = true
+			break
+		}
 		if h.ghost {
 			h.finishGhost()
 			handled = true
@@ -293,6 +433,10 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			handled = h.win.HandleMouseRelease(e)
 		}
 	case core.MouseWheelEvent:
+		if h.popupsHandleMouse(e) {
+			handled = true
+			break
+		}
 		handled = h.win.HandleMouseWheel(e)
 	}
 	// Parity contract: repaint after input until widgets migrate to

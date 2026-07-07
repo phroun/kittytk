@@ -106,47 +106,55 @@ type Scheme struct {
 	ButtonShadowFG            *CellStyle // black, used in all other cases (FG only)
 
 	// EditBox / TextInput
-	EditBox                     *CellStyle // regular white on black
-	DefaultPaneEditBox          *CellStyle // regular white on dark blue, when inherited BG is ansi 49
-	DarkPaneEditBox             *CellStyle // regular white on dark blue, when inherited BG is black
-	EditBoxPlaceholder          *CellStyle
+	EditBox                       *CellStyle // regular white on black
+	DefaultPaneEditBox            *CellStyle // regular white on dark blue, when inherited BG is ansi 49
+	DarkPaneEditBox               *CellStyle // regular white on dark blue, when inherited BG is black
+	EditBoxPlaceholder            *CellStyle
 	DefaultPaneEditBoxPlaceholder *CellStyle // nil = EditBoxPlaceholder
-	DarkPaneEditBoxPlaceholder  *CellStyle // nil = EditBoxPlaceholder
-	FocusedEditBoxText          *CellStyle // black on dark cyan
-	FocusedEditBoxCursor        *CellStyle // black on white
-	FocusedEditBoxFill          *CellStyle // white on cyan
+	DarkPaneEditBoxPlaceholder    *CellStyle // nil = EditBoxPlaceholder
+	FocusedEditBoxText            *CellStyle // black on dark cyan
+	FocusedEditBoxCursor          *CellStyle // black on white
+	FocusedEditBoxFill            *CellStyle // white on cyan
+	// Selection inside an edit box: the focused pair, the resting
+	// (unfocused) pair, and the resting pair on a dark pane.
+	FocusedEditBoxSelectionFG         *Color // black
+	FocusedEditBoxSelectionBG         *Color // silver
+	RestingEditBoxSelectionFG         *Color // silver
+	RestingEditBoxSelectionBG         *Color // black
+	DarkPaneRestingEditBoxSelectionFG *Color // black
+	DarkPaneRestingEditBoxSelectionBG *Color // cyan
 
 	// ComboBox
-	ComboBox                 *CellStyle // nil = same as EditBox
-	ComboBoxArrow            *CellStyle // nil = same as EditBox
-	DisabledComboBoxFG       *CellStyle // nil = DisabledButtonFG
-	DisabledComboBoxArrow    *CellStyle // nil = DisabledComboBoxFG + DisabledComboBoxBG
-	DisabledComboBoxBG       *CellStyle // nil = DisabledButtonBG
-	FocusedComboBox          *CellStyle // nil = FocusedButton
-	FocusedComboBoxArrow     *CellStyle // nil = FocusedComboBox
-	PressedComboBox          *CellStyle // nil = PressedButton
-	PressedComboBoxArrow     *CellStyle // nil = PressedComboBox
-	DropdownItemText         *CellStyle // nil = MenuItemText
-	FocusedDropdownItemText  *CellStyle // nil = FocusedMenuItemText
-	DropdownSeparator        *CellStyle // nil = MenuSeparator
-	DisabledDropdownItem     *CellStyle // nil = DisabledMenuItem
-	DropdownScrollbar        *CellStyle // nil = DropdownItemText
-	DropdownScrollbarThumb   *CellStyle // nil = black on white (like PressedSplitter)
+	ComboBox                *CellStyle // nil = same as EditBox
+	ComboBoxArrow           *CellStyle // nil = same as EditBox
+	DisabledComboBoxFG      *CellStyle // nil = DisabledButtonFG
+	DisabledComboBoxArrow   *CellStyle // nil = DisabledComboBoxFG + DisabledComboBoxBG
+	DisabledComboBoxBG      *CellStyle // nil = DisabledButtonBG
+	FocusedComboBox         *CellStyle // nil = FocusedButton
+	FocusedComboBoxArrow    *CellStyle // nil = FocusedComboBox
+	PressedComboBox         *CellStyle // nil = PressedButton
+	PressedComboBoxArrow    *CellStyle // nil = PressedComboBox
+	DropdownItemText        *CellStyle // nil = MenuItemText
+	FocusedDropdownItemText *CellStyle // nil = FocusedMenuItemText
+	DropdownSeparator       *CellStyle // nil = MenuSeparator
+	DisabledDropdownItem    *CellStyle // nil = DisabledMenuItem
+	DropdownScrollbar       *CellStyle // nil = DropdownItemText
+	DropdownScrollbarThumb  *CellStyle // nil = black on white (like PressedSplitter)
 
 	// CheckBox
-	CheckBoxFG            *CellStyle // nil = same as LabelFG
-	CheckBoxBG            *CellStyle // nil = inherit
-	CheckBoxLabelFG       *CellStyle // nil = same as LabelFG
-	FocusedCheckBoxFG     *CellStyle // nil = FocusTextFG
-	FocusedCheckBoxBG     *CellStyle // nil = inherit
+	CheckBoxFG             *CellStyle // nil = same as LabelFG
+	CheckBoxBG             *CellStyle // nil = inherit
+	CheckBoxLabelFG        *CellStyle // nil = same as LabelFG
+	FocusedCheckBoxFG      *CellStyle // nil = FocusTextFG
+	FocusedCheckBoxBG      *CellStyle // nil = inherit
 	FocusedCheckBoxLabelFG *CellStyle // nil = FocusTextFG
 
 	// RadioButton
-	RadioButtonFG            *CellStyle // nil = same as LabelFG
-	RadioButtonBG            *CellStyle // nil = inherit
-	RadioButtonLabelFG       *CellStyle // nil = same as LabelFG
-	FocusedRadioButtonFG     *CellStyle // nil = FocusTextFG
-	FocusedRadioButtonBG     *CellStyle // nil = inherit
+	RadioButtonFG             *CellStyle // nil = same as LabelFG
+	RadioButtonBG             *CellStyle // nil = inherit
+	RadioButtonLabelFG        *CellStyle // nil = same as LabelFG
+	FocusedRadioButtonFG      *CellStyle // nil = FocusTextFG
+	FocusedRadioButtonBG      *CellStyle // nil = inherit
 	FocusedRadioButtonLabelFG *CellStyle // nil = FocusTextFG
 
 	// =========================================================================
@@ -167,15 +175,15 @@ type Scheme struct {
 	// Tab Widget (Page Control) Related Colors
 	// =========================================================================
 
-	TabsFG             *CellStyle // nil = WindowFG, currently bright white
-	TabsBG             *CellStyle // nil = inherit
-	TabsButton         *CellStyle // nil = TabsFG + TabsBG
-	PressedTabsButton  *CellStyle // nil = black on white
-	DisabledTabsButton *CellStyle // nil = DisabledTextFG on TabsBG
-	ActiveTabFG        *CellStyle // currently bright and bold yellow, nil = WidgetGroupFG
-	ActiveTabBG        *CellStyle // nil = WidgetGroupBG, currently ansi 49
-	FocusedTab         *CellStyle // nil = FocusBG + FocusFG
-	TabCloseButton     *CellStyle // close button on tabs
+	TabsFG                *CellStyle // nil = WindowFG, currently bright white
+	TabsBG                *CellStyle // nil = inherit
+	TabsButton            *CellStyle // nil = TabsFG + TabsBG
+	PressedTabsButton     *CellStyle // nil = black on white
+	DisabledTabsButton    *CellStyle // nil = DisabledTextFG on TabsBG
+	ActiveTabFG           *CellStyle // currently bright and bold yellow, nil = WidgetGroupFG
+	ActiveTabBG           *CellStyle // nil = WidgetGroupBG, currently ansi 49
+	FocusedTab            *CellStyle // nil = FocusBG + FocusFG
+	TabCloseButton        *CellStyle // close button on tabs
 	FocusedTabCloseButton *CellStyle
 	PressedTabCloseButton *CellStyle
 
@@ -283,6 +291,19 @@ func ptr(s CellStyle) *CellStyle {
 	return &s
 }
 
+// colorPtr is a helper to create a pointer to a Color.
+func colorPtr(c Color) *Color {
+	return &c
+}
+
+// orColor resolves an optional scheme color against its default.
+func orColor(c *Color, def Color) Color {
+	if c != nil {
+		return *c
+	}
+	return def
+}
+
 // DefaultScheme creates the default scheme (scheme 0) with current hard-coded values.
 func DefaultScheme() *Scheme {
 	return &Scheme{
@@ -366,15 +387,21 @@ func DefaultScheme() *Scheme {
 		ButtonShadowFG:            ptr(DefaultStyle().WithFg(ColorBlack)),
 
 		// EditBox / TextInput
-		EditBox:                       ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack)),
-		DefaultPaneEditBox:            ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue)),
-		DarkPaneEditBox:               ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue)),
-		EditBoxPlaceholder:            ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack)),
-		DefaultPaneEditBoxPlaceholder: nil, // EditBoxPlaceholder
-		DarkPaneEditBoxPlaceholder:    nil, // EditBoxPlaceholder
-		FocusedEditBoxText:            ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
-		FocusedEditBoxCursor:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		FocusedEditBoxFill:            ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorCyan)),
+		EditBox:                           ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack)),
+		DefaultPaneEditBox:                ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue)),
+		DarkPaneEditBox:                   ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue)),
+		EditBoxPlaceholder:                ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack)),
+		DefaultPaneEditBoxPlaceholder:     nil, // EditBoxPlaceholder
+		DarkPaneEditBoxPlaceholder:        nil, // EditBoxPlaceholder
+		FocusedEditBoxText:                ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		FocusedEditBoxCursor:              ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		FocusedEditBoxFill:                ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorCyan)),
+		FocusedEditBoxSelectionFG:         colorPtr(ColorBlack),
+		FocusedEditBoxSelectionBG:         colorPtr(ColorWhite),
+		RestingEditBoxSelectionFG:         colorPtr(ColorWhite),
+		RestingEditBoxSelectionBG:         colorPtr(ColorBlack),
+		DarkPaneRestingEditBoxSelectionFG: colorPtr(ColorBlack),
+		DarkPaneRestingEditBoxSelectionBG: colorPtr(ColorCyan),
 
 		// ComboBox
 		ComboBox:                nil, // EditBox
@@ -423,7 +450,7 @@ func DefaultScheme() *Scheme {
 		// Tab Widget
 		TabsFG:                ptr(DefaultStyle().WithFg(ColorBrightWhite)),
 		TabsBG:                ptr(DefaultStyle().WithBg(ColorBlue)), // blue tab bar background
-		TabsButton:            nil, // TabsFG + TabsBG
+		TabsButton:            nil,                                   // TabsFG + TabsBG
 		PressedTabsButton:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
 		DisabledTabsButton:    nil, // DisabledTextFG on TabsBG
 		ActiveTabFG:           ptr(DefaultStyle().WithFg(ColorBrightYellow).Bold()),
@@ -567,28 +594,32 @@ func (s *Scheme) GetNormal(active bool) CellStyle {
 func (s *Scheme) GetMenuBar() CellStyle           { return or(s.MenuBar) }
 func (s *Scheme) GetMenuBarMeta() CellStyle       { return or(s.MenuBarMeta) }
 func (s *Scheme) GetMenuBarInfo() CellStyle       { return or(s.MenuBarInfo) }
-func (s *Scheme) GetActiveMenuBarItem() CellStyle  { return or(s.ActiveMenuBarItem) }
-func (s *Scheme) GetActiveMenuBarMeta() CellStyle  { return or(s.ActiveMenuBarMeta) }
-func (s *Scheme) GetFocusedMenuBarItem() CellStyle { return or(s.FocusedMenuBarItem, s.FocusedMenuItemText) }
-func (s *Scheme) GetFocusedMenuBarMeta() CellStyle { return or(s.FocusedMenuBarMeta, s.FocusedMenuAccelerator) }
-func (s *Scheme) GetMenuGutter() CellStyle         { return or(s.MenuGutter) }
-func (s *Scheme) GetMenuCheckIcon() CellStyle     { return or(s.MenuCheckIcon) }
-func (s *Scheme) GetMenuRadioIcon() CellStyle     { return or(s.MenuRadioIcon) }
-func (s *Scheme) GetMenuItemText() CellStyle      { return or(s.MenuItemText) }
-func (s *Scheme) GetMenuAccelerator() CellStyle   { return or(s.MenuAccelerator) }
-func (s *Scheme) GetMenuShortcut() CellStyle      { return or(s.MenuShortcut) }
-func (s *Scheme) GetMenuSeparator() CellStyle     { return or(s.MenuSeparator) }
-func (s *Scheme) GetMenuSeparatorGutter() CellStyle { return or(s.MenuSeparatorGutter) }
-func (s *Scheme) GetMenuBarButton() CellStyle     { return or(s.MenuBarButton) }
-func (s *Scheme) GetDisabledMenuBarButton() CellStyle { return or(s.DisabledMenuBarButton) }
-func (s *Scheme) GetDisabledMenuGutter() CellStyle { return or(s.DisabledMenuGutter) }
-func (s *Scheme) GetDisabledMenuItem() CellStyle  { return or(s.DisabledMenuItem) }
-func (s *Scheme) GetDisabledMenuIcon() CellStyle  { return or(s.DisabledMenuIcon) }
-func (s *Scheme) GetFocusedMenuCheckIcon() CellStyle { return or(s.FocusedMenuCheckIcon) }
-func (s *Scheme) GetFocusedMenuRadioIcon() CellStyle { return or(s.FocusedMenuRadioIcon) }
-func (s *Scheme) GetFocusedMenuItemText() CellStyle { return or(s.FocusedMenuItemText) }
+func (s *Scheme) GetActiveMenuBarItem() CellStyle { return or(s.ActiveMenuBarItem) }
+func (s *Scheme) GetActiveMenuBarMeta() CellStyle { return or(s.ActiveMenuBarMeta) }
+func (s *Scheme) GetFocusedMenuBarItem() CellStyle {
+	return or(s.FocusedMenuBarItem, s.FocusedMenuItemText)
+}
+func (s *Scheme) GetFocusedMenuBarMeta() CellStyle {
+	return or(s.FocusedMenuBarMeta, s.FocusedMenuAccelerator)
+}
+func (s *Scheme) GetMenuGutter() CellStyle             { return or(s.MenuGutter) }
+func (s *Scheme) GetMenuCheckIcon() CellStyle          { return or(s.MenuCheckIcon) }
+func (s *Scheme) GetMenuRadioIcon() CellStyle          { return or(s.MenuRadioIcon) }
+func (s *Scheme) GetMenuItemText() CellStyle           { return or(s.MenuItemText) }
+func (s *Scheme) GetMenuAccelerator() CellStyle        { return or(s.MenuAccelerator) }
+func (s *Scheme) GetMenuShortcut() CellStyle           { return or(s.MenuShortcut) }
+func (s *Scheme) GetMenuSeparator() CellStyle          { return or(s.MenuSeparator) }
+func (s *Scheme) GetMenuSeparatorGutter() CellStyle    { return or(s.MenuSeparatorGutter) }
+func (s *Scheme) GetMenuBarButton() CellStyle          { return or(s.MenuBarButton) }
+func (s *Scheme) GetDisabledMenuBarButton() CellStyle  { return or(s.DisabledMenuBarButton) }
+func (s *Scheme) GetDisabledMenuGutter() CellStyle     { return or(s.DisabledMenuGutter) }
+func (s *Scheme) GetDisabledMenuItem() CellStyle       { return or(s.DisabledMenuItem) }
+func (s *Scheme) GetDisabledMenuIcon() CellStyle       { return or(s.DisabledMenuIcon) }
+func (s *Scheme) GetFocusedMenuCheckIcon() CellStyle   { return or(s.FocusedMenuCheckIcon) }
+func (s *Scheme) GetFocusedMenuRadioIcon() CellStyle   { return or(s.FocusedMenuRadioIcon) }
+func (s *Scheme) GetFocusedMenuItemText() CellStyle    { return or(s.FocusedMenuItemText) }
 func (s *Scheme) GetFocusedMenuAccelerator() CellStyle { return or(s.FocusedMenuAccelerator) }
-func (s *Scheme) GetFocusedMenuShortcut() CellStyle { return or(s.FocusedMenuShortcut) }
+func (s *Scheme) GetFocusedMenuShortcut() CellStyle    { return or(s.FocusedMenuShortcut) }
 
 // --- Widget Group Colors ---
 
@@ -690,6 +721,25 @@ func (s *Scheme) GetEditBoxPlaceholder(pane PaneType) CellStyle {
 func (s *Scheme) GetFocusedEditBoxText() CellStyle   { return or(s.FocusedEditBoxText) }
 func (s *Scheme) GetFocusedEditBoxCursor() CellStyle { return or(s.FocusedEditBoxCursor) }
 func (s *Scheme) GetFocusedEditBoxFill() CellStyle   { return or(s.FocusedEditBoxFill) }
+
+// GetEditBoxSelection returns the selection colors inside an edit
+// box: black on silver while focused, silver on black at rest, and
+// black on cyan for a resting box on a dark pane.
+func (s *Scheme) GetEditBoxSelection(focused bool, pane PaneType) CellStyle {
+	if focused {
+		return DefaultStyle().
+			WithFg(orColor(s.FocusedEditBoxSelectionFG, ColorBlack)).
+			WithBg(orColor(s.FocusedEditBoxSelectionBG, ColorWhite))
+	}
+	if pane == PaneDark {
+		return DefaultStyle().
+			WithFg(orColor(s.DarkPaneRestingEditBoxSelectionFG, ColorBlack)).
+			WithBg(orColor(s.DarkPaneRestingEditBoxSelectionBG, ColorCyan))
+	}
+	return DefaultStyle().
+		WithFg(orColor(s.RestingEditBoxSelectionFG, ColorWhite)).
+		WithBg(orColor(s.RestingEditBoxSelectionBG, ColorBlack))
+}
 
 // --- ComboBox Colors ---
 

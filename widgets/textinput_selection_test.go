@@ -1,0 +1,106 @@
+package widgets
+
+import (
+	"testing"
+
+	"github.com/phroun/tuitk/core"
+)
+
+// fakeClip is a minimal PopupController that also carries a clipboard,
+// standing in for a TearOffHost when the input has no desktop.
+type fakeClip struct {
+	buf    string
+	popups map[string]*core.PopupRequest
+}
+
+func (f *fakeClip) RegisterPopup(r *core.PopupRequest)                         { f.popups[r.ID] = r }
+func (f *fakeClip) UnregisterPopup(id string)                                  { delete(f.popups, id) }
+func (f *fakeClip) MapToScreen(_ core.Widget, p core.UnitPoint) core.UnitPoint { return p }
+func (f *fakeClip) ScreenBounds() core.UnitRect                                { return core.UnitRect{Width: 1000, Height: 1000} }
+func (f *fakeClip) Clipboard() string                                          { return f.buf }
+func (f *fakeClip) SetClipboard(s string)                                      { f.buf = s }
+
+func newClippedInput(text string) (*TextInput, *fakeClip) {
+	ti := NewTextInput()
+	ti.SetText(text)
+	clip := &fakeClip{popups: map[string]*core.PopupRequest{}}
+	ti.SetPopupController(clip)
+	return ti, clip
+}
+
+// Shift+arrow extends the selection from the pre-move caret; the
+// bare "S-Left" spelling folds to a shift-extend.
+func TestTextInputShiftArrowSelection(t *testing.T) {
+	ti, _ := newClippedInput("hello")
+	ti.SetCursorPosition(5) // end
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "S-Left", Modifiers: core.ShiftModifier})
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "S-Left", Modifiers: core.ShiftModifier})
+	if got := ti.SelectedText(); got != "lo" {
+		t.Errorf("shift-left selection = %q, want %q", got, "lo")
+	}
+	if ti.CursorPosition() != 3 {
+		t.Errorf("caret at %d, want 3", ti.CursorPosition())
+	}
+}
+
+// Shift+Ctrl+A / Shift+Ctrl+E extend to the ends.
+func TestTextInputShiftCtrlHomeEnd(t *testing.T) {
+	ti, _ := newClippedInput("hello world")
+	ti.SetCursorPosition(6)
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "C-S-a", Modifiers: core.ControlModifier | core.ShiftModifier})
+	if got := ti.SelectedText(); got != "hello " {
+		t.Errorf("shift-ctrl-A = %q, want %q", got, "hello ")
+	}
+	ti.SetCursorPosition(6)
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "C-S-e", Modifiers: core.ControlModifier | core.ShiftModifier})
+	if got := ti.SelectedText(); got != "world" {
+		t.Errorf("shift-ctrl-E = %q, want %q", got, "world")
+	}
+}
+
+// Typing/pasting over a selection overwrites it.
+func TestTextInputOverwriteSelection(t *testing.T) {
+	ti, clip := newClippedInput("hello")
+	ti.SelectAll()
+	ti.HandleKeyPress(core.KeyPressEvent{Text: "X"})
+	if ti.Text() != "X" {
+		t.Errorf("typing over selection = %q, want %q", ti.Text(), "X")
+	}
+	ti.SelectAll()
+	clip.SetClipboard("paste")
+	ti.Paste()
+	if ti.Text() != "paste" {
+		t.Errorf("paste over selection = %q, want %q", ti.Text(), "paste")
+	}
+}
+
+// Cut/Copy/Paste round-trip through the clipboard bridge.
+func TestTextInputClipboardActions(t *testing.T) {
+	ti, clip := newClippedInput("hello world")
+	// Select "world".
+	ti.SetCursorPosition(6)
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "C-S-e", Modifiers: core.ControlModifier | core.ShiftModifier})
+	ti.Copy()
+	if clip.buf != "world" {
+		t.Errorf("copy put %q on clipboard, want %q", clip.buf, "world")
+	}
+	ti.Cut()
+	if ti.Text() != "hello " {
+		t.Errorf("after cut = %q, want %q", ti.Text(), "hello ")
+	}
+	ti.SetCursorPosition(0)
+	ti.Paste()
+	if ti.Text() != "worldhello " {
+		t.Errorf("after paste = %q, want %q", ti.Text(), "worldhello ")
+	}
+}
+
+// A right click opens the context menu on the popup controller.
+func TestTextInputContextMenu(t *testing.T) {
+	ti, clip := newClippedInput("hello")
+	ti.SetBounds(core.UnitRect{Width: 200, Height: 16})
+	ti.HandleMousePress(core.MousePressEvent{X: 10, Y: 4, Button: core.RightButton})
+	if len(clip.popups) != 1 {
+		t.Fatalf("right click registered %d popups, want 1", len(clip.popups))
+	}
+}

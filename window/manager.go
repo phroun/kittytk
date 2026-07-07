@@ -409,15 +409,20 @@ func (m *WindowManager) AddWindow(win *Window) {
 // setPopupControllerRecursive sets this WindowManager as the popup controller
 // for a widget and all its descendants.
 func (m *WindowManager) setPopupControllerRecursive(widget core.Widget) {
-	// Set on this widget if it has the method
-	if setter, ok := widget.(interface{ SetPopupController(core.PopupController) }); ok {
-		setter.SetPopupController(m)
-	}
+	stampPopupController(widget, m)
+}
 
-	// Recurse into children
+// stampPopupController assigns the popup controller to a widget and
+// its whole subtree. The WindowManager stamps windows it manages; a
+// TearOffHost stamps its torn window so popups (combobox dropdowns,
+// context menus) open on the torn surface instead of the desktop's.
+func stampPopupController(widget core.Widget, pc core.PopupController) {
+	if setter, ok := widget.(interface{ SetPopupController(core.PopupController) }); ok {
+		setter.SetPopupController(pc)
+	}
 	if container, ok := widget.(core.Container); ok {
 		for _, child := range container.Children() {
-			m.setPopupControllerRecursive(child)
+			stampPopupController(child, pc)
 		}
 	}
 }
@@ -818,9 +823,15 @@ func (m *WindowManager) HasPopups() bool {
 }
 
 // MapToScreen implements core.PopupController.
-// It converts local widget coordinates to screen coordinates,
-// exchanging denominations at each re-denominating container boundary.
 func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
+	return MapWidgetToScreen(widget, local)
+}
+
+// MapWidgetToScreen converts local widget coordinates to surface
+// coordinates by walking the ancestry, exchanging denominations at
+// each re-denominating container boundary. Pure ancestry - both the
+// WindowManager and a TearOffHost use it.
+func MapWidgetToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
 	// Traverse up the widget hierarchy to accumulate offsets.
 	// Each widget's Bounds().X/Y is its position within its parent,
 	// denominated in the parent's currency. The accumulated point is
