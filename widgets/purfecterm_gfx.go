@@ -1748,6 +1748,23 @@ func (t *PurfecTerm) SelectAll() {
 	}
 }
 
+// Copy, Cut, Paste satisfy the desktop's edit-action interface so
+// the Edit menu operates on a focused terminal. A terminal's output
+// can't be cut, so Cut is a no-op and CutEnabled reports false (the
+// menu greys it out).
+
+// Copy copies the selection to the clipboard.
+func (t *PurfecTerm) Copy() { t.CopySelection() }
+
+// Cut is a no-op: terminal text cannot be removed.
+func (t *PurfecTerm) Cut() {}
+
+// Paste sends the clipboard to the PTY.
+func (t *PurfecTerm) Paste() { t.PasteClipboard() }
+
+// CutEnabled reports whether Cut applies here - never, for a terminal.
+func (t *PurfecTerm) CutEnabled() bool { return false }
+
 type termMenuItem struct {
 	label     string
 	separator bool

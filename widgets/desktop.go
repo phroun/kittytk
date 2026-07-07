@@ -884,8 +884,15 @@ func (d *Desktop) FocusedWidget() core.Widget {
 	if wm == nil {
 		return nil
 	}
-	if aw := wm.ActiveWindow(); aw != nil {
-		return aw.FocusManager().FocusedWidget()
+	win := wm.ActiveWindow()
+	if win == nil {
+		// While a menu is open the active window is deactivated
+		// (its focus is remembered as the previous window); menu
+		// about-to-show hooks and actions still target it.
+		win = wm.PreviousActiveWindow()
+	}
+	if win != nil {
+		return win.FocusManager().FocusedWidget()
 	}
 	return nil
 }

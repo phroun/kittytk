@@ -1341,9 +1341,12 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 }
 
 // ellipsizeToWidth trims s so that with a trailing ellipsis it fits
-// within avail; empty when not even the ellipsis fits.
+// within avail; empty when not even the ellipsis fits. The ellipsis
+// is three periods, not the "\u2026" glyph, matching the tab strip -
+// on cell surfaces it is three cells wide, and MeasureText adjusts
+// the need-for-ellipsis math on both surfaces.
 func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
-	const ell = "\u2026"
+	const ell = "..."
 	if font.MeasureText(s) <= avail {
 		return s
 	}
@@ -1361,7 +1364,7 @@ func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
 // a centered title fits between the left buttons and the right limit
 // (the blur button when shown, else the right edge); otherwise its
 // left edge sits just past the buttons and the text ellipsizes so
-// the "\u2026" butts against the right limit - the right side keeps no
+// the "..." butts against the right limit - the right side keeps no
 // mirrored reserve. A span of zero or less clips the title entirely.
 func (w *Window) paintTitleText(p *core.Painter, title string, ts style.CellStyle, font *core.Font, metrics core.CellMetrics, leftUsed, rightLimit, barWidth core.Unit) {
 	leftEdge := leftUsed + metrics.CellWidth

@@ -45,8 +45,8 @@ bar=new menubar children={
 		new menuitem caption="&Open..." shortcut="^O"
 		new menuitem caption="&Save" shortcut="^S"
 	}
-	new menu caption="&Edit" children={
-		new menuitem caption="Cu&t" shortcut="^X" action=demo.edit.cut
+	editmenu=new menu caption="&Edit" children={
+		cutitem=new menuitem caption="Cu&t" shortcut="^X" action=demo.edit.cut
 		new menuitem caption="&Copy" shortcut="^C" action=demo.edit.copy
 		new menuitem caption="&Paste" shortcut="^V" action=demo.edit.paste
 		new menuitem caption="Select &All" action=demo.edit.selectall
@@ -83,12 +83,14 @@ bar=new menubar children={
 }
 announce=bar.v.sr
 speakitem=bar.v.speak
+cutitem=bar.editmenu.cutitem
+editmenu=bar.editmenu
 `)
 	return b.String()
 }
 
 func createMenus(desktop *widgets.Desktop, application *app.Application) []*widgets.Menu {
-	menus, _, _ := buildMenuBar(mainMenuScript())
+	menus, byID, reply := buildMenuBar(mainMenuScript())
 
 	commands := application.Commands()
 	commands.Register("demo.file.new", func() {
@@ -133,6 +135,27 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 			ea.SelectAll()
 		}
 	})
+
+	// Grey out Cut when the focused widget reports it doesn't apply
+	// (a terminal's output can't be cut). Refreshed each time the
+	// Edit menu opens; the focused widget is the previous active
+	// window's while the menu is up.
+	if em, ok := byID[reply.IDs["editmenu"]].(*widgets.Menu); ok {
+		cut, _ := byID[reply.IDs["cutitem"]].(*widgets.MenuItem)
+		em.SetOnAboutToShow(func() {
+			if cut == nil {
+				return
+			}
+			enabled := true
+			if fw := desktop.FocusedWidget(); fw != nil {
+				if cq, ok := fw.(interface{ CutEnabled() bool }); ok {
+					enabled = cq.CutEnabled()
+				}
+			}
+			cut.SetEnabled(enabled)
+		})
+	}
+
 	commands.Register("demo.window.new", func() {
 		newApp := createSecondaryApplication(desktop)
 		desktop.AddApplication(newApp)
