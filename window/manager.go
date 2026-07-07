@@ -821,8 +821,14 @@ func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) co
 		}
 
 		// Check if parent is a scroll container and adjust for scroll
-		// offset (offsets are cells of the scroller's own denomination)
-		if scroller, ok := parent.(core.ScrollOffsetProvider); ok {
+		// offset. Unit-denominated scrollers (smooth surfaces) report
+		// units directly; classic scrollers report cells of their own
+		// denomination.
+		if su, ok := parent.(core.ScrollOffsetUnitsProvider); ok {
+			ox, oy := su.ScrollOffsetUnits()
+			result.X -= ox
+			result.Y -= oy
+		} else if scroller, ok := parent.(core.ScrollOffsetProvider); ok {
 			pm := core.DefaultCellMetrics()
 			if pw, ok := parent.(core.Widget); ok {
 				pm = core.FindEffectiveCellMetrics(pw)

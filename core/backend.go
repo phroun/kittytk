@@ -592,6 +592,22 @@ func (p *Painter) DrawCaret(x, y, height Unit, s style.CellStyle) bool {
 	return true
 }
 
+// ScreenHeightToLocal converts a screen-space height into local
+// units under the painter's current transform. Font metrics
+// (LineHeight, MeasureText) are screen-space: glyph rasters ignore
+// denomination scaling, so layout math inside re-denominated
+// interiors must convert them before mixing with local coordinates.
+func (p *Painter) ScreenHeightToLocal(h Unit) Unit {
+	r := p.transform.Inverse().ApplyRect(UnitRect{Height: h})
+	return r.Height
+}
+
+// ScreenWidthToLocal is ScreenHeightToLocal for the X axis.
+func (p *Painter) ScreenWidthToLocal(w Unit) Unit {
+	r := p.transform.Inverse().ApplyRect(UnitRect{Width: w})
+	return r.Width
+}
+
 // DrawText draws a string using the specified font.
 // If font is nil, uses DefaultFont().
 func (p *Painter) DrawText(x, y Unit, text string, s style.CellStyle, font *Font) Unit {

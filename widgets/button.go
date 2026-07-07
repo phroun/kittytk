@@ -321,6 +321,21 @@ func (b *Button) Paint(p *core.Painter) {
 	// Clear the entire button area first (to handle pressed state transition)
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', clearStyle)
 
+	graphical := p.Graphical()
+
+	// Pixel surfaces: the drop shadow is one filled rectangle beneath
+	// the face, offset down-right; the face paints over it. The
+	// half-block construction below is the cell-surface rendering of
+	// the same geometry.
+	if graphical && !showPressed {
+		p.FillRect(core.UnitRect{
+			X:      xOffset + metrics.CellWidth,
+			Y:      metrics.CellHeight / 2,
+			Width:  buttonWidth,
+			Height: metrics.CellHeight,
+		}, ' ', style.DefaultStyle().WithBg(shadowFg))
+	}
+
 	// Draw button background
 	if !b.flat || focused || showPressed {
 		p.FillRect(core.UnitRect{
@@ -332,7 +347,7 @@ func (b *Button) Paint(p *core.Painter) {
 	}
 
 	// Draw drop shadow (only when not pressed - both enabled and disabled buttons get shadow)
-	if !showPressed {
+	if !showPressed && !graphical {
 		// Bottom half block on right edge of button (top row)
 		shadowX := xOffset + buttonWidth
 		p.DrawCell(shadowX, 0, '▄', shadowStyle)

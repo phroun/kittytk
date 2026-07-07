@@ -449,8 +449,10 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 		label = "·· " + sp.title + " ··"
 	}
 	font := captionFont75(sp.EffectiveFont())
-	w := font.MeasureText(label)
-	h := font.LineHeight()
+	// Font metrics are screen-space; convert into this painter's local
+	// units so centering holds inside re-denominated interiors.
+	w := p.ScreenWidthToLocal(font.MeasureText(label))
+	h := p.ScreenHeightToLocal(font.LineHeight())
 	pad := core.Unit(4)
 	boxW := w + pad*2
 	if boxW > divider.Width {

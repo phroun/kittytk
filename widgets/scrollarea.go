@@ -729,6 +729,12 @@ func (s *ScrollArea) ScrollOffset() (x, y int) {
 	return s.scrollX, s.scrollY
 }
 
+// ScrollOffsetUnits implements core.ScrollOffsetUnitsProvider: the
+// current offsets in layout units regardless of denomination.
+func (s *ScrollArea) ScrollOffsetUnits() (core.Unit, core.Unit) {
+	return s.scrollOffsetUnits()
+}
+
 // smoothScroll reports whether this surface scrolls content at unit
 // granularity (pixel surfaces). Cell surfaces stay quantized to
 // whole rows and columns. Content that WANTS quantized output (the

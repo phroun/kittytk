@@ -276,6 +276,13 @@ type PopupController interface {
 	ScreenBounds() UnitRect
 }
 
+// ScrollOffsetUnitsProvider is implemented by scroll containers whose
+// offsets are already layout units (smooth surfaces). MapToScreen
+// prefers it over ScrollOffsetProvider's cell-denominated offsets.
+type ScrollOffsetUnitsProvider interface {
+	ScrollOffsetUnits() (x, y Unit)
+}
+
 // ScrollOffsetProvider is implemented by widgets that scroll their content
 // (like ScrollArea). Used by MapToScreen to adjust for scroll position.
 type ScrollOffsetProvider interface {

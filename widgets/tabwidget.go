@@ -37,6 +37,13 @@ type TabWidget struct {
 	scrollbarDragOffset int  // Scroll offset when drag started
 	vertTabDragging     bool // Whether dragging over vertical tabs (sweep selection)
 
+	// Smooth (pixel-surface) vertical tab scrollbar drag: the thumb
+	// follows the pointer at unit granularity while the first visible
+	// tab snaps to whole items.
+	smoothVertSbDrag bool
+	vertSbGrabOff    float64
+	vertSbThumbPos   float64
+
 	// Callbacks
 	onCurrentChanged func(index int)
 	onTabCloseRequested func(index int)
@@ -798,22 +805,78 @@ func (t *TabWidget) vertScrollbarGeometry() (scrollbarX core.Unit, thumbStart, t
 	return scrollbarX, thumbStart, thumbHeight, trackHeight
 }
 
+// vertScrollbarUnits returns the vertical tab lane geometry in units
+// for pixel surfaces: track length, thumb length, thumb origin - the
+// same proportions as vertScrollbarGeometry without row quantization.
+// Mid-drag the thumb origin is the smooth (pointer-tracked) position.
+func (t *TabWidget) vertScrollbarUnits() (trackU, thumbU, posU float64) {
+	metrics := t.EffectiveCellMetrics()
+	visibleCount := t.vertVisibleCount()
+	trackU = float64(core.Unit(visibleCount) * metrics.CellHeight)
+	totalTabs := len(t.tabs)
+	if totalTabs <= visibleCount || visibleCount <= 0 {
+		return trackU, trackU, 0
+	}
+	thumbU = trackU * float64(visibleCount) / float64(totalTabs)
+	if thumbU < 8 {
+		thumbU = 8
+	}
+	if thumbU > trackU {
+		thumbU = trackU
+	}
+	scrollable := trackU - thumbU
+	maxScroll := totalTabs - visibleCount
+	if t.scrollbarDragging && t.smoothVertSbDrag {
+		posU = t.vertSbThumbPos
+	} else if maxScroll > 0 {
+		posU = float64(t.vertScrollOffset) * scrollable / float64(maxScroll)
+	}
+	if posU < 0 {
+		posU = 0
+	}
+	if posU > scrollable {
+		posU = scrollable
+	}
+	return trackU, thumbU, posU
+}
+
 // paintVertScrollbar draws the vertical scrollbar for vertical tabs.
 func (t *TabWidget) paintVertScrollbar(p *core.Painter, scrollbarX core.Unit) {
 	scheme := t.GetScheme()
 	metrics := t.EffectiveCellMetrics()
+	trackStyle := scheme.GetScrollbar()
+	thumbStyle := scheme.GetScrollbarThumb()
+
+	// Pixel surfaces: a single hairline stripe blended at 50%
+	// opacity behind, and one solid full-opacity rectangle for the
+	// thumb, at unit granularity - the toolkit's lane treatment.
+	if p.Graphical() {
+		trackU, thumbU, posU := t.vertScrollbarUnits()
+		stripeX := scrollbarX + metrics.CellWidth/2
+		p.FillRect(core.UnitRect{
+			X:      stripeX,
+			Y:      0,
+			Width:  1,
+			Height: core.Unit(trackU + 0.5),
+		}, '▒', trackStyle.WithBg(style.ColorTransparent))
+		p.FillRect(core.UnitRect{
+			X:      scrollbarX + 1,
+			Y:      core.Unit(posU + 0.5),
+			Width:  metrics.CellWidth - 2,
+			Height: core.Unit(thumbU + 0.5),
+		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
+		return
+	}
 
 	_, thumbStart, thumbHeight, trackHeight := t.vertScrollbarGeometry()
 
 	// Draw scrollbar track
-	trackStyle := scheme.GetScrollbar()
 	for i := 0; i < trackHeight; i++ {
 		y := core.Unit(i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '│', trackStyle)
 	}
 
 	// Draw scrollbar thumb
-	thumbStyle := scheme.GetScrollbarThumb()
 	for i := 0; i < thumbHeight; i++ {
 		y := core.Unit(thumbStart+i) * metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)
@@ -824,6 +887,27 @@ func (t *TabWidget) paintVertScrollbar(p *core.Painter, scrollbarX core.Unit) {
 func (t *TabWidget) handleVertScrollbarClick(y core.Unit, metrics core.CellMetrics) {
 	clickedRow := int(y / metrics.CellHeight)
 	_, thumbStart, thumbHeight, _ := t.vertScrollbarGeometry()
+
+	// Pixel surfaces anchor the drag to the grab point within the
+	// unit-granular thumb; the first visible tab stays item-snapped.
+	if core.FindSmoothPositioning(t.Self()) {
+		_, thumbU, posU := t.vertScrollbarUnits()
+		pos := float64(y)
+		if pos >= posU && pos < posU+thumbU {
+			t.scrollbarDragging = true
+			t.smoothVertSbDrag = true
+			t.vertSbGrabOff = pos - posU
+			t.vertSbThumbPos = posU
+			return
+		}
+		// Track press falls through to page up/down below, keyed
+		// off the smooth thumb position.
+		if pos < posU {
+			clickedRow = thumbStart - 1
+		} else {
+			clickedRow = thumbStart + thumbHeight
+		}
+	}
 
 	// Check if click is on thumb - start drag
 	if clickedRow >= thumbStart && clickedRow < thumbStart+thumbHeight {
@@ -2828,6 +2912,31 @@ func (t *TabWidget) HandleFocusOut() {
 func (t *TabWidget) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Handle vertical scrollbar thumb drag
 	if t.scrollbarDragging {
+		// Smooth drag: the thumb follows the pointer in units, the
+		// first visible tab snaps to the nearest whole item.
+		if t.smoothVertSbDrag {
+			visibleCount := t.vertVisibleCount()
+			trackU, thumbU, _ := t.vertScrollbarUnits()
+			scrollable := trackU - thumbU
+			pos := float64(event.Y) - t.vertSbGrabOff
+			if pos < 0 {
+				pos = 0
+			}
+			if pos > scrollable {
+				pos = scrollable
+			}
+			t.vertSbThumbPos = pos
+			maxScroll := len(t.tabs) - visibleCount
+			newOffset := 0
+			if scrollable > 0 && maxScroll > 0 {
+				newOffset = int(pos*float64(maxScroll)/scrollable + 0.5)
+			}
+			t.vertScrollOffset = newOffset
+			// The thumb moves even when the snapped offset does not.
+			t.Update()
+			return true
+		}
+
 		metrics := t.EffectiveCellMetrics()
 		currentRow := int(event.Y / metrics.CellHeight)
 		rowDelta := currentRow - t.scrollbarDragStart
@@ -3026,6 +3135,8 @@ func (t *TabWidget) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Clear vertical scrollbar drag state
 	if t.scrollbarDragging {
 		t.scrollbarDragging = false
+		t.smoothVertSbDrag = false
+		t.Update()
 		return true
 	}
 
