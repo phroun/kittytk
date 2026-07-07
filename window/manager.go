@@ -74,6 +74,13 @@ type WindowManager struct {
 	dragStartY  core.Unit
 	dragOffsetX core.Unit
 	dragOffsetY core.Unit
+	// dragNeedsButton marks a drag armed programmatically (BeginDrag,
+	// re-dock): its press happened in another surface, so its release
+	// can be lost there too. Such a drag ends the moment motion
+	// arrives without the button held. Press-armed drags keep the
+	// historical behavior (terminal backends don't always report
+	// button state on motion).
+	dragNeedsButton bool
 
 	// Resize state
 	resizing       *Window
@@ -186,6 +193,7 @@ func (m *WindowManager) BeginDrag(win *Window, offsetX, offsetY core.Unit) {
 	m.dragging = win
 	m.dragOffsetX = offsetX
 	m.dragOffsetY = offsetY
+	m.dragNeedsButton = true
 }
 
 func (m *WindowManager) SmoothPositioning() bool {
@@ -1054,6 +1062,15 @@ func (m *WindowManager) CascadeWindows() {
 
 // HandleMousePress processes mouse events for windows.
 func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
+	m.mu.Lock()
+	if m.dragging != nil && m.dragNeedsButton {
+		// A press while an armed-without-press drag is live means its
+		// release was lost: disarm and process the press normally.
+		m.dragging = nil
+		m.dragNeedsButton = false
+	}
+	m.mu.Unlock()
+
 	m.mu.RLock()
 	windows := m.windows
 	desktop := m.desktop
@@ -1217,6 +1234,7 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 					m.dragStartY = event.Y
 					m.dragOffsetX = event.X - bounds.X
 					m.dragOffsetY = event.Y - bounds.Y
+					m.dragNeedsButton = false
 					m.pressedWindow = nil // Clear pressed window for drag
 					m.mu.Unlock()
 				}
@@ -1347,6 +1365,21 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle drag
 	if dragging != nil {
+		m.mu.RLock()
+		needsButton := m.dragNeedsButton
+		m.mu.RUnlock()
+		if needsButton && event.Buttons&core.LeftButton == 0 {
+			// The release was lost in another surface (re-dock
+			// hand-off): the gesture is over, stop following hovers.
+			m.mu.Lock()
+			if m.dragging == dragging {
+				m.dragging = nil
+				m.dragNeedsButton = false
+			}
+			m.mu.Unlock()
+			return true
+		}
+
 		// Tear-off: past the surface edge, the host may lift the
 		// window out into its own OS surface (G4 granting).
 		m.mu.RLock()

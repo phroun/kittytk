@@ -1,6 +1,8 @@
 package window
 
 import (
+	"time"
+
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/platform"
 )
@@ -45,6 +47,12 @@ type TearOffHost struct {
 	// area, second press restores the saved rect.
 	zoomed    bool
 	zoomSaved [4]int // x, y, w, h in px
+
+	// Double-click tracking for the title bar (zoom toggle), matching
+	// the in-surface manager's maximize double-click.
+	lastClickAt time.Time
+	lastClickX  core.Unit
+	lastClickY  core.Unit
 }
 
 // Resize edge bits. The top edge is the title bar (drag handle), so
@@ -141,17 +149,42 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 	case core.KeyReleaseEvent:
 		handled = h.win.HandleKeyRelease(e)
 	case core.MousePressEvent:
+		// A press while a drag/resize is still armed means the
+		// gesture's release was lost in the split event stream:
+		// disarm and process the press normally.
+		h.dragging = false
+		h.resizing = false
 		if e.Button == core.LeftButton && h.beginResize(e.X, e.Y) {
 			handled = true
 			break
 		}
 		handled = h.win.HandleMousePress(e)
 		if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) {
-			h.BeginDrag(e.X, e.Y)
+			// Double-click on the title bar toggles the zoom, exactly
+			// as it toggles maximize in-surface.
+			metrics := core.DefaultCellMetrics()
+			now := time.Now()
+			if now.Sub(h.lastClickAt) < 400*time.Millisecond &&
+				e.X-h.lastClickX < metrics.CellWidth && h.lastClickX-e.X < metrics.CellWidth &&
+				e.Y-h.lastClickY < metrics.CellHeight && h.lastClickY-e.Y < metrics.CellHeight {
+				h.lastClickAt = time.Time{}
+				h.ToggleZoom()
+			} else {
+				h.lastClickAt = now
+				h.lastClickX, h.lastClickY = e.X, e.Y
+				h.BeginDrag(e.X, e.Y)
+			}
 			handled = true
 		}
 	case core.MouseMoveEvent:
-		if h.resizing {
+		if (h.resizing || h.dragging) && e.Buttons&core.LeftButton == 0 {
+			// Button no longer held: the release happened where we
+			// couldn't see it. The gesture is over - do not move the
+			// window on a mere hover.
+			h.resizing = false
+			h.dragging = false
+			handled = h.win.HandleMouseMove(e)
+		} else if h.resizing {
 			handled = h.resizeMove()
 		} else if h.dragging {
 			handled = h.dragMove()

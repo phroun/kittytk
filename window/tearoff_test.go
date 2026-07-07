@@ -146,3 +146,83 @@ func TestTearOffHostKeyboardGeometry(t *testing.T) {
 		t.Errorf("keyboard resize: width %d px, want %d", surf.size.Width, 200*2+32)
 	}
 }
+
+// A lost release cannot leave an armed drag inverted: motion without
+// the button disarms it (no hover-drag), and a fresh press processes
+// normally instead of resuming the dead gesture.
+func TestTearOffHostLostReleaseDisarms(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	gx, gy := 700, 380
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, 1, func() (int, int) { return gx, gy }, nil)
+
+	// Armed (as the tear-off arms it), but the release was lost:
+	// hover motion must not move the window.
+	h.BeginDrag(120, 8)
+	gx, gy = 900, 500
+	h.Event(core.MouseMoveEvent{X: 40, Y: 9}) // no buttons held
+	if surf.x != 500 || surf.y != 300 {
+		t.Errorf("hover moved the window: %d,%d", surf.x, surf.y)
+	}
+	if h.Dragging() {
+		t.Error("hover did not disarm the stale drag")
+	}
+
+	// Same for a stale armed drag hit by a fresh press: it must not
+	// resume; the press processes normally (here: content press).
+	h.BeginDrag(120, 8)
+	h.Event(core.MousePressEvent{X: 100, Y: 50, Button: core.LeftButton})
+	h.Event(core.MouseMoveEvent{X: 110, Y: 60, Buttons: core.LeftButton})
+	if surf.x != 500 || surf.y != 300 {
+		t.Errorf("stale drag resumed on content press: %d,%d", surf.x, surf.y)
+	}
+	h.Event(core.MouseReleaseEvent{X: 110, Y: 60, Button: core.LeftButton})
+}
+
+// Double-clicking the torn window's title bar toggles the work-area
+// zoom, exactly as it toggles maximize in-surface.
+func TestTearOffHostTitleDoubleClickZooms(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+
+	h.Event(core.MousePressEvent{X: 120, Y: 8, Button: core.LeftButton})
+	h.Event(core.MouseReleaseEvent{X: 120, Y: 8, Button: core.LeftButton})
+	h.Event(core.MousePressEvent{X: 121, Y: 8, Button: core.LeftButton})
+	h.Event(core.MouseReleaseEvent{X: 121, Y: 8, Button: core.LeftButton})
+	if !win.IsMaximized() || surf.size.Width != 1600 {
+		t.Fatalf("double-click did not zoom: maximized=%v width=%d", win.IsMaximized(), surf.size.Width)
+	}
+
+	h.Event(core.MousePressEvent{X: 120, Y: 8, Button: core.LeftButton})
+	h.Event(core.MouseReleaseEvent{X: 120, Y: 8, Button: core.LeftButton})
+	h.Event(core.MousePressEvent{X: 121, Y: 8, Button: core.LeftButton})
+	h.Event(core.MouseReleaseEvent{X: 121, Y: 8, Button: core.LeftButton})
+	if win.IsMaximized() || surf.size.Width != 200 {
+		t.Fatalf("second double-click did not restore: maximized=%v width=%d", win.IsMaximized(), surf.size.Width)
+	}
+}
+
+// A BeginDrag-armed manager drag (re-dock hand-off) whose release was
+// lost ends on the first button-less motion instead of dragging the
+// window around on hover.
+func TestManagerArmedDragEndsWithoutButton(t *testing.T) {
+	m := NewWindowManager()
+	m.SetScreenBounds(core.UnitRect{Width: 800, Height: 480})
+	win := NewWindow("docked")
+	m.AddWindow(win)
+	win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
+
+	m.BeginDrag(win, 120, 8)
+	// Held motion follows.
+	m.HandleMouseMove(core.MouseMoveEvent{X: 240, Y: 120, Buttons: core.LeftButton})
+	if b := win.Bounds(); b.X != 120 || b.Y != 112 {
+		t.Fatalf("armed drag with button did not follow: %d,%d", b.X, b.Y)
+	}
+	// Button-less motion ends it; further held motion must not drag.
+	m.HandleMouseMove(core.MouseMoveEvent{X: 300, Y: 200})
+	m.HandleMouseMove(core.MouseMoveEvent{X: 400, Y: 300, Buttons: core.LeftButton})
+	if b := win.Bounds(); b.X != 120 || b.Y != 112 {
+		t.Errorf("stale armed drag kept following: %d,%d", b.X, b.Y)
+	}
+}
