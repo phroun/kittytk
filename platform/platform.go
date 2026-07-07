@@ -95,6 +95,11 @@ type NativeSurface interface {
 	// WorkAreaPx returns the usable bounds (menu bar and taskbar
 	// excluded) of the display the surface currently occupies.
 	WorkAreaPx() (x, y, w, h int)
+	// Minimize miniaturizes the OS window (macOS: to the Dock, like
+	// any document window; the platform makes borderless windows
+	// miniaturizable at creation). Restore is the OS's affair - the
+	// surface keeps painting when it comes back.
+	Minimize()
 	// Minimized reports whether the OS window is minimized or hidden
 	// (its screen rectangle is a phantom - re-dock hit tests must
 	// ignore it).

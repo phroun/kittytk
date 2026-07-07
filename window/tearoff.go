@@ -100,10 +100,18 @@ func NewTearOffHost(win *Window, surf platform.Surface, scale int,
 	}
 
 	h.savedFlags = win.Flags()
-	// Minimizing has no meaning without a managing desktop; resize and
-	// maximize stay - the host maps them onto the OS window (maximize
-	// zooms to the display's work area, macOS option-zoom style).
-	win.SetFlags(h.savedFlags | WindowFlagNoMinimize)
+	// All three title buttons keep meaning while torn: minimize
+	// miniaturizes the OS window (the Dock, on macOS), maximize zooms
+	// to the display's work area, resize maps onto the OS window. On
+	// surfaces that aren't native OS windows, minimize is masked.
+	if h.native == nil {
+		win.SetFlags(h.savedFlags | WindowFlagNoMinimize)
+	}
+	win.SetOnMinimizeRequest(func() {
+		if h.native != nil {
+			h.native.Minimize()
+		}
+	})
 	win.SetOnMaximizeRequest(h.ToggleZoom)
 	win.SetOnBoundsRequest(h.applyKeyboardBounds)
 	win.SetOnCloseComplete(func() {

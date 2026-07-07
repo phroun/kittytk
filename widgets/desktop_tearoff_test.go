@@ -33,6 +33,7 @@ func (s *msSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *msSurface) Close()                               { s.closed = true }
 func (s *msSurface) SetOpacity(o float64)                 { s.opacity = o }
 func (s *msSurface) Minimized() bool                      { return s.minimized }
+func (s *msSurface) Minimize()                            { s.minimized = true }
 func (s *msSurface) WorkAreaPx() (int, int, int, int)     { return 0, 0, 1600, 1000 }
 
 // SetScreenSizePx mimics the real platform: the size change reports

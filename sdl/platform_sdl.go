@@ -163,7 +163,7 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags uint32, shapeRadiusPx int) (*nativeWin, error) {
 	w := &nativeWin{shapeRadiusPx: shapeRadiusPx}
 	var err error
-	if shapeRadiusPx > 0 {
+	if shapeRadiusPx > 0 && !platformPerPixelAlpha {
 		// Shaped windows must be born shaped. Position is applied
 		// after creation (SDL's shaped-window position args are
 		// unreliable). Fall back to a plain window if shaping is
@@ -195,8 +195,9 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 		return nil, err
 	}
 	// Rounded corners, best mechanism first: per-pixel window alpha
-	// (macOS - antialiased), else the binary shape mask.
-	if w.shapeRadiusPx > 0 && makeWindowTransparent(w.window) {
+	// (macOS - antialiased, plain borderless window), else the binary
+	// shape mask on the shaped window created above.
+	if w.shapeRadiusPx > 0 && platformPerPixelAlpha && makeWindowTransparent(w.window) {
 		w.transparent = true
 		w.shapeRadiusPx = 0
 	}
@@ -681,6 +682,11 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 		return nil, err
 	}
 	w.surface = &sdlSurface{platform: p, win: w}
+	if opts.Borderless {
+		// Borderless windows can't miniaturize without help (Cocoa
+		// requires the miniaturizable style-mask bit).
+		makeWindowMiniaturizable(w.window)
+	}
 	reassertCapture()
 	return w.surface, nil
 }
@@ -820,6 +826,14 @@ func min32(a, b int32) int32 {
 		return a
 	}
 	return b
+}
+
+// Minimize implements platform.NativeSurface.
+func (s *sdlSurface) Minimize() {
+	if s.closed || s.win.window == nil {
+		return
+	}
+	s.win.window.Minimize()
 }
 
 // Minimized implements platform.NativeSurface.

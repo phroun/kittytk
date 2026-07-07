@@ -12,11 +12,12 @@ import (
 // position, and a size setter that reports back through Resized like
 // the real platform (scale 1: pixels are units).
 type nativeFakeSurface struct {
-	size    core.UnitSize
-	handler platform.SurfaceHandler
-	x, y    int
-	closed  bool
-	opacity float64
+	size      core.UnitSize
+	handler   platform.SurfaceHandler
+	x, y      int
+	closed    bool
+	opacity   float64
+	minimized bool
 }
 
 func (s *nativeFakeSurface) Size() core.UnitSize                  { return s.size }
@@ -31,6 +32,7 @@ func (s *nativeFakeSurface) WorkAreaPx() (int, int, int, int)     { return 0, 30
 func (s *nativeFakeSurface) Close()                               { s.closed = true }
 func (s *nativeFakeSurface) SetOpacity(o float64)                 { s.opacity = o }
 func (s *nativeFakeSurface) Minimized() bool                      { return false }
+func (s *nativeFakeSurface) Minimize()                            { s.minimized = true }
 
 func (s *nativeFakeSurface) SetScreenSizePx(w, h int) {
 	s.size = core.UnitSize{Width: core.Unit(w), Height: core.Unit(h)}
@@ -294,4 +296,22 @@ func TestTearOffHostZoomDragRestoreAndSnap(t *testing.T) {
 			win.IsMaximized(), surf.size.Width, surf.size.Height, surf.x, surf.y)
 	}
 	h.Event(core.MouseReleaseEvent{X: 100, Y: 5, Button: core.LeftButton})
+}
+
+// The minimize button on a torn window miniaturizes its OS window
+// (the Dock, on macOS) instead of being masked.
+func TestTearOffHostMinimizeButton(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+
+	if win.Flags()&WindowFlagNoMinimize != 0 {
+		t.Fatal("minimize masked on a native torn window")
+	}
+	// The [.] button sits after [x]: cells 4-6 of the title row.
+	h.Event(core.MousePressEvent{X: 40, Y: 8, Button: core.LeftButton})
+	h.Event(core.MouseReleaseEvent{X: 40, Y: 8, Button: core.LeftButton})
+	if !surf.minimized {
+		t.Error("minimize button did not miniaturize the OS window")
+	}
 }
