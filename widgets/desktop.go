@@ -128,6 +128,10 @@ type Desktop struct {
 	platform platform.Platform
 	surface  platform.Surface
 
+	// Live tear-off drag driven from the desktop's event stream (the
+	// desktop window owns the capture until the button is released).
+	tornDrag *tornDrag
+
 	// Running state
 	running atomic.Bool
 
@@ -932,6 +936,7 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 		d.surface = surface
 		d.mu.Unlock()
 		surface.SetHandler(&desktopSurfaceHandler{d: d})
+		d.setupTearOff(pf, surface)
 
 		size := surface.Size()
 		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
@@ -1029,6 +1034,12 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 	wm := d.windowManager
 	fm := d.focusManager
 	d.mu.RUnlock()
+
+	// A live tear-off drag owns the pointer stream: the desktop keeps
+	// the capture while the torn window follows the pointer.
+	if d.handleTornDrag(event) {
+		return true
+	}
 
 	// Check pass-next-key-to-widget mode FIRST, before any event filters.
 	// This ensures the key goes directly to the widget without any interception.

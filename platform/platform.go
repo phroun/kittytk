@@ -51,10 +51,41 @@ type Platform interface {
 	Beep()
 }
 
-// SurfaceOptions parameterizes surface creation. Sparse for the TUI
-// platform; native platforms add position/size/flags as G4 lands.
+// SurfaceOptions parameterizes surface creation. The TUI platform
+// ignores everything but Title; multi-surface platforms honor the
+// pixel geometry (zero size = platform default) and the Borderless
+// flag (no OS chrome - the window draws its own, as torn-off desktop
+// windows do).
 type SurfaceOptions struct {
-	Title string
+	Title             string
+	XPx, YPx          int
+	WidthPx, HeightPx int
+	Borderless        bool
+}
+
+// MultiSurfacePlatform is an optional Platform capability: more than
+// one surface may exist at a time (each an OS window). Hosts gate
+// tear-off choreography on it.
+type MultiSurfacePlatform interface {
+	SupportsMultipleSurfaces() bool
+}
+
+// GlobalPointerPlatform is an optional Platform capability: the
+// pointer position in screen pixels, for drag choreography that
+// crosses surfaces.
+type GlobalPointerPlatform interface {
+	GlobalPointerPx() (x, y int)
+}
+
+// NativeSurface is an optional Surface capability on platforms whose
+// surfaces are OS windows: screen-pixel geometry and lifetime.
+type NativeSurface interface {
+	// ScreenPositionPx returns the surface origin in screen pixels.
+	ScreenPositionPx() (x, y int)
+	// SetScreenPositionPx moves the surface.
+	SetScreenPositionPx(x, y int)
+	// Close destroys the surface and its OS window.
+	Close()
 }
 
 // Surface is one render target: per-surface size, damage, input.

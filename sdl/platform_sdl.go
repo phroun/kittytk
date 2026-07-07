@@ -17,9 +17,9 @@ import (
 	"github.com/phroun/tuitk/raster"
 )
 
-// Platform runs tuitk in an SDL2 window: the raster backend paints,
-// SDL presents and feeds input. All callbacks on the OS-locked main
-// thread per D21.
+// Platform runs tuitk over SDL2 windows: each surface is an OS
+// window with its own raster backend, SDL presents and feeds input.
+// All callbacks on the OS-locked main thread per D21.
 type Platform struct {
 	title    string
 	wPx, hPx int
@@ -32,12 +32,20 @@ type Platform struct {
 	quitting atomic.Bool
 	exitCode atomic.Int32
 
+	backend *raster.Backend // main window's framebuffer
+
+	main *nativeWin
+	wins map[uint32]*nativeWin // by SDL window ID, main included
+}
+
+// nativeWin bundles one OS window with its presentation chain.
+type nativeWin struct {
 	window   *sdl2.Window
 	renderer *sdl2.Renderer
 	texture  *sdl2.Texture
 	backend  *raster.Backend
-
-	surface *sdlSurface
+	surface  *sdlSurface
+	id       uint32
 }
 
 type timerEntry struct {
@@ -45,9 +53,9 @@ type timerEntry struct {
 	fn  func()
 }
 
-// New creates an SDL platform for one window of the given pixel size.
+// New creates an SDL platform; the main window has the given pixel size.
 func New(title string, widthPx, heightPx int) *Platform {
-	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1}
+	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1, wins: map[uint32]*nativeWin{}}
 }
 
 // SetScale sets how many window pixels one abstract unit covers.
@@ -61,11 +69,12 @@ func (p *Platform) SetScale(scale int) {
 	p.scale = scale
 }
 
-// Backend returns the raster backend (valid after Run starts; used
-// by embedders that must seed desktop metrics before RunOn).
+// Backend returns the main window's raster backend (valid after Run
+// starts; used by embedders that must seed desktop metrics before
+// RunOn).
 func (p *Platform) Backend() *raster.Backend { return p.backend }
 
-// EnsureBackend creates the framebuffer early (before Run) so
+// EnsureBackend creates the main framebuffer early (before Run) so
 // Desktop.SetBackend can seed metrics from it.
 func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 	if p.backend == nil {
@@ -88,31 +97,16 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	}
 	defer sdl2.Quit()
 
-	var err error
-	p.window, err = sdl2.CreateWindow(p.title,
-		sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED,
-		int32(p.wPx), int32(p.hPx),
-		sdl2.WINDOW_SHOWN|sdl2.WINDOW_RESIZABLE)
+	win, err := p.createWindow(p.title, sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED,
+		p.wPx, p.hPx, sdl2.WINDOW_SHOWN|sdl2.WINDOW_RESIZABLE)
 	if err != nil {
 		return 1
 	}
-	defer p.window.Destroy()
-
-	p.renderer, err = sdl2.CreateRenderer(p.window, -1, sdl2.RENDERER_ACCELERATED|sdl2.RENDERER_PRESENTVSYNC)
-	if err != nil {
-		p.renderer, err = sdl2.CreateRenderer(p.window, -1, 0)
-		if err != nil {
-			return 1
-		}
-	}
-	defer p.renderer.Destroy()
-
-	if err := p.recreateFramebuffer(p.wPx, p.hPx); err != nil {
-		return 1
-	}
+	p.main = win
+	p.backend = win.backend
 	defer func() {
-		if p.texture != nil {
-			p.texture.Destroy()
+		for _, w := range p.wins {
+			w.destroy()
 		}
 	}()
 
@@ -131,8 +125,10 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 
 		delivered := p.pumpEvents()
 
-		if s := p.surface; s != nil && s.dirty.Swap(false) {
-			p.paintAndPresent()
+		for _, w := range p.wins {
+			if s := w.surface; s != nil && s.dirty.Swap(false) {
+				p.paintAndPresent(w)
+			}
 		}
 
 		if !delivered {
@@ -142,47 +138,100 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	return int(p.exitCode.Load())
 }
 
-// recreateFramebuffer sizes the raster backend and streaming texture.
-func (p *Platform) recreateFramebuffer(wPx, hPx int) error {
+// createWindow builds one OS window with its presentation chain.
+func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags uint32) (*nativeWin, error) {
+	w := &nativeWin{}
+	var err error
+	w.window, err = sdl2.CreateWindow(title, x, y, int32(wPx), int32(hPx), flags)
+	if err != nil {
+		return nil, err
+	}
+	w.renderer, err = sdl2.CreateRenderer(w.window, -1, sdl2.RENDERER_ACCELERATED|sdl2.RENDERER_PRESENTVSYNC)
+	if err != nil {
+		w.renderer, err = sdl2.CreateRenderer(w.window, -1, 0)
+		if err != nil {
+			w.window.Destroy()
+			return nil, err
+		}
+	}
+	if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
+		w.renderer.Destroy()
+		w.window.Destroy()
+		return nil, err
+	}
+	w.id, _ = w.window.GetID()
+	p.wins[w.id] = w
+	return w, nil
+}
+
+// destroy tears down one window's chain.
+func (w *nativeWin) destroy() {
+	if w.texture != nil {
+		w.texture.Destroy()
+		w.texture = nil
+	}
+	if w.renderer != nil {
+		w.renderer.Destroy()
+		w.renderer = nil
+	}
+	if w.window != nil {
+		w.window.Destroy()
+		w.window = nil
+	}
+}
+
+// sizeFramebuffer sizes one window's raster backend and streaming
+// texture.
+func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 	b, err := raster.NewScaled(wPx, hPx, p.scale)
 	if err != nil {
 		return err
 	}
-	p.backend = b
-	p.wPx, p.hPx = wPx, hPx
+	w.backend = b
+	if w == p.main || p.main == nil {
+		p.backend = b
+		p.wPx, p.hPx = wPx, hPx
+	}
 
-	if p.texture != nil {
-		p.texture.Destroy()
+	if w.texture != nil {
+		w.texture.Destroy()
 	}
 	// Go's image.RGBA stores bytes R,G,B,A; on little-endian that is
 	// SDL's ABGR8888 packed format.
-	p.texture, err = p.renderer.CreateTexture(
+	w.texture, err = w.renderer.CreateTexture(
 		sdl2.PIXELFORMAT_ABGR8888, sdl2.TEXTUREACCESS_STREAMING,
 		int32(wPx), int32(hPx))
 	return err
 }
 
-// paintAndPresent runs the handler frame into the raster backend and
-// blits it.
-func (p *Platform) paintAndPresent() {
-	s := p.surface
-	if s == nil || s.handler == nil {
+// paintAndPresent runs the handler frame into the window's raster
+// backend and blits it.
+func (p *Platform) paintAndPresent(w *nativeWin) {
+	s := w.surface
+	if s == nil || s.handler == nil || w.texture == nil {
 		return
 	}
-	p.backend.BeginFrame()
-	s.handler.Frame(core.NewPainter(p.backend))
-	p.backend.EndFrame()
+	w.backend.BeginFrame()
+	s.handler.Frame(core.NewPainter(w.backend))
+	w.backend.EndFrame()
 
-	img := p.backend.Image()
-	_ = p.texture.Update(nil, unsafe.Pointer(&img.Pix[0]), img.Stride)
-	_ = p.renderer.Clear()
-	_ = p.renderer.Copy(p.texture, nil, nil)
-	p.renderer.Present()
+	img := w.backend.Image()
+	_ = w.texture.Update(nil, unsafe.Pointer(&img.Pix[0]), img.Stride)
+	_ = w.renderer.Clear()
+	_ = w.renderer.Copy(w.texture, nil, nil)
+	w.renderer.Present()
 }
 
-// pumpEvents drains SDL's queue into the surface handler.
+// surfaceFor routes an event's window ID to its surface.
+func (p *Platform) surfaceFor(id uint32) *sdlSurface {
+	if w, ok := p.wins[id]; ok {
+		return w.surface
+	}
+	return nil
+}
+
+// pumpEvents drains SDL's queue into the per-window surface handlers.
 func (p *Platform) pumpEvents() bool {
-	s := p.surface
 	delivered := false
 	for {
 		ev := sdl2.PollEvent()
@@ -190,20 +239,29 @@ func (p *Platform) pumpEvents() bool {
 			return delivered
 		}
 		delivered = true
-		if s == nil || s.handler == nil {
-			continue
-		}
 		switch e := ev.(type) {
 		case *sdl2.QuitEvent:
-			s.handler.Event(core.QuitEvent{})
+			if s := p.mainSurface(); s != nil && s.handler != nil {
+				s.handler.Event(core.QuitEvent{})
+			}
 		case *sdl2.WindowEvent:
+			s := p.surfaceFor(e.WindowID)
+			if s == nil || s.handler == nil {
+				continue
+			}
 			if e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
-				if err := p.recreateFramebuffer(int(e.Data1), int(e.Data2)); err == nil {
-					s.handler.Resized(p.backend.Size())
-					s.Invalidate(core.UnitRect{})
+				if w, ok := p.wins[e.WindowID]; ok {
+					if err := p.sizeFramebuffer(w, int(e.Data1), int(e.Data2)); err == nil {
+						s.handler.Resized(w.backend.Size())
+						s.Invalidate(core.UnitRect{})
+					}
 				}
 			}
 		case *sdl2.TextInputEvent:
+			s := p.surfaceFor(e.WindowID)
+			if s == nil || s.handler == nil {
+				continue
+			}
 			text := e.GetText()
 			for _, ch := range text {
 				s.handler.Event(core.KeyPressEvent{
@@ -212,6 +270,10 @@ func (p *Platform) pumpEvents() bool {
 				})
 			}
 		case *sdl2.KeyboardEvent:
+			s := p.surfaceFor(e.WindowID)
+			if s == nil || s.handler == nil {
+				continue
+			}
 			if e.Type == sdl2.KEYDOWN {
 				if key := translateKey(e.Keysym); key != "" {
 					mods, name := core.ParseKeyModifiers(key)
@@ -223,15 +285,28 @@ func (p *Platform) pumpEvents() bool {
 				}
 			}
 		case *sdl2.MouseButtonEvent:
+			s := p.surfaceFor(e.WindowID)
+			if s == nil || s.handler == nil {
+				continue
+			}
 			btn := mapButton(e.Button)
 			x, y := p.toUnits(e.X, e.Y)
 			mods := currentKeyModifiers()
 			if e.Type == sdl2.MOUSEBUTTONDOWN {
+				// Capture so a drag keeps reporting past the window
+				// edge (coordinates go negative/out of bounds) - the
+				// tear-off choreography depends on it.
+				_ = sdl2.CaptureMouse(true)
 				s.handler.Event(core.MousePressEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 			} else {
+				_ = sdl2.CaptureMouse(false)
 				s.handler.Event(core.MouseReleaseEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 			}
 		case *sdl2.MouseMotionEvent:
+			s := p.surfaceFor(e.WindowID)
+			if s == nil || s.handler == nil {
+				continue
+			}
 			var held core.MouseButton
 			if e.State&sdl2.ButtonLMask() != 0 {
 				held = core.LeftButton
@@ -239,6 +314,10 @@ func (p *Platform) pumpEvents() bool {
 			x, y := p.toUnits(e.X, e.Y)
 			s.handler.Event(core.MouseMoveEvent{X: x, Y: y, Buttons: held, Modifiers: currentKeyModifiers()})
 		case *sdl2.MouseWheelEvent:
+			s := p.surfaceFor(e.WindowID)
+			if s == nil || s.handler == nil {
+				continue
+			}
 			mx, my, _ := sdl2.GetMouseState()
 			x, y := p.toUnits(mx, my)
 			s.handler.Event(core.MouseWheelEvent{
@@ -254,9 +333,27 @@ func (p *Platform) pumpEvents() bool {
 	}
 }
 
+func (p *Platform) mainSurface() *sdlSurface {
+	if p.main != nil {
+		return p.main.surface
+	}
+	return nil
+}
+
 // toUnits converts window-pixel mouse coordinates to abstract units.
 func (p *Platform) toUnits(x, y int32) (core.Unit, core.Unit) {
-	return core.Unit(int(x) / p.scale), core.Unit(int(y) / p.scale)
+	// Round toward negative infinity so captured-drag coordinates
+	// left/above the window stay strictly negative.
+	fx, fy := int(x), int(y)
+	ux := fx / p.scale
+	if fx < 0 && fx%p.scale != 0 {
+		ux--
+	}
+	uy := fy / p.scale
+	if fy < 0 && fy%p.scale != 0 {
+		uy--
+	}
+	return core.Unit(ux), core.Unit(uy)
 }
 
 // currentKeyModifiers translates SDL's live modifier state for mouse
@@ -463,14 +560,50 @@ func (p *Platform) Quit(code int) {
 	p.quitting.Store(true)
 }
 
-// CreateSurface implements platform.Platform: the SDL window is the
-// one surface (per-window native surfaces arrive with G4 granting).
+// SupportsMultipleSurfaces implements platform.MultiSurfacePlatform.
+func (p *Platform) SupportsMultipleSurfaces() bool { return true }
+
+// GlobalPointerPx implements platform.GlobalPointerPlatform.
+func (p *Platform) GlobalPointerPx() (int, int) {
+	x, y, _ := sdl2.GetGlobalMouseState()
+	return int(x), int(y)
+}
+
+// CreateSurface implements platform.Platform: the first surface binds
+// the main window; each further call opens another OS window (G4
+// granting - torn-off desktop windows, native-mode windows).
 func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface, error) {
-	if p.surface != nil {
-		return nil, fmt.Errorf("sdl platform: surface already created")
+	if p.main == nil {
+		return nil, fmt.Errorf("sdl platform: not running")
 	}
-	p.surface = &sdlSurface{platform: p}
-	return p.surface, nil
+	if p.main.surface == nil {
+		p.main.surface = &sdlSurface{platform: p, win: p.main}
+		if opts.Title != "" {
+			p.main.window.SetTitle(opts.Title)
+		}
+		return p.main.surface, nil
+	}
+
+	wPx, hPx := opts.WidthPx, opts.HeightPx
+	if wPx <= 0 || hPx <= 0 {
+		wPx, hPx = 640, 480
+	}
+	x, y := int32(opts.XPx), int32(opts.YPx)
+	if opts.XPx == 0 && opts.YPx == 0 {
+		x, y = sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED
+	}
+	flags := uint32(sdl2.WINDOW_SHOWN)
+	if opts.Borderless {
+		flags |= sdl2.WINDOW_BORDERLESS
+	} else {
+		flags |= sdl2.WINDOW_RESIZABLE
+	}
+	w, err := p.createWindow(opts.Title, x, y, wPx, hPx, flags)
+	if err != nil {
+		return nil, err
+	}
+	w.surface = &sdlSurface{platform: p, win: w}
+	return w.surface, nil
 }
 
 // Clipboard implements platform.Platform.
@@ -485,20 +618,51 @@ func (p *Platform) SetClipboard(text string) { _ = sdl2.SetClipboardText(text) }
 // Beep implements platform.Platform.
 func (p *Platform) Beep() {}
 
-// sdlSurface is the SDL window as a platform.Surface.
+// sdlSurface is one SDL window as a platform.Surface.
 type sdlSurface struct {
 	platform *Platform
+	win      *nativeWin
 	handler  platform.SurfaceHandler
 	dirty    atomic.Bool
+	closed   bool
 }
 
 func (s *sdlSurface) Size() core.UnitSize {
-	return s.platform.backend.Size()
+	return s.win.backend.Size()
 }
 func (s *sdlSurface) Metrics() core.CellMetrics {
-	return s.platform.backend.Metrics()
+	return s.win.backend.Metrics()
 }
 func (s *sdlSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
 func (s *sdlSurface) Invalidate(core.UnitRect)             { s.dirty.Store(true) }
 func (s *sdlSurface) SetCursorVisible(bool)                {}
 func (s *sdlSurface) SetCursorPosition(x, y core.Unit)     {}
+
+// ScreenPositionPx implements platform.NativeSurface.
+func (s *sdlSurface) ScreenPositionPx() (int, int) {
+	if s.closed || s.win.window == nil {
+		return 0, 0
+	}
+	x, y := s.win.window.GetPosition()
+	return int(x), int(y)
+}
+
+// SetScreenPositionPx implements platform.NativeSurface.
+func (s *sdlSurface) SetScreenPositionPx(x, y int) {
+	if s.closed || s.win.window == nil {
+		return
+	}
+	s.win.window.SetPosition(int32(x), int32(y))
+}
+
+// Close implements platform.NativeSurface: destroys the OS window.
+// The main window ignores it (quitting the app is Platform.Quit).
+func (s *sdlSurface) Close() {
+	if s.closed || s.win == s.platform.main {
+		return
+	}
+	s.closed = true
+	s.handler = nil
+	delete(s.platform.wins, s.win.id)
+	s.win.destroy()
+}

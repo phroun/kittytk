@@ -641,6 +641,22 @@ milestone for whole windows.
    against a fake surface (bounds/flags/layout, paint, click
    routing, resize tracking, invalidation). Desktop-side granting
    policy activates when a multi-surface platform exists.
+   **Granting landed 2026-07-07**: the SDL platform is multi-surface
+   (per-window renderer/texture/raster backend, events routed by
+   window ID, mouse captured during drags so coordinates keep
+   reporting past the edge). New optional capabilities:
+   `platform.MultiSurfacePlatform`, `platform.GlobalPointerPlatform`,
+   `platform.NativeSurface` (screen-px position + Close), and
+   `SurfaceOptions` pixel geometry + Borderless. `window.TearOffHost`
+   hosts one window per surface with tuitk chrome KEPT (borderless OS
+   window - torn windows look identical to docked ones); its title
+   drag moves the OS window via the global pointer. Desktop
+   choreography: a WindowManager title drag crossing the surface edge
+   tears the window off into its own OS window (the desktop keeps the
+   capture and drives the torn surface until release); crossing back
+   over the desktop re-docks it with the drag still armed, in either
+   phase. Headless choreography tests against a fake multi-surface
+   platform.
 5. ✅ **D2 transport** core — **done 2026-07-05** (D22). The wire IS
    the language: `protocol.Scanner` frames statements off the socket
    by brace/string awareness; batches end with `end`; replies and

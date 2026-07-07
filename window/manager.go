@@ -63,6 +63,11 @@ type WindowManager struct {
 	// Theme
 	theme *style.Theme
 
+	// Tear-off policy (G4 granting): when a drag crosses the surface
+	// edge, the host may lift the window out into its own OS surface.
+	// Returning true means the window left this manager.
+	tearOff func(win *Window, event core.MouseMoveEvent, offsetX, offsetY core.Unit) bool
+
 	// Drag state
 	dragging    *Window
 	dragStartX  core.Unit
@@ -162,6 +167,27 @@ func (m *WindowManager) SetResizeGrip(grip core.Unit) {
 
 // SmoothPositioning reports whether drag and resize track the pointer at
 // unit granularity rather than snapping to cell boundaries.
+// SetTearOffHandler installs the host's tear-off policy: called
+// during a title drag when the pointer leaves the surface. A nil
+// handler (the default) keeps every drag in-surface.
+func (m *WindowManager) SetTearOffHandler(h func(win *Window, event core.MouseMoveEvent, offsetX, offsetY core.Unit) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tearOff = h
+}
+
+// BeginDrag arms the title-bar drag state programmatically, as if the
+// user had pressed on the titlebar with the given grab offset. The
+// re-dock choreography uses it so a window dropped back onto the
+// desktop keeps following the held pointer.
+func (m *WindowManager) BeginDrag(win *Window, offsetX, offsetY core.Unit) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dragging = win
+	m.dragOffsetX = offsetX
+	m.dragOffsetY = offsetY
+}
+
 func (m *WindowManager) SmoothPositioning() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1321,6 +1347,25 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle drag
 	if dragging != nil {
+		// Tear-off: past the surface edge, the host may lift the
+		// window out into its own OS surface (G4 granting).
+		m.mu.RLock()
+		tear := m.tearOff
+		screen := m.screenBounds
+		m.mu.RUnlock()
+		if tear != nil && !dragging.IsMaximized() &&
+			(event.X < screen.X || event.Y < screen.Y ||
+				event.X >= screen.X+screen.Width || event.Y >= screen.Y+screen.Height) {
+			if tear(dragging, event, offsetX, offsetY) {
+				m.mu.Lock()
+				if m.dragging == dragging {
+					m.dragging = nil
+				}
+				m.mu.Unlock()
+				return true
+			}
+		}
+
 		// Track if we just restored from maximized (to avoid immediate re-maximize)
 		justRestored := false
 
@@ -1395,7 +1440,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 		// Allow window to go almost completely off-screen horizontally
 		// Just keep 1 unit (border) visible for retrieval
-		minVisibleX := core.Unit(1) // Just border visible on right
+		minVisibleX := core.Unit(1)        // Just border visible on right
 		minVisibleFromLeft := core.Unit(1) // Just border visible on left
 
 		// Left constraint: window can go so far left that only right border is visible
