@@ -2089,6 +2089,14 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
+	// A click below the title bar moves keyboard focus into the
+	// content: drop any title-bar keyboard focus (set by Tab/Shift+Tab)
+	// so it stops intercepting keys and Tab resumes from the clicked
+	// control rather than the title-bar element.
+	if w.TitleFocus() != TitleFocusNone {
+		w.SetTitleFocus(TitleFocusNone)
+	}
+
 	// Pass to content (converted into the interior denomination)
 	if content != nil {
 		contentBounds := w.contentBounds()

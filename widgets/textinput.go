@@ -449,6 +449,17 @@ func (t *TextInput) Paint(p *core.Painter) {
 			p.DrawText(x, 0, string(r), charStyle, font)
 			x += font.MeasureText(string(r))
 		}
+
+		// The selection can extend past the last visible glyph while
+		// more selected text is scrolled off the right (proportional
+		// fonts leave a sliver of the box unfilled where a cell grid
+		// would not). Color that trailing gap as selection so the
+		// highlight reaches the edge. No-op on cell surfaces, where
+		// the text fills the box exactly.
+		lastVisiblePos := t.scrollOffset + len(displayText)
+		if x < bounds.Width && start <= lastVisiblePos && end > lastVisiblePos {
+			p.FillRect(core.UnitRect{X: x, Width: bounds.Width - x, Height: bounds.Height}, ' ', selStyle)
+		}
 	}
 
 	// Draw cursor - cursor position is still cell-based for consistency.

@@ -3,6 +3,8 @@ package widgets
 import (
 	"testing"
 
+	"github.com/phroun/tuitk/raster"
+
 	"github.com/phroun/tuitk/core"
 )
 
@@ -104,3 +106,36 @@ func TestTextInputContextMenu(t *testing.T) {
 		t.Fatalf("right click registered %d popups, want 1", len(clip.popups))
 	}
 }
+
+// On a pixel surface, when the selection runs past the last visible
+// glyph (caret far left, the other end scrolled off the right), the
+// leftover sliver on the right edge is painted in the selection
+// color, not the box fill.
+func TestTextInputSelectionSliverFillsToEdge(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := rasterNew(240, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(px)
+
+	ti := NewTextInput()
+	ti.SetText("proportional selection running off the right edge")
+	ti.SetBounds(core.UnitRect{Width: 220, Height: 16})
+	ti.SetFocus()
+	// Caret to the end, then Shift+Home: caret jumps left, the
+	// selection anchor stays at the (now off-screen) right end.
+	ti.SetCursorPosition(len("proportional selection running off the right edge"))
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "S-Home", Modifiers: core.ShiftModifier})
+	ti.Paint(core.NewPainter(px))
+
+	// The rightmost column, mid-row, must be the selection background
+	// (white ~255,255,255), not the focused fill (cyan ~17,168,205).
+	img := px.Image()
+	r, _, _, _ := img.At(219, 8).RGBA()
+	if r>>8 < 200 {
+		t.Errorf("trailing sliver not selection-colored: R=%d (want white, ~255; cyan fill ~17)", r>>8)
+	}
+}
+
+func rasterNew(w, h int) (*raster.Backend, error) { return raster.New(w, h) }
