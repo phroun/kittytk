@@ -691,6 +691,66 @@ func (b *Backend) blendPx(x, y int, c color.RGBA, a float64) {
 	b.img.SetRGBA(x, y, blend(c, b.img.RGBAAt(x, y), a))
 }
 
+// DrawArcWedge implements core.ArcWedgeDrawer: per-pixel coverage
+// against the quarter ellipse inscribed in r and centered on the
+// chosen corner, so silhouette curves come out antialiased. The part
+// of r outside the arc fills with the style's background; a stroke of
+// the given weight follows the arc in its foreground (0 = no stroke).
+func (b *Backend) DrawArcWedge(r core.UnitRect, centerRight, centerBottom bool, strokeW core.Unit, s style.CellStyle) {
+	fg, bg := b.styleColors(s)
+	x0, y0 := b.px(r.X), b.px(r.Y)
+	x1, y1 := b.px(r.X+r.Width), b.px(r.Y+r.Height)
+	w, h := x1-x0, y1-y0
+	if w <= 0 || h <= 0 {
+		return
+	}
+	rx, ry := float64(w), float64(h)
+	cx, cy := float64(x0), float64(y0)
+	if centerRight {
+		cx = float64(x1)
+	}
+	if centerBottom {
+		cy = float64(y1)
+	}
+	th := float64(int(strokeW) * b.scale)
+	clampCov := func(v float64) float64 {
+		if v < 0 {
+			return 0
+		}
+		if v > 1 {
+			return 1
+		}
+		return v
+	}
+	for py := y0; py < y1; py++ {
+		for px := x0; px < x1; px++ {
+			nx := (float64(px) + 0.5 - cx) / rx
+			ny := (float64(py) + 0.5 - cy) / ry
+			nd := math.Hypot(nx, ny)
+			// Signed pixel distance outside the arc: the normalized
+			// distance converted back through the local radial
+			// gradient (exactly d - r for a circle).
+			pd := -math.Min(rx, ry)
+			if nd > 0 {
+				pd = (nd - 1) * nd / math.Hypot(nx/rx, ny/ry)
+			}
+			cov := clampCov(pd + th + 0.5) // stroke band + wedge fill
+			fillCov := clampCov(pd + 0.5)  // wedge fill only
+			if th <= 0 {
+				cov = fillCov
+			}
+			if cov <= 0 {
+				continue
+			}
+			src := bg
+			if fillCov < cov {
+				src = blend(bg, fg, fillCov/cov)
+			}
+			b.blendPx(px, py, src, cov)
+		}
+	}
+}
+
 // DrawRoundedRect implements core.RoundedRectDrawer: one pass paints
 // the fill (style background) and the stroke (style foreground, at
 // strokePx weight) with anti-aliased corners. Window frames on pixel

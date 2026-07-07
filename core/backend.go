@@ -143,6 +143,17 @@ type RoundedRectDrawer interface {
 	StrokeRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle)
 }
 
+// ArcWedgeDrawer is an optional RenderBackend capability: fill the
+// part of a rect lying outside the quarter ellipse inscribed in it
+// and centered on the chosen corner - antialiased - painting the fill
+// in the style's background and an optional stroke of the given
+// weight along the arc in its foreground (0 = no stroke). The tab
+// strip's silhouette corners use this; cell surfaces omit it and
+// callers fall back to scanline fills.
+type ArcWedgeDrawer interface {
+	DrawArcWedge(r UnitRect, centerRight, centerBottom bool, strokeW Unit, s style.CellStyle)
+}
+
 // ImageDrawer is an optional RenderBackend capability: composite a
 // raster image onto the surface. The image is in DEVICE pixels
 // (callers render at the surface's scale); alpha is honored
@@ -496,6 +507,21 @@ func (p *Painter) DrawRoundedRect(r UnitRect, radius Unit, border style.BorderSt
 	screenRect := p.transform.ApplyRect(r)
 	p.applyClip()
 	rd.DrawRoundedRect(screenRect, radius, border, s)
+	return true
+}
+
+// DrawArcWedge paints an antialiased quarter-arc wedge when the
+// backend supports it (see ArcWedgeDrawer). strokeW is in screen
+// units. Returns false on cell surfaces; the caller then falls back
+// to its scanline rendering.
+func (p *Painter) DrawArcWedge(r UnitRect, centerRight, centerBottom bool, strokeW Unit, s style.CellStyle) bool {
+	ad, ok := p.backend.(ArcWedgeDrawer)
+	if !ok {
+		return false
+	}
+	screenRect := p.transform.ApplyRect(r)
+	p.applyClip()
+	ad.DrawArcWedge(screenRect, centerRight, centerBottom, strokeW, s)
 	return true
 }
 

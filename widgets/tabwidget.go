@@ -679,7 +679,7 @@ func (t *TabWidget) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX, 
 			p.FillRect(core.UnitRect{X: x0, Y: y, Width: x1 - x0, Height: hairH}, ' ', line)
 		}
 	}
-	rSmall := cw / 2
+	rSmall := cw * 3 / 4
 	rBig := cw + cw/4
 	bodyLeft := leadX + cw
 	bodyRight := trailX
@@ -700,18 +700,24 @@ func (t *TabWidget) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX, 
 		footY = rowY
 		shoY = rowY + rowH - rBig
 	}
-	// Color fills: concave feet in the slash cells, convex shoulders
-	// carving the body's outer corners.
-	fillArcWedge(p, leadX+cw-rSmall, footY, rSmall, false, !top, tab)
-	fillArcWedge(p, bodyLeft, shoY, rBig, true, top, bar)
-	if hasTrail {
-		fillArcWedge(p, bodyRight, footY, rSmall, true, !top, tab)
-		fillArcWedge(p, bodyRight-rBig, shoY, rBig, false, top, bar)
+	// One quarter arc of the silhouette: the wedge outside the arc in
+	// the given fill color, edged along the arc in the line color -
+	// antialiased by the backend when it can, scanline fills
+	// otherwise.
+	arc := func(x, y, r core.Unit, cRight, cBottom bool, fill style.CellStyle) {
+		box := core.UnitRect{X: x, Y: y, Width: r, Height: r}
+		if p.DrawArcWedge(box, cRight, cBottom, 1, fill.WithFg(bar.Fg)) {
+			return
+		}
+		fillArcWedge(p, x, y, r, cRight, cBottom, fill)
+		strokeArc(p, x, y, r, cRight, cBottom, line, hairW)
 	}
-	// The continuous edge line between the two colors.
+	// Concave feet in the slash cells, convex shoulders carving the
+	// body's outer corners, joined by the straight edge segments into
+	// one continuous line between the two colors.
 	hline(0, leadX+cw-rSmall, barEdgeY)
-	strokeArc(p, leadX+cw-rSmall, footY, rSmall, false, !top, line, hairW)
-	strokeArc(p, bodyLeft, shoY, rBig, true, top, line, hairW)
+	arc(leadX+cw-rSmall, footY, rSmall, false, !top, tab)
+	arc(bodyLeft, shoY, rBig, true, top, bar)
 	// Straight vertical run on the tab's side where the two radii
 	// don't span the full row height.
 	gapLen := rowH - rSmall - rBig
@@ -724,8 +730,8 @@ func (t *TabWidget) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX, 
 	}
 	if hasTrail {
 		hline(bodyLeft+rBig, bodyRight-rBig, tabEdgeY)
-		strokeArc(p, bodyRight-rBig, shoY, rBig, false, top, line, hairW)
-		strokeArc(p, bodyRight, footY, rSmall, true, !top, line, hairW)
+		arc(bodyRight-rBig, shoY, rBig, false, top, bar)
+		arc(bodyRight, footY, rSmall, true, !top, tab)
 		if gapLen > 0 {
 			p.FillRect(core.UnitRect{X: bodyRight, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
 		}
