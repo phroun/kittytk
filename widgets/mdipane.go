@@ -769,6 +769,20 @@ func (m *MDIPane) DeactivateActiveWindow() {
 	m.Update()
 }
 
+// displayBounds returns where a child window is drawn and hit-tested:
+// its logical bounds corralled into the current client area. The corral
+// is PROVISIONAL - never written back - so shrinking the pane nudges an
+// off-screen window into view, and growing it again lets the window
+// re-spread to its original spot. A deliberate interaction commits it
+// (see commitDisplayBounds). Maximized windows are exempt (they already
+// track the client area).
+func (m *MDIPane) displayBounds(win *window.Window) core.UnitRect {
+	if win.IsMaximized() {
+		return win.Bounds()
+	}
+	return window.ClampWindowToClientArea(win.Bounds(), m.ClientArea(), m.EffectiveCellMetrics())
+}
+
 // ClientArea returns the area available for windows.
 func (m *MDIPane) ClientArea() core.UnitRect {
 	bounds := m.Bounds()
@@ -1018,7 +1032,7 @@ func (m *MDIPane) ChildAt(pos core.UnitPoint) core.Widget {
 	// Check windows from top to bottom
 	for i := len(windows) - 1; i >= 0; i-- {
 		win := windows[i]
-		if win.IsVisible() && !win.IsMinimized() && win.Bounds().Contains(pos) {
+		if win.IsVisible() && !win.IsMinimized() && m.displayBounds(win).Contains(pos) {
 			return win
 		}
 	}
@@ -1159,7 +1173,9 @@ func (m *MDIPane) Paint(p *core.Painter) {
 	// Paint windows from bottom to top
 	for _, win := range windows {
 		if win.IsVisible() && !win.IsMinimized() {
-			winBounds := win.Bounds()
+			// Draw at the provisional (corralled) position so windows
+			// left off-screen by a pane shrink are nudged into view.
+			winBounds := m.displayBounds(win)
 
 			// Calculate visible portion within client area
 			visibleBounds := winBounds.Intersection(clientArea)
@@ -1250,8 +1266,13 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 			continue
 		}
 
-		bounds := win.Bounds()
+		bounds := m.displayBounds(win)
 		if bounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+			// Deliberate interaction: commit the provisional corral so
+			// this window's displayed position becomes its real one and
+			// all downstream geometry (resize edges, drag offsets) agrees.
+			win.SetBounds(bounds)
+
 			// Check for resize edge first - resize operations raise immediately
 			resizeEdge := m.detectResizeEdge(win, event.X, event.Y)
 			if resizeEdge != window.ResizeEdgeNone {
@@ -1478,25 +1499,11 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		// Keep titlebar visible
-		if bounds.Y < clientArea.Y {
-			bounds.Y = clientArea.Y
-		}
-		maxY := clientArea.Y + clientArea.Height - metrics.CellHeight
-		if bounds.Y > maxY {
-			bounds.Y = maxY
-		}
-
-		// Allow going off-screen horizontally
-		minVisibleX := core.Unit(1)
-		minX := clientArea.X - bounds.Width + minVisibleX
-		if bounds.X < minX {
-			bounds.X = minX
-		}
-		maxX := clientArea.X + clientArea.Width - minVisibleX
-		if bounds.X > maxX {
-			bounds.X = maxX
-		}
+		// Keep the window retrievable within the pane: title bar
+		// vertically inside the client area, at least a couple of
+		// columns visible horizontally on each side - the same corral
+		// the desktop enforces for its windows.
+		bounds = window.ClampWindowToClientArea(bounds, clientArea, metrics)
 
 		// Snap to cell boundaries unless the surface supports smooth
 		// (unit-granular) positioning, as pixel surfaces do
@@ -1515,7 +1522,7 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 	m.mu.RUnlock()
 
 	if active != nil && !active.IsMinimized() {
-		bounds := active.Bounds()
+		bounds := m.displayBounds(active)
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
@@ -1554,11 +1561,11 @@ func (m *MDIPane) HandleMouseWheel(event core.MouseWheelEvent) bool {
 
 	for i := len(windows) - 1; i >= 0; i-- {
 		win := windows[i]
-		if !win.IsVisible() || win.IsMinimized() || !win.Bounds().Contains(pos) {
+		b := m.displayBounds(win)
+		if !win.IsVisible() || win.IsMinimized() || !b.Contains(pos) {
 			continue
 		}
 		local := event
-		b := win.Bounds()
 		local.X -= b.X
 		local.Y -= b.Y
 		return win.HandleMouseWheel(local)
@@ -1595,7 +1602,7 @@ func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Check if we should raise the pressed window (focus-without-raise behavior)
 	// Only raise if release is over a non-occluded part of the window
 	if pressedWin != nil && !pressedWin.IsMinimized() {
-		bounds := pressedWin.Bounds()
+		bounds := m.displayBounds(pressedWin)
 		releasePoint := core.UnitPoint{X: event.X, Y: event.Y}
 		if bounds.Contains(releasePoint) {
 			// Check that no other window is on top at this position
@@ -1606,7 +1613,7 @@ func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 			topmostAtPoint := (*window.Window)(nil)
 			for i := len(windows) - 1; i >= 0; i-- {
 				win := windows[i]
-				if win.IsVisible() && !win.IsMinimized() && win.Bounds().Contains(releasePoint) {
+				if win.IsVisible() && !win.IsMinimized() && m.displayBounds(win).Contains(releasePoint) {
 					topmostAtPoint = win
 					break
 				}
@@ -1626,7 +1633,7 @@ func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	m.mu.RUnlock()
 
 	if active != nil && !active.IsMinimized() {
-		bounds := active.Bounds()
+		bounds := m.displayBounds(active)
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y

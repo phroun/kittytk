@@ -2095,6 +2095,15 @@ func (w *Window) constrainBoundsForMovement(newBounds core.UnitRect) core.UnitRe
 // client area horizontally so it can always be grabbed back.
 const minVisibleColumns core.Unit = 2
 
+// ClampWindowToClientArea is the exported form of the shared corral
+// used by both the desktop WindowManager and embedded MDIPanes: it
+// keeps a window retrievable within its container (title bar vertically
+// inside the client area, at least a couple of columns visible on each
+// side horizontally).
+func ClampWindowToClientArea(bounds, clientArea core.UnitRect, metrics core.CellMetrics) core.UnitRect {
+	return clampWindowToClientArea(bounds, clientArea, metrics)
+}
+
 // clampWindowToClientArea keeps a window retrievable: its title bar
 // vertically within the client area (below any menu bar, above any
 // dock/status bar - the client area already excludes them), and at

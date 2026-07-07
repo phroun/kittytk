@@ -330,6 +330,20 @@ func (m *WindowManager) ClampToClientArea(bounds core.UnitRect) core.UnitRect {
 	return clampWindowToClientArea(bounds, m.ClientArea(), m.ScreenCellMetrics())
 }
 
+// displayBounds returns where a window is drawn and hit-tested: its
+// logical bounds corralled into the current client area. The corral is
+// PROVISIONAL - never written back - so shrinking the desktop nudges an
+// off-screen window into view, and growing it again lets the window
+// re-spread to its original spot. A deliberate interaction commits the
+// corral (see commitDisplayBounds). Maximized windows are exempt (they
+// already track the client area).
+func (m *WindowManager) displayBounds(win *Window) core.UnitRect {
+	if win.IsMaximized() {
+		return win.Bounds()
+	}
+	return clampWindowToClientArea(win.Bounds(), m.ClientArea(), m.ScreenCellMetrics())
+}
+
 func (m *WindowManager) ClientArea() core.UnitRect {
 	m.mu.RLock()
 	screen := m.screenBounds
@@ -1170,8 +1184,13 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 			continue
 		}
 
-		bounds := win.Bounds()
+		bounds := m.displayBounds(win)
 		if bounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+			// Deliberate interaction: commit the provisional corral so
+			// this window's displayed position becomes its real one and
+			// all downstream geometry (resize edges, drag offsets) agrees.
+			win.SetBounds(bounds)
+
 			// Close any active menu before processing window click
 			if desktop != nil {
 				if menuCloser, ok := desktop.(interface {
@@ -1564,7 +1583,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Forward to active window (for splitter/widget dragging, but not if minimized)
 	if active != nil && !active.IsMinimized() {
-		bounds := active.Bounds()
+		bounds := m.displayBounds(active)
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
@@ -1620,7 +1639,7 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Check if we should raise the pressed window (focus-without-raise behavior)
 	// Only raise if release is over a non-occluded part of the window
 	if pressedWin != nil && !pressedWin.IsMinimized() {
-		bounds := pressedWin.Bounds()
+		bounds := m.displayBounds(pressedWin)
 		releasePoint := core.UnitPoint{X: event.X, Y: event.Y}
 		if bounds.Contains(releasePoint) {
 			// Check that no other window is on top at this position
@@ -1631,7 +1650,7 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 			topmostAtPoint := (*Window)(nil)
 			for i := len(windows) - 1; i >= 0; i-- {
 				win := windows[i]
-				if win.IsVisible() && !win.IsMinimized() && win.Bounds().Contains(releasePoint) {
+				if win.IsVisible() && !win.IsMinimized() && m.displayBounds(win).Contains(releasePoint) {
 					topmostAtPoint = win
 					break
 				}
@@ -1662,7 +1681,7 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 	// Forward to active window (for splitter/widget release, but not if minimized)
 	if active != nil && !active.IsMinimized() {
-		bounds := active.Bounds()
+		bounds := m.displayBounds(active)
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
@@ -1868,7 +1887,9 @@ func (m *WindowManager) Paint(p *core.Painter) {
 	// Paint windows from bottom to top, clipped to client area
 	for _, win := range windows {
 		if win.IsVisible() && !win.IsMinimized() {
-			bounds := win.Bounds()
+			// Draw at the provisional (corralled) position so windows
+			// left off-screen by a desktop shrink are nudged into view.
+			bounds := m.displayBounds(win)
 
 			// Calculate visible portion within client area
 			visibleBounds := bounds.Intersection(clientArea)
@@ -1985,11 +2006,11 @@ func (m *WindowManager) HandleMouseWheel(event core.MouseWheelEvent) bool {
 
 	for i := len(windows) - 1; i >= 0; i-- {
 		win := windows[i]
-		if !win.IsVisible() || win.IsMinimized() || !win.Bounds().Contains(pos) {
+		b := m.displayBounds(win)
+		if !win.IsVisible() || win.IsMinimized() || !b.Contains(pos) {
 			continue
 		}
 		local := event
-		b := win.Bounds()
 		local.X -= b.X
 		local.Y -= b.Y
 		if win.HandleMouseWheel(local) {
