@@ -30,7 +30,33 @@ type TearOffHost struct {
 	dragging bool
 	grabX    core.Unit
 	grabY    core.Unit
+
+	// Edge-resize drag: the OS window resizes with the pointer.
+	resizing    bool
+	resizeEdges int // resizeLeft | resizeRight | resizeBottom
+	startGX     int // global pointer at resize start, px
+	startGY     int
+	startX      int // OS window rect at resize start, px
+	startY      int
+	startW      int
+	startH      int
+
+	// Zoom (the maximize button while torn): fill the display's work
+	// area, second press restores the saved rect.
+	zoomed    bool
+	zoomSaved [4]int // x, y, w, h in px
 }
+
+// Resize edge bits. The top edge is the title bar (drag handle), so
+// only left/right/bottom resize - matching the in-surface manager.
+const (
+	resizeLeft = 1 << iota
+	resizeRight
+	resizeBottom
+)
+
+// tearResizeGrip is the edge thickness (units) that starts a resize.
+const tearResizeGrip core.Unit = 6
 
 // NewTearOffHost attaches the window to its own surface. Unlike
 // SurfaceHost no chrome is suppressed; maximize/minimize make no
@@ -46,7 +72,11 @@ func NewTearOffHost(win *Window, surf platform.Surface, scale int,
 	}
 
 	h.savedFlags = win.Flags()
-	win.SetFlags(h.savedFlags | WindowFlagNoMaximize | WindowFlagNoMinimize | WindowFlagNoResize)
+	// Minimizing has no meaning without a managing desktop; resize and
+	// maximize stay - the host maps them onto the OS window (maximize
+	// zooms to the display's work area, macOS option-zoom style).
+	win.SetFlags(h.savedFlags | WindowFlagNoMinimize)
+	win.SetOnMaximizeRequest(h.ToggleZoom)
 
 	size := surf.Size()
 	win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
@@ -103,19 +133,26 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 	case core.KeyReleaseEvent:
 		handled = h.win.HandleKeyRelease(e)
 	case core.MousePressEvent:
+		if e.Button == core.LeftButton && h.beginResize(e.X, e.Y) {
+			handled = true
+			break
+		}
 		handled = h.win.HandleMousePress(e)
 		if !handled && e.Button == core.LeftButton && h.inTitleBar(e.X, e.Y) {
 			h.BeginDrag(e.X, e.Y)
 			handled = true
 		}
 	case core.MouseMoveEvent:
-		if h.dragging {
+		if h.resizing {
+			handled = h.resizeMove()
+		} else if h.dragging {
 			handled = h.dragMove()
 		} else {
 			handled = h.win.HandleMouseMove(e)
 		}
 	case core.MouseReleaseEvent:
-		if h.dragging {
+		if h.resizing || h.dragging {
+			h.resizing = false
 			h.dragging = false
 			handled = true
 		} else {
@@ -145,6 +182,105 @@ func (h *TearOffHost) dragMove() bool {
 	}
 	h.native.SetScreenPositionPx(gx-int(h.grabX)*h.scale, gy-int(h.grabY)*h.scale)
 	return true
+}
+
+// beginResize arms an edge resize when the press lands within the
+// grip distance of the left, right, or bottom edge (the top edge is
+// the title bar). Returns false when the window is not resizable or
+// the press is interior.
+func (h *TearOffHost) beginResize(x, y core.Unit) bool {
+	if h.native == nil || h.global == nil || h.zoomed ||
+		h.win.Flags()&WindowFlagNoResize != 0 {
+		return false
+	}
+	b := h.win.Bounds()
+	edges := 0
+	if x < tearResizeGrip {
+		edges |= resizeLeft
+	}
+	if x >= b.Width-tearResizeGrip {
+		edges |= resizeRight
+	}
+	if y >= b.Height-tearResizeGrip {
+		edges |= resizeBottom
+	}
+	if edges == 0 || y < core.DefaultCellMetrics().CellHeight {
+		// Interior press, or within the title row (drag, not resize).
+		return false
+	}
+	h.resizing = true
+	h.resizeEdges = edges
+	h.startGX, h.startGY = h.global()
+	h.startX, h.startY = h.native.ScreenPositionPx()
+	size := h.surf.Size()
+	h.startW = int(size.Width) * h.scale
+	h.startH = int(size.Height) * h.scale
+	return true
+}
+
+// resizeMove applies the pointer delta to the armed edges, moving and
+// resizing the OS window; the size change reports back through
+// Resized and the window re-lays out to the surface.
+func (h *TearOffHost) resizeMove() bool {
+	gx, gy := h.global()
+	dx, dy := gx-h.startGX, gy-h.startGY
+	metrics := core.DefaultCellMetrics()
+	minW := int(metrics.CellWidth) * 12 * h.scale
+	minH := int(metrics.CellHeight) * 4 * h.scale
+
+	x, y, w, ht := h.startX, h.startY, h.startW, h.startH
+	if h.resizeEdges&resizeLeft != 0 {
+		w -= dx
+		if w < minW {
+			dx -= minW - w
+			w = minW
+		}
+		x += dx
+	}
+	if h.resizeEdges&resizeRight != 0 {
+		w += dx
+		if w < minW {
+			w = minW
+		}
+	}
+	if h.resizeEdges&resizeBottom != 0 {
+		ht += dy
+		if ht < minH {
+			ht = minH
+		}
+	}
+	if h.resizeEdges&resizeLeft != 0 {
+		h.native.SetScreenPositionPx(x, y)
+	}
+	h.native.SetScreenSizePx(w, ht)
+	return true
+}
+
+// ToggleZoom fills the display's work area (the maximize button's
+// meaning while torn - macOS option-zoom, not a fullscreen space);
+// a second toggle restores the saved rect.
+func (h *TearOffHost) ToggleZoom() {
+	if h.native == nil {
+		return
+	}
+	if h.zoomed {
+		h.zoomed = false
+		h.win.Restore()
+		h.native.SetScreenPositionPx(h.zoomSaved[0], h.zoomSaved[1])
+		h.native.SetScreenSizePx(h.zoomSaved[2], h.zoomSaved[3])
+		return
+	}
+	wx, wy, ww, wh := h.native.WorkAreaPx()
+	if ww <= 0 || wh <= 0 {
+		return
+	}
+	x, y := h.native.ScreenPositionPx()
+	size := h.surf.Size()
+	h.zoomSaved = [4]int{x, y, int(size.Width) * h.scale, int(size.Height) * h.scale}
+	h.zoomed = true
+	h.win.Maximize()
+	h.native.SetScreenPositionPx(wx, wy)
+	h.native.SetScreenSizePx(ww, wh)
 }
 
 // inTitleBar reports whether the point sits in the window's title

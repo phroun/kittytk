@@ -83,12 +83,13 @@ func (d *Desktop) tearOffWindow(win *window.Window, e core.MouseMoveEvent, offX,
 	deskX, deskY := native.ScreenPositionPx()
 	b := win.Bounds()
 	newSurf, err := plat.CreateSurface(platform.SurfaceOptions{
-		Title:      win.Title(),
-		Borderless: true,
-		XPx:        deskX + int(e.X-offX)*scale,
-		YPx:        deskY + int(e.Y-offY)*scale,
-		WidthPx:    int(b.Width) * scale,
-		HeightPx:   int(b.Height) * scale,
+		Title:          win.Title(),
+		Borderless:     true,
+		CornerRadiusPx: int(window.FrameCornerRadius()) * scale,
+		XPx:            deskX + int(e.X-offX)*scale,
+		YPx:            deskY + int(e.Y-offY)*scale,
+		WidthPx:        int(b.Width) * scale,
+		HeightPx:       int(b.Height) * scale,
 	})
 	if err != nil {
 		return false

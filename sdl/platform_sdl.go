@@ -46,6 +46,10 @@ type nativeWin struct {
 	backend  *raster.Backend
 	surface  *sdlSurface
 	id       uint32
+
+	// shapeRadiusPx > 0 shapes the OS window with rounded corners
+	// (borderless torn-off windows); reapplied on every resize.
+	shapeRadiusPx int
 }
 
 type timerEntry struct {
@@ -98,7 +102,7 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	defer sdl2.Quit()
 
 	win, err := p.createWindow(p.title, sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED,
-		p.wPx, p.hPx, sdl2.WINDOW_SHOWN|sdl2.WINDOW_RESIZABLE)
+		p.wPx, p.hPx, sdl2.WINDOW_SHOWN|sdl2.WINDOW_RESIZABLE, 0)
 	if err != nil {
 		return 1
 	}
@@ -139,10 +143,25 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 }
 
 // createWindow builds one OS window with its presentation chain.
-func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags uint32) (*nativeWin, error) {
-	w := &nativeWin{}
+// shapeRadiusPx > 0 creates a shapeable window and rounds its corners.
+func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags uint32, shapeRadiusPx int) (*nativeWin, error) {
+	w := &nativeWin{shapeRadiusPx: shapeRadiusPx}
 	var err error
-	w.window, err = sdl2.CreateWindow(title, x, y, int32(wPx), int32(hPx), flags)
+	if shapeRadiusPx > 0 {
+		// Shaped windows must be born shaped. Position is applied
+		// after creation (SDL's shaped-window position args are
+		// unreliable). Fall back to a plain window if shaping is
+		// unavailable on this video driver.
+		w.window, err = sdl2.CreateShapedWindow(title, 0, 0, uint32(wPx), uint32(hPx), flags)
+		if err == nil {
+			w.window.SetPosition(x, y)
+		} else {
+			w.shapeRadiusPx = 0
+		}
+	}
+	if w.window == nil {
+		w.window, err = sdl2.CreateWindow(title, x, y, int32(wPx), int32(hPx), flags)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +178,7 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 		w.window.Destroy()
 		return nil, err
 	}
+	w.applyShape()
 	w.id, _ = w.window.GetID()
 	p.wins[w.id] = w
 	return w, nil
@@ -252,6 +272,7 @@ func (p *Platform) pumpEvents() bool {
 			if e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
 				if w, ok := p.wins[e.WindowID]; ok {
 					if err := p.sizeFramebuffer(w, int(e.Data1), int(e.Data2)); err == nil {
+						w.applyShape()
 						s.handler.Resized(w.backend.Size())
 						s.Invalidate(core.UnitRect{})
 					}
@@ -598,7 +619,11 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 	} else {
 		flags |= sdl2.WINDOW_RESIZABLE
 	}
-	w, err := p.createWindow(opts.Title, x, y, wPx, hPx, flags)
+	radius := 0
+	if opts.Borderless {
+		radius = opts.CornerRadiusPx
+	}
+	w, err := p.createWindow(opts.Title, x, y, wPx, hPx, flags, radius)
 	if err != nil {
 		return nil, err
 	}
@@ -653,6 +678,84 @@ func (s *sdlSurface) SetScreenPositionPx(x, y int) {
 		return
 	}
 	s.win.window.SetPosition(int32(x), int32(y))
+}
+
+// SetScreenSizePx implements platform.NativeSurface: the size change
+// reports back through the WINDOWEVENT_SIZE_CHANGED path (framebuffer
+// recreate, shape reapply, handler.Resized).
+func (s *sdlSurface) SetScreenSizePx(w, h int) {
+	if s.closed || s.win.window == nil || w <= 0 || h <= 0 {
+		return
+	}
+	s.win.window.SetSize(int32(w), int32(h))
+}
+
+// WorkAreaPx implements platform.NativeSurface: the usable bounds of
+// the display the window occupies (the macOS option-zoom target).
+func (s *sdlSurface) WorkAreaPx() (int, int, int, int) {
+	if s.closed || s.win.window == nil {
+		return 0, 0, 0, 0
+	}
+	idx, err := s.win.window.GetDisplayIndex()
+	if err != nil {
+		idx = 0
+	}
+	r, err := sdl2.GetDisplayUsableBounds(idx)
+	if err != nil {
+		return 0, 0, 0, 0
+	}
+	return int(r.X), int(r.Y), int(r.W), int(r.H)
+}
+
+// applyShape rounds the OS window's corners with a binary alpha mask
+// so the pixels outside the drawn roundrect frame are not opaque
+// black. Best effort: video drivers without shape support just keep
+// square corners.
+func (w *nativeWin) applyShape() {
+	if w.shapeRadiusPx <= 0 || w.window == nil {
+		return
+	}
+	wPx, hPx := w.window.GetSize()
+	if wPx <= 0 || hPx <= 0 {
+		return
+	}
+	mask, err := sdl2.CreateRGBSurfaceWithFormat(0, wPx, hPx, 32, uint32(sdl2.PIXELFORMAT_ARGB8888))
+	if err != nil {
+		return
+	}
+	defer mask.Free()
+	_ = mask.FillRect(nil, 0xffffffff)
+	pix := mask.Pixels()
+	pitch := int(mask.Pitch)
+	r := w.shapeRadiusPx
+	if m := int(min32(wPx, hPx)) / 2; r > m {
+		r = m
+	}
+	rf := float64(r)
+	clear := func(x, y int) {
+		off := y*pitch + x*4
+		pix[off], pix[off+1], pix[off+2], pix[off+3] = 0, 0, 0, 0
+	}
+	for j := 0; j < r; j++ {
+		for i := 0; i < r; i++ {
+			dx := rf - float64(i) - 0.5
+			dy := rf - float64(j) - 0.5
+			if dx*dx+dy*dy > rf*rf {
+				clear(i, j)
+				clear(int(wPx)-1-i, j)
+				clear(i, int(hPx)-1-j)
+				clear(int(wPx)-1-i, int(hPx)-1-j)
+			}
+		}
+	}
+	_ = w.window.SetShape(mask, sdl2.ShapeModeDefault{})
+}
+
+func min32(a, b int32) int32 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // Close implements platform.NativeSurface: destroys the OS window.

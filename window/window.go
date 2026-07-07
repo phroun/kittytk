@@ -41,6 +41,10 @@ const (
 // overlap the curve; cell surfaces ignore it entirely.
 const windowCornerRadius core.Unit = 6
 
+// FrameCornerRadius reports the graphical frame's corner radius in
+// units, for hosts that shape OS windows around torn-off frames.
+func FrameCornerRadius() core.Unit { return windowCornerRadius }
+
 // TitleButton identifies a titlebar button.
 type TitleButton int
 

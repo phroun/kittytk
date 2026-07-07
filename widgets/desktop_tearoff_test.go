@@ -28,6 +28,16 @@ func (s *msSurface) SetCursorPosition(x, y core.Unit)     {}
 func (s *msSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *msSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *msSurface) Close()                               { s.closed = true }
+func (s *msSurface) WorkAreaPx() (int, int, int, int)     { return 0, 0, 1600, 1000 }
+
+// SetScreenSizePx mimics the real platform: the size change reports
+// back through Resized (scale 1: pixels are units).
+func (s *msSurface) SetScreenSizePx(w, h int) {
+	s.size = core.UnitSize{Width: core.Unit(w), Height: core.Unit(h)}
+	if s.handler != nil {
+		s.handler.Resized(s.size)
+	}
+}
 
 // msPlatform is a fake multi-surface platform: the desktop surface
 // plus any torn-off windows, with a scriptable global pointer.

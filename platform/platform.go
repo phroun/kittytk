@@ -61,6 +61,11 @@ type SurfaceOptions struct {
 	XPx, YPx          int
 	WidthPx, HeightPx int
 	Borderless        bool
+	// CornerRadiusPx rounds a borderless surface's corners by shaping
+	// the OS window (platforms that can't shape ignore it). Torn-off
+	// desktop windows pass their frame radius so the corners outside
+	// the drawn roundrect aren't opaque.
+	CornerRadiusPx int
 }
 
 // MultiSurfacePlatform is an optional Platform capability: more than
@@ -84,6 +89,12 @@ type NativeSurface interface {
 	ScreenPositionPx() (x, y int)
 	// SetScreenPositionPx moves the surface.
 	SetScreenPositionPx(x, y int)
+	// SetScreenSizePx resizes the surface's OS window; the size
+	// change reports back through SurfaceHandler.Resized.
+	SetScreenSizePx(w, h int)
+	// WorkAreaPx returns the usable bounds (menu bar and taskbar
+	// excluded) of the display the surface currently occupies.
+	WorkAreaPx() (x, y, w, h int)
 	// Close destroys the surface and its OS window.
 	Close()
 }
