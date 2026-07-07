@@ -80,6 +80,12 @@ func (h *TearOffHost) BeginDrag(grabX, grabY core.Unit) {
 // Dragging reports whether a title drag is moving the OS window.
 func (h *TearOffHost) Dragging() bool { return h.dragging }
 
+// EndDrag disarms the drag. The desktop calls it when the gesture's
+// end shows up on its side of the split event stream (release, or a
+// move with the button no longer held) - without it a later drag
+// inside the torn window's content would move the OS window.
+func (h *TearOffHost) EndDrag() { h.dragging = false }
+
 // Frame implements platform.SurfaceHandler.
 func (h *TearOffHost) Frame(p *core.Painter) {
 	h.win.Paint(p)

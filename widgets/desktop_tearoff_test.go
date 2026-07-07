@@ -218,3 +218,80 @@ func TestTornWindowTitleDragAndRedock(t *testing.T) {
 
 	d.RunOn(plat)
 }
+
+// The platform may hand the tail of the tearing gesture (motion and
+// the release) to the torn window once it appears under the held
+// pointer. The desktop must not treat its stale tear state as a live
+// drag: a hover back over the desktop re-docks nothing.
+func TestMissedReleaseDoesNotStealTornWindow(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	win := window.NewWindow("tearme")
+	d.SetOnStartup(func() {
+		d.WindowManager().AddWindow(win)
+		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
+		win.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		desk := plat.surfaces[0]
+		wm := d.WindowManager()
+		send := func(ev core.Event) { desk.handler.Event(ev) }
+
+		// Tear off; the gesture continues at the TORN window.
+		send(core.MousePressEvent{X: 220, Y: 108, Button: core.LeftButton})
+		send(core.MouseMoveEvent{X: -30, Y: 150, Buttons: core.LeftButton})
+		if len(plat.surfaces) != 2 {
+			t.Fatalf("expected a torn surface, have %d", len(plat.surfaces))
+		}
+		torn := plat.surfaces[1]
+
+		// The armed host keeps driving the drag from its own stream.
+		plat.gx, plat.gy = 900, 500
+		torn.handler.Event(core.MouseMoveEvent{X: 40, Y: 9, Buttons: core.LeftButton})
+		if torn.x != 900-120 || torn.y != 500-8 {
+			t.Errorf("armed host did not follow pointer: %d,%d want %d,%d",
+				torn.x, torn.y, 900-120, 500-8)
+		}
+
+		// The RELEASE also lands on the torn window - the desktop
+		// never sees it.
+		torn.handler.Event(core.MouseReleaseEvent{X: 40, Y: 9, Button: core.LeftButton})
+
+		// Hovering the desktop later (button up) must not re-dock.
+		send(core.MouseMoveEvent{X: 400, Y: 300})
+		send(core.MouseMoveEvent{X: 410, Y: 310})
+		if torn.closed || containsWindow(wm, win) {
+			t.Fatal("hover over the desktop stole the torn window back")
+		}
+
+		// A drag inside the torn window's CONTENT must not move the
+		// OS window either.
+		wasX := torn.x
+		torn.handler.Event(core.MousePressEvent{X: 50, Y: 50, Button: core.LeftButton})
+		torn.handler.Event(core.MouseMoveEvent{X: 60, Y: 60, Buttons: core.LeftButton})
+		torn.handler.Event(core.MouseReleaseEvent{X: 60, Y: 60, Button: core.LeftButton})
+		if torn.x != wasX {
+			t.Errorf("content drag moved the OS window: %d -> %d", wasX, torn.x)
+		}
+
+		// And a fresh press on the desktop with stale-free state
+		// behaves normally.
+		send(core.MousePressEvent{X: 400, Y: 300, Button: core.LeftButton})
+		send(core.MouseReleaseEvent{X: 400, Y: 300, Button: core.LeftButton})
+		if torn.closed || containsWindow(wm, win) {
+			t.Fatal("desktop click stole the torn window back")
+		}
+
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}

@@ -102,6 +102,12 @@ func (d *Desktop) tearOffWindow(win *window.Window, e core.MouseMoveEvent, offX,
 			return d.redockAt(host, gx, gy, grabX, grabY)
 		})
 
+	// Arm the host too: once the torn window exists under the held
+	// pointer, the platform may hand it the rest of the gesture
+	// (motion and the release) instead of the desktop. Whichever
+	// window receives the stream drives the same drag.
+	host.BeginDrag(offX, offY)
+
 	d.mu.Lock()
 	d.tornDrag = &tornDrag{host: host, surf: newSurf, offX: offX, offY: offY}
 	d.mu.Unlock()
@@ -121,14 +127,26 @@ func (d *Desktop) handleTornDrag(event core.Event) bool {
 	}
 
 	switch e := event.(type) {
+	case core.MousePressEvent:
+		// A fresh press means the tearing gesture ended somewhere we
+		// couldn't see (the torn window took the release). Stale
+		// state: the window stays torn, the press proceeds normally.
+		d.clearTornDrag(td)
+		return false
+
 	case core.MouseMoveEvent:
+		if e.Buttons&core.LeftButton == 0 {
+			// Button no longer held: the release went to the torn
+			// window. The gesture is over; do NOT re-dock on a mere
+			// hover.
+			d.clearTornDrag(td)
+			return false
+		}
 		size := surf.Size()
 		if e.X >= 0 && e.Y >= 0 && e.X < size.Width && e.Y < size.Height {
 			// Pointer came home: re-dock and hand the drag straight
 			// back to the window manager.
-			d.mu.Lock()
-			d.tornDrag = nil
-			d.mu.Unlock()
+			d.clearTornDrag(td)
 			d.adoptTornWindow(td.host, e.X-td.offX, e.Y-td.offY)
 			d.windowManager.BeginDrag(td.host.Window(), td.offX, td.offY)
 			return true
@@ -148,12 +166,21 @@ func (d *Desktop) handleTornDrag(event core.Event) bool {
 		// Dropped outside: the window stays torn off; its host owns
 		// any further drags.
 		_ = e
-		d.mu.Lock()
-		d.tornDrag = nil
-		d.mu.Unlock()
+		d.clearTornDrag(td)
 		return true
 	}
 	return false
+}
+
+// clearTornDrag ends the desktop-driven tear phase and disarms the
+// host's mirror of the same gesture.
+func (d *Desktop) clearTornDrag(td *tornDrag) {
+	d.mu.Lock()
+	if d.tornDrag == td {
+		d.tornDrag = nil
+	}
+	d.mu.Unlock()
+	td.host.EndDrag()
 }
 
 // redockAt serves a TearOffHost title drag: when the global pointer
@@ -186,6 +213,13 @@ func (d *Desktop) redockAt(host *window.TearOffHost, gx, gy int, grabX, grabY co
 // adoptTornWindow closes the torn surface and puts the window back
 // under the window manager at the given desktop-unit position.
 func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit) {
+	d.mu.Lock()
+	if d.tornDrag != nil && d.tornDrag.host == host {
+		d.tornDrag = nil
+	}
+	d.mu.Unlock()
+	host.EndDrag()
+
 	win := host.Window()
 	b := win.Bounds()
 
