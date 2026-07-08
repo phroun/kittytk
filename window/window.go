@@ -1043,6 +1043,25 @@ func (w *Window) ClientAreaOffset() core.UnitPoint {
 	return core.UnitPoint{X: cb.X, Y: cb.Y}
 }
 
+// ClientArea reports the space a dropdown from the window's own (detached)
+// menu bar may occupy, expressed in that menu bar's local coordinate
+// space (its origin sits at the menu bar's top-left, since the dropdown
+// paints offset by menuBarRect). The menu reads Y+Height as the bottom
+// limit, so it clamps to the window's surface and shows scroll bumpers
+// instead of overflowing. Mirrors the desktop's ClientArea contract so
+// the same menu-bar height logic works on a torn window.
+func (w *Window) ClientArea() core.UnitRect {
+	b := w.Bounds()
+	mbr := w.menuBarRect()
+	top := core.DefaultCellMetrics().CellHeight
+	// Bottom edge of the surface in menu-bar-local coordinates.
+	bottom := b.Height - mbr.Y
+	if bottom < top {
+		bottom = top
+	}
+	return core.UnitRect{Y: top, Height: bottom - top}
+}
+
 // denominations returns the grid-metrics currency of the window's own
 // coordinate space (outer: the parent's, in which bounds and chrome
 // live) and of its content area (interior: honoring a per-window
@@ -2554,13 +2573,16 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 	}
 
-	// While the detached window's own menu bar has a dropdown open, it
-	// owns keyboard navigation.
+	// The detached window's own menu bar owns keyboard navigation while it
+	// is focused (F10) or has a dropdown open, and F10 itself always goes
+	// to the bar so it can toggle that focus - matching the desktop bar.
 	if mb != nil {
+		menuActive := mb.HasFocus() || event.Key == "F10"
 		if o, ok := mb.(interface{ IsMenuOpen() bool }); ok && o.IsMenuOpen() {
-			if mb.HandleKeyPress(event) {
-				return true
-			}
+			menuActive = true
+		}
+		if menuActive && mb.HandleKeyPress(event) {
+			return true
 		}
 	}
 

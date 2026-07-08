@@ -107,3 +107,25 @@ func TestTornEdgeRects(t *testing.T) {
 		t.Errorf("bottom band = %v, want %v", got[1], wantBottom)
 	}
 }
+
+// A detached window's ClientArea (used to clamp its own menu bar's
+// dropdowns) stays within the window surface, so tall menus scroll
+// instead of overflowing.
+func TestDetachedWindowClientAreaBounded(t *testing.T) {
+	w := NewWindow("w")
+	w.SetDetached(true)
+	mb := &ibeamContent{}
+	mb.WidgetBase = *core.NewWidgetBase()
+	w.SetWindowMenuBar(mb)
+	w.SetBounds(core.UnitRect{Width: 400, Height: 300})
+	w.Layout()
+
+	ca := w.ClientArea()
+	b := w.Bounds()
+	if ca.Height <= 0 {
+		t.Fatalf("client area height = %d, want > 0", ca.Height)
+	}
+	if ca.Y+ca.Height > b.Height {
+		t.Errorf("client area bottom %d exceeds window height %d", ca.Y+ca.Height, b.Height)
+	}
+}
