@@ -56,11 +56,17 @@ char *kt_quote(const char *s) {
 char *kt_default_socket_path(void) {
     const char *env = getenv("KITTYTK_DISPLAY");
     if (env && *env) return strdup(env);
+    /* Match the Go host's DefaultSocketPath: XDG_RUNTIME_DIR, else Go's
+     * os.TempDir() (which is $TMPDIR, else /tmp - the macOS TMPDIR is
+     * /var/folders/.../T, NOT /tmp). */
     const char *rt = getenv("XDG_RUNTIME_DIR");
+    if (!rt || !*rt) rt = getenv("TMPDIR");
     if (!rt || !*rt) rt = "/tmp";
-    size_t n = strlen(rt) + strlen("/kittytk/display-0.sock") + 1;
+    size_t rtlen = strlen(rt);
+    while (rtlen > 1 && rt[rtlen - 1] == '/') rtlen--;  /* macOS TMPDIR has one */
+    size_t n = rtlen + strlen("/kittytk/display-0.sock") + 1;
     char *out = malloc(n);
-    snprintf(out, n, "%s/kittytk/display-0.sock", rt);
+    snprintf(out, n, "%.*s/kittytk/display-0.sock", (int)rtlen, rt);
     return out;
 }
 

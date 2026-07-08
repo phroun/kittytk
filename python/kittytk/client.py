@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import queue
 import socket
-import tempfile
 import threading
 from typing import Callable, Dict, List, Optional
 
@@ -24,12 +23,19 @@ DISPLAY_ENV = "KITTYTK_DISPLAY"
 
 def default_socket_path() -> str:
     """The conventional endpoint: $KITTYTK_DISPLAY, else
-    $XDG_RUNTIME_DIR/kittytk/display-0.sock."""
+    <runtime>/kittytk/display-0.sock.
+
+    <runtime> matches the Go host's DefaultSocketPath exactly: $XDG_RUNTIME_DIR,
+    else Go's os.TempDir() (which is $TMPDIR, else /tmp). On macOS $TMPDIR is
+    /var/folders/.../T - NOT /tmp - so this must consult it to find the host's
+    socket."""
     p = os.environ.get(DISPLAY_ENV)
     if p:
         return p
-    runtime = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-    return os.path.join(runtime, "kittytk", "display-0.sock")
+    runtime = (os.environ.get("XDG_RUNTIME_DIR")
+               or os.environ.get("TMPDIR")
+               or "/tmp")
+    return os.path.join(runtime.rstrip("/") or "/", "kittytk", "display-0.sock")
 
 
 _CLOSED = object()  # reply-queue sentinel: the transport disconnected
