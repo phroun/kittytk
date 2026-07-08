@@ -2322,6 +2322,23 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	for i, ch := range dateTimeStr {
 		p.DrawCell(dateTimeX+core.Unit(i)*metrics.CellWidth, 0, ch, dateTimeStyle)
 	}
+
+	// When a menu is popped down, frame its parent bar item with the same
+	// 1-pixel separator-color stroke, so item + dropdown read as one
+	// outline. Drawn before the dropdown (which paints later), so the
+	// dropdown covers the bottom edge; the top edge falls above the
+	// canvas. Graphical only.
+	if p.Graphical() && m.activeMenu != nil && m.activeMenu.visible &&
+		m.currentIndex >= 0 && m.currentIndex < len(m.menus) {
+		itemRect := core.UnitRect{
+			X:      m.calculateMenuX(m.currentIndex),
+			Y:      0,
+			Width:  m.menuTitleWidth(m.menus[m.currentIndex].title),
+			Height: metrics.CellHeight,
+		}
+		lineStyle := style.DefaultStyle().WithBg(scheme.GetMenuSeparator().Fg)
+		paintPopupOuterStroke(p, itemRect, p.DeviceScale(), lineStyle, 0, 0, false)
+	}
 }
 
 // PaintDropdown renders the active menu dropdown (call after windows for correct z-order).

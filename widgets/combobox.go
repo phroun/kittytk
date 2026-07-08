@@ -27,8 +27,9 @@ type ComboBox struct {
 	// Scroll state for drop-down
 	scrollOffset     int
 	maxVisible       int  // User-configured maximum (0 = auto-size to screen)
-	popupVisibleRows int  // Actual visible rows for current popup (calculated from screen space)
-	popupDropUp      bool // popup opened above the box (drop-up) rather than below
+	popupVisibleRows int            // Actual visible rows for current popup (calculated from screen space)
+	popupDropUp      bool           // popup opened above the box (drop-up) rather than below
+	popupControlRect core.UnitRect  // the originating control's screen rect (for its outer stroke)
 
 	// popupScreenMetrics is the screen/desktop denomination captured
 	// when the popup opens; popup-space geometry, painting, and input
@@ -592,6 +593,14 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	}
 
 	c.popupDropUp = !popDown // stroke gaps the edge nearest the box
+	// Remember the originating control's screen rect so the popup overlay
+	// (which paints unclipped) can frame it with the same stroke.
+	c.popupControlRect = core.UnitRect{
+		X:      widgetTopPos.X,
+		Y:      widgetTopPos.Y,
+		Width:  core.ExchangeX(bounds.Width, metrics, screen),
+		Height: widgetBottomPos.Y - widgetTopPos.Y,
+	}
 
 	var popupY core.Unit
 	var maxRowsAvailable int
@@ -863,6 +872,15 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect) {
 	scheme := c.GetScheme()
 	metrics := c.screenMetrics()
+
+	// Frame the originating control with the same 1-pixel separator-color
+	// stroke, BEFORE the popup fills, so the popup covers the edge they
+	// share and control + popup read as one outline. Uses the unclipped
+	// overlay painter and screen-space rect. Graphical only.
+	if p.Graphical() && !c.popupControlRect.IsEmpty() {
+		lineStyle := style.DefaultStyle().WithBg(scheme.GetMenuSeparator().Fg)
+		paintPopupOuterStroke(p, c.popupControlRect, p.DeviceScale(), lineStyle, 0, 0, false)
+	}
 
 	// Use a painter offset to the popup position
 	popupPainter := p.WithOffset(popupBounds.X, popupBounds.Y)
