@@ -65,7 +65,7 @@ static const char *TREE_ITEMS =
 char *main_build_script(void) {
     sbuf b = {0};
     sb_add(&b,
-        "w=new window title=\"KittyTK Demo\" width=480 height=288 tearable main children={\n"
+        "w=new window title=\"KittyTK Demo (C)\" width=480 height=288 tearable main children={\n"
         "t=new tabs children={\n"
         "\n"
         "b=new tab caption=\"Basic Trinkets\" children={\n"

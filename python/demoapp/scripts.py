@@ -75,7 +75,7 @@ def main_build_script() -> str:
     (nine tabs), its menu bar and its status bar."""
     b = []
     b.append(r'''
-w=new window title="KittyTK Demo" width=480 height=288 tearable main children={
+w=new window title="KittyTK Demo (Python)" width=480 height=288 tearable main children={
 t=new tabs children={
 
 b=new tab caption="Basic Trinkets" children={
