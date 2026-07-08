@@ -589,9 +589,16 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghos
 	win.SetShortcutResolver(nil)
 	win.SetOnTearRequest(func() { d.tearOffInPlace(win) })
 	d.windowManager.AddWindow(win)
-	// Keep the re-docked window reachable: title bar within the client
-	// area, a couple of columns visible horizontally.
-	win.SetBounds(d.windowManager.ClampToClientArea(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height}))
+	if win.IsMaximized() {
+		// A window that was maximized when torn off re-fills the client
+		// area of the desktop it docks into (which may differ in size from
+		// wherever it was torn), rather than keeping its torn surface size.
+		d.windowManager.MaximizeWindow(win)
+	} else {
+		// Keep the re-docked window reachable: title bar within the client
+		// area, a couple of columns visible horizontally.
+		win.SetBounds(d.windowManager.ClampToClientArea(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height}))
+	}
 	win.Layout()
 	d.windowManager.ActivateWindow(win)
 

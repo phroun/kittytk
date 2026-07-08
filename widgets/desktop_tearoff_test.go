@@ -467,3 +467,50 @@ func TestMainWindowTearOffCascadeArrangeRaise(t *testing.T) {
 
 	d.RunOn(plat)
 }
+
+// A window that was maximized when torn off re-fills the client area of
+// the desktop it docks back into, rather than keeping its torn size.
+func TestMaximizedWindowRedockRefillsClientArea(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	win := window.NewWindow("max")
+	win.SetTearable(true)
+	d.SetOnStartup(func() {
+		d.WindowManager().AddWindow(win)
+		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
+		win.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		wm := d.WindowManager()
+		wm.MaximizeWindow(win)
+		if !win.IsMaximized() {
+			t.Fatal("window did not maximize")
+		}
+
+		host := d.createTornHost(win, 0, 0)
+		if host == nil {
+			t.Fatal("tear-off host not created")
+		}
+		if !win.IsDetached() {
+			t.Fatal("window not detached after tear-off")
+		}
+
+		d.redockInPlace(host)
+		if win.IsDetached() {
+			t.Error("window still detached after redock")
+		}
+		if !win.IsMaximized() {
+			t.Error("window lost its maximized state on redock")
+		}
+		if got, want := win.Bounds(), wm.ClientArea(); got != want {
+			t.Errorf("redocked maximized bounds = %v, want client area %v", got, want)
+		}
+		d.QuitWithCode(0)
+	}
+	d.RunOn(plat)
+}
