@@ -20,6 +20,11 @@
 __pycache__/
 *.pyc
 
+# C example binaries
+/c/demoapp
+/c/interop_smoke
+/c/demoapp_smoke
+
 # Output of go coverage
 *.out
 
