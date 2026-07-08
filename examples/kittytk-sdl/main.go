@@ -50,9 +50,9 @@ func main() {
 			case err != nil:
 				sb.SetText("display service unavailable: " + err.Error())
 			case srv.TLSFingerprint != "":
-				sb.SetText("display service on " + endpoint + " (" + srv.TLSFingerprint + ")")
+				sb.SetText("display service on " + srv.Addr() + " (" + srv.TLSFingerprint + ")")
 			default:
-				sb.SetText("display service on " + endpoint + " - run examples/demoapp to connect")
+				sb.SetText("display service on " + srv.Addr() + " - run examples/demoapp to connect")
 			}
 		}
 	})

@@ -20,13 +20,24 @@ import (
 
 // DefaultConfig builds a desktop host's Config: the given endpoint, an
 // optional shared token from $KITTYTK_TOKEN (headless bypass), and an
-// interactive on-desktop approval prompt for non-local connections.
+// interactive on-desktop approval prompt for non-local connections. Set
+// $KITTYTK_PROMPT_LOCAL=1 to also prompt for local (unix/loopback)
+// connections - handy for trying the prompt on one machine.
 func DefaultConfig(desktop *trinkets.Desktop, endpoint string) Config {
 	return Config{
-		Endpoint: endpoint,
-		Token:    os.Getenv("KITTYTK_TOKEN"),
-		Prompt:   NewDesktopAuthorizer(desktop),
+		Endpoint:    endpoint,
+		Token:       os.Getenv("KITTYTK_TOKEN"),
+		Prompt:      NewDesktopAuthorizer(desktop),
+		PromptLocal: envTruthy("KITTYTK_PROMPT_LOCAL"),
 	}
+}
+
+func envTruthy(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // promptTimeout bounds how long an unanswered prompt waits before it is
