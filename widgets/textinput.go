@@ -478,7 +478,11 @@ func (t *TextInput) Paint(p *core.Painter) {
 		}
 
 		if cursorX >= 0 && cursorX < bounds.Width {
+			// The graphical bar caret uses a brighter white than the cell
+			// block cursor, for contrast; the block fallback keeps the
+			// regular (silver) white.
 			cursorStyle := scheme.GetFocusedEditBoxCursor()
+			barStyle := scheme.GetFocusedEditBoxBarCursor()
 			// The graphical bar caret blinks (keystrokes restart the
 			// phase); the cell-surface block stays steady.
 			if p.Graphical() {
@@ -487,7 +491,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 			if !p.Graphical() || t.caretVisible() {
 				// Pixel surfaces draw a vertical bar at the left edge
 				// of the glyph box; cell surfaces fall back to the block.
-				if !p.DrawCaret(cursorX, 0, font.LineHeight(), cursorStyle) {
+				if !p.DrawCaret(cursorX, 0, font.LineHeight(), barStyle) {
 					var cursorChar rune = ' '
 					if t.cursorPos < len(t.getDisplayText()) {
 						cursorChar = t.getDisplayText()[t.cursorPos]

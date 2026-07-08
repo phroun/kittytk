@@ -113,7 +113,8 @@ type Scheme struct {
 	DefaultPaneEditBoxPlaceholder *CellStyle // nil = EditBoxPlaceholder
 	DarkPaneEditBoxPlaceholder    *CellStyle // nil = EditBoxPlaceholder
 	FocusedEditBoxText            *CellStyle // black on dark cyan
-	FocusedEditBoxCursor          *CellStyle // black on white
+	FocusedEditBoxCursor          *CellStyle // black on white (cell block cursor)
+	FocusedEditBoxBarCursor       *CellStyle // bright white (graphical bar caret)
 	FocusedEditBoxFill            *CellStyle // white on cyan
 	// Selection inside an edit box: the focused pair, the resting
 	// (unfocused) pair, and the resting pair on a dark pane.
@@ -395,6 +396,7 @@ func DefaultScheme() *Scheme {
 		DarkPaneEditBoxPlaceholder:        nil, // EditBoxPlaceholder
 		FocusedEditBoxText:                ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
 		FocusedEditBoxCursor:              ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		FocusedEditBoxBarCursor:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
 		FocusedEditBoxFill:                ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorCyan)),
 		FocusedEditBoxSelectionFG:         colorPtr(ColorBlack),
 		FocusedEditBoxSelectionBG:         colorPtr(ColorWhite),
@@ -721,6 +723,13 @@ func (s *Scheme) GetEditBoxPlaceholder(pane PaneType) CellStyle {
 func (s *Scheme) GetFocusedEditBoxText() CellStyle   { return or(s.FocusedEditBoxText) }
 func (s *Scheme) GetFocusedEditBoxCursor() CellStyle { return or(s.FocusedEditBoxCursor) }
 func (s *Scheme) GetFocusedEditBoxFill() CellStyle   { return or(s.FocusedEditBoxFill) }
+
+// GetFocusedEditBoxBarCursor returns the color for the graphical bar
+// caret (a brighter white than the cell block cursor, for contrast),
+// falling back to the block cursor color when unset.
+func (s *Scheme) GetFocusedEditBoxBarCursor() CellStyle {
+	return or(s.FocusedEditBoxBarCursor, s.FocusedEditBoxCursor)
+}
 
 // GetEditBoxSelection returns the selection colors inside an edit
 // box: black on silver while focused, silver on black at rest, and
