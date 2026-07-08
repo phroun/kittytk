@@ -285,27 +285,35 @@ func (c *messageBoxContent) Paint(p *core.Painter) {
 		p.DrawCell(metrics.CellWidth, textY, []rune(iconText)[0], contentStyle)
 	}
 
-	// Draw message text
+	// Draw message text in the proportional font, one DrawText per line.
+	font := c.EffectiveFont()
 	textX := metrics.CellWidth * 4
-	for _, ch := range c.text {
-		if ch == '\n' {
-			textY += metrics.CellHeight
-			textX = metrics.CellWidth * 4
-			continue
-		}
-		if textX >= bounds.Width-metrics.CellWidth {
-			break
-		}
-		p.DrawCell(textX, textY, ch, contentStyle)
-		textX += metrics.CellWidth
+	lineY := textY
+	for _, line := range strings.Split(c.text, "\n") {
+		p.DrawText(textX, lineY, line, contentStyle, font)
+		lineY += metrics.CellHeight
 	}
 
-	// Draw buttons at bottom
+	// Lay the buttons out at the bottom, centered as a row.
 	buttonY := bounds.Height - metrics.CellHeight*2
-	buttonX := metrics.CellWidth
 
-	for _, btn := range c.buttonWidgets {
-		btnWidth := core.Unit(len(btn.Text())+4) * metrics.CellWidth
+	btnWidths := make([]core.Unit, len(c.buttonWidgets))
+	rowWidth := core.Unit(0)
+	for i, btn := range c.buttonWidgets {
+		btnWidths[i] = core.Unit(len(btn.Text())+4) * metrics.CellWidth
+		rowWidth += btnWidths[i]
+	}
+	if n := len(c.buttonWidgets); n > 1 {
+		rowWidth += core.Unit(n-1) * metrics.CellWidth // inter-button gaps
+	}
+
+	buttonX := (bounds.Width - rowWidth) / 2
+	if buttonX < metrics.CellWidth {
+		buttonX = metrics.CellWidth
+	}
+
+	for i, btn := range c.buttonWidgets {
+		btnWidth := btnWidths[i]
 		btn.SetBounds(core.UnitRect{
 			X:      buttonX,
 			Y:      buttonY,
