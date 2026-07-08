@@ -212,9 +212,10 @@ wbtn=w.p.btn
 	}
 }
 
-// A solo connection's main window replaces the desktop: the bar carries
-// only the app's own menus (no Psi), the window is maximized and not
-// tearable, and the host quits when the last window closes.
+// A solo connection puts the desktop into solo mode, and the host quits
+// when the last window closes. (The visual tear-off - the main window on
+// its own borderless surface - needs a real platform and is covered by a
+// widgets msPlatform test; here there is no surface to tear onto.)
 func TestSoloModeReplacesDesktop(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "display.sock")
 
@@ -268,46 +269,6 @@ mb=new menubar children={new menu caption="File" children={new menuitem caption=
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-
-	onUI(desktop, func() {
-		// The desktop draws no chrome of its own - the window carries it.
-		if got := len(desktop.MenuBar().Menus()); got != 0 {
-			t.Errorf("desktop menu bar has %d menus in solo, want 0 (chrome is on the window)", got)
-		}
-		for _, a := range desktop.Applications() {
-			if a.Name() != "Solo App" {
-				continue
-			}
-			mw := a.MainWindow()
-			if mw == nil {
-				t.Fatal("solo app has no main window")
-			}
-			// Rendered like a torn-off window filling the surface: detached
-			// (paints its own title+menu+status chrome), maximized, not
-			// tearable, with the app's menu/status bars as its chrome.
-			if !mw.IsDetached() {
-				t.Error("solo main window is not detached (won't paint its own chrome)")
-			}
-			if !mw.IsMaximized() {
-				t.Error("solo main window is not maximized")
-			}
-			if mw.IsTearable() {
-				t.Error("solo main window is still tearable")
-			}
-			if mw.WindowMenuBar() == nil {
-				t.Error("solo main window has no chrome menu bar")
-			}
-			if mw.WindowStatusBar() == nil {
-				t.Error("solo main window has no chrome status bar")
-			}
-			// It fills the whole surface (client area = full in solo).
-			ca := desktop.ClientArea()
-			if b := mw.Bounds(); b.Width != ca.Width || b.Height != ca.Height {
-				t.Errorf("solo window %dx%d does not fill the surface %dx%d",
-					b.Width, b.Height, ca.Width, ca.Height)
-			}
-		}
-	})
 
 	// Closing the last window quits the host (peers; quit on last close).
 	if _, err := conn.Exec(fmt.Sprintf("destroy %d", ui.ID("w"))); err != nil {

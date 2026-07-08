@@ -735,6 +735,15 @@ func (h *TearOffHost) resizeMove() bool {
 // ToggleZoom fills the display's work area (the maximize button's
 // meaning while torn - macOS option-zoom, not a fullscreen space);
 // a second toggle restores the saved rect.
+// ZoomToFill fills the display work area (idempotent, unlike ToggleZoom).
+// Used by solo mode to make the torn window the whole display.
+func (h *TearOffHost) ZoomToFill() {
+	if h.native == nil || h.zoomed {
+		return
+	}
+	h.zoomToWorkArea()
+}
+
 func (h *TearOffHost) ToggleZoom() {
 	if h.native == nil {
 		return

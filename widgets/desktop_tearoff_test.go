@@ -50,10 +50,11 @@ func (s *msSurface) SetScreenSizePx(w, h int) {
 // msPlatform is a fake multi-surface platform: the desktop surface
 // plus any torn-off windows, with a scriptable global pointer.
 type msPlatform struct {
-	surfaces []*msSurface
-	script   func()
-	afters   []func() // PostAfter callbacks, fired by the script
-	gx, gy   int
+	surfaces   []*msSurface
+	script     func()
+	afters     []func() // PostAfter callbacks, fired by the script
+	gx, gy     int
+	quitCalled bool
 }
 
 func (p *msPlatform) Run(init func(platform.Platform)) int {
@@ -65,7 +66,7 @@ func (p *msPlatform) Run(init func(platform.Platform)) int {
 }
 func (p *msPlatform) Post(fn func())                       { fn() }
 func (p *msPlatform) PostAfter(_ time.Duration, fn func()) { p.afters = append(p.afters, fn) }
-func (p *msPlatform) Quit(int)                             {}
+func (p *msPlatform) Quit(int)                             { p.quitCalled = true }
 func (p *msPlatform) Clipboard() string                    { return "" }
 func (p *msPlatform) SetClipboard(string)                  {}
 func (p *msPlatform) Beep()                                {}
@@ -499,6 +500,62 @@ func TestTornWindowResizeGripMatchesDesktop(t *testing.T) {
 		}
 		d.QuitWithCode(0)
 	}
+	d.RunOn(plat)
+}
+
+// Solo mode tears the main window onto its own borderless surface (which
+// fills the display) and closes the desktop's own surface, so only the
+// app's window remains; the host quits when the last window closes.
+func TestSoloModeTearsMainAndClosesPrimary(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Solo")
+	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.EnterSoloMode(main)
+
+		if !d.IsSolo() {
+			t.Error("desktop is not in solo mode")
+		}
+		if !main.IsDetached() {
+			t.Error("solo main window was not torn onto its own surface")
+		}
+		if len(plat.surfaces) != 2 {
+			t.Fatalf("want 2 surfaces (desktop + torn), got %d", len(plat.surfaces))
+		}
+		if !plat.surfaces[0].closed {
+			t.Error("the desktop's own (bordered) surface was not closed")
+		}
+		if plat.surfaces[1].closed {
+			t.Error("the torn solo surface should be open")
+		}
+		// Filled to the display work area (the msSurface reports 1600x1000).
+		if s := plat.surfaces[1].size; s.Width != 1600 || s.Height != 1000 {
+			t.Errorf("torn solo surface = %dx%d, want the work area 1600x1000", s.Width, s.Height)
+		}
+
+		// Closing the last window quits the host.
+		main.Close()
+		if !plat.quitCalled {
+			t.Error("host did not quit after its last window closed")
+		}
+
+		d.QuitWithCode(0)
+	}
+
 	d.RunOn(plat)
 }
 

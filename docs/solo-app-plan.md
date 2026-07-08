@@ -110,16 +110,25 @@ hello version=1 app="My App" solo
 
 ## Milestones
 
-1. **Solo handshake + solo desktop mode (Path A).** `solo` in the handshake;
-   `client.DialSolo`; the display flips its desktop into solo mode when a
-   solo app's `main` window is adopted: suppress Psi/dock/wallpaper, maximize
-   and de-tear the main window. Quit when the *last* app window closes (not
-   the first). Headless test: connect solo, assert no Psi menu, main window
-   maximized and non-tearable, and that the host stays alive while any window
-   remains and quits only when the last closes.
-2. **Additional windows as peer surfaces.** A solo app's non-main windows get
-   their own surfaces (reuse the tear-off host path) or an MDI pane, per the
-   app - all genuine peers. Settle the "primary window closes while peers
-   remain" case so no blank host surface is left behind.
-3. **Shell extraction (Path B).** Unify torn / solo / desktop under one
-   chrome-less host, making genuine peers with no host window exact.
+1. **Solo handshake + tear-off (done).** `solo` in the handshake;
+   `client.DialSolo`. When a solo app's `main` window is adopted, the desktop
+   **tears it onto its own borderless surface** (reusing `TearOffHost`, which
+   already carries the app's chrome, fills the surface, and maps resize onto
+   the OS window), zooms it to fill the display, and **closes the desktop's
+   own (bordered) surface** - so there is exactly one window, no double title
+   bar, and keyboard resize drives the OS surface. This works because the SDL
+   event loop is process-global (it survives the primary window closing); the
+   desktop lives on as a windowless coordinator. This is the user's insight -
+   "create the app as a detached window and kill the native window" - and it
+   collapses the old Path A/Path B split. Tested headlessly with the
+   msPlatform harness (main torn onto its surface, primary surface closed,
+   quit on last close).
+2. **Additional windows as peer surfaces (done).** In solo there is no
+   desktop surface, so every added window is torn onto its own surface (a
+   peer) - which also makes secondary-app "New Window" appear. Peers keep no
+   tear handle and are not zoomed; the host quits when the last surface
+   closes.
+3. **Shell extraction (later).** Formalize the windowless coordinator into a
+   `Shell` so torn / solo / desktop share one host abstraction, and refine
+   peer positioning (currently peers created after the primary closes lose
+   the desktop-relative origin).

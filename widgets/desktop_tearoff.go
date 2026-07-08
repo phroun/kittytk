@@ -562,6 +562,11 @@ func (d *Desktop) dropTornHost(host *window.TearOffHost) {
 		native.Close()
 	}
 	d.invalidateSurface()
+	// In solo mode every window is a torn surface; when the last one
+	// closes, the host quits.
+	if d.IsSolo() {
+		d.Post(func() { d.quitIfEmptySolo() })
+	}
 }
 
 // globalToDesktopUnits converts a global pixel position to desktop

@@ -350,6 +350,14 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 		if win.IsTearable() {
 			win.SetOnTearRequest(func() { d.tearOffInPlace(win) })
 		}
+		// In solo mode there is no desktop surface: every window lives on
+		// its own surface, so a newly added one is torn off immediately
+		// (deferred, since we are mid-add). The solo main window is torn
+		// by EnterSoloMode itself, before solo is set, so it is not caught
+		// here.
+		if d.IsSolo() {
+			d.Post(func() { d.soloAdoptWindow(win) })
+		}
 	})
 
 	d.windowManager.SetDesktop(d)
@@ -657,10 +665,12 @@ func (d *Desktop) IsSolo() bool {
 	return d.solo
 }
 
-// EnterSoloMode makes win the whole display: no system (Psi) menu, no
-// dock, no wallpaper, and win maximized to fill the surface and not
-// tearable (there is nothing to dock back to). The host then quits when
-// the last window closes rather than showing an empty desktop. Idempotent.
+// EnterSoloMode makes win the whole display. The main window is torn onto
+// its own borderless surface (reusing the tear-off host, which already
+// carries the app's chrome, fills the surface, and maps resize onto the OS
+// window), and the desktop's own (bordered) surface is closed so only the
+// app's window remains. The event loop is process-global, so it lives on
+// for the torn surface and quits when the last window closes. Idempotent.
 func (d *Desktop) EnterSoloMode(win *window.Window) {
 	d.mu.Lock()
 	first := !d.solo
@@ -670,43 +680,89 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 
 	if first && wm != nil {
 		// Quit when the last window closes (peers, no privileged root).
-		// Deferred so the check runs after the removal settles.
 		wm.SetOnWindowRemoved(func(*window.Window) {
 			d.Post(func() { d.quitIfEmptySolo() })
 		})
 	}
 
 	if win != nil {
-		// The window carries the app's own menu/status bars and renders
-		// them itself (like a torn-off window): mark it detached so it
-		// paints that chrome, drop the tear handle (nothing to dock back
-		// to), and maximize it to fill the whole surface.
-		d.attachMainWindowChrome(win)
-		win.SetDetached(true)
+		// Tear the main window onto its own borderless surface and zoom it
+		// to fill the display. tearOffInPlace needs a tearable, non-detached
+		// window; the solo window keeps no tear handle afterwards.
+		win.SetTearable(true)
+		d.tearOffInPlace(win)
+		if host := d.hostForWindow(win); host != nil {
+			host.ZoomToFill()
+		}
 		win.SetTearable(false)
-		// The window's own menu bar has no desktop in its ancestry, so
-		// wire its dropdown timers and repaint to the desktop directly
-		// (as a torn-off host would).
-		if mb, ok := win.WindowMenuBar().(*MenuBar); ok {
-			mb.SetScrollTimerStarter(func(interval time.Duration, cb func()) interface{ Stop() } {
-				return d.StartRepeatingTimer(interval, cb)
-			})
-			mb.SetRequestUpdate(func() { d.RequestUpdate() })
-		}
-		if wm != nil {
-			wm.MaximizeWindow(win)
-		}
 	}
-	d.updateMenuBarContent() // desktop bar goes empty
-	d.layoutChildren()       // dock disappears
-	d.RequestUpdate()
+
+	// The desktop's own (bordered) window is no longer wanted - the torn
+	// surface is the whole display now.
+	d.closePrimarySurface()
 }
 
-// dockVisible reports whether the minimized-window dock occupies space:
-// it has entries and we are not in solo mode (which hides all desktop
-// furniture).
+// soloAdoptWindow tears a newly added window onto its own surface (a peer
+// of the solo main window). A no-op if the window is already detached or
+// solo mode has since ended. Peers keep no tear handle (nothing to dock
+// back to) and are not zoomed - only the main window fills the display.
+func (d *Desktop) soloAdoptWindow(win *window.Window) {
+	if win == nil || !d.IsSolo() || win.IsDetached() {
+		return
+	}
+	// Only genuinely managed windows tear off (a closed one has left).
+	if !d.managesWindow(win) {
+		return
+	}
+	win.SetTearable(true)
+	d.tearOffInPlace(win)
+	win.SetTearable(false)
+}
+
+// managesWindow reports whether win is currently in the window manager.
+func (d *Desktop) managesWindow(win *window.Window) bool {
+	d.mu.RLock()
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if wm == nil {
+		return false
+	}
+	for _, w := range wm.Windows() {
+		if w == win {
+			return true
+		}
+	}
+	return false
+}
+
+// hostForWindow returns the tear-off host currently hosting win, or nil.
+func (d *Desktop) hostForWindow(win *window.Window) *window.TearOffHost {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for _, h := range d.tornHosts {
+		if h.Window() == win {
+			return h
+		}
+	}
+	return nil
+}
+
+// closePrimarySurface closes the desktop's own OS window. Closed-surface
+// operations are already no-ops, so the desktop lives on as a windowless
+// coordinator (window manager, timers, torn hosts) driving the torn
+// surfaces; the process-global event loop keeps running.
+func (d *Desktop) closePrimarySurface() {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	if native, ok := surf.(platform.NativeSurface); ok {
+		native.Close()
+	}
+}
+
+// dockVisible reports whether the minimized-window dock occupies space.
 func (d *Desktop) dockVisible() bool {
-	return d.dockRow != nil && !d.dockRow.IsEmpty() && !d.solo
+	return d.dockRow != nil && !d.dockRow.IsEmpty()
 }
 
 // quitIfEmptySolo quits the host once no windows remain, in solo mode.
@@ -739,12 +795,6 @@ func (d *Desktop) updateMenuBarContent() {
 	// Clear existing menus
 	d.menuBar.Clear()
 
-	// Solo mode: the desktop bar is never shown; the app's window carries
-	// its own menu bar, so the desktop bar stays empty.
-	if d.solo {
-		return
-	}
-
 	// Reduced bar: while the active app's main window is detached it
 	// carries the app's own menus on its own surface, so the desktop
 	// shows only the real system Psi menu, an app-named menu with just
@@ -761,9 +811,8 @@ func (d *Desktop) updateMenuBarContent() {
 		}
 	}
 
-	// Full bar: system menu first - except in solo mode, where the app
-	// owns the whole chrome and there is no Psi menu.
-	if d.systemMenu != nil && !d.solo {
+	// Full bar: system menu first
+	if d.systemMenu != nil {
 		d.menuBar.AddMenu(d.systemMenu)
 	}
 
@@ -2058,12 +2107,6 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	bounds := d.Bounds()
 	metrics := d.EffectiveCellMetrics()
 
-	// Solo mode: the app's window owns the entire surface (it carries its
-	// own chrome, like a torn-off window), so the desktop reserves nothing.
-	if d.solo {
-		return core.UnitRect{Width: bounds.Width, Height: bounds.Height}
-	}
-
 	top := core.Unit(0)
 	bottom := bounds.Height
 
@@ -2196,14 +2239,10 @@ func (d *Desktop) Paint(p *core.Painter) {
 
 	// Draw background pattern. Graphical targets tile the classic
 	// 8x8 two-color bitmap wallpaper (chunked to WallpaperChunkPx);
-	// cell targets keep the rune fill. Solo mode shows no wallpaper - the
-	// app owns the whole surface - so it gets a plain fill instead.
+	// cell targets keep the rune fill.
 	bgStyle := scheme.GetDesktopFill()
-	switch {
-	case d.solo:
-		p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
-	case !p.FillPattern(core.UnitRect{Width: bounds.Width, Height: bounds.Height},
-		d.wallpaperPattern, d.wallpaperChunkPx, bgStyle):
+	if !p.FillPattern(core.UnitRect{Width: bounds.Width, Height: bounds.Height},
+		d.wallpaperPattern, d.wallpaperChunkPx, bgStyle) {
 		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
 			for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
 				p.DrawCell(x, y, d.bgChar, bgStyle)
@@ -2217,12 +2256,6 @@ func (d *Desktop) Paint(p *core.Painter) {
 		contentPainter := p.WithOffset(clientArea.X, clientArea.Y).
 			WithClip(core.UnitRect{Width: clientArea.Width, Height: clientArea.Height})
 		d.content.Paint(contentPainter)
-	}
-
-	// Solo mode draws no desktop chrome at all - the app's window owns
-	// the whole surface and carries its own menu/status bars.
-	if d.solo {
-		return
 	}
 
 	// Draw menu bar at top
@@ -2270,10 +2303,8 @@ func (d *Desktop) Paint(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
-	// Check if menu bar wants to handle keys. In solo mode the desktop
-	// bar is hidden; the active window carries its own menu bar, so let
-	// menu-bar keys (F10, Alt+letter) fall through to it.
-	if d.menuBar != nil && !d.solo {
+	// Check if menu bar wants to handle keys
+	if d.menuBar != nil {
 		// F10 toggles menu bar focus
 		if event.Key == "F10" {
 			// Deactivate the active window when invoking menu bar
