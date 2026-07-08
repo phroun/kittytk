@@ -158,6 +158,18 @@ type Desktop struct {
 	// repaint tick drives their animation alongside the desktop's.
 	tornHosts []*window.TearOffHost
 
+	// soloPrimaryHost is the tear-off host on the desktop's own OS
+	// surface in solo mode (the one window that can't just be closed,
+	// because that surface owns the event loop). When its window closes,
+	// a remaining window is promoted onto the primary surface.
+	soloPrimaryHost *window.TearOffHost
+
+	// soloHosting is true while a window is being lifted onto the primary
+	// surface. The lift removes the window from the manager, which fires
+	// the removed-hook; this flag stops that internal removal from being
+	// mistaken for the last window closing (a spurious quit).
+	soloHosting bool
+
 	// Running state
 	running atomic.Bool
 
@@ -679,10 +691,16 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 	wm := d.windowManager
 	d.mu.Unlock()
 
+	// Quit when the last window closes (peers, no privileged root). On a
+	// native platform every solo window is hosted on its own surface, so
+	// its close flows through dropTornHost -> soloRebalance; but on a
+	// single-surface platform (a terminal, or headless polling) windows
+	// stay docked, and this hook is the only signal that the last one
+	// left. The soloHosting guard keeps the internal lift (which removes a
+	// window from the manager to host it) from tripping a spurious quit.
 	if first && wm != nil {
-		// Quit when the last window closes (peers, no privileged root).
 		wm.SetOnWindowRemoved(func(*window.Window) {
-			d.Post(func() { d.quitIfEmptySolo() })
+			d.Post(func() { d.soloRebalance(false) })
 		})
 	}
 	if win != nil {
@@ -690,10 +708,22 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 	}
 }
 
+// screenRect is a surface's OS-window geometry in screen pixels.
+type screenRect struct{ x, y, w, h int }
+
 // soloHostOnPrimary reshapes the desktop's own OS window into the app's
 // window (see EnterSoloMode). Returns without effect when the platform
 // can't host it (headless); solo mode is still recorded.
 func (d *Desktop) soloHostOnPrimary(win *window.Window) {
+	d.soloHostOnPrimaryAt(win, nil)
+}
+
+// soloHostOnPrimaryAt is soloHostOnPrimary with an optional target
+// geometry: when a promoted peer takes over the primary surface, the
+// surface repositions and resizes to where that peer's window was, so the
+// primary surface "takes on the personality" of the promoted window
+// including its screen placement.
+func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 	d.mu.RLock()
 	plat := d.platform
 	surf := d.surface
@@ -716,8 +746,23 @@ func (d *Desktop) soloHostOnPrimary(win *window.Window) {
 		bt.SetBordered(false)
 	}
 
-	// Lift the window out of the manager (and any dock entry).
+	// Adopt the promoted window's screen placement.
+	if target != nil {
+		if target.w > 0 && target.h > 0 {
+			native.SetScreenSizePx(target.w, target.h)
+		}
+		native.SetScreenPositionPx(target.x, target.y)
+	}
+
+	// Lift the window out of the manager (and any dock entry). The removed
+	// hook must not read this internal removal as the last window closing.
+	d.mu.Lock()
+	d.soloHosting = true
+	d.mu.Unlock()
 	wm.RemoveWindow(win)
+	d.mu.Lock()
+	d.soloHosting = false
+	d.mu.Unlock()
 	if win.IsMinimized() {
 		win.Restore()
 	}
@@ -755,6 +800,7 @@ func (d *Desktop) soloHostOnPrimary(win *window.Window) {
 
 	d.mu.Lock()
 	d.tornHosts = append(d.tornHosts, host)
+	d.soloPrimaryHost = host
 	d.mu.Unlock()
 
 	host.Invalidate()
@@ -798,19 +844,82 @@ func (d *Desktop) dockVisible() bool {
 	return d.dockRow != nil && !d.dockRow.IsEmpty()
 }
 
-// quitIfEmptySolo quits the host once no windows remain, in solo mode.
-func (d *Desktop) quitIfEmptySolo() {
+// soloRebalance runs after a solo window closes: if no windows remain the
+// host quits; if the window that closed was the one on the primary
+// surface (which the platform won't let us close), a remaining window is
+// promoted onto that surface so it always hosts something.
+func (d *Desktop) soloRebalance(primaryClosed bool) {
 	d.mu.RLock()
 	solo := d.solo
+	hosting := d.soloHosting
 	wm := d.windowManager
-	torn := len(d.tornHosts)
+	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
+	havePrimary := d.soloPrimaryHost != nil
 	d.mu.RUnlock()
-	if !solo || wm == nil {
+	if !solo || wm == nil || hosting {
+		// Mid-lift: a window was just removed to be hosted, not closed.
 		return
 	}
-	if len(wm.Windows()) == 0 && torn == 0 {
+	if len(hosts) == 0 && len(wm.Windows()) == 0 {
 		d.Quit()
+		return
 	}
+	if primaryClosed && !havePrimary {
+		if h := pickPromotable(hosts); h != nil {
+			d.promoteToPrimary(h)
+		}
+	}
+}
+
+// pickPromotable chooses which window takes over the primary surface,
+// preferring an application's own main window.
+func pickPromotable(hosts []*window.TearOffHost) *window.TearOffHost {
+	for _, h := range hosts {
+		if h.Window() != nil && h.Window().MainRequested() {
+			return h
+		}
+	}
+	if len(hosts) > 0 {
+		return hosts[0]
+	}
+	return nil
+}
+
+// promoteToPrimary moves peer's window off its own surface onto the
+// desktop's primary surface, so that (un-closeable) surface always hosts
+// a live window while any window remains.
+func (d *Desktop) promoteToPrimary(peer *window.TearOffHost) {
+	win := peer.Window()
+	if win == nil {
+		return
+	}
+	d.mu.Lock()
+	for i, h := range d.tornHosts {
+		if h == peer {
+			d.tornHosts = append(d.tornHosts[:i], d.tornHosts[i+1:]...)
+			break
+		}
+	}
+	d.mu.Unlock()
+	// Capture the peer's screen placement so the primary surface can adopt
+	// it, then discard the peer's own surface without closing the window.
+	var target *screenRect
+	peer.SetOnClosed(nil)
+	psurf := peer.Surface()
+	if s, ok := psurf.(platform.NativeSurface); ok {
+		x, y := s.ScreenPositionPx()
+		scale := d.deviceScale()
+		sz := psurf.Size() // units; screen pixels = units * scale
+		target = &screenRect{
+			x: x, y: y,
+			w: int(sz.Width) * scale,
+			h: int(sz.Height) * scale,
+		}
+		s.Close()
+	}
+	// Re-host the window on the primary surface (sets soloPrimaryHost),
+	// repositioning it to where the promoted peer was.
+	d.soloHostOnPrimaryAt(win, target)
 }
 
 // updateMenuBarContent updates the menu bar with the active app's menus.

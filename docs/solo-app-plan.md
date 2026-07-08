@@ -127,7 +127,23 @@ hello version=1 app="My App" solo
    peer) - which also makes secondary-app "New Window" appear. Peers keep no
    tear handle and are not zoomed; the host quits when the last surface
    closes.
-3. **Shell extraction (later).** Formalize the windowless coordinator into a
+3. **Primary-surface promotion (done).** The primary surface owns the event
+   loop and cannot be destroyed, so closing the window that sits on it (via
+   `[x]` or an internal quit action) does not end the app while peers remain.
+   Instead the primary surface **takes on the personality of a remaining
+   window**: a peer is promoted onto it - preferring a window that requested
+   `main` - and the surface repositions and resizes to where that peer was
+   (its screen origin and size), so the promoted window keeps its placement.
+   The promoted peer's own surface is discarded. Only when the truly last
+   window closes does the host quit. On a single-surface platform (a terminal
+   or headless polling backend) windows stay docked instead of hosted, so the
+   quit-on-last signal comes from the window manager's removed-hook rather
+   than the tear-off path; a `soloHosting` guard keeps the internal lift
+   (which removes a window from the manager to host it) from being mistaken
+   for the last close. Tested with the msPlatform harness (primary refuses
+   Close like SDL's main window; closing it promotes a peer with
+   reposition/resize; closing the last quits).
+4. **Shell extraction (later).** Formalize the windowless coordinator into a
    `Shell` so torn / solo / desktop share one host abstraction, and refine
-   peer positioning (currently peers created after the primary closes lose
-   the desktop-relative origin).
+   peer positioning (peers created after the primary closes still lose the
+   desktop-relative origin between promotions).

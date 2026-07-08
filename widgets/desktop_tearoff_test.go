@@ -20,6 +20,7 @@ type msSurface struct {
 	opacity     float64
 	minimized   bool
 	raised      bool
+	primary     bool // the loop-owning surface; like SDL, refuses Close
 	opts        platform.SurfaceOptions
 }
 
@@ -31,12 +32,20 @@ func (s *msSurface) SetCursorVisible(bool)                {}
 func (s *msSurface) SetCursorPosition(x, y core.Unit)     {}
 func (s *msSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *msSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
-func (s *msSurface) Close()                               { s.closed = true }
-func (s *msSurface) SetOpacity(o float64)                 { s.opacity = o }
-func (s *msSurface) Raise()                               { s.raised = true }
-func (s *msSurface) Minimized() bool                      { return s.minimized }
-func (s *msSurface) Minimize()                            { s.minimized = true }
-func (s *msSurface) WorkAreaPx() (int, int, int, int)     { return 0, 0, 1600, 1000 }
+
+// Close mimics the real platform: the primary (loop-owning) surface
+// refuses to close - solo mode reshapes it instead of destroying it.
+func (s *msSurface) Close() {
+	if s.primary {
+		return
+	}
+	s.closed = true
+}
+func (s *msSurface) SetOpacity(o float64)             { s.opacity = o }
+func (s *msSurface) Raise()                           { s.raised = true }
+func (s *msSurface) Minimized() bool                  { return s.minimized }
+func (s *msSurface) Minimize()                        { s.minimized = true }
+func (s *msSurface) WorkAreaPx() (int, int, int, int) { return 0, 0, 1600, 1000 }
 
 // SetScreenSizePx mimics the real platform: the size change reports
 // back through Resized (scale 1: pixels are units).
@@ -75,9 +84,11 @@ func (p *msPlatform) GlobalPointerPx() (int, int)          { return p.gx, p.gy }
 func (p *msPlatform) CreateSurface(o platform.SurfaceOptions) (platform.Surface, error) {
 	s := &msSurface{opts: o, x: o.XPx, y: o.YPx, opacity: 1}
 	if len(p.surfaces) == 0 {
-		// The desktop window: 800x480 units at 50,60 px, scale 1.
+		// The desktop window: 800x480 units at 50,60 px, scale 1. It owns
+		// the event loop, so like SDL's main window it refuses to close.
 		s.size = core.UnitSize{Width: 800, Height: 480}
 		s.x, s.y = 50, 60
+		s.primary = true
 	} else {
 		s.size = core.UnitSize{Width: core.Unit(o.WidthPx), Height: core.Unit(o.HeightPx)}
 	}
@@ -548,6 +559,90 @@ func TestSoloModeHostsMainOnPrimarySurface(t *testing.T) {
 			t.Error("host did not quit after its last window closed")
 		}
 
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
+// Closing the window on the primary surface (which owns the loop and
+// can't be destroyed) promotes a remaining peer onto that surface: the
+// primary surface takes on the peer's window and repositions/resizes to
+// where the peer was, and only closing the truly last window quits.
+func TestSoloModePrimaryCloserPromotesPeer(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Main")
+	peer := window.NewWindow("Peer")
+	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		wm := d.WindowManager()
+		d.EnterSoloMode(main)
+
+		// A window opened in solo mode tears onto its own peer surface
+		// (the window manager's added-hook routes it to soloAdoptWindow).
+		app.windows = append(app.windows, peer)
+		peer.SetBounds(core.UnitRect{X: 40, Y: 30, Width: 220, Height: 160})
+		wm.AddWindow(peer)
+		peer.Layout()
+
+		if len(plat.surfaces) != 2 {
+			t.Fatalf("want 2 surfaces (primary + peer), got %d", len(plat.surfaces))
+		}
+		primary := plat.surfaces[0]
+		peerSurf := plat.surfaces[1]
+		peerX, peerY := peerSurf.x, peerSurf.y
+		peerW, peerH := peerSurf.size.Width, peerSurf.size.Height
+
+		// Close the window on the primary surface. The primary can't be
+		// destroyed, so the peer is promoted onto it.
+		main.Close()
+
+		if plat.quitCalled {
+			t.Fatal("host quit while a peer window remained")
+		}
+		if primary.closed {
+			t.Fatal("primary surface was destroyed instead of reshaped")
+		}
+		if !peerSurf.closed {
+			t.Error("promoted peer's own surface was not discarded")
+		}
+		if !peer.IsDetached() {
+			t.Error("promoted peer is not hosted (detached)")
+		}
+		// The peer fills the primary surface...
+		if b := peer.Bounds(); b.Width != primary.size.Width || b.Height != primary.size.Height {
+			t.Errorf("promoted peer %dx%d does not fill primary %dx%d",
+				b.Width, b.Height, primary.size.Width, primary.size.Height)
+		}
+		// ...which took on the peer's screen placement (position and size).
+		if primary.x != peerX || primary.y != peerY {
+			t.Errorf("primary not repositioned to peer origin: got (%d,%d), want (%d,%d)",
+				primary.x, primary.y, peerX, peerY)
+		}
+		if primary.size.Width != peerW || primary.size.Height != peerH {
+			t.Errorf("primary not resized to peer size: got %dx%d, want %dx%d",
+				primary.size.Width, primary.size.Height, peerW, peerH)
+		}
+
+		// Now closing the last window (on the primary) quits the host.
+		peer.Close()
+		if !plat.quitCalled {
+			t.Error("host did not quit after the last window closed")
+		}
 		d.QuitWithCode(0)
 	}
 

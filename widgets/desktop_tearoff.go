@@ -557,15 +557,21 @@ func (d *Desktop) dropTornHost(host *window.TearOffHost) {
 			break
 		}
 	}
+	wasPrimary := host == d.soloPrimaryHost
+	if wasPrimary {
+		d.soloPrimaryHost = nil
+	}
+	solo := d.solo
 	d.mu.Unlock()
 	if native, ok := host.Surface().(platform.NativeSurface); ok {
 		native.Close()
 	}
 	d.invalidateSurface()
-	// In solo mode every window is a torn surface; when the last one
-	// closes, the host quits.
-	if d.IsSolo() {
-		d.Post(func() { d.quitIfEmptySolo() })
+	// In solo mode: the primary surface can't be closed, so when its
+	// window closes a remaining window is promoted onto it; when no
+	// windows remain the host quits.
+	if solo {
+		d.Post(func() { d.soloRebalance(wasPrimary) })
 	}
 }
 
