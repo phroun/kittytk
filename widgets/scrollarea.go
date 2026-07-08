@@ -2,6 +2,9 @@
 package widgets
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/style"
 )
@@ -622,6 +625,16 @@ func NewScrollArea() *ScrollArea {
 	})
 
 	return s
+}
+
+// scrollBarPercent returns the thumb position along the track as a
+// percentage (0 = start, 100 = end), rounded to the nearest integer.
+func scrollBarPercent(sb *ScrollBar) int {
+	span := sb.Maximum() - sb.Minimum()
+	if span <= 0 {
+		return 0
+	}
+	return int(float64(sb.Value()-sb.Minimum())*100.0/float64(span) + 0.5)
 }
 
 // Content returns the content widget.
@@ -1421,8 +1434,22 @@ func (s *ScrollArea) HandleFocusOut() {
 }
 
 // AccessibleInfo returns accessibility information.
+// AccessibleInfo announces the scroll area with the thumb position of
+// each visible scrollbar: "scroll area, horizontal N percent, vertical M
+// percent", 0 percent at the left/top and 100 percent at the right/bottom
+// (rounded to the nearest integer). A direction is included only when its
+// scrollbar is actually visible. The role is folded into the name so the
+// announcement doesn't end in a trailing "group".
 func (s *ScrollArea) AccessibleInfo() core.AccessibleInfo {
-	info := s.AccessibleWidget.AccessibleInfo()
-	info.Role = core.RoleGroup
-	return info
+	s.updateScrollBars()
+	needsV, needsH := s.calculateScrollBarNeeds()
+
+	parts := []string{"scroll area"}
+	if needsH {
+		parts = append(parts, fmt.Sprintf("horizontal %d percent", scrollBarPercent(s.hScrollBar)))
+	}
+	if needsV {
+		parts = append(parts, fmt.Sprintf("vertical %d percent", scrollBarPercent(s.vScrollBar)))
+	}
+	return core.AccessibleInfo{Name: strings.Join(parts, ", "), Role: core.RoleNone}
 }
