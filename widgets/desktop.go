@@ -796,6 +796,67 @@ func (d *Desktop) buildPsiHideMenu(appName string) *Menu {
 	return menu
 }
 
+// applicationForMainWindow returns the application whose main window is
+// win, or nil if win is not any app's main window.
+func (d *Desktop) applicationForMainWindow(win *window.Window) ApplicationProvider {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for _, app := range d.applications {
+		if app.MainWindow() == win {
+			return app
+		}
+	}
+	return nil
+}
+
+// buildDetachedMenuBar builds the menu bar a detached main window hosts
+// itself: the app's menus (the first carrying only the Quit section, no
+// Hide section, no Psi menu), and no calendar.
+func (d *Desktop) buildDetachedMenuBar(app ApplicationProvider) *MenuBar {
+	mb := NewMenuBar()
+	mb.SetHideCalendar(true)
+
+	appMenus := app.MenuBarContent()
+	appName := app.Name()
+	if len(appMenus) > 0 {
+		mb.AddMenu(d.createAppMenuWithQuitOnly(appMenus[0], appName))
+		for i := 1; i < len(appMenus); i++ {
+			mb.AddMenu(appMenus[i])
+		}
+	} else {
+		m := NewMenu("&" + appName)
+		d.appendQuitSection(m, appName)
+		mb.AddMenu(m)
+	}
+	return mb
+}
+
+// buildDetachedStatusBar builds the status bar a detached main window
+// hosts, seeded with the app's status sections.
+func (d *Desktop) buildDetachedStatusBar(app ApplicationProvider) *StatusBar {
+	sb := NewStatusBar()
+	if sections := app.StatusBarContent(); len(sections) > 0 {
+		sb.SetSections(sections)
+	}
+	return sb
+}
+
+// attachMainWindowChrome gives a detached main window its own menu bar
+// and status bar; detachMainWindowChrome removes them on re-dock.
+func (d *Desktop) attachMainWindowChrome(win *window.Window) {
+	app := d.applicationForMainWindow(win)
+	if app == nil {
+		return
+	}
+	win.SetWindowMenuBar(d.buildDetachedMenuBar(app))
+	win.SetWindowStatusBar(d.buildDetachedStatusBar(app))
+}
+
+func (d *Desktop) detachMainWindowChrome(win *window.Window) {
+	win.SetWindowMenuBar(nil)
+	win.SetWindowStatusBar(nil)
+}
+
 // buildWindowTileCascadeMenu builds the reduced Window menu (Tile and
 // Cascade only) shown on the desktop bar while the main window is
 // detached.

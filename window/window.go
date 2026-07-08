@@ -135,6 +135,17 @@ type Window struct {
 	// so the frame draws its black tear-off halo (see TearIndicatorActive).
 	tearHighlight bool
 
+	// Detached main-window chrome, set by the desktop when the window is
+	// torn off: a menu bar between the title bar and content, and a
+	// status bar along the bottom edge. Kept as generic core.Widget so
+	// the window package needn't import widgets. Both only occupy space,
+	// paint, and receive input while the window is detached; either may
+	// be hidden.
+	menuBar          core.Widget
+	statusBar        core.Widget
+	menuBarVisible   bool
+	statusBarVisible bool
+
 	// Request callbacks (for WindowManager integration)
 	onMinimizeRequest     func()                   // Called when user clicks minimize button
 	onMaximizeRequest     func()                   // Called when user clicks maximize button
@@ -607,6 +618,95 @@ func (w *Window) IsDetached() bool {
 	return w.detached
 }
 
+// SetWindowMenuBar installs (or clears) the window's own menu bar,
+// shown between the title bar and content while the window is detached.
+// The desktop supplies it as a generic widget. Passing nil removes it.
+func (w *Window) SetWindowMenuBar(mb core.Widget) {
+	w.mu.Lock()
+	w.menuBar = mb
+	w.menuBarVisible = mb != nil
+	w.mu.Unlock()
+	if mb != nil {
+		mb.SetParent(w)
+	}
+	w.layoutContent()
+	w.Update()
+}
+
+// SetWindowStatusBar installs (or clears) the window's own status bar,
+// shown along the bottom edge while the window is detached.
+func (w *Window) SetWindowStatusBar(sb core.Widget) {
+	w.mu.Lock()
+	w.statusBar = sb
+	w.statusBarVisible = sb != nil
+	w.mu.Unlock()
+	if sb != nil {
+		sb.SetParent(w)
+	}
+	w.layoutContent()
+	w.Update()
+}
+
+// SetMenuBarVisible / SetStatusBarVisible toggle the chrome rows.
+func (w *Window) SetMenuBarVisible(v bool) {
+	w.mu.Lock()
+	w.menuBarVisible = v
+	w.mu.Unlock()
+	w.layoutContent()
+	w.Update()
+}
+
+func (w *Window) SetStatusBarVisible(v bool) {
+	w.mu.Lock()
+	w.statusBarVisible = v
+	w.mu.Unlock()
+	w.layoutContent()
+	w.Update()
+}
+
+// chromeHeights returns the vertical space the menu bar (top) and status
+// bar (bottom) reserve inside a detached window; zero for both when the
+// window is docked or the chrome is absent/hidden.
+func (w *Window) chromeHeights() (menuTop, statusBottom core.Unit) {
+	w.mu.RLock()
+	detached := w.detached
+	mb, sb := w.menuBar, w.statusBar
+	mbVis, sbVis := w.menuBarVisible, w.statusBarVisible
+	w.mu.RUnlock()
+	if !detached {
+		return 0, 0
+	}
+	metrics := core.DefaultCellMetrics()
+	if mb != nil && mbVis {
+		menuTop = metrics.CellHeight
+	}
+	if sb != nil && sbVis {
+		statusBottom = metrics.CellHeight
+	}
+	return
+}
+
+// menuBarRect / statusBarRect return the chrome rows in window-local
+// coordinates (empty when that chrome isn't shown). Derived from the
+// content bounds, which already reserve the chrome space.
+func (w *Window) menuBarRect() core.UnitRect {
+	top, _ := w.chromeHeights()
+	if top == 0 {
+		return core.UnitRect{}
+	}
+	cb := w.contentBounds()
+	return core.UnitRect{X: cb.X, Y: cb.Y - top, Width: cb.Width, Height: top}
+}
+
+func (w *Window) statusBarRect() core.UnitRect {
+	_, bottom := w.chromeHeights()
+	if bottom == 0 {
+		return core.UnitRect{}
+	}
+	cb := w.contentBounds()
+	return core.UnitRect{X: cb.X, Y: cb.Y + cb.Height, Width: cb.Width, Height: bottom}
+}
+
 // SetTearHighlight toggles the tear-off halo shown while the tear
 // handle is being pressed or dragged. The window manager sets it on
 // mousedown/drag of the '%'/'#' handle and clears it on release.
@@ -807,7 +907,9 @@ func (w *Window) SchemeBackgroundColor() *style.Color {
 	return &bgColor
 }
 
-// contentBounds returns the bounds for the content area.
+// contentBounds returns the bounds for the content area. When the window
+// is detached and carries its own chrome, the menu bar (top) and status
+// bar (bottom) rows are reserved out of it (see reserveChrome).
 func (w *Window) contentBounds() core.UnitRect {
 	bounds := w.Bounds()
 	metrics := core.DefaultCellMetrics()
@@ -817,56 +919,43 @@ func (w *Window) contentBounds() core.UnitRect {
 	flags := w.flags
 	w.mu.RUnlock()
 
-	// In maximized mode, no side borders (full width)
-	if state == WindowStateMaximized && flags&WindowFlagNoTitle == 0 {
-		// Only top title bar, no side borders
-		return clampClientArea(core.UnitRect{
-			X:      0,
-			Y:      metrics.CellHeight, // One row for title
-			Width:  bounds.Width,
-			Height: bounds.Height - metrics.CellHeight,
-		})
-	}
-
-	// Normal mode with full frame
-	if flags&WindowFlagFrameless != 0 {
-		return clampClientArea(core.UnitRect{Width: bounds.Width, Height: bounds.Height})
-	}
-
-	// Graphical frames: the border is a hairline on the window's own
-	// surface, not a cell band - only the titlebar reserves a full
-	// row, and content extends to the left, right, and bottom edges
-	// (the frame re-strokes over it, and a rounded clip keeps it
-	// inside the corners).
-	if core.FindGraphicalFrames(w) {
+	var cb core.UnitRect
+	switch {
+	case state == WindowStateMaximized && flags&WindowFlagNoTitle == 0:
+		// Maximized: only top title bar, no side borders.
+		cb = core.UnitRect{X: 0, Y: metrics.CellHeight, Width: bounds.Width, Height: bounds.Height - metrics.CellHeight}
+	case flags&WindowFlagFrameless != 0:
+		cb = core.UnitRect{Width: bounds.Width, Height: bounds.Height}
+	case core.FindGraphicalFrames(w):
+		// Graphical frames: the border is a hairline; only the titlebar
+		// reserves a full row and content extends to the other edges.
 		top := metrics.CellHeight
 		if flags&WindowFlagNoTitle != 0 {
 			top = 0
 		}
-		return clampClientArea(core.UnitRect{
-			X:      0,
-			Y:      top,
-			Width:  bounds.Width,
-			Height: bounds.Height - top,
-		})
+		cb = core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: bounds.Height - top}
+	default:
+		// Cell frames: the border occupies a full cell on every side.
+		left, top, right, bottom := metrics.CellWidth, metrics.CellHeight, metrics.CellWidth, metrics.CellHeight
+		cb = core.UnitRect{X: left, Y: top, Width: bounds.Width - left - right, Height: bounds.Height - top - bottom}
 	}
 
-	// Cell frames: the border occupies a full cell on every side.
-	left := metrics.CellWidth
-	top := metrics.CellHeight
-	right := metrics.CellWidth
-	bottom := metrics.CellHeight
+	return clampClientArea(w.reserveChrome(cb))
+}
 
-	if flags&WindowFlagNoTitle != 0 {
-		top = metrics.CellHeight // Just border, no extra title row
+// reserveChrome removes the detached window's menu bar (top) and status
+// bar (bottom) rows from a content rect.
+func (w *Window) reserveChrome(cb core.UnitRect) core.UnitRect {
+	top, bottom := w.chromeHeights()
+	if top == 0 && bottom == 0 {
+		return cb
 	}
-
-	return clampClientArea(core.UnitRect{
-		X:      left,
-		Y:      top,
-		Width:  bounds.Width - left - right,
-		Height: bounds.Height - top - bottom,
-	})
+	cb.Y += top
+	cb.Height -= top + bottom
+	if cb.Height < 0 {
+		cb.Height = 0
+	}
+	return cb
 }
 
 // clampClientArea guarantees the client area is never empty: a window
@@ -1107,6 +1196,65 @@ func (w *Window) Paint(p *core.Painter) {
 			}
 		}
 	}
+
+	// Detached-window chrome: the menu bar (between title and content)
+	// and status bar (bottom edge), then the menu bar's dropdown on top.
+	w.paintChrome(p, outer, interior)
+}
+
+// paintChrome paints the detached window's menu bar and status bar in
+// their reserved rows, and the menu bar's dropdown on top of content.
+func (w *Window) paintChrome(p *core.Painter, outer, interior core.CellMetrics) {
+	w.mu.RLock()
+	mb, sb := w.menuBar, w.statusBar
+	w.mu.RUnlock()
+
+	if r := w.menuBarRect(); mb != nil && !r.IsEmpty() {
+		mb.SetBounds(core.UnitRect{Width: r.Width, Height: r.Height})
+		mp := p.WithOffset(r.X, r.Y).
+			WithClip(core.UnitRect{Width: r.Width, Height: r.Height}).
+			WithDenomination(outer, interior)
+		mb.Paint(mp)
+	}
+	if r := w.statusBarRect(); sb != nil && !r.IsEmpty() {
+		sb.SetBounds(core.UnitRect{Width: r.Width, Height: r.Height})
+		sp := p.WithOffset(r.X, r.Y).
+			WithClip(core.UnitRect{Width: r.Width, Height: r.Height}).
+			WithDenomination(outer, interior)
+		sb.Paint(sp)
+	}
+	// The menu bar's dropdown paints last, unclipped, so it overlays the
+	// window content below the bar.
+	if r := w.menuBarRect(); mb != nil && !r.IsEmpty() {
+		if dp, ok := mb.(interface{ PaintDropdown(*core.Painter) }); ok {
+			dp.PaintDropdown(p.WithOffset(r.X, r.Y).WithDenomination(outer, interior))
+		}
+	}
+}
+
+// chromeMouseTarget returns the chrome widget that should receive a
+// mouse event at window-local (x, y), its rect, and true when the chrome
+// owns the event. An open menu owns all mouse input; otherwise the menu
+// bar / status bar own their own rows.
+func (w *Window) chromeMouseTarget(x, y core.Unit) (core.Widget, core.UnitRect, bool) {
+	w.mu.RLock()
+	mb, sb := w.menuBar, w.statusBar
+	w.mu.RUnlock()
+
+	if mb != nil {
+		if o, ok := mb.(interface{ IsMenuOpen() bool }); ok && o.IsMenuOpen() {
+			return mb, w.menuBarRect(), true
+		}
+		if r := w.menuBarRect(); !r.IsEmpty() && r.Contains(core.UnitPoint{X: x, Y: y}) {
+			return mb, r, true
+		}
+	}
+	if sb != nil {
+		if r := w.statusBarRect(); !r.IsEmpty() && r.Contains(core.UnitPoint{X: x, Y: y}) {
+			return sb, r, true
+		}
+	}
+	return nil, core.UnitRect{}, false
 }
 
 // paintMaximizedFrame draws the title bar only (no side borders).
@@ -2211,7 +2359,18 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	w.mu.RLock()
 	fm := w.focusManager
 	titleFocus := w.titleFocus
+	mb := w.menuBar
 	w.mu.RUnlock()
+
+	// While the detached window's own menu bar has a dropdown open, it
+	// owns keyboard navigation.
+	if mb != nil {
+		if o, ok := mb.(interface{ IsMenuOpen() bool }); ok && o.IsMenuOpen() {
+			if mb.HandleKeyPress(event) {
+				return true
+			}
+		}
+	}
 
 	// If title bar has focus, handle title bar keys
 	if titleFocus != TitleFocusNone {
@@ -2329,6 +2488,16 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 		return false
 	}
 
+	// Detached-window chrome (menu bar / status bar) claims the click
+	// before content, and an open menu claims all clicks.
+	if target, r, owns := w.chromeMouseTarget(event.X, event.Y); owns {
+		le := event
+		le.X -= r.X
+		le.Y -= r.Y
+		target.HandleMousePress(le)
+		return true
+	}
+
 	// A click below the title bar moves keyboard focus into the
 	// content: drop any title-bar keyboard focus (set by Tab/Shift+Tab)
 	// so it stops intercepting keys and Tab resumes from the clicked
@@ -2373,6 +2542,19 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 			w.mu.Unlock()
 		}
 		return true // Capture mouse while button is pressed
+	}
+
+	// Chrome (open-menu drag-select / hover) before content.
+	if target, r, owns := w.chromeMouseTarget(event.X, event.Y); owns {
+		if h, ok := target.(interface {
+			HandleMouseMove(core.MouseMoveEvent) bool
+		}); ok {
+			le := event
+			le.X -= r.X
+			le.Y -= r.Y
+			h.HandleMouseMove(le)
+		}
+		return true
 	}
 
 	// Forward to content
@@ -2437,6 +2619,19 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 				// detached host this is the re-dock path.
 				w.requestTear()
 			}
+		}
+		return true
+	}
+
+	// Chrome (menu drag-select release) before content.
+	if target, r, owns := w.chromeMouseTarget(event.X, event.Y); owns {
+		if h, ok := target.(interface {
+			HandleMouseRelease(core.MouseReleaseEvent) bool
+		}); ok {
+			le := event
+			le.X -= r.X
+			le.Y -= r.Y
+			h.HandleMouseRelease(le)
 		}
 		return true
 	}

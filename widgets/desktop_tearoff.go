@@ -170,6 +170,8 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	// The window now reads as detached (handle shows '#'); clicking
 	// the handle (or Cmd-style activation) re-docks it to the desktop.
 	win.SetDetached(true)
+	// A detached main window carries the app's own menu bar + status bar.
+	d.attachMainWindowChrome(win)
 	win.SetOnTearRequest(func() { d.redockInPlace(host) })
 
 	d.mu.Lock()
@@ -397,6 +399,8 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghos
 	win.SetOnBoundsRequest(nil)
 	// Re-docked: the handle reads '%' again and its click re-tears.
 	win.SetDetached(false)
+	// Docked again: the app's menus return to the desktop bar.
+	d.detachMainWindowChrome(win)
 	win.SetOnTearRequest(func() { d.tearOffInPlace(win) })
 	d.windowManager.AddWindow(win)
 	// Keep the re-docked window reachable: title bar within the client

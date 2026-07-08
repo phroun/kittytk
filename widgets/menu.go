@@ -1880,6 +1880,12 @@ func (m *MenuBar) ActiveMenu() *Menu {
 	return m.activeMenu
 }
 
+// IsMenuOpen reports whether a dropdown is currently open. A detached
+// window hosting this bar routes all mouse input here while it is.
+func (m *MenuBar) IsMenuOpen() bool {
+	return m.activeMenu != nil
+}
+
 // OpenMenu opens a menu by index.
 func (m *MenuBar) OpenMenu(index int) {
 	if index < 0 || index >= len(m.menus) {

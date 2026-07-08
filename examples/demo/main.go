@@ -238,9 +238,12 @@ sb=new statusbar children={
 		if pw := createProtocolWindow(application, desktop); pw != nil {
 			application.AddWindow(pw)
 		}
-		// Create the main demo window - owned by the application
+		// Create the main demo window - owned by the application, and
+		// mark it the app's main window (its menus/status move to its own
+		// chrome when it is torn off).
 		mainWindow := createMainWindow(desktop, application)
 		application.AddWindow(mainWindow)
+		application.SetMainWindow(mainWindow)
 
 		// D22: this desktop IS a display service. Remote apps dial
 		// the socket and appear as full applications:
@@ -434,7 +437,12 @@ sb=new statusbar children={new section children={new span text="Secondary Applic
 
 	w.SetContent(splitter)
 
+	// This window is the main window of its own application, and can be
+	// torn off the desktop to become a standalone OS surface.
+	w.SetTearable(true)
+
 	newApp.AddWindow(w)
+	newApp.SetMainWindow(w)
 
 	return newApp
 }
