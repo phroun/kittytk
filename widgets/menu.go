@@ -774,6 +774,25 @@ func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s s
 	drawEdge(y+h, 0, gapBottom)   // bottom edge (gapped for drop-ups)
 }
 
+// paintScrollBumper draws a top/bottom scroll indicator row like a
+// normal menu row - gutter background, gutter divider, and white content
+// - with three indicator glyphs centered in the white content area
+// only. glyph is '^'/'v' when that direction can scroll, else '-' for a
+// blank bumper. No line-drawing characters.
+func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSize, metrics core.CellMetrics, gutterStyle, contentStyle style.CellStyle, g bool, scale int, hairStyle style.CellStyle, glyph rune) {
+	gutterWidth := metrics.CellWidth * 3
+	p.FillRect(core.UnitRect{X: m.popupX, Y: y, Width: gutterWidth, Height: metrics.CellHeight}, ' ', gutterStyle)
+	p.FillRect(core.UnitRect{X: m.popupX + gutterWidth, Y: y, Width: size.Width - gutterWidth, Height: metrics.CellHeight}, ' ', contentStyle)
+	if g {
+		p.FillRectPixels(m.popupX+gutterWidth, y, -1, 0, 1, int(metrics.CellHeight)*scale, hairStyle)
+	}
+	// Center the three glyphs in the white content area only.
+	centerX := m.popupX + gutterWidth + (size.Width-gutterWidth)/2
+	p.DrawCell(centerX-metrics.CellWidth*2, y, glyph, contentStyle)
+	p.DrawCell(centerX, y, glyph, contentStyle)
+	p.DrawCell(centerX+metrics.CellWidth*2, y, glyph, contentStyle)
+}
+
 // paintOuterStroke draws the menu's 1-pixel outer frame with the edge
 // nearest its opening control gapped (see SetStrokeGap).
 func (m *Menu) paintOuterStroke(p *core.Painter, size core.UnitSize, scale int, s style.CellStyle) {
@@ -962,7 +981,12 @@ func (m *Menu) Paint(p *core.Painter) {
 	}
 	menuItemStyle := scheme.GetMenuItemText()
 	p.FillRect(menuBounds, ' ', menuItemStyle)
-	p.DrawRect(menuBounds, theme.DefaultBorder, menuItemStyle)
+	// Cell surfaces get the box-drawing border; graphical surfaces get
+	// the 1-pixel outer stroke drawn at the end instead (the char border
+	// draws an inset line that would cut through the scroll bumpers).
+	if !p.Graphical() {
+		p.DrawRect(menuBounds, theme.DefaultBorder, menuItemStyle)
+	}
 
 	// Track Y offset for drawing
 	currentY := m.popupY
@@ -978,14 +1002,11 @@ func (m *Menu) Paint(p *core.Painter) {
 
 	// Draw top scroll indicator if needed
 	if needsScroll {
-		indicatorStyle := menuItemStyle
+		glyph := '-' // blank bumper (nothing above) shows a dash row
 		if m.canScrollUp() {
-			// Draw "^ ^ ^" centered
-			centerX := m.popupX + size.Width/2
-			p.DrawCell(centerX-metrics.CellWidth*2, currentY, '^', indicatorStyle)
-			p.DrawCell(centerX, currentY, '^', indicatorStyle)
-			p.DrawCell(centerX+metrics.CellWidth*2, currentY, '^', indicatorStyle)
+			glyph = '^'
 		}
+		m.paintScrollBumper(p, currentY, size, metrics, scheme.GetMenuGutter(), menuItemStyle, g, scale, hairStyle, glyph)
 		currentY += metrics.CellHeight
 	}
 
@@ -1139,14 +1160,11 @@ func (m *Menu) Paint(p *core.Painter) {
 
 	// Draw bottom scroll indicator if needed
 	if needsScroll {
-		indicatorStyle := menuItemStyle
+		glyph := '-' // blank bumper (nothing below) shows a dash row
 		if m.canScrollDown() {
-			// Draw "v v v" centered
-			centerX := m.popupX + size.Width/2
-			p.DrawCell(centerX-metrics.CellWidth*2, currentY, 'v', indicatorStyle)
-			p.DrawCell(centerX, currentY, 'v', indicatorStyle)
-			p.DrawCell(centerX+metrics.CellWidth*2, currentY, 'v', indicatorStyle)
+			glyph = 'v'
 		}
+		m.paintScrollBumper(p, currentY, size, metrics, scheme.GetMenuGutter(), menuItemStyle, g, scale, hairStyle, glyph)
 	}
 
 	// A 1-pixel frame just outside the menu, in the separator color,

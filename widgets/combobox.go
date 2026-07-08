@@ -876,7 +876,12 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 	}
 	itemStyle := scheme.GetDropdownItemText()
 	popupPainter.FillRect(localBounds, ' ', itemStyle)
-	popupPainter.DrawRect(localBounds, c.Theme().DefaultBorder, itemStyle)
+	// Cell surfaces get the box-drawing border; graphical surfaces use
+	// the 1-pixel outer stroke drawn at the end (the char border's inset
+	// line would cut through the popup).
+	if !popupPainter.Graphical() {
+		popupPainter.DrawRect(localBounds, c.Theme().DefaultBorder, itemStyle)
+	}
 
 	maxVis := c.effectiveMaxVisible()
 	needsScroll := len(c.items) > maxVis
