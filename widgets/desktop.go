@@ -695,11 +695,15 @@ func (d *Desktop) updateMenuBarContent() {
 			for i := 1; i < len(appMenus); i++ {
 				d.menuBar.AddMenu(appMenus[i])
 			}
-		} else {
-			// App has no menus - create a standard app menu
+		} else if len(activeApp.Windows()) > 0 {
+			// App has windows but no menus of its own - give it a standard
+			// app menu (Hide/Quit act on those windows).
 			appMenu := d.createStandardAppMenu(appName)
 			d.menuBar.AddMenu(appMenu)
 		}
+		// A windowless, menuless application - the empty desktop host at
+		// boot, before any client app connects - contributes no menu at
+		// all, so only the Psi menu shows.
 	}
 }
 
