@@ -25,6 +25,7 @@ from .client import (
     TextInput,
     UI,
     Window,
+    default_endpoint,
     default_socket_path,
     dial,
     dial_solo,
@@ -35,5 +36,5 @@ __all__ = [
     "parse", "parse_event", "quote",
     "Button", "Checkbox", "Conn", "Handle", "Label", "Selector",
     "TextInput", "UI", "Window",
-    "default_socket_path", "dial", "dial_solo",
+    "default_endpoint", "default_socket_path", "dial", "dial_solo",
 ]

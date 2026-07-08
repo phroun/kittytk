@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"context"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -138,16 +139,26 @@ func findRemoteTrinkets(d *trinkets.Desktop) (*trinkets.Checkbox, *trinkets.Text
 	return cb, inp, btn
 }
 
-// runInteropClient drives one client subprocess through the full exchange.
+// runInteropClient drives one client subprocess through the full exchange
+// over the default unix socket.
 func runInteropClient(t *testing.T, name string, argv ...string) {
 	desktop, sock, stop := startService(t)
 	defer stop()
+	exchange(t, name, desktop, sock, nil, argv...)
+}
 
+// exchange launches the client with endpoint as its last argument (plus
+// any extra env) and drives the full bidirectional handshake against the
+// running desktop.
+func exchange(t *testing.T, name string, desktop *trinkets.Desktop, endpoint string, env []string, argv ...string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	full := append(argv, sock)
+	full := append(argv, endpoint)
 	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("%s: stdout pipe: %v", name, err)

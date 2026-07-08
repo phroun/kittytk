@@ -15,20 +15,22 @@ import socket
 import threading
 from typing import Callable, Dict, List, Optional
 
+from . import endpoint as _endpoint
 from . import protocol
 from .protocol import Event, FlagState
 
 DISPLAY_ENV = "KITTYTK_DISPLAY"
+TOKEN_ENV = "KITTYTK_TOKEN"
 
 
-def default_socket_path() -> str:
+def default_endpoint() -> str:
     """The conventional endpoint: $KITTYTK_DISPLAY, else
-    <runtime>/kittytk/display-0.sock.
+    <runtime>/kittytk/display-0.sock (a unix socket). The value may carry
+    any scheme (unix:/tcp://tls://); see endpoint.py.
 
-    <runtime> matches the Go host's DefaultSocketPath exactly: $XDG_RUNTIME_DIR,
-    else Go's os.TempDir() (which is $TMPDIR, else /tmp). On macOS $TMPDIR is
-    /var/folders/.../T - NOT /tmp - so this must consult it to find the host's
-    socket."""
+    <runtime> matches the Go host's default exactly: $XDG_RUNTIME_DIR,
+    else Go's os.TempDir() (which is $TMPDIR, else /tmp). On macOS $TMPDIR
+    is /var/folders/.../T - NOT /tmp - so this must consult it."""
     p = os.environ.get(DISPLAY_ENV)
     if p:
         return p
@@ -36,6 +38,11 @@ def default_socket_path() -> str:
                or os.environ.get("TMPDIR")
                or "/tmp")
     return os.path.join(runtime.rstrip("/") or "/", "kittytk", "display-0.sock")
+
+
+# Historical name (kept so existing callers keep working).
+def default_socket_path() -> str:
+    return default_endpoint()
 
 
 _CLOSED = object()  # reply-queue sentinel: the transport disconnected
@@ -371,14 +378,21 @@ class UI:
 
 # --- Dial ----------------------------------------------------------------
 
-def _dial(path: str, app_name: str, dispatch, solo: bool) -> Conn:
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(path)
+def _dial(endpoint_str: str, app_name: str, dispatch, solo: bool,
+          token=None, insecure=False, known_hosts=None,
+          ssl_context=None) -> Conn:
+    sock = _endpoint.connect(endpoint_str, insecure=insecure,
+                             known_hosts=known_hosts, ssl_context=ssl_context)
     conn = Conn(sock, dispatch)
+
+    if token is None:
+        token = os.environ.get(TOKEN_ENV)
 
     hello = "hello version=1 app=" + protocol.quote(app_name)
     if solo:
         hello += " solo"
+    if token:
+        hello += " token=" + protocol.quote(token)
     sock.sendall((hello + "\nend\n").encode("utf-8"))
 
     welcome = conn._scanner.next()
@@ -391,13 +405,21 @@ def _dial(path: str, app_name: str, dispatch, solo: bool) -> Conn:
     return conn
 
 
-def dial(path: str, app_name: str, dispatch=None) -> Conn:
-    """Connect to a display service. dispatch (optional) receives action=
-    command IDs."""
-    return _dial(path, app_name, dispatch, False)
+def dial(endpoint: str, app_name: str, dispatch=None, *, token=None,
+         insecure=False, known_hosts=None, ssl_context=None) -> Conn:
+    """Connect to a display service. endpoint is a unix socket path or a
+    tcp://host:port / tls://host:port URL. dispatch (optional) receives
+    action= command IDs; token (optional, else $KITTYTK_TOKEN) authorizes
+    the client in the handshake."""
+    return _dial(endpoint, app_name, dispatch, False, token=token,
+                 insecure=insecure, known_hosts=known_hosts,
+                 ssl_context=ssl_context)
 
 
-def dial_solo(path: str, app_name: str, dispatch=None) -> Conn:
+def dial_solo(endpoint: str, app_name: str, dispatch=None, *, token=None,
+              insecure=False, known_hosts=None, ssl_context=None) -> Conn:
     """dial() for an app that wants to be the whole display (its `main`
     window replaces the desktop)."""
-    return _dial(path, app_name, dispatch, True)
+    return _dial(endpoint, app_name, dispatch, True, token=token,
+                 insecure=insecure, known_hosts=known_hosts,
+                 ssl_context=ssl_context)
