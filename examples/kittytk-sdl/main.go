@@ -1,10 +1,14 @@
 //go:build sdl
 
-// Command sdldesktop is the GRAPHICAL display service (D23): a blank
+// Command kittytk-sdl is the GRAPHICAL display service (D23): a blank
 // KittyTK desktop rendered as pixels in an SDL window, serving the
-// protocol socket. Applications are separate processes that dial in:
+// protocol socket. It is one of two interchangeable hosts - its terminal
+// twin is kittytk-tui. Applications dial the socket and attach to
+// whichever host is running, without knowing (or caring) which renderer
+// is on the other end:
 //
-//	terminal 1:  go run -tags sdl ./examples/sdldesktop
+//	terminal 1:  go run -tags sdl ./examples/kittytk-sdl   (graphical)
+//	         or:  go run ./examples/kittytk-tui             (terminal)
 //	terminal 2:  go run ./examples/demoapp   (or ./examples/remoteapp)
 package main
 
@@ -34,7 +38,7 @@ func main() {
 	// The desktop's own (windowless) application owns the base menu bar
 	// until a client dials in.
 	application := app.New(nil)
-	application.SetName("SDL Desktop")
+	application.SetName("KittyTK (SDL)")
 	desktop.AddApplication(application)
 
 	// Start the display service: applications appear as they connect.

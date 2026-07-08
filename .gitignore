@@ -1,8 +1,12 @@
-# Binary executables (example commands built into the repo root)
-demo
-demoapp
-sdldesktop
-remoteapp
+# Binary executables (example commands built into the repo root).
+# Root-anchored so they don't also match the example SOURCE dirs of the
+# same name under examples/.
+/demo
+/demoapp
+/kittytk-sdl
+/kittytk-tui
+/remoteapp
+/spawndesktop
 *.exe
 *.exe~
 *.dll
