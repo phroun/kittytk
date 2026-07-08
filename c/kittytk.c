@@ -88,6 +88,25 @@ static int kt_mkdir(const char *p) { return mkdir(p, 0700); }
 #include <openssl/x509.h>
 #endif
 
+/* --- optional tracing (KITTYTK_DEBUG=1) ----------------------------- */
+
+static int kt_debug(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("KITTYTK_DEBUG");
+        v = (e && (!strcmp(e, "1") || !strcmp(e, "true") ||
+                   !strcmp(e, "yes") || !strcmp(e, "on"))) ? 1 : 0;
+    }
+    return v;
+}
+#define KTDBG(...)                                        \
+    do {                                                  \
+        if (kt_debug()) {                                 \
+            fprintf(stderr, "kittytk/client: " __VA_ARGS__); \
+            fprintf(stderr, "\n");                        \
+        }                                                 \
+    } while (0)
+
 /* --- growable byte buffer ------------------------------------------- */
 
 typedef struct { char *p; size_t len, cap; } kt_buf;
@@ -619,13 +638,16 @@ static int do_exec(kt_conn *c, const char *src, kt_ui *out_ids) {
     kt_mutex_unlock(&c->rmu);
 
     if (conn_write_all(c, src, strlen(src)) < 0 || conn_write_all(c, "\nend\n", 5) < 0) {
+        KTDBG("exec: write failed");
         kt_mutex_unlock(&c->write_mu);
         return -1;
     }
+    KTDBG("exec: batch sent (%zu bytes), awaiting reply", strlen(src) + 5);
 
     kt_mutex_lock(&c->rmu);
     while (!c->reply_ready) kt_cond_wait(&c->rcv, &c->rmu);
     int err = c->reply_err;
+    KTDBG("exec: reply received (err=%d)", err);
     if (!err && out_ids) {
         out_ids->n = c->reply_ids.n;
         out_ids->pairs = malloc(sizeof(kt_pair) * (c->reply_ids.n ? c->reply_ids.n : 1));
@@ -939,13 +961,15 @@ static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_o
     kt_platform_init();
 
     kt_endpoint e = parse_endpoint(endpoint);
+    KTDBG("dial app=%s unix=%d tls=%d addr=%s: connecting",
+          app_name, e.is_unix, e.use_tls, e.address ? e.address : "");
     kt_socket fd;
     if (e.is_unix) {
         fd = connect_unix(e.address);
     } else {
         fd = connect_tcp(e.address);
     }
-    if (fd == KT_BAD_SOCKET) { endpoint_free(&e); return NULL; }
+    if (fd == KT_BAD_SOCKET) { KTDBG("dial app=%s: connect failed", app_name); endpoint_free(&e); return NULL; }
 
     kt_conn *c = calloc(1, sizeof *c);
     c->fd = fd;
@@ -982,17 +1006,20 @@ static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_o
         buf_puts(&hb, tq); free(tq);
     }
     buf_puts(&hb, "\nend\n");
+    KTDBG("dial app=%s: transport up, sending hello", app_name);
     int wok = conn_write_all(c, hb.p, hb.len) == 0;
     free(hb.p);
-    if (!wok) { goto fail; }
+    if (!wok) { KTDBG("dial app=%s: hello write failed", app_name); goto fail; }
 
+    KTDBG("dial app=%s: hello sent, awaiting welcome", app_name);
     char *welcome = scan_next(c);
-    if (!welcome) goto fail;
+    if (!welcome) { KTDBG("dial app=%s: reading welcome failed (EOF)", app_name); goto fail; }
     kt_stmt *st = parse_statement(welcome);
     int ok = st && strcmp(st->verb, "welcome") == 0;
     stmt_free(st);
     free(welcome);
-    if (!ok) goto fail;
+    if (!ok) { KTDBG("dial app=%s: bad welcome", app_name); goto fail; }
+    KTDBG("dial app=%s: welcome received, connection ready", app_name);
 
     kt_thread_create(&c->rthread, read_loop, c);
     kt_thread_create(&c->ethread, event_loop, c);

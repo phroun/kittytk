@@ -61,10 +61,13 @@ func DialWith(endpointStr, appName string, opts DialOptions) (*Conn, error) {
 }
 
 func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
+	dbg("dial app=%q net=%s addr=%s tls=%v: connecting", appName, ep.network, ep.address, ep.useTLS)
 	nc, err := ep.connect(opts)
 	if err != nil {
+		dbg("dial app=%q: connect failed: %v", appName, err)
 		return nil, err
 	}
+	dbg("dial app=%q: transport up, sending hello", appName)
 
 	c := newConn(opts.Dispatch)
 	rt := &remoteTransport{
@@ -91,8 +94,10 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		nc.Close()
 		return nil, err
 	}
+	dbg("dial app=%q: hello sent, awaiting welcome", appName)
 	welcome, err := rt.scanner.Next()
 	if err != nil {
+		dbg("dial app=%q: reading welcome failed: %v", appName, err)
 		nc.Close()
 		return nil, fmt.Errorf("handshake: %w", err)
 	}
@@ -101,6 +106,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		nc.Close()
 		return nil, fmt.Errorf("handshake: unexpected response %q", welcome)
 	}
+	dbg("dial app=%q: welcome received, connection ready", appName)
 
 	go rt.readLoop()
 	go rt.eventLoop()
@@ -135,12 +141,16 @@ func (t *remoteTransport) exec(src string) (*protocol.Reply, error) {
 	defer t.writeMu.Unlock()
 
 	if _, err := t.nc.Write([]byte(src + "\nend\n")); err != nil {
+		dbg("exec: write failed: %v", err)
 		return nil, err
 	}
+	dbg("exec: batch sent (%d bytes), awaiting reply", len(src)+5)
 	r, ok := <-t.replies
 	if !ok {
+		dbg("exec: connection closed before reply")
 		return nil, fmt.Errorf("connection closed")
 	}
+	dbg("exec: reply received (err=%v)", r.err)
 	return r.reply, r.err
 }
 
