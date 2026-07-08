@@ -1,6 +1,8 @@
 package widgets
 
 import (
+	"time"
+
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/platform"
 	"github.com/phroun/tuitk/window"
@@ -184,6 +186,15 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	win.SetDetached(true)
 	// A detached main window carries the app's own menu bar + status bar.
 	d.attachMainWindowChrome(win)
+	// The detached menu bar's parent is the window, which can't provide the
+	// desktop timer system its dropdowns need for hover auto-scroll. Wire
+	// the bar to the desktop's timers and this surface's repaint directly.
+	if mb, ok := win.WindowMenuBar().(*MenuBar); ok {
+		mb.SetScrollTimerStarter(func(interval time.Duration, cb func()) interface{ Stop() } {
+			return d.StartRepeatingTimer(interval, cb)
+		})
+		mb.SetRequestUpdate(host.Invalidate)
+	}
 	win.SetOnTearRequest(func() { d.redockInPlace(host) })
 
 	d.mu.Lock()

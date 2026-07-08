@@ -1347,6 +1347,9 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 	item.SubMenu.onItemPressed = m.onItemPressed
 	// Propagate the accessibility manager to submenu
 	item.SubMenu.accessibilityManager = m.accessibilityManager
+	// Propagate the scroll-timer wiring so a tall submenu auto-scrolls too.
+	item.SubMenu.scrollTimerStarter = m.scrollTimerStarter
+	item.SubMenu.requestUpdate = m.requestUpdate
 	// Calculate available height for submenu based on screen bottom
 	if m.screenBottom > 0 {
 		availableHeight := m.screenBottom - subY
@@ -1564,6 +1567,25 @@ type MenuBar struct {
 
 	// Callback when Tab navigation should transfer to the dock
 	onFocusDock func()
+
+	// Fallback scroll-timer + update wiring for dropdowns, used when the
+	// bar's parent doesn't provide them (a detached window's own menu bar,
+	// whose parent is the Window rather than the Desktop). The desktop
+	// wires these to its own timer system and the torn surface's repaint.
+	scrollTimerStarter func(interval time.Duration, callback func()) interface{ Stop() }
+	requestUpdate      func()
+}
+
+// SetScrollTimerStarter installs a fallback repeating-timer starter for
+// this bar's dropdowns, used when the parent can't provide one.
+func (m *MenuBar) SetScrollTimerStarter(fn func(interval time.Duration, callback func()) interface{ Stop() }) {
+	m.scrollTimerStarter = fn
+}
+
+// SetRequestUpdate installs a fallback screen-update requester for this
+// bar's dropdowns, used when the parent can't provide one.
+func (m *MenuBar) SetRequestUpdate(fn func()) {
+	m.requestUpdate = fn
 }
 
 // NewMenuBar creates a new menu bar.
@@ -1987,6 +2009,11 @@ func (m *MenuBar) OpenMenu(index int) {
 				return timerProvider.StartRepeatingTimer(interval, callback)
 			})
 			m.activeMenu.SetRequestUpdate(timerProvider.RequestUpdate)
+		} else if m.scrollTimerStarter != nil {
+			// Parent can't provide timers (a detached window's menu bar):
+			// fall back to the wiring the desktop set on the bar itself.
+			m.activeMenu.SetScrollTimerStarter(m.scrollTimerStarter)
+			m.activeMenu.SetRequestUpdate(m.requestUpdate)
 		}
 	}
 
