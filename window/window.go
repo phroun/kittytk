@@ -384,6 +384,15 @@ func (w *Window) removeChildWindow(child *Window) {
 	}
 }
 
+// canMaximize reports whether the window may be maximized. Maximizing is
+// a form of resize, so it is suppressed both by an explicit NoMaximize
+// flag and by NoResize. Governs the maximize button (paint, hit-test,
+// focus order, keyboard/mouse triggers), programmatic Maximize, and the
+// window manager's drag-to-top snap.
+func canMaximize(flags WindowFlags) bool {
+	return flags&WindowFlagNoMaximize == 0 && flags&WindowFlagNoResize == 0
+}
+
 // Maximize maximizes the window.
 func (w *Window) Maximize() {
 	w.mu.Lock()
@@ -391,7 +400,7 @@ func (w *Window) Maximize() {
 		w.mu.Unlock()
 		return
 	}
-	if w.flags&WindowFlagNoMaximize != 0 {
+	if !canMaximize(w.flags) {
 		w.mu.Unlock()
 		return
 	}
@@ -1373,7 +1382,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
 		controlX += buttonWidth
 	}
-	if flags&WindowFlagNoMaximize == 0 {
+	if canMaximize(flags) {
 		isFocused := titleFocus == TitleFocusMaximize
 		isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
@@ -1578,7 +1587,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
 			controlX += buttonWidth
 		}
-		if flags&WindowFlagNoMaximize == 0 {
+		if canMaximize(flags) {
 			isFocused := titleFocus == TitleFocusMaximize
 			isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
@@ -1819,7 +1828,7 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	}
 
 	// Check maximize/restore button [^] or [o]
-	if flags&WindowFlagNoMaximize == 0 {
+	if canMaximize(flags) {
 		if x >= controlX && x < controlX+buttonWidth {
 			return TitleButtonMaximize
 		}
@@ -1999,7 +2008,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 				}
 			}
 		case TitleFocusMaximize:
-			if flags&WindowFlagNoMaximize == 0 {
+			if canMaximize(flags) {
 				w.mu.RLock()
 				handler := w.onMaximizeRequest
 				w.mu.RUnlock()
@@ -2057,6 +2066,15 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			key = key[2:]
 			horizStep = metrics.CellWidth * 10
 			vertStep = metrics.CellHeight * 4
+		}
+
+		// A non-resizable window ignores keyboard resize (Shift is the
+		// resize modifier) but still allows plain-arrow moves.
+		if hasShift && flags&WindowFlagNoResize != 0 {
+			switch key {
+			case "Left", "Right", "Up", "Down":
+				return true
+			}
 		}
 
 		switch key {
@@ -2343,7 +2361,7 @@ func (w *Window) nextTitleFocus(current TitleFocus) TitleFocus {
 		}
 		fallthrough
 	case TitleFocusMinimize:
-		if flags&WindowFlagNoMaximize == 0 {
+		if canMaximize(flags) {
 			return TitleFocusMaximize
 		}
 		fallthrough
@@ -2380,12 +2398,12 @@ func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
 		if flags&WindowFlagTearable != 0 {
 			return TitleFocusTear
 		}
-		if flags&WindowFlagNoMaximize == 0 {
+		if canMaximize(flags) {
 			return TitleFocusMaximize
 		}
 		fallthrough
 	case TitleFocusTear:
-		if flags&WindowFlagNoMaximize == 0 {
+		if canMaximize(flags) {
 			return TitleFocusMaximize
 		}
 		fallthrough

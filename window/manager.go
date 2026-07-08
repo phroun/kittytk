@@ -753,8 +753,14 @@ func (m *WindowManager) CloseModal() {
 	win.Close()
 }
 
-// MaximizeWindow maximizes a window to fill the client area.
+// MaximizeWindow maximizes a window to fill the client area. Windows that
+// can't be maximized (NoMaximize, or NoResize since maximizing is a
+// resize) are left untouched, so callers - double-click, drag-to-top
+// snap - don't silently resize a fixed-size dialog.
 func (m *WindowManager) MaximizeWindow(win *Window) {
+	if !canMaximize(win.Flags()) {
+		return
+	}
 	clientArea := m.ClientArea()
 	win.Maximize()
 	win.SetBounds(clientArea)
@@ -1531,8 +1537,10 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 		// Dragging into menu bar area = maximize gesture. Skipped for a
 		// tear-handle drag: that gesture tears the window off, so it
-		// must not snap-maximize on the way up.
-		if !isTearHandle && bounds.Y < clientArea.Y && dragging.Flags()&WindowFlagNoMaximize == 0 && !justRestored {
+		// must not snap-maximize on the way up. Also skipped for windows
+		// that can't be maximized (fixed-size dialogs), which then fall
+		// through to the normal clamped move.
+		if !isTearHandle && bounds.Y < clientArea.Y && canMaximize(dragging.Flags()) && !justRestored {
 			if !dragging.IsMaximized() {
 				m.MaximizeWindow(dragging)
 				m.RequestRepaint()
