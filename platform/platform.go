@@ -123,6 +123,13 @@ type CursorController interface {
 	SetCursor(shape core.CursorShape)
 }
 
+// BorderToggler is an optional NativeSurface capability: toggle the OS
+// window's title bar / border at runtime. Solo mode removes the border
+// from the primary window so the app's own chrome is the only title bar.
+type BorderToggler interface {
+	SetBordered(bordered bool)
+}
+
 // Surface is one render target: per-surface size, damage, input.
 type Surface interface {
 	// Size returns the surface size in units.

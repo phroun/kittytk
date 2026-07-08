@@ -665,12 +665,13 @@ func (d *Desktop) IsSolo() bool {
 	return d.solo
 }
 
-// EnterSoloMode makes win the whole display. The main window is torn onto
-// its own borderless surface (reusing the tear-off host, which already
-// carries the app's chrome, fills the surface, and maps resize onto the OS
-// window), and the desktop's own (bordered) surface is closed so only the
-// app's window remains. The event loop is process-global, so it lives on
-// for the torn surface and quits when the last window closes. Idempotent.
+// EnterSoloMode makes win the whole display. The desktop's own OS window
+// is reshaped into the app's window: its border is stripped (the app's
+// chrome is the only title bar) and win is hosted on that surface via a
+// tear-off host, so win fills it and keyboard/edge resize maps onto the OS
+// window. No second window is created and none is closed (the SDL platform
+// refuses to close its main window); the desktop lives on as a windowless
+// coordinator and quits when the last window closes. Idempotent.
 func (d *Desktop) EnterSoloMode(win *window.Window) {
 	d.mu.Lock()
 	first := !d.solo
@@ -684,22 +685,79 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 			d.Post(func() { d.quitIfEmptySolo() })
 		})
 	}
-
 	if win != nil {
-		// Tear the main window onto its own borderless surface and zoom it
-		// to fill the display. tearOffInPlace needs a tearable, non-detached
-		// window; the solo window keeps no tear handle afterwards.
-		win.SetTearable(true)
-		d.tearOffInPlace(win)
-		if host := d.hostForWindow(win); host != nil {
-			host.ZoomToFill()
-		}
-		win.SetTearable(false)
+		d.soloHostOnPrimary(win)
+	}
+}
+
+// soloHostOnPrimary reshapes the desktop's own OS window into the app's
+// window (see EnterSoloMode). Returns without effect when the platform
+// can't host it (headless); solo mode is still recorded.
+func (d *Desktop) soloHostOnPrimary(win *window.Window) {
+	d.mu.RLock()
+	plat := d.platform
+	surf := d.surface
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if plat == nil || surf == nil || wm == nil {
+		return
+	}
+	native, ok := surf.(platform.NativeSurface)
+	if !ok {
+		return
+	}
+	gp, ok := plat.(platform.GlobalPointerPlatform)
+	if !ok {
+		return
 	}
 
-	// The desktop's own (bordered) window is no longer wanted - the torn
-	// surface is the whole display now.
-	d.closePrimarySurface()
+	// Strip the OS title bar - the app's own chrome is the only one.
+	if bt, ok := native.(platform.BorderToggler); ok {
+		bt.SetBordered(false)
+	}
+
+	// Lift the window out of the manager (and any dock entry).
+	wm.RemoveWindow(win)
+	if win.IsMinimized() {
+		win.Restore()
+	}
+	if d.dockRow != nil {
+		d.dockRow.RemoveEntryByID(win.ObjectID())
+	}
+
+	// Host it on the primary surface. No redock: there is no desktop to
+	// dock back to.
+	var host *window.TearOffHost
+	host = window.NewTearOffHost(win, surf, d.deviceScale(), gp.GlobalPointerPx,
+		func(int, int, core.Unit, core.Unit) bool { return false })
+	host.SetOnClosed(func() { d.dropTornHost(host) })
+	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)
+	if cc, ok := plat.(platform.CursorController); ok {
+		host.SetCursorSetter(cc.SetCursor)
+	}
+	host.SetResizeGrip(d.resizeGrip)
+	host.SetOnFocus(func(focused bool) {
+		if focused {
+			d.windowFocusChanged(win)
+			d.invalidateSurface()
+		}
+	})
+
+	win.SetDetached(true)
+	win.SetTearable(false) // no tear/redock handle in solo
+	d.attachMainWindowChrome(win)
+	if mb, ok := win.WindowMenuBar().(*MenuBar); ok {
+		mb.SetScrollTimerStarter(func(interval time.Duration, cb func()) interface{ Stop() } {
+			return d.StartRepeatingTimer(interval, cb)
+		})
+		mb.SetRequestUpdate(host.Invalidate)
+	}
+
+	d.mu.Lock()
+	d.tornHosts = append(d.tornHosts, host)
+	d.mu.Unlock()
+
+	host.Invalidate()
 }
 
 // soloAdoptWindow tears a newly added window onto its own surface (a peer
@@ -733,31 +791,6 @@ func (d *Desktop) managesWindow(win *window.Window) bool {
 		}
 	}
 	return false
-}
-
-// hostForWindow returns the tear-off host currently hosting win, or nil.
-func (d *Desktop) hostForWindow(win *window.Window) *window.TearOffHost {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	for _, h := range d.tornHosts {
-		if h.Window() == win {
-			return h
-		}
-	}
-	return nil
-}
-
-// closePrimarySurface closes the desktop's own OS window. Closed-surface
-// operations are already no-ops, so the desktop lives on as a windowless
-// coordinator (window manager, timers, torn hosts) driving the torn
-// surfaces; the process-global event loop keeps running.
-func (d *Desktop) closePrimarySurface() {
-	d.mu.RLock()
-	surf := d.surface
-	d.mu.RUnlock()
-	if native, ok := surf.(platform.NativeSurface); ok {
-		native.Close()
-	}
 }
 
 // dockVisible reports whether the minimized-window dock occupies space.

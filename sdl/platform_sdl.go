@@ -38,9 +38,9 @@ type Platform struct {
 	wins map[uint32]*nativeWin // by SDL window ID, main included
 
 	// System mouse cursors, created on demand and cached by shape.
-	cursors    map[core.CursorShape]*sdl2.Cursor
-	curCursor  core.CursorShape
-	cursorSet  bool
+	cursors   map[core.CursorShape]*sdl2.Cursor
+	curCursor core.CursorShape
+	cursorSet bool
 }
 
 // nativeWin bundles one OS window with its presentation chain.
@@ -820,6 +820,16 @@ func (s *sdlSurface) SetScreenPositionPx(x, y int) {
 		return
 	}
 	s.win.window.SetPosition(int32(x), int32(y))
+}
+
+// SetBordered implements platform.BorderToggler: toggle the OS title bar
+// at runtime (solo mode strips the primary window's border so the app's
+// own chrome is the only title bar).
+func (s *sdlSurface) SetBordered(bordered bool) {
+	if s.closed || s.win == nil || s.win.window == nil {
+		return
+	}
+	s.win.window.SetBordered(bordered)
 }
 
 // SetScreenSizePx implements platform.NativeSurface: the size change

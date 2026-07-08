@@ -503,10 +503,10 @@ func TestTornWindowResizeGripMatchesDesktop(t *testing.T) {
 	d.RunOn(plat)
 }
 
-// Solo mode tears the main window onto its own borderless surface (which
-// fills the display) and closes the desktop's own surface, so only the
-// app's window remains; the host quits when the last window closes.
-func TestSoloModeTearsMainAndClosesPrimary(t *testing.T) {
+// Solo mode reshapes the desktop's own OS window into the app's window:
+// no second surface is created, the main window is hosted on the primary
+// surface and fills it, and the host quits when the last window closes.
+func TestSoloModeHostsMainOnPrimarySurface(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	px, _ := raster.New(800, 480)
 	d := NewDesktop()
@@ -531,20 +531,15 @@ func TestSoloModeTearsMainAndClosesPrimary(t *testing.T) {
 			t.Error("desktop is not in solo mode")
 		}
 		if !main.IsDetached() {
-			t.Error("solo main window was not torn onto its own surface")
+			t.Error("solo main window is not hosted (detached)")
 		}
-		if len(plat.surfaces) != 2 {
-			t.Fatalf("want 2 surfaces (desktop + torn), got %d", len(plat.surfaces))
+		if len(plat.surfaces) != 1 {
+			t.Fatalf("want 1 surface (the reshaped primary), got %d", len(plat.surfaces))
 		}
-		if !plat.surfaces[0].closed {
-			t.Error("the desktop's own (bordered) surface was not closed")
-		}
-		if plat.surfaces[1].closed {
-			t.Error("the torn solo surface should be open")
-		}
-		// Filled to the display work area (the msSurface reports 1600x1000).
-		if s := plat.surfaces[1].size; s.Width != 1600 || s.Height != 1000 {
-			t.Errorf("torn solo surface = %dx%d, want the work area 1600x1000", s.Width, s.Height)
+		// The window fills the primary surface (no separate window).
+		if b, s := main.Bounds(), plat.surfaces[0].size; b.Width != s.Width || b.Height != s.Height {
+			t.Errorf("solo window %dx%d does not fill the surface %dx%d",
+				b.Width, b.Height, s.Width, s.Height)
 		}
 
 		// Closing the last window quits the host.

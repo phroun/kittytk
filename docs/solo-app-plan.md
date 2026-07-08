@@ -110,19 +110,18 @@ hello version=1 app="My App" solo
 
 ## Milestones
 
-1. **Solo handshake + tear-off (done).** `solo` in the handshake;
-   `client.DialSolo`. When a solo app's `main` window is adopted, the desktop
-   **tears it onto its own borderless surface** (reusing `TearOffHost`, which
-   already carries the app's chrome, fills the surface, and maps resize onto
-   the OS window), zooms it to fill the display, and **closes the desktop's
-   own (bordered) surface** - so there is exactly one window, no double title
-   bar, and keyboard resize drives the OS surface. This works because the SDL
-   event loop is process-global (it survives the primary window closing); the
-   desktop lives on as a windowless coordinator. This is the user's insight -
-   "create the app as a detached window and kill the native window" - and it
-   collapses the old Path A/Path B split. Tested headlessly with the
-   msPlatform harness (main torn onto its surface, primary surface closed,
-   quit on last close).
+1. **Solo handshake + reshape the primary window (done).** `solo` in the
+   handshake; `client.DialSolo`. When a solo app's `main` window is adopted,
+   the desktop **reshapes its own OS window into the app's window**: it strips
+   the border (via the new `platform.BorderToggler` capability -
+   `SDL_SetWindowBordered`) so the app's chrome is the only title bar, and
+   hosts the main window on that same surface via `TearOffHost` (which fills
+   the surface and maps keyboard/edge resize onto the OS window). No second
+   window is created and none is closed - the SDL platform *refuses* to close
+   its main window (it owns the event loop), so reshaping the one window is
+   the way. The desktop lives on as a windowless coordinator and quits when
+   the last window closes. Tested headlessly with the msPlatform harness (one
+   surface, main window hosted and filling it, quit on last close).
 2. **Additional windows as peer surfaces (done).** In solo there is no
    desktop surface, so every added window is torn onto its own surface (a
    peer) - which also makes secondary-app "New Window" appear. Peers keep no
