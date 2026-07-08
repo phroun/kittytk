@@ -157,6 +157,16 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	host.SetOnClosed(func() { d.dropTornHost(host) })
 	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)
 
+	// A torn window still borrows the desktop's menu bar line: when its
+	// surface gains focus, point the menu bar at this window's app so the
+	// app's menus are actually reachable (they showed nowhere before).
+	host.SetOnFocus(func(focused bool) {
+		if focused {
+			d.windowFocusChanged(win)
+			d.invalidateSurface()
+		}
+	})
+
 	// The window now reads as detached (handle shows '#'); clicking
 	// the handle (or Cmd-style activation) re-docks it to the desktop.
 	win.SetDetached(true)
@@ -311,6 +321,10 @@ func (d *Desktop) dropTornHost(host *window.TearOffHost) {
 	d.mu.Lock()
 	if d.tornDrag != nil && d.tornDrag.host == host {
 		d.tornDrag = nil
+	}
+	// A closing torn window can't keep owning focus/the menu bar line.
+	if d.tornFocusOwner == host.Window() {
+		d.tornFocusOwner = nil
 	}
 	for i, th := range d.tornHosts {
 		if th == host {

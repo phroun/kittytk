@@ -105,6 +105,13 @@ type Desktop struct {
 	applications []ApplicationProvider
 	activeApp    ApplicationProvider
 
+	// tornFocusOwner is the torn-off window that most recently took
+	// focus, if it still holds it. While set, the desktop's own surface
+	// regaining focus must NOT re-light an in-surface window (that would
+	// steal focus from the detached window, which still owns the menu
+	// bar line). Cleared when an in-surface window is actually activated.
+	tornFocusOwner *window.Window
+
 	// Backend for rendering (optional - used when Desktop.Run() is called)
 	backend core.RenderBackend
 
@@ -612,6 +619,14 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 		if d.activeApp != nil {
 			d.activeApp.OnActivate()
 		}
+	}
+	// Remember when a detached window owns focus, so the desktop's own
+	// surface regaining focus won't re-light an in-surface window over
+	// it. Activating an in-surface window clears the reference.
+	if w.IsDetached() {
+		d.tornFocusOwner = w
+	} else {
+		d.tornFocusOwner = nil
 	}
 	d.mu.Unlock()
 
@@ -1129,8 +1144,20 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// window's chrome follows, the same way a torn-off window's
 		// chrome follows its own OS window. WM state is untouched -
 		// re-focusing lights the same window back up.
+		//
+		// Exception: while a detached window owns focus (and the menu bar
+		// line), regaining focus must NOT re-light an in-surface window -
+		// that would silently steal focus from the detached window. Only
+		// an actual click on an in-surface window changes the focus.
+		d.mu.RLock()
+		tornOwns := d.tornFocusOwner != nil
+		d.mu.RUnlock()
 		if aw := wm.ActiveWindow(); aw != nil {
-			aw.SetActive(e.Focused)
+			if e.Focused && tornOwns {
+				// Don't relight; leave the detached window as the owner.
+			} else {
+				aw.SetActive(e.Focused)
+			}
 		}
 		return true
 

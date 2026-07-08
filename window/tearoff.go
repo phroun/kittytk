@@ -27,6 +27,11 @@ type TearOffHost struct {
 	// must go quiet (its surface is closed by the callback).
 	onRedock func(globalX, globalY int, grabX, grabY core.Unit) bool
 
+	// onFocus fires when the torn surface gains or loses OS focus, so the
+	// desktop can point its menu bar at this window's app when it becomes
+	// focused (the window still borrows the desktop's menu bar line).
+	onFocus func(focused bool)
+
 	savedFlags WindowFlags
 
 	dragging bool
@@ -185,6 +190,11 @@ func (h *TearOffHost) Dragging() bool { return h.dragging }
 // SetOnClosed installs the desktop's disposal for a torn window that
 // closes itself.
 func (h *TearOffHost) SetOnClosed(fn func()) { h.onClosed = fn }
+
+// SetOnFocus installs a callback fired when the torn surface gains or
+// loses OS focus, letting the desktop point its menu bar at this
+// window's app when it becomes focused.
+func (h *TearOffHost) SetOnFocus(fn func(focused bool)) { h.onFocus = fn }
 
 // SetClipboardAccess bridges the platform clipboard to widgets in the
 // torn window (their ancestry has no desktop to ask).
@@ -346,6 +356,9 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		// The torn window's chrome follows its OS window's focus,
 		// exactly as it would follow activation in the desktop.
 		h.win.SetActive(e.Focused)
+		if h.onFocus != nil {
+			h.onFocus(e.Focused)
+		}
 		handled = true
 	case core.KeyPressEvent:
 		if h.native != nil && (e.Key == "s-m" ||
