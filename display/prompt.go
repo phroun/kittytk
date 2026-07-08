@@ -198,8 +198,13 @@ func showAuthPrompt(d *trinkets.Desktop, req AuthRequest, deliver func(AuthDecis
 	choose := func(dec AuthDecision) func() {
 		return func() {
 			once.Do(func() {
-				deliver(dec)
+				// Tear the modal down BEFORE releasing the decision, so
+				// the admitted connection can't start building its window
+				// while this modal is still on the stack (ActivateWindow
+				// refuses to front a window under a live modal, which
+				// would leave the new window hidden).
 				wm.CloseModal()
+				deliver(dec)
 			})
 		}
 	}

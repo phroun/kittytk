@@ -237,6 +237,8 @@ func (s *Server) admit(req AuthRequest, token string) bool {
 		d = s.prompt(req)
 	}
 	_ = s.store.record(req, d)
+	dbg("admit app=%q transport=%s id=%q -> decision=%d allowed=%v",
+		req.AppName, req.Transport, req.identity(), d, d.allows())
 	return d.allows()
 }
 

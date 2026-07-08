@@ -278,13 +278,16 @@ func (s *Server) serveConn(nc net.Conn) {
 	defer close(c.out)
 
 	c.send(fmt.Sprintf("welcome version=1 session=%d", sessionID))
+	dbg("welcome sent session=%d app=%q", sessionID, appName)
 
 	// Batch loop: read until end, execute on the UI thread, reply.
 	for {
 		batch, err := readBatch(scanner)
 		if err != nil {
+			dbg("batch read ended for app=%q: %v", appName, err)
 			return // disconnect -> deferred teardown
 		}
+		dbg("executing batch (%d statements) for app=%q", len(batch), appName)
 		done := make(chan struct{})
 		s.desktop.Post(func() {
 			defer close(done)
@@ -370,6 +373,7 @@ func (c *conn) execute(batch []*protocol.Statement) {
 		c.server.desktop.EnterSoloMode(soloMain)
 	}
 	c.server.desktop.RequestUpdate()
+	dbg("batch adopted for app=%q: app now has %d window(s)", c.app.Name(), len(c.app.Windows()))
 
 	c.send(protocol.EncodeReply(reply))
 }
