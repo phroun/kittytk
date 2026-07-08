@@ -14,6 +14,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"sync"
@@ -22,7 +23,14 @@ import (
 	"github.com/phroun/tuitk/protocol"
 )
 
+// soloMode, set by -solo, makes the primary app the whole display: its
+// main window replaces the desktop (no Psi menu, dock or wallpaper).
+var soloMode bool
+
 func main() {
+	flag.BoolVar(&soloMode, "solo", false, "run as the whole display (solo mode)")
+	flag.Parse()
+
 	path := client.DefaultSocketPath()
 
 	a, err := newPrimary(path)
@@ -56,11 +64,17 @@ type app struct {
 }
 
 // newApp dials a fresh connection (a new Application on the desktop).
+// The primary app dials solo when -solo is set, so its main window
+// becomes the whole display.
 func newApp(path, name string, primary bool) (*app, error) {
 	a := &app{path: path, primary: primary, quit: make(chan struct{})}
 	// Command dispatch is observed via conn.OnCommand handlers, so the
 	// Dial sink is unused here.
-	conn, err := client.Dial(path, name, nil)
+	dial := client.Dial
+	if primary && soloMode {
+		dial = client.DialSolo
+	}
+	conn, err := dial(path, name, nil)
 	if err != nil {
 		return nil, err
 	}

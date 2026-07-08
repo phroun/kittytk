@@ -94,6 +94,11 @@ type Desktop struct {
 	// System menu (always present, upper-left)
 	systemMenu *Menu
 
+	// solo: a single application owns the whole display. Its main window
+	// replaces the desktop entirely - no system (Psi) menu, no dock, no
+	// wallpaper - and the host quits when the last window closes.
+	solo bool
+
 	// Status bar at the bottom
 	statusBar *StatusBar
 
@@ -644,6 +649,66 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 	d.updateStatusBarContent()
 }
 
+// IsSolo reports whether the desktop is running a single application as
+// the whole display (see docs/solo-app-plan.md).
+func (d *Desktop) IsSolo() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.solo
+}
+
+// EnterSoloMode makes win the whole display: no system (Psi) menu, no
+// dock, no wallpaper, and win maximized to fill the surface and not
+// tearable (there is nothing to dock back to). The host then quits when
+// the last window closes rather than showing an empty desktop. Idempotent.
+func (d *Desktop) EnterSoloMode(win *window.Window) {
+	d.mu.Lock()
+	first := !d.solo
+	d.solo = true
+	wm := d.windowManager
+	d.mu.Unlock()
+
+	if first && wm != nil {
+		// Quit when the last window closes (peers, no privileged root).
+		// Deferred so the check runs after the removal settles.
+		wm.SetOnWindowRemoved(func(*window.Window) {
+			d.Post(func() { d.quitIfEmptySolo() })
+		})
+	}
+
+	if win != nil {
+		win.SetTearable(false)
+		if wm != nil && !win.IsMaximized() {
+			wm.MaximizeWindow(win)
+		}
+	}
+	d.updateMenuBarContent() // drop the Psi menu
+	d.layoutChildren()       // dock disappears
+	d.RequestUpdate()
+}
+
+// dockVisible reports whether the minimized-window dock occupies space:
+// it has entries and we are not in solo mode (which hides all desktop
+// furniture).
+func (d *Desktop) dockVisible() bool {
+	return d.dockRow != nil && !d.dockRow.IsEmpty() && !d.solo
+}
+
+// quitIfEmptySolo quits the host once no windows remain, in solo mode.
+func (d *Desktop) quitIfEmptySolo() {
+	d.mu.RLock()
+	solo := d.solo
+	wm := d.windowManager
+	torn := len(d.tornHosts)
+	d.mu.RUnlock()
+	if !solo || wm == nil {
+		return
+	}
+	if len(wm.Windows()) == 0 && torn == 0 {
+		d.Quit()
+	}
+}
+
 // updateMenuBarContent updates the menu bar with the active app's menus.
 // The first menu after the system menu automatically gets standard app items
 // (Hide, Hide Others, Show All, Quit) appended.
@@ -675,8 +740,9 @@ func (d *Desktop) updateMenuBarContent() {
 		}
 	}
 
-	// Full bar: system menu first
-	if d.systemMenu != nil {
+	// Full bar: system menu first - except in solo mode, where the app
+	// owns the whole chrome and there is no Psi menu.
+	if d.systemMenu != nil && !d.solo {
 		d.menuBar.AddMenu(d.systemMenu)
 	}
 
@@ -1683,7 +1749,7 @@ func (d *Desktop) Children() []core.Widget {
 	if d.content != nil {
 		children = append(children, d.content)
 	}
-	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+	if d.dockVisible() {
 		children = append(children, d.dockRow)
 	}
 	if d.statusBar != nil {
@@ -1920,7 +1986,7 @@ func (d *Desktop) layoutChildren() {
 
 	// Calculate dock row position and size (above status bar)
 	dockHeight := core.Unit(0)
-	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+	if d.dockVisible() {
 		// First set width so RowCount works correctly
 		d.dockRow.SetBounds(core.UnitRect{
 			X:     0,
@@ -1941,7 +2007,7 @@ func (d *Desktop) layoutChildren() {
 	}
 
 	// Dock row above status bar
-	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+	if d.dockVisible() {
 		dockY := bounds.Height - metrics.CellHeight - dockHeight
 		if d.statusBar == nil {
 			dockY = bounds.Height - dockHeight
@@ -1981,7 +2047,7 @@ func (d *Desktop) ClientArea() core.UnitRect {
 		bottom -= metrics.CellHeight
 	}
 	// Account for dock row height (when not empty)
-	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+	if d.dockVisible() {
 		// Need to calculate height based on current width
 		d.dockRow.SetBounds(core.UnitRect{Width: bounds.Width})
 		bottom -= d.dockRow.RequiredHeight()
@@ -2077,7 +2143,7 @@ func (d *Desktop) IsDockFocused() bool {
 
 // FocusDock sets focus to the dock.
 func (d *Desktop) FocusDock() {
-	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+	if d.dockVisible() {
 		d.dockRow.SetFocus()
 	}
 }
@@ -2103,10 +2169,14 @@ func (d *Desktop) Paint(p *core.Painter) {
 
 	// Draw background pattern. Graphical targets tile the classic
 	// 8x8 two-color bitmap wallpaper (chunked to WallpaperChunkPx);
-	// cell targets keep the rune fill.
+	// cell targets keep the rune fill. Solo mode shows no wallpaper - the
+	// app owns the whole surface - so it gets a plain fill instead.
 	bgStyle := scheme.GetDesktopFill()
-	if !p.FillPattern(core.UnitRect{Width: bounds.Width, Height: bounds.Height},
-		d.wallpaperPattern, d.wallpaperChunkPx, bgStyle) {
+	switch {
+	case d.solo:
+		p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
+	case !p.FillPattern(core.UnitRect{Width: bounds.Width, Height: bounds.Height},
+		d.wallpaperPattern, d.wallpaperChunkPx, bgStyle):
 		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
 			for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
 				p.DrawCell(x, y, d.bgChar, bgStyle)
@@ -2135,7 +2205,7 @@ func (d *Desktop) Paint(p *core.Painter) {
 	}
 
 	// Draw dock row above status bar (if not empty)
-	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+	if d.dockVisible() {
 		dockHeight := d.dockRow.RequiredHeight()
 		dockY := bounds.Height - metrics.CellHeight - dockHeight
 		if d.statusBar == nil {
@@ -2260,7 +2330,7 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	// Check dock row (above status bar)
-	if d.dockRow != nil && !d.dockRow.IsEmpty() {
+	if d.dockVisible() {
 		dockHeight := d.dockRow.RequiredHeight()
 		dockY := bounds.Height - metrics.CellHeight - dockHeight
 		if d.statusBar == nil {

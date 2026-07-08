@@ -35,6 +35,18 @@ func DefaultSocketPath() string {
 // reader goroutine, and Handle.Target() is always nil (the widgets
 // live in the display service's process).
 func Dial(path, appName string, dispatch func(commandID string)) (*Conn, error) {
+	return dial(path, appName, dispatch, false)
+}
+
+// DialSolo is Dial for an app that wants to be the whole display: its
+// `main` window replaces the desktop entirely (no system menu, dock or
+// wallpaper), rendered like a torn-off window filling the surface. The
+// host quits when the last window closes (see docs/solo-app-plan.md).
+func DialSolo(path, appName string, dispatch func(commandID string)) (*Conn, error) {
+	return dial(path, appName, dispatch, true)
+}
+
+func dial(path, appName string, dispatch func(commandID string), solo bool) (*Conn, error) {
 	nc, err := net.Dial("unix", path)
 	if err != nil {
 		return nil, err
@@ -51,8 +63,13 @@ func Dial(path, appName string, dispatch func(commandID string)) (*Conn, error) 
 	c.transport = rt
 
 	// Handshake: hello out, welcome back (reattach-ready: the reply
-	// carries the server-assigned session id).
-	if _, err := nc.Write([]byte(fmt.Sprintf("hello version=1 app=%s\nend\n", protocol.Quote(appName)))); err != nil {
+	// carries the server-assigned session id). The optional `solo` flag
+	// asks the display to run this app as the whole surface.
+	hello := fmt.Sprintf("hello version=1 app=%s", protocol.Quote(appName))
+	if solo {
+		hello += " solo"
+	}
+	if _, err := nc.Write([]byte(hello + "\nend\n")); err != nil {
 		nc.Close()
 		return nil, err
 	}

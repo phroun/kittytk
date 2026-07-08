@@ -82,6 +82,10 @@ type conn struct {
 	factory *hostFactory
 	app     *app.Application
 
+	// solo marks a connection that asked (via the handshake) to be the
+	// whole display: its main window replaces the desktop entirely.
+	solo bool
+
 	// Accessibility routing state (the "Show/Speak Announcements"
 	// toggles): the connection owns the intent, and installs a desktop
 	// OnAnnounce handler reflecting it. Speech serializes through
@@ -108,9 +112,13 @@ func (s *Server) serveConn(nc net.Conn) {
 		return
 	}
 	appName := "Remote App"
+	solo := false
 	for _, a := range first[0].Args {
 		if a.Name == "app" && a.Value != nil && a.Value.Kind == protocol.StringValue {
 			appName = a.Value.Str
+		}
+		if a.Name == "solo" && a.Flag == protocol.FlagTrue {
+			solo = true
 		}
 	}
 	sessionID := s.sessions.Add(1)
@@ -119,6 +127,7 @@ func (s *Server) serveConn(nc net.Conn) {
 		server:  s,
 		nc:      nc,
 		session: protocol.NewSession(),
+		solo:    solo,
 		out:     make(chan string, 1024),
 	}
 
@@ -195,6 +204,7 @@ func (c *conn) execute(batch []*protocol.Statement) {
 
 	// Adopt what the batch created: windows join the connection's
 	// application; a menubar/statusbar becomes the app's bar content.
+	var soloMain *window.Window
 	for _, target := range c.factory.take() {
 		switch t := target.(type) {
 		case *window.Window:
@@ -207,6 +217,13 @@ func (c *conn) execute(batch []*protocol.Statement) {
 				// the menu/status chrome when torn off.
 				if t.MainRequested() {
 					c.app.SetMainWindow(t)
+					// A solo connection's main window replaces the desktop
+					// entirely. Deferred to after the batch so its menu/
+					// status content is already adopted when solo mode
+					// rebuilds the (Psi-less) bar.
+					if c.solo {
+						soloMain = t
+					}
 				}
 			}
 		case *widgets.MessageBox:
@@ -220,6 +237,9 @@ func (c *conn) execute(batch []*protocol.Statement) {
 		}:
 			c.app.SetStatusBarContent(t.Sections())
 		}
+	}
+	if soloMain != nil {
+		c.server.desktop.EnterSoloMode(soloMain)
 	}
 	c.server.desktop.RequestUpdate()
 

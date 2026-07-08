@@ -6,6 +6,7 @@ package display_test
 // disconnects - watching its windows disappear.
 
 import (
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -208,6 +209,102 @@ wbtn=w.p.btn
 			t.Fatalf("app still present after disconnect (%d)", apps)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A solo connection's main window replaces the desktop: the bar carries
+// only the app's own menus (no Psi), the window is maximized and not
+// tearable, and the host quits when the last window closes.
+func TestSoloModeReplacesDesktop(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "display.sock")
+
+	desktop := widgets.NewDesktop()
+	desktop.SetBackend(&nullBackend{})
+
+	ready := make(chan *display.Server, 1)
+	desktop.SetOnStartup(func() {
+		srv, err := display.Serve(desktop, sock)
+		if err != nil {
+			t.Errorf("serve: %v", err)
+			desktop.Quit()
+			return
+		}
+		ready <- srv
+	})
+
+	exited := make(chan int, 1)
+	go func() { exited <- desktop.Run() }()
+	var srv *display.Server
+	select {
+	case srv = <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop did not start")
+	}
+	defer srv.Close()
+
+	conn, err := client.DialSolo(sock, "Solo App", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	ui, err := conn.Build(`
+w=new window title="Solo" width=320 height=240 main tearable children={new panel layout=vbox children={new label caption="hi"}}
+mb=new menubar children={new menu caption="File" children={new menuitem caption="Quit"}}
+`)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	// The build is posted async; wait for solo mode to apply.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var solo bool
+		onUI(desktop, func() { solo = desktop.IsSolo() })
+		if solo {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("desktop did not enter solo mode")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	onUI(desktop, func() {
+		// No Psi menu: the app's own menu is first.
+		menus := desktop.MenuBar().Menus()
+		if len(menus) == 0 || menus[0].Title() != "File" {
+			var titles []string
+			for _, m := range menus {
+				titles = append(titles, m.Title())
+			}
+			t.Errorf("solo menu bar = %v, want app menus only (no Psi)", titles)
+		}
+		// The main window fills the surface and can't be torn off.
+		for _, a := range desktop.Applications() {
+			if a.Name() != "Solo App" {
+				continue
+			}
+			mw := a.MainWindow()
+			if mw == nil {
+				t.Fatal("solo app has no main window")
+			}
+			if !mw.IsMaximized() {
+				t.Error("solo main window is not maximized")
+			}
+			if mw.IsTearable() {
+				t.Error("solo main window is still tearable")
+			}
+		}
+	})
+
+	// Closing the last window quits the host (peers; quit on last close).
+	if _, err := conn.Exec(fmt.Sprintf("destroy %d", ui.ID("w"))); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Error("host did not quit after its last window closed")
 	}
 }
 
