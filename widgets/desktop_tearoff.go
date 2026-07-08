@@ -186,7 +186,10 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	// window then rises above those children and takes focus, so the tear
 	// ends with it on top rather than buried under a large child surface.
 	if app := d.applicationForMainWindow(win); app != nil {
-		d.tearOffFollowers(app, win)
+		// b was captured before NewTearOffHost zeroed the window's origin,
+		// so it still holds the main window's docked bounds - the reference
+		// for keeping each child at the same relative position.
+		d.tearOffFollowers(app, win, b)
 		if n, ok := host.Surface().(platform.NativeSurface); ok {
 			n.Raise()
 		}
@@ -196,24 +199,32 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 }
 
 // tearOffFollowers tears every non-tearable child of app (other than the
-// main window itself) onto its own surface, centered over the detached
-// main window. Called when the app's main window is torn off.
-func (d *Desktop) tearOffFollowers(app ApplicationProvider, main *window.Window) {
-	for _, w := range app.Windows() {
-		if w == main || w.IsTearable() || w.IsDetached() {
+// main window itself) onto its own surface. Children are torn in the
+// window manager's z-order (back to front) so their new surfaces stack in
+// the same order they had on the desktop, and each keeps the position it
+// held relative to the main window (mainDocked, the main window's bounds
+// before it was torn) - the tear preserves the layout as it was. Called
+// when the app's main window is torn off.
+func (d *Desktop) tearOffFollowers(app ApplicationProvider, main *window.Window, mainDocked core.UnitRect) {
+	d.mu.RLock()
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if wm == nil {
+		return
+	}
+	for _, w := range wm.Windows() {
+		if w == main || w.IsTearable() || w.IsDetached() || !appOwnsWindow(app, w) {
 			continue
 		}
-		b := w.Bounds()
-		x, y := d.centerOverMain(main, b.Width, b.Height, b)
+		x, y := d.positionRelativeToMain(main, mainDocked, w)
 		d.createTornHost(w, x, y)
+		d.setChildShortcutResolver(w, main)
 	}
 }
 
-// centerOverMain returns the desktop-unit top-left at which a child of
-// size childW x childH is centered over the app's torn-off main window.
-// Falls back to the supplied rectangle's origin when the main window's
-// torn surface can't be located.
-func (d *Desktop) centerOverMain(main *window.Window, childW, childH core.Unit, fallback core.UnitRect) (core.Unit, core.Unit) {
+// mainTornUnitOrigin returns the top-left of the main window's torn-off
+// surface in desktop units, and whether it could be located.
+func (d *Desktop) mainTornUnitOrigin(main *window.Window) (core.Unit, core.Unit, bool) {
 	d.mu.RLock()
 	surf := d.surface
 	hosts := make([]*window.TearOffHost, len(d.tornHosts))
@@ -222,7 +233,7 @@ func (d *Desktop) centerOverMain(main *window.Window, childW, childH core.Unit, 
 
 	deskNative, ok := surf.(platform.NativeSurface)
 	if !ok {
-		return fallback.X, fallback.Y
+		return 0, 0, false
 	}
 	var mainNative platform.NativeSurface
 	for _, h := range hosts {
@@ -234,16 +245,39 @@ func (d *Desktop) centerOverMain(main *window.Window, childW, childH core.Unit, 
 		}
 	}
 	if mainNative == nil {
-		return fallback.X, fallback.Y
+		return 0, 0, false
 	}
-
 	scale := d.deviceScale()
 	deskX, deskY := deskNative.ScreenPositionPx()
 	mx, my := mainNative.ScreenPositionPx()
-	mainUnitX := core.Unit((mx - deskX) / scale)
-	mainUnitY := core.Unit((my - deskY) / scale)
+	return core.Unit((mx - deskX) / scale), core.Unit((my - deskY) / scale), true
+}
+
+// positionRelativeToMain returns the desktop-unit top-left that keeps
+// child at the same offset from the main window it had while docked.
+// mainDocked is the main window's bounds captured before it was torn (its
+// live bounds now read as origin-zero on its own surface). Falls back to
+// the child's own bounds when the main surface is unknown.
+func (d *Desktop) positionRelativeToMain(main *window.Window, mainDocked core.UnitRect, child *window.Window) (core.Unit, core.Unit) {
+	cb := child.Bounds()
+	ox, oy, ok := d.mainTornUnitOrigin(main)
+	if !ok {
+		return cb.X, cb.Y
+	}
+	return ox + (cb.X - mainDocked.X), oy + (cb.Y - mainDocked.Y)
+}
+
+// centerOverMain returns the desktop-unit top-left at which a child of
+// size childW x childH is centered over the app's torn-off main window.
+// Used only for freshly created child windows. Falls back to the supplied
+// rectangle's origin when the main window's torn surface can't be located.
+func (d *Desktop) centerOverMain(main *window.Window, childW, childH core.Unit, fallback core.UnitRect) (core.Unit, core.Unit) {
+	ox, oy, ok := d.mainTornUnitOrigin(main)
+	if !ok {
+		return fallback.X, fallback.Y
+	}
 	mb := main.Bounds()
-	return mainUnitX + (mb.Width-childW)/2, mainUnitY + (mb.Height-childH)/2
+	return ox + (mb.Width-childW)/2, oy + (mb.Height-childH)/2
 }
 
 // redockFollowers re-docks every torn non-tearable child of app back onto
@@ -293,6 +327,27 @@ func (d *Desktop) SyncAddedWindowDetachState(win *window.Window) {
 	b := win.Bounds()
 	x, y := d.centerOverMain(main, b.Width, b.Height, b)
 	d.createTornHost(win, x, y)
+	d.setChildShortcutResolver(win, main)
+}
+
+// setChildShortcutResolver lets a torn-off child window service its app's
+// keyboard shortcuts through the same menu bar its detached main window
+// hosts, so Cut/Copy/Paste (etc.) work when the child has focus even
+// though the child carries no chrome of its own. Read lazily at event
+// time, so a later chrome change (or re-dock) is reflected.
+func (d *Desktop) setChildShortcutResolver(child, main *window.Window) {
+	child.SetShortcutResolver(func(ev core.KeyPressEvent) bool {
+		mb := main.WindowMenuBar()
+		if mb == nil {
+			return false
+		}
+		if sc, ok := mb.(interface {
+			HandleShortcut(core.KeyPressEvent) bool
+		}); ok {
+			return sc.HandleShortcut(ev)
+		}
+		return false
+	})
 }
 
 // applicationForWindow returns the application that owns win, or nil.
@@ -528,8 +583,10 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghos
 	win.SetOnBoundsRequest(nil)
 	// Re-docked: the handle reads '%' again and its click re-tears.
 	win.SetDetached(false)
-	// Docked again: the app's menus return to the desktop bar.
+	// Docked again: the app's menus return to the desktop bar, and a child
+	// no longer borrows its app's menu bar for shortcuts.
 	d.detachMainWindowChrome(win)
+	win.SetShortcutResolver(nil)
 	win.SetOnTearRequest(func() { d.tearOffInPlace(win) })
 	d.windowManager.AddWindow(win)
 	// Keep the re-docked window reachable: title bar within the client
@@ -546,10 +603,12 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghos
 	}
 
 	// A re-docking main window brings its non-tearable children home with
-	// it. A follower re-docking here is not any app's main window, so this
-	// does not recurse.
+	// it, preserving their arrangement and z-order; the main window is then
+	// re-activated so it re-docks last, on top of its children. A follower
+	// re-docking here is not any app's main window, so this does not recurse.
 	if app := d.applicationForMainWindow(win); app != nil {
 		d.redockFollowers(app, win)
+		d.windowManager.ActivateWindow(win)
 	}
 }
 

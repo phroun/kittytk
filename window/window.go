@@ -146,6 +146,13 @@ type Window struct {
 	menuBarVisible   bool
 	statusBarVisible bool
 
+	// shortcutResolver, when set, gets first crack at a key event's
+	// accelerator after the window's own menu bar. The desktop points a
+	// torn-off child window's resolver at its detached main window's menu
+	// bar, so the child services the app's shortcuts (Cut/Copy/Paste, ...)
+	// despite carrying no chrome of its own.
+	shortcutResolver func(core.KeyPressEvent) bool
+
 	// Request callbacks (for WindowManager integration)
 	onMinimizeRequest     func()                   // Called when user clicks minimize button
 	onMaximizeRequest     func()                   // Called when user clicks maximize button
@@ -631,6 +638,24 @@ func (w *Window) SetWindowMenuBar(mb core.Widget) {
 	}
 	w.layoutContent()
 	w.Update()
+}
+
+// WindowMenuBar returns the window's own menu bar (the chrome a detached
+// main window hosts), or nil. Used by the desktop to route a torn-off
+// child window's shortcuts through its app's menu bar.
+func (w *Window) WindowMenuBar() core.Widget {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.menuBar
+}
+
+// SetShortcutResolver installs a fallback accelerator handler, consulted
+// in HandleKeyPress after the window's own menu bar. The desktop uses it
+// to give a torn-off child window access to its app's shortcuts.
+func (w *Window) SetShortcutResolver(fn func(core.KeyPressEvent) bool) {
+	w.mu.Lock()
+	w.shortcutResolver = fn
+	w.mu.Unlock()
 }
 
 // SetWindowStatusBar installs (or clears) the window's own status bar,
@@ -2360,6 +2385,7 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	fm := w.focusManager
 	titleFocus := w.titleFocus
 	mb := w.menuBar
+	shortcutResolver := w.shortcutResolver
 	w.mu.RUnlock()
 
 	// While the detached window's own menu bar has a dropdown open, it
@@ -2375,13 +2401,17 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	// The detached window's own menu bar services its app shortcuts
 	// (Cut/Copy/Paste, Close Window, Quit, ...) globally - checked before
 	// the focused widget sees the key, matching the desktop bar while
-	// docked. Only a detached window has chrome, so mb != nil implies it.
+	// docked. A detached main window carries its own bar (mb); a torn-off
+	// child carries no chrome but borrows its app's bar via the resolver.
 	if mb != nil {
 		if sc, ok := mb.(interface {
 			HandleShortcut(core.KeyPressEvent) bool
 		}); ok && sc.HandleShortcut(event) {
 			return true
 		}
+	}
+	if shortcutResolver != nil && shortcutResolver(event) {
+		return true
 	}
 
 	// If title bar has focus, handle title bar keys

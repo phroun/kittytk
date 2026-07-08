@@ -393,10 +393,11 @@ func TestDesktopBlurDimsActiveWindow(t *testing.T) {
 	d.RunOn(plat)
 }
 
-// Tearing off an app's main window carries its non-tearable children
-// onto their own surfaces centered over it, raises the main window above
-// those children, and gives it focus so the tear ends with it on top.
-func TestMainWindowTearOffCascadeCenterRaise(t *testing.T) {
+// Tearing off an app's main window carries its non-tearable children onto
+// their own surfaces, preserving each child's z-order and its position
+// relative to the main window, then raises the main window above those
+// children and gives it focus so the tear ends with it on top.
+func TestMainWindowTearOffCascadeArrangeRaise(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	px, _ := raster.New(800, 480)
 	d := NewDesktop()
@@ -404,9 +405,10 @@ func TestMainWindowTearOffCascadeCenterRaise(t *testing.T) {
 
 	main := window.NewWindow("main")
 	main.SetTearable(true)
-	child := window.NewWindow("child") // non-tearable dialog-style child
+	childBack := window.NewWindow("back")   // non-tearable, behind
+	childFront := window.NewWindow("front") // non-tearable, in front
 
-	app := &mockApp{name: "App", main: main, windows: []*window.Window{main, child}}
+	app := &mockApp{name: "App", main: main, windows: []*window.Window{main, childBack, childFront}}
 	d.AddApplication(app)
 
 	d.SetOnStartup(func() {
@@ -414,36 +416,47 @@ func TestMainWindowTearOffCascadeCenterRaise(t *testing.T) {
 		wm.AddWindow(main)
 		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
 		main.Layout()
-		wm.AddWindow(child)
-		child.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 100, Height: 80})
-		child.Layout()
+		wm.AddWindow(childBack)
+		childBack.SetBounds(core.UnitRect{X: 10, Y: 10, Width: 100, Height: 80})
+		childBack.Layout()
+		wm.AddWindow(childFront)
+		childFront.SetBounds(core.UnitRect{X: 20, Y: 20, Width: 100, Height: 80})
+		childFront.Layout()
+		// Deterministic z-order: main (back), childBack, childFront (front).
+		wm.ActivateWindow(main)
+		wm.ActivateWindow(childBack)
+		wm.ActivateWindow(childFront)
 	})
 
 	plat := &msPlatform{}
 	plat.script = func() {
 		d.tearOffInPlace(main)
 
-		if len(plat.surfaces) != 3 {
-			t.Fatalf("want 3 surfaces (desktop + main + child), got %d", len(plat.surfaces))
+		if len(plat.surfaces) != 4 {
+			t.Fatalf("want 4 surfaces (desktop + main + 2 children), got %d", len(plat.surfaces))
 		}
 		mainSurf := plat.surfaces[1]
-		childSurf := plat.surfaces[2]
+		// Children tear off in z-order (back to front), so surfaces are
+		// created back-first: surfaces[2]=childBack, surfaces[3]=childFront.
+		backSurf := plat.surfaces[2]
+		frontSurf := plat.surfaces[3]
 
 		if !mainSurf.raised {
 			t.Error("main window surface was not raised above its children")
 		}
-		if !main.IsDetached() {
-			t.Error("main window not marked detached")
-		}
-		if child.IsTearable() || !child.IsDetached() {
-			t.Error("non-tearable child should have followed the main window off")
+		if !main.IsDetached() || !childBack.IsDetached() || !childFront.IsDetached() {
+			t.Error("main window and its non-tearable children should all be detached")
 		}
 
-		// Desktop origin is (50,60) px, scale 1. Main torn at unit (100,100)
-		// so its surface sits at (150,160). The child (100x80) centers over
-		// the 300x200 main: unit (100+100, 100+60) = (200,160) -> px (250,220).
-		if childSurf.x != 250 || childSurf.y != 220 {
-			t.Errorf("child not centered over main: surface at (%d,%d), want (250,220)", childSurf.x, childSurf.y)
+		// Desktop origin (50,60) px, scale 1. Main torn in place at unit
+		// (100,100). Each child keeps its docked position (offset from main
+		// preserved): back at unit (10,10) -> px (60,70); front at unit
+		// (20,20) -> px (70,80).
+		if backSurf.x != 60 || backSurf.y != 70 {
+			t.Errorf("back child not at its original position: (%d,%d), want (60,70)", backSurf.x, backSurf.y)
+		}
+		if frontSurf.x != 70 || frontSurf.y != 80 {
+			t.Errorf("front child not at its original position: (%d,%d), want (70,80)", frontSurf.x, frontSurf.y)
 		}
 
 		if d.tornFocusOwner != main {
