@@ -131,6 +131,11 @@ type Window struct {
 	// surface; the tear handle then shows '#' and re-docks on click.
 	detached bool
 
+	// mainRequested marks (via the wire `main` property) that this
+	// window should become its application's main window when adopted -
+	// so its menu/status chrome detaches with it on tear-off.
+	mainRequested bool
+
 	// tearHighlight is set while the tear handle is pressed or dragged
 	// so the frame draws its black tear-off halo (see TearIndicatorActive).
 	tearHighlight bool
@@ -628,6 +633,23 @@ func (w *Window) IsTearable() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.flags&WindowFlagTearable != 0
+}
+
+// SetMainRequested records that this window wants to be its
+// application's main window (wire `main` property). The host reads it
+// when adopting the window.
+func (w *Window) SetMainRequested(v bool) {
+	w.mu.Lock()
+	w.mainRequested = v
+	w.mu.Unlock()
+}
+
+// MainRequested reports whether the window asked to be the app's main
+// window.
+func (w *Window) MainRequested() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.mainRequested
 }
 
 // SetDetached marks whether the window currently lives in its own

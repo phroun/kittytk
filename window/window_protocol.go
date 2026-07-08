@@ -28,6 +28,7 @@ func init() {
 		"modal":        WindowFlagModal,
 		"stays_on_top": WindowFlagStaysOnTop,
 		"tool":         WindowFlagToolWindow,
+		"tearable":     WindowFlagTearable,
 	}
 
 	props := map[string]protocol.PropertyApplier{
@@ -48,6 +49,17 @@ func init() {
 				return err
 			}
 			target.(*Window).SetNativeRequested(b)
+			return nil
+		},
+		// main marks this window as its application's main window: its
+		// menu/status chrome detaches with it on tear-off. The host acts
+		// on it when adopting the window.
+		"main": func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+			b, err := protocol.AsBool("main", v, f)
+			if err != nil {
+				return err
+			}
+			target.(*Window).SetMainRequested(b)
 			return nil
 		},
 		// font overrides the window's font (its content inherits it);

@@ -79,7 +79,7 @@ func mainBuildScript() string {
 	var b strings.Builder
 
 	b.WriteString(`
-w=new window title="TUI Toolkit Demo" width=480 height=288 children={
+w=new window title="TUI Toolkit Demo" width=480 height=288 tearable main children={
 t=new tabs children={
 
 b=new tab caption="Basic Widgets" children={
@@ -483,7 +483,7 @@ pcombo=pw.root.combo
 // feed= pseudo-property streams a banner in before the shell starts.
 func demoTerminalScript(n int) string {
 	return fmt.Sprintf(`
-dw%d=new window title="Demo Window" x=%d y=%d width=480 height=320 children={
+dw%d=new window title="Demo Window" x=%d y=%d width=480 height=320 tearable children={
 	dsp=new splitter orientation=vertical position=0.3 caption="Terminal" children={
 		dtp=new panel layout=vbox spacing=8 children={
 			new label caption="This is a child window."
@@ -513,7 +513,7 @@ func secondaryBuildScript(n int) string {
 	x := (offset*3 + 5) * 8
 	y := (offset*2 + 3) * 16
 	return fmt.Sprintf(`
-w=new window title="App %d Window" x=%d y=%d width=480 height=320 children={
+w=new window title="App %d Window" x=%d y=%d width=480 height=320 tearable main children={
 	sp=new splitter orientation=vertical position=0.3 caption="Terminal" children={
 		tp=new panel layout=vbox spacing=8 children={
 			new label caption="This window belongs to Application #%d"

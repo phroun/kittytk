@@ -203,6 +203,11 @@ func (c *conn) execute(batch []*protocol.Statement) {
 			// only genuinely top-level windows join the application.
 			if t.Parent() == nil {
 				c.app.AddWindow(t)
+				// A window that asked to be the app's main window carries
+				// the menu/status chrome when torn off.
+				if t.MainRequested() {
+					c.app.SetMainWindow(t)
+				}
 			}
 		case *widgets.MessageBox:
 			if t.Window.Parent() == nil {

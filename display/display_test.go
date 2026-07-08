@@ -287,3 +287,84 @@ pane=w.pane
 		t.Errorf("app top-level windows = %v, want [Host] (MDI child must not be adopted)", titles)
 	}
 }
+
+// The wire `tearable` and `main` properties must reach the adopted
+// window: a "tearable main" window shows the tear handle and becomes the
+// application's main window (its chrome detaches with it); a plain window
+// does neither.
+func TestWindowTearableAndMainFlags(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "display.sock")
+
+	desktop := widgets.NewDesktop()
+	desktop.SetBackend(&nullBackend{})
+
+	ready := make(chan *display.Server, 1)
+	desktop.SetOnStartup(func() {
+		srv, err := display.Serve(desktop, sock)
+		if err != nil {
+			t.Errorf("serve: %v", err)
+			desktop.Quit()
+			return
+		}
+		ready <- srv
+	})
+
+	exited := make(chan int, 1)
+	go func() { exited <- desktop.Run() }()
+	var srv *display.Server
+	select {
+	case srv = <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop did not start")
+	}
+	defer func() {
+		srv.Close()
+		desktop.Quit()
+		select {
+		case <-exited:
+		case <-time.After(5 * time.Second):
+			t.Error("desktop did not exit")
+		}
+	}()
+
+	conn, err := client.Dial(sock, "Tear App", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Build(`
+main=new window title="Main" width=320 height=240 tearable main children={new label caption="m"}
+`); err != nil {
+		t.Fatalf("build main: %v", err)
+	}
+	if _, err := conn.Build(`
+plain=new window title="Plain" width=200 height=120 children={new label caption="p"}
+`); err != nil {
+		t.Fatalf("build plain: %v", err)
+	}
+
+	onUI(desktop, func() {
+		for _, a := range desktop.Applications() {
+			if a.Name() != "Tear App" {
+				continue
+			}
+			mw := a.MainWindow()
+			if mw == nil || mw.Title() != "Main" {
+				t.Errorf("app MainWindow = %v, want the \"Main\" window", mw)
+			}
+			for _, w := range a.Windows() {
+				switch w.Title() {
+				case "Main":
+					if !w.IsTearable() {
+						t.Error(`"Main" window is not tearable`)
+					}
+				case "Plain":
+					if w.IsTearable() {
+						t.Error(`"Plain" window is unexpectedly tearable`)
+					}
+				}
+			}
+		}
+	})
+}
