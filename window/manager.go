@@ -591,6 +591,16 @@ func stampPopupController(widget core.Widget, pc core.PopupController) {
 	if setter, ok := widget.(interface{ SetPopupController(core.PopupController) }); ok {
 		setter.SetPopupController(pc)
 	}
+	// Prefer AllChildren over Children: a TabWidget's Children() is only the
+	// active tab, so a combobox on an inactive tab would keep a stale
+	// controller (e.g. the desktop's, from when its tab was last active) and
+	// open its popup on the wrong surface after the window is torn off.
+	if ac, ok := widget.(interface{ AllChildren() []core.Widget }); ok {
+		for _, child := range ac.AllChildren() {
+			stampPopupController(child, pc)
+		}
+		return
+	}
 	if container, ok := widget.(core.Container); ok {
 		for _, child := range container.Children() {
 			stampPopupController(child, pc)

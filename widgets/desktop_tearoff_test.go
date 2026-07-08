@@ -787,6 +787,60 @@ func TestReSoloFromDesktop(t *testing.T) {
 	d.RunOn(plat)
 }
 
+// A combobox on a tab that is NOT active while a window is torn off must
+// still open its popup on the torn surface, not the desktop. TabWidget only
+// exposes its active tab as a child, so a combobox whose tab was active
+// during an earlier stamp (the desktop's window manager) kept that stale
+// controller; stamping every tab page fixes it.
+func TestTornWindowTabComboboxPopupController(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Solo")
+	tabs := NewTabWidget()
+	comboT0 := NewComboBox()
+	comboT1 := NewComboBox()
+	p0 := NewPanel()
+	p0.AddChild(comboT0)
+	p1 := NewPanel()
+	p1.AddChild(comboT1)
+	tabs.AddTab("First", p0)  // active on add -> gets the wm controller
+	tabs.AddTab("Second", p1) // inactive on add
+	main.SetContent(tabs)
+	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		// Switch to the second tab, so the tear-off re-stamp runs while the
+		// first tab (comboT0) is inactive - the case that stranded it.
+		tabs.SetCurrentIndex(1)
+
+		d.EnterSoloMode(main)
+		d.ExitSoloMode()
+		tornHost := core.PopupController(d.tornHosts[len(d.tornHosts)-1])
+
+		if got := comboT0.findPopupController(); got != tornHost {
+			t.Errorf("inactive-tab combobox resolves popups to %v, want the torn host %v (would open on the desktop)", got, tornHost)
+		}
+		if got := comboT1.findPopupController(); got != tornHost {
+			t.Errorf("active-tab combobox resolves popups to %v, want the torn host %v", got, tornHost)
+		}
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
 // The system menu's "Exit Desktop" command promotes a remaining app back
 // to solo rather than quitting: with a desktop revealed and a torn app on
 // it, ExitDesktop re-solos that app; with nothing left it quits the host.
