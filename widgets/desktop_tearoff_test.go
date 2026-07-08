@@ -722,9 +722,10 @@ func TestExitSoloModeRevealsDesktop(t *testing.T) {
 }
 
 // EnterSoloFromDesktop is the inverse: after a desktop has been revealed,
-// promoting the detached app makes it solo again - its surface is discarded,
-// it fills the (re-borderless) primary surface, and the primary keeps its
-// own display geometry rather than shrinking to the window's torn rect.
+// promoting the detached app makes it solo again - its surface is discarded
+// and it fills the primary surface, which MOVES to where the app's torn
+// window was so the app keeps its on-screen position instead of snapping to
+// the desktop's spot.
 func TestReSoloFromDesktop(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	px, _ := raster.New(800, 480)
@@ -749,6 +750,11 @@ func TestReSoloFromDesktop(t *testing.T) {
 		primary := plat.surfaces[0]
 		tornSurf := plat.surfaces[1]
 
+		// Simulate the user dragging the torn app window away from where the
+		// desktop sits, then shrinking it.
+		tornSurf.SetScreenPositionPx(300, 220)
+		tornSurf.SetScreenSizePx(220, 160)
+
 		d.EnterSoloFromDesktop()
 
 		if !d.IsSolo() {
@@ -763,9 +769,13 @@ func TestReSoloFromDesktop(t *testing.T) {
 		if !main.IsDetached() {
 			t.Error("solo window is not hosted (detached)")
 		}
-		// The primary keeps its display geometry (not shrunk to the torn rect).
-		if primary.size.Width != 800 || primary.size.Height != 480 {
-			t.Errorf("primary resized to %v; solo should keep the display size 800x480", primary.size)
+		// The primary MOVED to where the app's torn window was (the app keeps
+		// its position and size, not the desktop's).
+		if primary.x != 300 || primary.y != 220 {
+			t.Errorf("primary at (%d,%d); should adopt the app's position (300,220)", primary.x, primary.y)
+		}
+		if primary.size.Width != 220 || primary.size.Height != 160 {
+			t.Errorf("primary size %v; should adopt the app's size 220x160", primary.size)
 		}
 		if b := main.Bounds(); b.Width != primary.size.Width || b.Height != primary.size.Height {
 			t.Errorf("solo window %dx%d does not fill the primary %dx%d",

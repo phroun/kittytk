@@ -154,9 +154,10 @@ hello version=1 app="My App" solo
      floats over the revealed desktop and can be dragged in to dock.
    - `gosolo` verb -> `Desktop.EnterSoloFromDesktop()`: the inverse - promote
      a detached app (preferring an app's `main` window) back to solo. Its
-     surface is discarded and it fills the re-borderless primary; the primary
-     keeps its own display geometry rather than shrinking to the window's
-     torn rect (`promoteToPrimary(..., reposition=false)`).
+     surface is discarded and it fills the re-borderless primary, which
+     *moves* to where that window was (`promoteToPrimary(..., reposition=true)`)
+     so the app keeps its on-screen position instead of snapping to the
+     desktop's spot.
    - `examples/spawndesktop` is the external tool: it dials, sends the verb
      (`-solo` sends `gosolo`), and exits.
    Tested with the msPlatform harness (primary re-borders and a torn window

@@ -784,10 +784,10 @@ func (d *Desktop) ExitSoloMode() {
 // the primary surface borderless, dismissing the desktop. This is the
 // inverse of ExitSoloMode - "promote a detached app" - so any client can
 // toggle the root back to solo over the protocol (the `gosolo` verb). A
-// no-op when already solo or when no detached window exists. Unlike a
-// primary-close promotion the primary keeps its own geometry (the app
-// fills the display), rather than shrinking to the promoted window's rect.
-// Runs on the platform thread.
+// no-op when already solo or when no detached window exists. The primary
+// surface adopts the promoted window's screen rectangle, so the app stays
+// exactly where it was floating rather than snapping to where the desktop
+// sat. Runs on the platform thread.
 func (d *Desktop) EnterSoloFromDesktop() {
 	d.mu.RLock()
 	solo := d.solo
@@ -807,8 +807,10 @@ func (d *Desktop) EnterSoloFromDesktop() {
 		d.solo = true
 		d.mu.Unlock()
 		// Discard the window's own surface and host it on the primary,
-		// keeping the primary's geometry (reposition=false).
-		d.promoteToPrimary(h, false)
+		// moving the primary to where the window was (reposition=true) so
+		// the app keeps its on-screen position instead of jumping to the
+		// desktop's spot.
+		d.promoteToPrimary(h, true)
 		return
 	}
 	// No torn window: lift a docked application window straight onto the
