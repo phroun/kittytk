@@ -13,7 +13,7 @@ import (
 	"github.com/phroun/kittytk/window"
 )
 
-// The TUI Toolkit Demo window is built from protocol text: the script
+// The KittyTK Demo window is built from protocol text: the script
 // below IS the window. Only the MDI Demo tab stays imperative (the
 // MDIPane still has G1 boundary residuals and embeds PurfecTerm),
 // attached through the surfaced TabTrinket - the supported hybrid.
@@ -119,7 +119,7 @@ func mainWindowScript() string {
 	var b strings.Builder
 
 	b.WriteString(`
-w=new window title="TUI Toolkit Demo" width=480 height=288 children={
+w=new window title="KittyTK Demo" width=480 height=288 children={
 t=new tabs children={
 
 b=new tab caption="Basic Trinkets" children={
@@ -412,7 +412,7 @@ func indent(s, prefix string) string {
 	return prefix + strings.ReplaceAll(strings.TrimSpace(s), "\n", "\n"+prefix) + "\n"
 }
 
-// createMainWindow builds the TUI Toolkit Demo window by executing
+// createMainWindow builds the KittyTK Demo window by executing
 // the protocol script, then wires app-side behavior: commands into
 // the registry, event handlers by surfaced ObjectID, and the one
 // imperative tab (MDI).

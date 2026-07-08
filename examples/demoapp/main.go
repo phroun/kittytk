@@ -1,4 +1,4 @@
-// Command demoapp is the full TUI Toolkit demo as a display-protocol
+// Command demoapp is the full KittyTK demo as a display-protocol
 // APPLICATION: it links only client + protocol (no rendering backend),
 // dials a running KittyTK display service, and drives its entire UI - the
 // nine-tab trinket gallery, menu bars, status bar, the protocol-built
@@ -85,7 +85,7 @@ func newApp(path, name string, primary bool) (*app, error) {
 // newPrimary builds the primary application: the full demo window, its
 // menus and status bar, plus the protocol-built companion window.
 func newPrimary(path string) (*app, error) {
-	a, err := newApp(path, "TUI Toolkit Demo", true)
+	a, err := newApp(path, "KittyTK Demo", true)
 	if err != nil {
 		return nil, err
 	}

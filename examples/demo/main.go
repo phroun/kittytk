@@ -1,4 +1,4 @@
-// Package main demonstrates the TUI toolkit capabilities.
+// Package main demonstrates the KittyTK capabilities.
 package main
 
 import (
@@ -490,6 +490,6 @@ func protocolMessageBox(application *app.Application, script string) {
 
 func showAboutDialog(desktop *trinkets.Desktop, application *app.Application) {
 	protocolMessageBox(application, `
-dlg=new messagebox title="About TUI Toolkit" icon=information ok text="TUI Toolkit Demo\n\nA comprehensive terminal UI framework.\n\nVersion 0.1.0"
+dlg=new messagebox title="About KittyTK" icon=information ok text="KittyTK Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion 0.1.0"
 `)
 }

@@ -72,14 +72,14 @@ func indent(s, prefix string) string {
 }
 
 // mainBuildScript is the whole primary application in one build: the
-// TUI Toolkit Demo window (nine tabs), its menu bar and its status bar.
+// KittyTK Demo window (nine tabs), its menu bar and its status bar.
 // The display adopts each top-level object - window, menubar, statusbar -
 // as the connection's application chrome.
 func mainBuildScript() string {
 	var b strings.Builder
 
 	b.WriteString(`
-w=new window title="TUI Toolkit Demo" width=480 height=288 tearable main children={
+w=new window title="KittyTK Demo" width=480 height=288 tearable main children={
 t=new tabs children={
 
 b=new tab caption="Basic Trinkets" children={
@@ -503,7 +503,7 @@ set dterm shell
 
 // aboutDialogScript is the About message box.
 const aboutDialogScript = `
-dlg=new messagebox title="About TUI Toolkit" icon=information ok text="TUI Toolkit Demo\n\nA comprehensive terminal UI framework.\n\nVersion 0.1.0"
+dlg=new messagebox title="About KittyTK" icon=information ok text="KittyTK Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion 0.1.0"
 `
 
 // secondaryBuildScript is a whole secondary application: a window with a

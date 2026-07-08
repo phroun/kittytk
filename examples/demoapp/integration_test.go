@@ -105,7 +105,7 @@ func TestDemoBuildsOverService(t *testing.T) {
 	sock, stop := startService(t)
 	defer stop()
 
-	conn, err := client.Dial(sock, "TUI Toolkit Demo", nil)
+	conn, err := client.Dial(sock, "KittyTK Demo", nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

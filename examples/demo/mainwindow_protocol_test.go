@@ -107,7 +107,7 @@ func TestMainWindowPaint(t *testing.T) {
 	// focused - fill, no placeholder text - same as the imperative
 	// version did.)
 	for _, want := range []string{
-		"TUI Toolkit Demo",
+		"KittyTK Demo",
 		"Basic Trinkets",
 		"This is a demo of basic trinkets:",
 		"OK",
