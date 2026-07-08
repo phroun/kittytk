@@ -1539,6 +1539,7 @@ type MenuBar struct {
 
 	// Appearance
 	showShortcuts bool
+	hideCalendar  bool // when true, omit the right-hand date/time area
 
 	// Scroll state for overflow handling
 	scrollOffset int // Index of first visible menu
@@ -1602,8 +1603,19 @@ func (m *MenuBar) calculateTotalMenusWidth() core.Unit {
 	return total
 }
 
-// dateTimeWidth returns the width reserved for the date/time display.
+// SetHideCalendar controls whether the right-hand date/time (calendar)
+// area is shown. A detached window's own menu bar hides it.
+func (m *MenuBar) SetHideCalendar(hide bool) {
+	m.hideCalendar = hide
+	m.Update()
+}
+
+// dateTimeWidth returns the width reserved for the date/time display,
+// or zero when the calendar is hidden.
 func (m *MenuBar) dateTimeWidth() core.Unit {
+	if m.hideCalendar {
+		return 0
+	}
 	metrics := m.EffectiveCellMetrics()
 	// " Mon Jan 02 15:04 " = 18 chars
 	return 18 * metrics.CellWidth
@@ -2311,16 +2323,18 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		x += menuWidth
 	}
 
-	// Draw date/time background and text
-	p.FillRect(core.UnitRect{
-		X:      dateTimeX,
-		Y:      0,
-		Width:  dateTimeWidth,
-		Height: metrics.CellHeight,
-	}, ' ', dateTimeStyle)
+	// Draw date/time background and text (unless the calendar is hidden)
+	if !m.hideCalendar {
+		p.FillRect(core.UnitRect{
+			X:      dateTimeX,
+			Y:      0,
+			Width:  dateTimeWidth,
+			Height: metrics.CellHeight,
+		}, ' ', dateTimeStyle)
 
-	for i, ch := range dateTimeStr {
-		p.DrawCell(dateTimeX+core.Unit(i)*metrics.CellWidth, 0, ch, dateTimeStyle)
+		for i, ch := range dateTimeStr {
+			p.DrawCell(dateTimeX+core.Unit(i)*metrics.CellWidth, 0, ch, dateTimeStyle)
+		}
 	}
 
 	// When a menu is popped down, frame its parent bar item with the same

@@ -72,6 +72,10 @@ type Application struct {
 	// Windows owned by this application (for ApplicationProvider interface)
 	windows []*window.Window
 
+	// mainWindow is the app's optional main window; when detached it
+	// hosts the app's own menu bar and the desktop shows a reduced bar.
+	mainWindow *window.Window
+
 	// Menu bar content for this application
 	menuBarContent []*widgets.Menu
 
@@ -796,6 +800,22 @@ func (app *Application) RemoveWindow(w *window.Window) {
 			}
 		}
 	}
+}
+
+// MainWindow returns the application's main window, or nil if unset.
+func (app *Application) MainWindow() *window.Window {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.mainWindow
+}
+
+// SetMainWindow marks a window as the application's main window. When
+// that window is torn off it carries the app's own menu bar, and the
+// desktop shows only the reduced (Psi/Window/calendar) bar.
+func (app *Application) SetMainWindow(w *window.Window) {
+	app.mu.Lock()
+	app.mainWindow = w
+	app.mu.Unlock()
 }
 
 // MenuBarContent returns the menu bar content for this application.

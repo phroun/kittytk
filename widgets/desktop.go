@@ -23,6 +23,11 @@ type ApplicationProvider interface {
 	// Windows returns all windows owned by this application.
 	Windows() []*window.Window
 
+	// MainWindow returns the application's main window, or nil if it has
+	// none. When the main window is detached (torn off), it hosts the
+	// app's own menu bar and the desktop shows only the reduced bar.
+	MainWindow() *window.Window
+
 	// AddWindow adds a window to this application.
 	AddWindow(w *window.Window)
 
@@ -649,7 +654,19 @@ func (d *Desktop) updateMenuBarContent() {
 	// Clear existing menus
 	d.menuBar.Clear()
 
-	// Add system menu first
+	// Reduced bar: while the active app's main window is detached it
+	// carries the app's own menus on its own surface, so the desktop
+	// shows only the Psi menu (merged Hide section), a Tile/Cascade
+	// Window menu, and the calendar (drawn by the bar itself).
+	if activeApp != nil {
+		if main := activeApp.MainWindow(); main != nil && main.IsDetached() {
+			d.menuBar.AddMenu(d.buildPsiHideMenu(activeApp.Name()))
+			d.menuBar.AddMenu(d.buildWindowTileCascadeMenu())
+			return
+		}
+	}
+
+	// Full bar: system menu first
 	if d.systemMenu != nil {
 		d.menuBar.AddMenu(d.systemMenu)
 	}
@@ -710,49 +727,98 @@ func (d *Desktop) createStandardAppMenu(appName string) *Menu {
 // appendStandardAppItems adds the standard app menu items to the given menu.
 // Items added: separator, Hide [App], Hide Others, Show All, separator, Quit [App]
 func (d *Desktop) appendStandardAppItems(menu *Menu, appName string) {
-	menu.AddSeparator()
+	d.appendHideSection(menu, appName, true)
+	d.appendQuitSection(menu, appName)
+}
 
-	// Hide [App Name]
+// appendHideSection adds the merged system items - Hide [App], Hide
+// Others, Show All. When leadingSeparator is true a separator first
+// offsets them from the menu's own items (as in the desktop's app
+// menu); the standalone Psi menu passes false.
+func (d *Desktop) appendHideSection(menu *Menu, appName string, leadingSeparator bool) {
+	if leadingSeparator {
+		menu.AddSeparator()
+	}
+
 	hideItem := NewMenuItem("&Hide " + appName)
 	if keys := core.DefaultKeyBindings.Keys(core.ActionAppHide); len(keys) > 0 {
 		hideItem.SetShortcut(core.NewShortcut(keys[0]))
 	}
-	hideItem.SetOnTriggered(func() {
-		d.hideActiveApp()
-	})
+	hideItem.SetOnTriggered(func() { d.hideActiveApp() })
 	menu.AddItem(hideItem)
 
-	// Hide Others
 	hideOthersItem := NewMenuItem("Hide &Others")
 	if keys := core.DefaultKeyBindings.Keys(core.ActionAppHideOthers); len(keys) > 0 {
 		hideOthersItem.SetShortcut(core.NewShortcut(keys[0]))
 	}
-	hideOthersItem.SetOnTriggered(func() {
-		d.hideOtherApps()
-	})
+	hideOthersItem.SetOnTriggered(func() { d.hideOtherApps() })
 	menu.AddItem(hideOthersItem)
 
-	// Show All
 	showAllItem := NewMenuItem("&Show All")
 	if keys := core.DefaultKeyBindings.Keys(core.ActionAppShowAll); len(keys) > 0 {
 		showAllItem.SetShortcut(core.NewShortcut(keys[0]))
 	}
-	showAllItem.SetOnTriggered(func() {
-		d.showAllApps()
-	})
+	showAllItem.SetOnTriggered(func() { d.showAllApps() })
 	menu.AddItem(showAllItem)
+}
 
+// appendQuitSection adds a separator and the app's Quit item. This is
+// the part that stays on a detached main window's own menu bar.
+func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
 	menu.AddSeparator()
 
-	// Quit [App Name] - quits only this application, not the entire desktop
 	quitItem := NewMenuItem("&Quit " + appName)
 	if keys := core.DefaultKeyBindings.Keys(core.ActionQuit); len(keys) > 0 {
 		quitItem.SetShortcut(core.NewShortcut(keys[0]))
 	}
-	quitItem.SetOnTriggered(func() {
-		d.quitActiveApp()
-	})
+	quitItem.SetOnTriggered(func() { d.quitActiveApp() })
 	menu.AddItem(quitItem)
+}
+
+// createAppMenuWithQuitOnly copies a menu and appends only the Quit
+// section (no Hide section, no offset separator) - the first-menu form
+// for a detached main window's own menu bar.
+func (d *Desktop) createAppMenuWithQuitOnly(original *Menu, appName string) *Menu {
+	merged := NewMenu(original.Title())
+	for _, item := range original.Items() {
+		merged.AddItem(item)
+	}
+	d.appendQuitSection(merged, appName)
+	return merged
+}
+
+// buildPsiHideMenu builds the reduced Psi menu shown on the desktop bar
+// while the active app's main window is detached: the Psi glyph carrying
+// only the merged Hide section.
+func (d *Desktop) buildPsiHideMenu(appName string) *Menu {
+	menu := NewMenu("Ψ")
+	d.appendHideSection(menu, appName, false)
+	return menu
+}
+
+// buildWindowTileCascadeMenu builds the reduced Window menu (Tile and
+// Cascade only) shown on the desktop bar while the main window is
+// detached.
+func (d *Desktop) buildWindowTileCascadeMenu() *Menu {
+	menu := NewMenu("&Window")
+
+	tile := NewMenuItem("&Tile")
+	tile.SetOnTriggered(func() {
+		if wm := d.WindowManager(); wm != nil {
+			wm.TileWindows()
+		}
+	})
+	menu.AddItem(tile)
+
+	cascade := NewMenuItem("&Cascade")
+	cascade.SetOnTriggered(func() {
+		if wm := d.WindowManager(); wm != nil {
+			wm.CascadeWindows()
+		}
+	})
+	menu.AddItem(cascade)
+
+	return menu
 }
 
 // hideActiveApp minimizes all windows of the active application.
