@@ -14,9 +14,10 @@ func TestMenuScriptsBuild(t *testing.T) {
 			t.Errorf("missing surfaced item %q", key)
 		}
 	}
-	// Alphabet menu carries its 26 generated items.
-	if n := len(menus[4].Items()); n != 26 {
-		t.Errorf("alphabet items = %d, want 26", n)
+	// Alphabet menu carries its 26 generated letters plus one demo
+	// separator (after "Letter C").
+	if n := len(menus[4].Items()); n != 27 {
+		t.Errorf("alphabet items = %d, want 27", n)
 	}
 
 	secondary, _, _ := buildMenuBar(secondaryMenuScript(3))

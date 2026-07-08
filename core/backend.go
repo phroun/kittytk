@@ -270,6 +270,15 @@ type CaretDrawer interface {
 	DrawCaret(x, y, height Unit, s style.CellStyle)
 }
 
+// PixelRectFiller is an optional RenderBackend capability: fill a
+// rectangle whose anchor is given in units but whose position and size
+// are refined in device pixels, for hairline separators and 1-pixel
+// gutter strokes that a whole-unit FillRect is too coarse to express.
+// The style's background color fills the rect. Cell surfaces omit it.
+type PixelRectFiller interface {
+	FillRectPx(xPx, yPx, wPx, hPx int, s style.CellStyle)
+}
+
 // FindSmoothPositioning walks up the widget tree for a
 // SmoothPositioningProvider. Default (no provider found): false -
 // snap to cells, the only always-safe answer.
@@ -552,6 +561,23 @@ func (p *Painter) DrawImageOffset(x, y Unit, offXPx, offYPx int, img image.Image
 	scale := p.DeviceScale()
 	p.applyClip()
 	id.DrawImagePx(int(sx)*scale+offXPx, int(sy)*scale+offYPx, img)
+	return true
+}
+
+// FillRectPixels fills, in device pixels, a rectangle anchored at unit
+// (x, y) plus a device-pixel offset: wPx x hPx device pixels in the
+// style's background color. For hairline separators and 1-pixel gutter
+// strokes that whole-unit FillRect can't express. Returns false on cell
+// surfaces (the caller falls back to a cell-idiom line).
+func (p *Painter) FillRectPixels(x, y Unit, offXPx, offYPx, wPx, hPx int, s style.CellStyle) bool {
+	pf, ok := p.backend.(PixelRectFiller)
+	if !ok {
+		return false
+	}
+	sx, sy := p.toScreen(x, y)
+	scale := p.DeviceScale()
+	p.applyClip()
+	pf.FillRectPx(int(sx)*scale+offXPx, int(sy)*scale+offYPx, wPx, hPx, s)
 	return true
 }
 

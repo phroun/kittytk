@@ -660,22 +660,101 @@ func (m *Menu) calculateSize() core.UnitSize {
 	// Add padding (gutter: 3 cells, content space: 1 cell, right border: 1 cell)
 	maxWidth += metrics.CellWidth * 5
 
-	// Calculate visible item count
-	visibleItems := len(m.items)
-	if m.maxVisible > 0 && visibleItems > m.maxVisible {
-		visibleItems = m.maxVisible
+	// Sum the heights of the visible item rows (thin separators on
+	// graphical surfaces are shorter than a text row), plus a full row
+	// for each scroll indicator when scrolling.
+	g := m.graphicalSurface()
+	var height core.Unit
+	visible := m.visibleItemCount()
+	for i := 0; i < visible; i++ {
+		idx := m.scrollOffset + i
+		if idx >= len(m.items) {
+			break
+		}
+		height += m.rowHeightAt(idx, g, metrics.CellHeight)
 	}
-
-	// Add space for scroll indicators if needed
-	height := visibleItems
 	if m.needsScrolling() {
-		height += 2 // One row for each scroll indicator
+		height += 2 * metrics.CellHeight // one row per scroll indicator
 	}
 
 	return core.UnitSize{
 		Width:  maxWidth,
-		Height: core.Unit(height) * metrics.CellHeight,
+		Height: height,
 	}
+}
+
+// separatorBandUnits is the height a separator row occupies on graphical
+// (pixel) surfaces - a thin band (~6 device px at the usual 2x scale)
+// carrying a single hairline, rather than a full text row of dashes.
+const separatorBandUnits core.Unit = 3
+
+// graphicalSurface reports whether this dropdown paints on a pixel
+// surface, where separators shrink to a thin band and gain hairlines.
+func (m *Menu) graphicalSurface() bool {
+	return core.FindGraphicalFrames(m.Self())
+}
+
+// rowHeightAt returns the vertical space item idx occupies. Separators
+// collapse to a thin band on graphical surfaces; everything else (and
+// all rows on cell surfaces) is a full text row.
+func (m *Menu) rowHeightAt(idx int, graphical bool, cellHeight core.Unit) core.Unit {
+	if graphical && idx >= 0 && idx < len(m.items) && m.items[idx].Separator {
+		return separatorBandUnits
+	}
+	return cellHeight
+}
+
+// contentTopY returns the Y of the first item row (below the top scroll
+// indicator, if any).
+func (m *Menu) contentTopY() core.Unit {
+	y := m.popupY
+	if m.needsScrolling() {
+		y += m.EffectiveCellMetrics().CellHeight
+	}
+	return y
+}
+
+// itemTopY returns the top Y of a visible item, walking the variable row
+// heights of the items above it in the current scroll window.
+func (m *Menu) itemTopY(itemIndex int) core.Unit {
+	metrics := m.EffectiveCellMetrics()
+	g := m.graphicalSurface()
+	y := m.contentTopY()
+	for i := m.scrollOffset; i < itemIndex && i < len(m.items); i++ {
+		y += m.rowHeightAt(i, g, metrics.CellHeight)
+	}
+	return y
+}
+
+// hitRow maps a Y coordinate to a slot: kind is 0 none, 1 top scroll
+// indicator, 2 bottom scroll indicator, 3 an item (itemIndex set).
+// It honors the variable row heights of thin separators.
+func (m *Menu) hitRow(y core.Unit) (kind, itemIndex int) {
+	metrics := m.EffectiveCellMetrics()
+	g := m.graphicalSurface()
+	cur := m.popupY
+	if m.needsScrolling() {
+		if y >= cur && y < cur+metrics.CellHeight {
+			return 1, -1
+		}
+		cur += metrics.CellHeight
+	}
+	visible := m.visibleItemCount()
+	for i := 0; i < visible; i++ {
+		idx := m.scrollOffset + i
+		if idx >= len(m.items) {
+			break
+		}
+		h := m.rowHeightAt(idx, g, metrics.CellHeight)
+		if y >= cur && y < cur+h {
+			return 3, idx
+		}
+		cur += h
+	}
+	if m.needsScrolling() && y >= cur && y < cur+metrics.CellHeight {
+		return 2, -1
+	}
+	return 0, -1
 }
 
 // needsScrolling returns true if the menu has more items than maxVisible.
@@ -795,6 +874,15 @@ func (m *Menu) Paint(p *core.Painter) {
 	// Track Y offset for drawing
 	currentY := m.popupY
 
+	// Graphical surfaces get thin separator bands, a hairline separator,
+	// and a 1-pixel gutter divider; cell surfaces keep the char idiom.
+	g := m.graphicalSurface()
+	scale := p.DeviceScale()
+	// The hairlines (separator + gutter divider) are drawn in the menu
+	// separator's foreground; FillRectPixels fills with the style's bg.
+	hairColor := scheme.GetMenuSeparator().Fg
+	hairStyle := style.DefaultStyle().WithBg(hairColor)
+
 	// Draw top scroll indicator if needed
 	if needsScroll {
 		indicatorStyle := menuItemStyle
@@ -837,12 +925,15 @@ func (m *Menu) Paint(p *core.Painter) {
 		// Gutter area: 3 cells (border + checkmark + 1 space)
 		gutterWidth := metrics.CellWidth * 3
 
+		// Row height: separators collapse to a thin band on graphical.
+		rowH := m.rowHeightAt(itemIndex, g, metrics.CellHeight)
+
 		// Draw gutter background
 		p.FillRect(core.UnitRect{
 			X:      m.popupX,
 			Y:      itemY,
 			Width:  gutterWidth,
-			Height: metrics.CellHeight,
+			Height: rowH,
 		}, ' ', gutterStyle)
 
 		// Draw content background
@@ -850,19 +941,38 @@ func (m *Menu) Paint(p *core.Painter) {
 			X:      m.popupX + gutterWidth,
 			Y:      itemY,
 			Width:  size.Width - gutterWidth,
-			Height: metrics.CellHeight,
+			Height: rowH,
 		}, ' ', contentStyle)
 
+		// A 1-pixel divider down the right edge of the gutter, on every
+		// row EXCEPT the focused one (its focus fill spans the gutter, so
+		// the divider would clash / is overwritten).
+		if g && itemIndex != m.currentIndex {
+			p.FillRectPixels(m.popupX+gutterWidth, itemY, -1, 0, 1, int(rowH)*scale, hairStyle)
+		}
+
 		if item.Separator {
-			// Draw separator line - gutter portion and content portion
-			for x := m.popupX + metrics.CellWidth; x < m.popupX+size.Width-metrics.CellWidth; x += metrics.CellWidth {
-				if x < m.popupX+gutterWidth {
-					p.DrawCell(x, itemY, '─', gutterStyle)
-				} else {
-					p.DrawCell(x, itemY, '─', contentStyle)
+			if g {
+				// A single hairline centered in the band, drawn only on
+				// the white content area, inset 4 device px at each end.
+				const marginPx = 4
+				bandPx := int(rowH) * scale
+				offY := (bandPx - 1) / 2
+				wPx := int(size.Width-gutterWidth)*scale - 2*marginPx
+				if wPx > 0 {
+					p.FillRectPixels(m.popupX+gutterWidth, itemY, marginPx, offY, wPx, 1, hairStyle)
+				}
+			} else {
+				// Cell surface: the dashed-row idiom, gutter + content.
+				for x := m.popupX + metrics.CellWidth; x < m.popupX+size.Width-metrics.CellWidth; x += metrics.CellWidth {
+					if x < m.popupX+gutterWidth {
+						p.DrawCell(x, itemY, '─', gutterStyle)
+					} else {
+						p.DrawCell(x, itemY, '─', contentStyle)
+					}
 				}
 			}
-			currentY += metrics.CellHeight
+			currentY += rowH
 			continue
 		}
 
@@ -931,7 +1041,7 @@ func (m *Menu) Paint(p *core.Painter) {
 			p.DrawText(shortcutX, itemY, shortcutStr, shortcutStyle, font)
 		}
 
-		currentY += metrics.CellHeight
+		currentY += rowH
 	}
 
 	// Draw bottom scroll indicator if needed
@@ -1096,9 +1206,7 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 
 	m.closeSubMenu()
 
-	metrics := m.EffectiveCellMetrics()
 	size := m.calculateSize()
-	needsScroll := m.needsScrolling()
 
 	// Position submenu to the right of current item
 	itemIndex := -1
@@ -1109,12 +1217,8 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 		}
 	}
 
-	// Calculate Y position accounting for scroll offset and indicators
-	visibleIndex := itemIndex - m.scrollOffset
-	subY := m.popupY + core.Unit(visibleIndex)*metrics.CellHeight
-	if needsScroll {
-		subY += metrics.CellHeight // Account for top scroll indicator row
-	}
+	// Top of the item row, walking the variable row heights above it.
+	subY := m.itemTopY(itemIndex)
 
 	subX := m.popupX + size.Width
 
@@ -1169,49 +1273,32 @@ func (m *Menu) HandleMousePress(event core.MousePressEvent) bool {
 		return true
 	}
 
-	metrics := m.EffectiveCellMetrics()
 	size := m.calculateSize()
-	needsScroll := m.needsScrolling()
 
 	// Check if click is in menu bounds
 	if event.X >= m.popupX && event.X < m.popupX+size.Width &&
 		event.Y >= m.popupY && event.Y < m.popupY+size.Height {
 
-		// Calculate which row was clicked
-		rowIndex := int((event.Y - m.popupY) / metrics.CellHeight)
+		// Map the Y to a slot honoring variable-height separator rows.
+		kind, itemIndex := m.hitRow(event.Y)
 
 		// Check if clicking on scroll indicators
-		if needsScroll {
-			// Calculate scroll amount (page minus one for contextual overlap)
-			scrollAmount := m.visibleItemCount() - 1
-			if scrollAmount < 1 {
-				scrollAmount = 1
-			}
-
-			// Top scroll indicator (row 0)
-			if rowIndex == 0 && m.canScrollUp() {
-				// Click on scroll indicator - transition to clicked mode and scroll
-				m.clickedMode = true
-				m.scrollUp(scrollAmount)
-				return true
-			}
-
-			// Bottom scroll indicator (last row)
-			lastRow := m.visibleItemCount() + 1 // +1 for top indicator
-			if rowIndex == lastRow && m.canScrollDown() {
-				// Click on scroll indicator - transition to clicked mode and scroll
-				m.clickedMode = true
-				m.scrollDown(scrollAmount)
-				return true
-			}
-
-			// Adjust row index for items (subtract 1 for top indicator)
-			rowIndex--
+		scrollAmount := m.visibleItemCount() - 1
+		if scrollAmount < 1 {
+			scrollAmount = 1
+		}
+		if kind == 1 && m.canScrollUp() { // top indicator
+			m.clickedMode = true
+			m.scrollUp(scrollAmount)
+			return true
+		}
+		if kind == 2 && m.canScrollDown() { // bottom indicator
+			m.clickedMode = true
+			m.scrollDown(scrollAmount)
+			return true
 		}
 
-		// Convert row to item index
-		itemIndex := m.scrollOffset + rowIndex
-		if itemIndex >= 0 && itemIndex < len(m.items) {
+		if kind == 3 && itemIndex >= 0 && itemIndex < len(m.items) {
 			item := m.items[itemIndex]
 			if !item.Separator && item.Enabled {
 				m.currentIndex = itemIndex
@@ -1241,7 +1328,6 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	metrics := m.EffectiveCellMetrics()
 	size := m.calculateSize()
 
 	// Check if mouse is in menu bounds
@@ -1259,60 +1345,38 @@ func (m *Menu) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	// Calculate which row the mouse is in
-	rowIndex := int((event.Y - m.popupY) / metrics.CellHeight)
-	needsScroll := m.needsScrolling()
+	// Map the Y to a slot honoring variable-height separator rows.
+	kind, itemIndex := m.hitRow(event.Y)
 
-	// Handle scrolling menus
-	if needsScroll {
-		lastRow := m.visibleItemCount() + 1 // +1 for top indicator
-
-		// Check if on top scroll indicator
-		if rowIndex == 0 && m.canScrollUp() {
-			if m.scrollHoverZone != -1 {
-				m.scrollHoverZone = -1
-				// Do initial scroll immediately, then start timer for continuous scrolling
-				m.scrollUp(1)
-				m.startScrollTimer(-1)
-			}
-			return true
+	// Handle scroll-indicator hover zones.
+	if kind == 1 && m.canScrollUp() { // top indicator
+		if m.scrollHoverZone != -1 {
+			m.scrollHoverZone = -1
+			m.scrollUp(1)
+			m.startScrollTimer(-1)
 		}
-
-		// Check if on bottom scroll indicator
-		if rowIndex == lastRow && m.canScrollDown() {
-			if m.scrollHoverZone != 1 {
-				m.scrollHoverZone = 1
-				// Do initial scroll immediately, then start timer for continuous scrolling
-				m.scrollDown(1)
-				m.startScrollTimer(1)
-			}
-			return true
-		}
-
-		// Not on a scroll indicator - clear scroll state and stop timer
-		if m.scrollHoverZone != 0 {
-			m.scrollHoverZone = 0
-			m.stopScrollTimer()
-		}
-
-		// Update highlighted item (accounting for scroll indicator)
-		adjustedRow := rowIndex - 1 // Subtract 1 for top indicator
-		itemIndex := m.scrollOffset + adjustedRow
-		if itemIndex >= 0 && itemIndex < len(m.items) {
-			item := m.items[itemIndex]
-			if !item.Separator && item.Enabled {
-				m.currentIndex = itemIndex
-				m.Update()
-			}
+		return true
+	}
+	if kind == 2 && m.canScrollDown() { // bottom indicator
+		if m.scrollHoverZone != 1 {
+			m.scrollHoverZone = 1
+			m.scrollDown(1)
+			m.startScrollTimer(1)
 		}
 		return true
 	}
 
-	// Non-scrolling menu - direct row to item mapping
-	if rowIndex >= 0 && rowIndex < len(m.items) {
-		item := m.items[rowIndex]
+	// Not on a scroll indicator - clear scroll state and stop timer.
+	if m.scrollHoverZone != 0 {
+		m.scrollHoverZone = 0
+		m.stopScrollTimer()
+	}
+
+	// Highlight the hovered item.
+	if kind == 3 && itemIndex >= 0 && itemIndex < len(m.items) {
+		item := m.items[itemIndex]
 		if !item.Separator && item.Enabled {
-			m.currentIndex = rowIndex
+			m.currentIndex = itemIndex
 			m.Update()
 		}
 	}
@@ -2563,15 +2627,13 @@ func (m *MenuBar) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		return true // Consume the release event but don't dismiss
 	}
 
-	metrics := m.EffectiveCellMetrics()
-
 	// Check if release is on a dropdown menu item - trigger it
 	if m.activeMenu != nil && m.activeMenu.visible {
 		size := m.activeMenu.calculateSize()
 		if event.X >= m.activeMenu.popupX && event.X < m.activeMenu.popupX+size.Width &&
 			event.Y >= m.activeMenu.popupY && event.Y < m.activeMenu.popupY+size.Height {
-			itemIndex := int((event.Y - m.activeMenu.popupY) / metrics.CellHeight)
-			if itemIndex >= 0 && itemIndex < len(m.activeMenu.items) {
+			kind, itemIndex := m.activeMenu.hitRow(event.Y)
+			if kind == 3 && itemIndex >= 0 && itemIndex < len(m.activeMenu.items) {
 				item := m.activeMenu.items[itemIndex]
 				if !item.Separator && item.Enabled {
 					if item.SubMenu != nil {

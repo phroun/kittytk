@@ -983,6 +983,13 @@ func (b *Backend) DrawCaret(x, y, height core.Unit, s style.CellStyle) {
 	b.fillPx(b.px(x), b.px(y), b.px(x)+b.scale, b.px(y+height), bar)
 }
 
+// FillRectPx implements core.PixelRectFiller: a device-pixel rectangle
+// (already in framebuffer coordinates) filled with the style background.
+func (b *Backend) FillRectPx(xPx, yPx, wPx, hPx int, s style.CellStyle) {
+	_, bg := b.styleColors(s)
+	b.fillPx(xPx, yPx, xPx+wPx, yPx+hPx, bg)
+}
+
 func (b *Backend) PollEvent() core.Event                  { return nil }
 func (b *Backend) WaitEvent() core.Event                  { return nil }
 func (b *Backend) SetCursorVisible(bool)                  {}

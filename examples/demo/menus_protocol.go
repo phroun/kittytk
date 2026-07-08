@@ -95,6 +95,9 @@ bar=new menubar children={
 	for i := 0; i < 26; i++ {
 		letter := string(rune('A' + i))
 		fmt.Fprintf(&b, "\n\t\tnew menuitem caption=\"&%s - Letter %s\"", letter, letter)
+		if i == 2 { // separator after "Letter C" (demo of the thin separator)
+			b.WriteString("\n\t\tnew menuitem separator")
+		}
 	}
 	b.WriteString(`
 	}
