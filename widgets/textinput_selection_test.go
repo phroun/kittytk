@@ -130,11 +130,12 @@ func TestTextInputSelectionSliverFillsToEdge(t *testing.T) {
 	ti.Paint(core.NewPainter(px))
 
 	// The rightmost column, mid-row, must be the selection background
-	// (white ~255,255,255), not the focused fill (cyan ~17,168,205).
+	// (ColorWhite = the standard/dim white, silver #AAAAAA -> R=170 in
+	// the EGA palette), not the focused box fill (cyan #00AAAA -> R=0).
 	img := px.Image()
 	r, _, _, _ := img.At(219, 8).RGBA()
-	if r>>8 < 200 {
-		t.Errorf("trailing sliver not selection-colored: R=%d (want white, ~255; cyan fill ~17)", r>>8)
+	if r>>8 < 100 {
+		t.Errorf("trailing sliver not selection-colored: R=%d (want silver, ~170; cyan fill R=0)", r>>8)
 	}
 }
 

@@ -112,7 +112,7 @@ func (t *PurfecTerm) gfxScheme() purfecterm.ColorScheme {
 	if t.gfx.schemeSet {
 		return t.gfx.scheme
 	}
-	return purfecterm.DefaultColorScheme()
+	return termColorScheme()
 }
 
 func (t *PurfecTerm) gfxEngine() *text.Engine {
@@ -136,6 +136,35 @@ func (t *PurfecTerm) gfxFocused() bool {
 // handlers (the desktop paints graphical frames).
 func (t *PurfecTerm) gfxInputActive() bool {
 	return t.terminal != nil && core.FindGraphicalFrames(t)
+}
+
+// termColorScheme builds the terminal's color scheme from the app's
+// theme palettes: both the dark and light 16-color palettes (in ANSI
+// order, which purfecterm indexes by) plus each theme's default
+// background/foreground. The terminal's own DECSCNM reverse-video state
+// then selects between them, staying in step with the app's colors.
+func termColorScheme() purfecterm.ColorScheme {
+	s := purfecterm.DefaultColorScheme() // inherit cursor/selection/blink defaults
+	darkA := style.TermPaletteDark.ANSIColors()
+	lightA := style.TermPaletteLight.ANSIColors()
+	darkPal := make([]purfecterm.Color, 16)
+	lightPal := make([]purfecterm.Color, 16)
+	for i := 0; i < 16; i++ {
+		darkPal[i] = pcColor(darkA[i])
+		lightPal[i] = pcColor(lightA[i])
+	}
+	s.DarkPalette = darkPal
+	s.LightPalette = lightPal
+	s.DarkForeground = pcColor(style.TermPaletteDark.Foreground)
+	s.DarkBackground = pcColor(style.TermPaletteDark.Background)
+	s.LightForeground = pcColor(style.TermPaletteLight.Foreground)
+	s.LightBackground = pcColor(style.TermPaletteLight.Background)
+	return s
+}
+
+// pcColor converts a theme palette color to a purfecterm true color.
+func pcColor(c style.TermRGB) purfecterm.Color {
+	return purfecterm.TrueColor(c.R, c.G, c.B)
 }
 
 func pcRGBA(c purfecterm.Color) color.RGBA {

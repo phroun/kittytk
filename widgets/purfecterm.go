@@ -79,6 +79,10 @@ func NewPurfecTerm() *PurfecTerm {
 	}
 	t.terminal = term
 
+	// Apply the app's theme palette (dark + light) so the terminal
+	// renders with the same colors as the rest of the UI.
+	t.SetColorScheme(termColorScheme())
+
 	// Set up callbacks
 	t.terminal.SetOnBell(func() {
 		// Could trigger a visual bell or notification

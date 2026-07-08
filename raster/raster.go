@@ -48,6 +48,10 @@ type Backend struct {
 	defaultFg color.RGBA
 	defaultBg color.RGBA
 
+	// palette holds the 16 standard colors in ANSI SGR index order,
+	// copied from the active theme palette at construction.
+	palette [16]color.RGBA
+
 	// clipboard holds the local clipboard for headless use; SDL and
 	// other substrates may sync it with the system clipboard.
 	clipboard string
@@ -67,15 +71,28 @@ func NewScaled(widthPx, heightPx, scale int) (*Backend, error) {
 	if scale < 1 {
 		scale = 1
 	}
+	// Take the 16 standard colors and default fg/bg from the active
+	// theme palette (the user's chosen ANSI/EGA/VGA values), rather than
+	// a fixed assumed set.
+	ap := style.ActiveTermPalette
 	b := &Backend{
 		img:       image.NewRGBA(image.Rect(0, 0, widthPx, heightPx)),
 		w:         widthPx,
 		h:         heightPx,
 		scale:     scale,
-		defaultFg: color.RGBA{220, 220, 220, 255},
-		defaultBg: color.RGBA{16, 16, 24, 255},
+		defaultFg: termRGBA(ap.Foreground),
+		defaultBg: termRGBA(ap.Background),
+	}
+	ansi := ap.ANSIColors()
+	for i := range ansi {
+		b.palette[i] = termRGBA(ansi[i])
 	}
 	return b, nil
+}
+
+// termRGBA converts a palette color to an opaque framebuffer color.
+func termRGBA(c style.TermRGB) color.RGBA {
+	return color.RGBA{R: c.R, G: c.G, B: c.B, A: 255}
 }
 
 // px converts an abstract-unit coordinate to framebuffer pixels.
@@ -183,14 +200,6 @@ func (b *Backend) pointVisible(x, y int) bool {
 
 // --- Color resolution ---
 
-// ansi16 is the classic palette (0-7 normal, 8-15 bright).
-var ansi16 = [16]color.RGBA{
-	{0, 0, 0, 255}, {205, 49, 49, 255}, {13, 188, 121, 255}, {229, 229, 16, 255},
-	{36, 114, 200, 255}, {188, 63, 188, 255}, {17, 168, 205, 255}, {229, 229, 229, 255},
-	{102, 102, 102, 255}, {241, 76, 76, 255}, {35, 209, 139, 255}, {245, 245, 67, 255},
-	{59, 142, 234, 255}, {214, 112, 214, 255}, {41, 184, 219, 255}, {255, 255, 255, 255},
-}
-
 func (b *Backend) rgba(c style.Color, isFg bool) color.RGBA {
 	switch {
 	case c == style.ColorDefault:
@@ -199,7 +208,7 @@ func (b *Backend) rgba(c style.Color, isFg bool) color.RGBA {
 		}
 		return b.defaultBg
 	case c >= 0 && c < 16:
-		return ansi16[c]
+		return b.palette[c]
 	case c >= 256:
 		v := uint32(c - 256)
 		return color.RGBA{uint8(v >> 16), uint8(v >> 8), uint8(v), 255}
