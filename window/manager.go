@@ -348,6 +348,62 @@ func (m *WindowManager) updateResizeHover(x, y core.Unit) {
 	}
 }
 
+// topWindowAt returns the topmost visible, non-minimized window whose
+// bounds contain the point, or nil.
+func (m *WindowManager) topWindowAt(x, y core.Unit) *Window {
+	m.mu.RLock()
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.RUnlock()
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		if !win.IsVisible() || win.IsMinimized() {
+			continue
+		}
+		if win.Bounds().Contains(core.UnitPoint{X: x, Y: y}) {
+			return win
+		}
+	}
+	return nil
+}
+
+// resizeCursorForEdge maps a resize-edge bitmask to its directional
+// cursor. Bottom corners use the diagonal cursors; a lone left/right or
+// bottom edge uses the horizontal/vertical cursor.
+func resizeCursorForEdge(edge int) core.CursorShape {
+	left := edge&ResizeEdgeLeft != 0
+	right := edge&ResizeEdgeRight != 0
+	bottom := edge&(ResizeEdgeBottom|ResizeEdgeTop) != 0
+	switch {
+	case (left && bottom):
+		return core.CursorResizeNESW // bottom-left / top-right diagonal
+	case (right && bottom):
+		return core.CursorResizeNWSE // bottom-right / top-left diagonal
+	case left || right:
+		return core.CursorResizeH
+	case bottom:
+		return core.CursorResizeV
+	default:
+		return core.CursorDefault
+	}
+}
+
+// CursorAt resolves the mouse cursor for a desktop-coordinate point: a
+// resize cursor when over a window's size-sensitive edge, otherwise the
+// cursor requested by the widget under the pointer (e.g. a text I-beam),
+// or the default arrow.
+func (m *WindowManager) CursorAt(x, y core.Unit) core.CursorShape {
+	win := m.topWindowAt(x, y)
+	if win == nil {
+		return core.CursorDefault
+	}
+	if s := resizeCursorForEdge(m.detectResizeEdge(win, x, y)); s != core.CursorDefault {
+		return s
+	}
+	b := win.Bounds()
+	return win.CursorShapeAt(x-b.X, y-b.Y)
+}
+
 // SetDesktop sets the desktop widget (background behind windows).
 func (m *WindowManager) SetDesktop(desktop core.Widget) {
 	m.mu.Lock()

@@ -91,6 +91,12 @@ func NewPurfecTerm() *PurfecTerm {
 	return t
 }
 
+// CursorShape implements core.CursorProvider: the terminal shows the
+// text I-beam while hovered, like any text surface.
+func (t *PurfecTerm) CursorShape() core.CursorShape {
+	return core.CursorText
+}
+
 // SetDarkTheme selects the terminal's dark (true) or light (false)
 // palette, keeping it in step with the app theme. It sets both the
 // current and preferred theme so a terminal reset stays consistent.

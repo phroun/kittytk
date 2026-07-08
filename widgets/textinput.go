@@ -68,6 +68,12 @@ func NewTextInput() *TextInput {
 	return t
 }
 
+// CursorShape implements core.CursorProvider: an editable text field
+// shows the text I-beam while hovered.
+func (t *TextInput) CursorShape() core.CursorShape {
+	return core.CursorText
+}
+
 // Text returns the current text.
 func (t *TextInput) Text() string {
 	return string(t.text)

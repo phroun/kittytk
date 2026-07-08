@@ -36,6 +36,11 @@ type Platform struct {
 
 	main *nativeWin
 	wins map[uint32]*nativeWin // by SDL window ID, main included
+
+	// System mouse cursors, created on demand and cached by shape.
+	cursors    map[core.CursorShape]*sdl2.Cursor
+	curCursor  core.CursorShape
+	cursorSet  bool
 }
 
 // nativeWin bundles one OS window with its presentation chain.
@@ -734,6 +739,47 @@ func (p *Platform) SetClipboard(text string) { _ = sdl2.SetClipboardText(text) }
 
 // Beep implements platform.Platform.
 func (p *Platform) Beep() {}
+
+// SetCursor implements platform.CursorController: set the application's
+// system mouse cursor. System cursors are created on demand and cached;
+// redundant sets (same shape) are skipped.
+func (p *Platform) SetCursor(shape core.CursorShape) {
+	if p.cursorSet && p.curCursor == shape {
+		return
+	}
+	if p.cursors == nil {
+		p.cursors = map[core.CursorShape]*sdl2.Cursor{}
+	}
+	cur, ok := p.cursors[shape]
+	if !ok {
+		cur = sdl2.CreateSystemCursor(systemCursorID(shape))
+		p.cursors[shape] = cur
+	}
+	if cur == nil {
+		return
+	}
+	sdl2.SetCursor(cur)
+	p.curCursor = shape
+	p.cursorSet = true
+}
+
+// systemCursorID maps a core cursor shape to its SDL system cursor.
+func systemCursorID(shape core.CursorShape) sdl2.SystemCursor {
+	switch shape {
+	case core.CursorText:
+		return sdl2.SYSTEM_CURSOR_IBEAM
+	case core.CursorResizeH:
+		return sdl2.SYSTEM_CURSOR_SIZEWE
+	case core.CursorResizeV:
+		return sdl2.SYSTEM_CURSOR_SIZENS
+	case core.CursorResizeNWSE:
+		return sdl2.SYSTEM_CURSOR_SIZENWSE
+	case core.CursorResizeNESW:
+		return sdl2.SYSTEM_CURSOR_SIZENESW
+	default:
+		return sdl2.SYSTEM_CURSOR_ARROW
+	}
+}
 
 // sdlSurface is one SDL window as a platform.Surface.
 type sdlSurface struct {

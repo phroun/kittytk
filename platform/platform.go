@@ -116,6 +116,13 @@ type NativeSurface interface {
 	Close()
 }
 
+// CursorController is an optional Platform capability: set the system
+// mouse cursor shape for the application. Platforms that don't implement
+// it keep the default arrow.
+type CursorController interface {
+	SetCursor(shape core.CursorShape)
+}
+
 // Surface is one render target: per-surface size, damage, input.
 type Surface interface {
 	// Size returns the surface size in units.

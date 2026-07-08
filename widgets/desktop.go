@@ -1070,6 +1070,25 @@ func (d *Desktop) FocusedWidget() core.Widget {
 	return nil
 }
 
+// updateCursor resolves and applies the system mouse cursor for the
+// pointer position: a resize cursor over a window's size-sensitive edge,
+// a text I-beam over an editable control, otherwise the arrow. No-op on
+// platforms without cursor control.
+func (d *Desktop) updateCursor(x, y core.Unit) {
+	d.mu.RLock()
+	plat := d.platform
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if wm == nil {
+		return
+	}
+	cc, ok := plat.(platform.CursorController)
+	if !ok {
+		return
+	}
+	cc.SetCursor(wm.CursorAt(x, y))
+}
+
 // ActivatePassNextKeyToWidget activates pass-next-key-to-widget mode for the active app.
 // The next keypress will bypass all global shortcut handling and go directly
 // to the focused widget. This can be called from menu items or other UI elements.
@@ -1349,7 +1368,9 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 
 	case core.MouseMoveEvent:
 		core.WheelPointerMoved()
-		return wm.HandleMouseMove(e)
+		handled := wm.HandleMouseMove(e)
+		d.updateCursor(e.X, e.Y)
+		return handled
 
 	case core.MouseReleaseEvent:
 		return wm.HandleMouseRelease(e)

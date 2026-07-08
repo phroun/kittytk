@@ -1300,6 +1300,52 @@ func sameRects(a, b []core.UnitRect) bool {
 	return true
 }
 
+// CursorShapeAt returns the mouse cursor requested by the widget under
+// the given window-local point (e.g. a text field's I-beam), or the
+// default arrow when the point is outside the content area or over a
+// widget with no preference.
+func (w *Window) CursorShapeAt(localX, localY core.Unit) core.CursorShape {
+	w.mu.RLock()
+	content := w.content
+	w.mu.RUnlock()
+	if content == nil {
+		return core.CursorDefault
+	}
+	cb := w.contentBounds()
+	if localX < cb.X || localY < cb.Y || localX >= cb.X+cb.Width || localY >= cb.Y+cb.Height {
+		// Title bar, borders, or detached chrome: ordinary arrow.
+		return core.CursorDefault
+	}
+	outer, interior := w.denominations()
+	cx := core.ExchangeX(localX-cb.X, outer, interior)
+	cy := core.ExchangeY(localY-cb.Y, outer, interior)
+	return cursorShapeAtWidget(content, core.UnitPoint{X: cx, Y: cy})
+}
+
+// cursorShapeAtWidget descends to the deepest widget containing pos and
+// returns its requested cursor, or the default when none applies.
+func cursorShapeAtWidget(widget core.Widget, pos core.UnitPoint) core.CursorShape {
+	cur := widget
+	p := pos
+	for {
+		c, ok := cur.(core.Container)
+		if !ok {
+			break
+		}
+		child := c.ChildAt(p)
+		if child == nil || child == cur {
+			break
+		}
+		cb := child.Bounds()
+		p = core.UnitPoint{X: p.X - cb.X, Y: p.Y - cb.Y}
+		cur = child
+	}
+	if cp, ok := cur.(core.CursorProvider); ok {
+		return cp.CursorShape()
+	}
+	return core.CursorDefault
+}
+
 // paintResizeHover fills the hovered resize edges with a translucent white
 // band, clipped to the window's rounded corner radius. No-op on cell
 // surfaces (FillRectPixelsAlpha returns false there).
