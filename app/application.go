@@ -802,6 +802,10 @@ func (app *Application) AddWindow(w *window.Window) {
 			if wm := d.WindowManager(); wm != nil {
 				wm.AddWindow(w)
 			}
+			// If this app's main window is already torn off, a new
+			// non-tearable child (e.g. a dialog) is torn off too, so it
+			// appears with its detached parent rather than docked here.
+			d.SyncAddedWindowDetachState(w)
 		}
 	}
 }

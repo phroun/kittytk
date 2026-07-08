@@ -177,7 +177,91 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	d.mu.Lock()
 	d.tornHosts = append(d.tornHosts, host)
 	d.mu.Unlock()
+
+	// A main window drags its non-tearable children off the desktop with
+	// it: dialogs and other windows that can't be torn off by hand live on
+	// their own surfaces while the main window is detached, and re-dock
+	// with it. Only fires for a genuine main window (a follower being torn
+	// here is not any app's main window, so it does not recurse).
+	if app := d.applicationForMainWindow(win); app != nil {
+		d.tearOffFollowers(app, win)
+	}
 	return host
+}
+
+// tearOffFollowers tears every non-tearable child of app (other than the
+// main window itself) onto its own surface at its current desktop
+// position. Called when the app's main window is torn off.
+func (d *Desktop) tearOffFollowers(app ApplicationProvider, main *window.Window) {
+	for _, w := range app.Windows() {
+		if w == main || w.IsTearable() || w.IsDetached() {
+			continue
+		}
+		b := w.Bounds()
+		d.createTornHost(w, b.X, b.Y)
+	}
+}
+
+// redockFollowers re-docks every torn non-tearable child of app back onto
+// the desktop at its current on-screen position. Called when the app's
+// main window re-docks.
+func (d *Desktop) redockFollowers(app ApplicationProvider, main *window.Window) {
+	d.mu.RLock()
+	hosts := make([]*window.TearOffHost, len(d.tornHosts))
+	copy(hosts, d.tornHosts)
+	d.mu.RUnlock()
+	for _, h := range hosts {
+		w := h.Window()
+		if w == main || w.IsTearable() || !appOwnsWindow(app, w) {
+			continue
+		}
+		d.redockInPlace(h)
+	}
+}
+
+// appOwnsWindow reports whether win is one of app's windows.
+func appOwnsWindow(app ApplicationProvider, win *window.Window) bool {
+	for _, w := range app.Windows() {
+		if w == win {
+			return true
+		}
+	}
+	return false
+}
+
+// SyncAddedWindowDetachState tears a freshly added window off immediately
+// when its app's main window is already detached and the new window is a
+// non-tearable child - so a dialog spawned by a torn-off main window
+// appears torn off too, rather than docked back on the desktop. Called by
+// Application.AddWindow after the window joins the window manager.
+func (d *Desktop) SyncAddedWindowDetachState(win *window.Window) {
+	if win == nil || win.IsTearable() || win.IsDetached() {
+		return
+	}
+	app := d.applicationForWindow(win)
+	if app == nil {
+		return
+	}
+	main := app.MainWindow()
+	if main == nil || main == win || !main.IsDetached() {
+		return
+	}
+	b := win.Bounds()
+	d.createTornHost(win, b.X, b.Y)
+}
+
+// applicationForWindow returns the application that owns win, or nil.
+func (d *Desktop) applicationForWindow(win *window.Window) ApplicationProvider {
+	d.mu.RLock()
+	apps := make([]ApplicationProvider, len(d.applications))
+	copy(apps, d.applications)
+	d.mu.RUnlock()
+	for _, app := range apps {
+		if appOwnsWindow(app, win) {
+			return app
+		}
+	}
+	return nil
 }
 
 // redockInPlace re-docks a torn window to the desktop at its current
@@ -414,6 +498,13 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghos
 	d.mu.RUnlock()
 	if surf != nil {
 		surf.Invalidate(core.UnitRect{})
+	}
+
+	// A re-docking main window brings its non-tearable children home with
+	// it. A follower re-docking here is not any app's main window, so this
+	// does not recurse.
+	if app := d.applicationForMainWindow(win); app != nil {
+		d.redockFollowers(app, win)
 	}
 }
 
