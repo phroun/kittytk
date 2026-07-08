@@ -36,12 +36,17 @@ func main() {
 	// service only touches the desktop via Post, so it is agnostic to the
 	// backend - the very same Serve call powers kittytk-sdl.
 	desktop.SetOnStartup(func() {
-		if _, err := display.Serve(desktop, client.DefaultSocketPath()); err != nil {
-			if sb := desktop.StatusBar(); sb != nil {
+		endpoint := client.DefaultEndpoint()
+		srv, err := display.ServeConfig(desktop, display.DefaultConfig(desktop, endpoint))
+		if sb := desktop.StatusBar(); sb != nil {
+			switch {
+			case err != nil:
 				sb.SetText("display service unavailable: " + err.Error())
+			case srv.TLSFingerprint != "":
+				sb.SetText("display service on " + endpoint + " (" + srv.TLSFingerprint + ")")
+			default:
+				sb.SetText("display service on " + endpoint + " - run examples/demoapp to connect")
 			}
-		} else if sb := desktop.StatusBar(); sb != nil {
-			sb.SetText("display service on " + client.DefaultSocketPath() + " - run examples/demoapp to connect")
 		}
 	})
 
