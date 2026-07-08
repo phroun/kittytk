@@ -10,8 +10,26 @@ import (
 	"github.com/phroun/tuitk/app"
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/tuitk/style"
 	"github.com/phroun/tuitk/widgets"
 )
+
+// applyTerminalTheme walks a widget subtree and puts every PurfecTerm
+// into the given dark/light mode, so terminals follow the app theme
+// toggle along with the rest of the UI.
+func applyTerminalTheme(w core.Widget, dark bool) {
+	if w == nil {
+		return
+	}
+	if term, ok := w.(*widgets.PurfecTerm); ok {
+		term.SetDarkTheme(dark)
+	}
+	if c, ok := w.(core.Container); ok {
+		for _, child := range c.Children() {
+			applyTerminalTheme(child, dark)
+		}
+	}
+}
 
 // The menu bars are protocol data (G6): scripts build menubar/menu/
 // menuitem trees; activation dispatches action= command IDs through
@@ -58,6 +76,8 @@ bar=new menubar children={
 		new menuitem caption="&Toolbar" checkable checked
 		new menuitem caption="&Status Bar" checkable checked
 		new menuitem separator
+		new menuitem caption="&Light/Dark Theme" shortcut="^T" action=demo.view.theme
+		new menuitem separator
 		sr=new menuitem caption="Show A&nnouncements in Status Bar" checkable action=demo.view.announce
 		speak=new menuitem caption="Speak Announcements (macOS)" checkable action=demo.view.speak`)
 	if runtime.GOOS != "darwin" {
@@ -99,6 +119,22 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 	})
 	commands.Register("demo.edit.rawkey", func() {
 		desktop.ActivatePassNextKeyToWidget()
+	})
+	// Toggle the app between the dark and light theme palettes. The UI
+	// chrome recolors on the next full-frame repaint (the 16 standard
+	// colors read the active palette live); terminals follow via their
+	// own dark/light palette.
+	commands.Register("demo.view.theme", func() {
+		newDark := style.ActiveTermTheme() == style.TermThemeLight
+		if newDark {
+			style.SetActiveTermTheme(style.TermThemeDark)
+		} else {
+			style.SetActiveTermTheme(style.TermThemeLight)
+		}
+		for _, win := range desktop.WindowManager().Windows() {
+			applyTerminalTheme(win, newDark)
+		}
+		desktop.Update()
 	})
 	// Edit actions operate on the focused widget; the context menus
 	// on edit boxes invoke the same methods.

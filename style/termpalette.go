@@ -118,8 +118,24 @@ var (
 	activeTermTheme = TermThemeDark
 )
 
+// activeTermANSI caches ActiveTermPalette reordered into ANSI SGR index
+// order, so the renderer resolves a standard color with a single array
+// read (no per-lookup reorder). Kept in step with ActiveTermPalette.
+var activeTermANSI = ActiveTermPalette.ANSIColors()
+
+// ActiveTermANSIColor returns the active palette's color for ANSI SGR
+// index i (0-15). The renderer calls this to resolve standard colors,
+// so switching themes takes effect on the next paint of any surface.
+func ActiveTermANSIColor(i int) TermRGB {
+	if i < 0 || i > 15 {
+		return TermRGB{}
+	}
+	return activeTermANSI[i]
+}
+
 // SetActiveTermTheme copies the dark or light palette into the active
-// set. A future config toggle calls this to switch themes at runtime.
+// set. The config toggle (and the demo's View menu) call this to switch
+// themes at runtime; the change shows on the next repaint.
 func SetActiveTermTheme(theme TermTheme) {
 	activeTermTheme = theme
 	if theme == TermThemeLight {
@@ -127,6 +143,7 @@ func SetActiveTermTheme(theme TermTheme) {
 	} else {
 		ActiveTermPalette = TermPaletteDark
 	}
+	activeTermANSI = ActiveTermPalette.ANSIColors()
 }
 
 // ActiveTermTheme reports the currently selected theme.

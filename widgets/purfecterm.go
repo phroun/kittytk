@@ -91,6 +91,20 @@ func NewPurfecTerm() *PurfecTerm {
 	return t
 }
 
+// SetDarkTheme selects the terminal's dark (true) or light (false)
+// palette, keeping it in step with the app theme. It sets both the
+// current and preferred theme so a terminal reset stays consistent.
+func (t *PurfecTerm) SetDarkTheme(dark bool) {
+	if t.terminal == nil {
+		return
+	}
+	if buf := t.terminal.Buffer(); buf != nil {
+		buf.SetPreferredDarkTheme(dark)
+		buf.SetDarkTheme(dark)
+	}
+	t.Update()
+}
+
 // Start starts the terminal with a shell.
 func (t *PurfecTerm) Start() error {
 	if t.terminal == nil {

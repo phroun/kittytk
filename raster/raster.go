@@ -45,13 +45,6 @@ type Backend struct {
 	roundClipRadius core.Unit
 	hasRoundClip    bool
 
-	defaultFg color.RGBA
-	defaultBg color.RGBA
-
-	// palette holds the 16 standard colors in ANSI SGR index order,
-	// copied from the active theme palette at construction.
-	palette [16]color.RGBA
-
 	// clipboard holds the local clipboard for headless use; SDL and
 	// other substrates may sync it with the system clipboard.
 	clipboard string
@@ -71,21 +64,11 @@ func NewScaled(widthPx, heightPx, scale int) (*Backend, error) {
 	if scale < 1 {
 		scale = 1
 	}
-	// Take the 16 standard colors and default fg/bg from the active
-	// theme palette (the user's chosen ANSI/EGA/VGA values), rather than
-	// a fixed assumed set.
-	ap := style.ActiveTermPalette
 	b := &Backend{
-		img:       image.NewRGBA(image.Rect(0, 0, widthPx, heightPx)),
-		w:         widthPx,
-		h:         heightPx,
-		scale:     scale,
-		defaultFg: termRGBA(ap.Foreground),
-		defaultBg: termRGBA(ap.Background),
-	}
-	ansi := ap.ANSIColors()
-	for i := range ansi {
-		b.palette[i] = termRGBA(ansi[i])
+		img:   image.NewRGBA(image.Rect(0, 0, widthPx, heightPx)),
+		w:     widthPx,
+		h:     heightPx,
+		scale: scale,
 	}
 	return b, nil
 }
@@ -200,24 +183,31 @@ func (b *Backend) pointVisible(x, y int) bool {
 
 // --- Color resolution ---
 
+// rgba resolves a style color to a framebuffer color, reading the 16
+// standard colors and the default fg/bg from the active theme palette
+// each time so a theme switch shows on the next paint (no cached copy
+// to invalidate). True colors (>=256) carry their own RGB.
 func (b *Backend) rgba(c style.Color, isFg bool) color.RGBA {
 	switch {
 	case c == style.ColorDefault:
-		if isFg {
-			return b.defaultFg
-		}
-		return b.defaultBg
+		return b.defaultColor(isFg)
 	case c >= 0 && c < 16:
-		return b.palette[c]
+		return termRGBA(style.ActiveTermANSIColor(int(c)))
 	case c >= 256:
 		v := uint32(c - 256)
 		return color.RGBA{uint8(v >> 16), uint8(v >> 8), uint8(v), 255}
 	default:
-		if isFg {
-			return b.defaultFg
-		}
-		return b.defaultBg
+		return b.defaultColor(isFg)
 	}
+}
+
+// defaultColor returns the active theme's default foreground or
+// background (used for style.ColorDefault and unknown indices).
+func (b *Backend) defaultColor(isFg bool) color.RGBA {
+	if isFg {
+		return termRGBA(style.ActiveTermPalette.Foreground)
+	}
+	return termRGBA(style.ActiveTermPalette.Background)
 }
 
 func (b *Backend) styleColors(s style.CellStyle) (fg, bg color.RGBA) {
