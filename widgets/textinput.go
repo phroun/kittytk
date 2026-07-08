@@ -158,6 +158,9 @@ func (t *TextInput) SetCursorPosition(pos int) {
 	t.selStart = pos
 	t.selEnd = pos
 	t.ensureCursorVisible()
+	// Moving the caret restarts the blink visible, so its new position
+	// shows immediately.
+	t.resetCaretBlink()
 	t.Update()
 }
 
@@ -782,6 +785,8 @@ func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 		}
 		t.selecting = true
 		t.SetFocus()
+		// A click that repositions the caret shows it immediately.
+		t.resetCaretBlink()
 		t.Update()
 		return true
 	}
@@ -807,6 +812,8 @@ func (t *TextInput) HandleMouseMove(event core.MouseMoveEvent) bool {
 		t.cursorPos = pos
 		t.selEnd = pos
 		t.ensureCursorVisible()
+		// Keep the caret visible as it tracks the drag.
+		t.resetCaretBlink()
 		t.Update()
 	}
 	return true
