@@ -281,7 +281,7 @@ func (d *Desktop) createSystemMenu() *Menu {
 		exitItem.SetShortcut(core.NewShortcut(keys[0]))
 	}
 	exitItem.SetOnTriggered(func() {
-		d.Quit()
+		d.ExitDesktop()
 	})
 	menu.AddItem(exitItem)
 
@@ -788,21 +788,62 @@ func (d *Desktop) EnterSoloFromDesktop() {
 	if solo || wm == nil {
 		return
 	}
-	h := pickPromotable(hosts)
-	if h == nil {
+	if h := pickPromotable(hosts); h != nil {
+		// Same quit-on-last wiring as a fresh solo entry (idempotent if it
+		// was installed before): the removed-hook drives the docked case.
+		wm.SetOnWindowRemoved(func(*window.Window) {
+			d.Post(func() { d.soloRebalance(false) })
+		})
+		d.mu.Lock()
+		d.solo = true
+		d.mu.Unlock()
+		// Discard the window's own surface and host it on the primary,
+		// keeping the primary's geometry (reposition=false).
+		d.promoteToPrimary(h, false)
 		return
 	}
-	// Same quit-on-last wiring as a fresh solo entry (idempotent if it was
-	// installed before): the removed-hook drives the docked-window case.
-	wm.SetOnWindowRemoved(func(*window.Window) {
-		d.Post(func() { d.soloRebalance(false) })
-	})
-	d.mu.Lock()
-	d.solo = true
-	d.mu.Unlock()
-	// Discard the window's own surface and host it on the primary, keeping
-	// the primary's geometry (reposition=false).
-	d.promoteToPrimary(h, false)
+	// No torn window: lift a docked application window straight onto the
+	// primary surface. EnterSoloMode removes it from the manager and hosts
+	// it, so it fills the display as the new solo window.
+	if win := pickDockedMain(wm.Windows()); win != nil {
+		d.EnterSoloMode(win)
+	}
+}
+
+// pickDockedMain chooses a docked application window to make solo,
+// preferring one that requested to be its app's main window.
+func pickDockedMain(wins []*window.Window) *window.Window {
+	for _, w := range wins {
+		if w.MainRequested() {
+			return w
+		}
+	}
+	if len(wins) > 0 {
+		return wins[0]
+	}
+	return nil
+}
+
+// ExitDesktop handles the system menu's "Exit Desktop" command. If any
+// application window remains, the desktop is dismissed and that app takes
+// over the whole display as a solo app (promote a detached app again);
+// otherwise nothing is left to run, so the desktop process quits. A no-op
+// distinction only matters off solo - a solo app has no desktop to exit.
+func (d *Desktop) ExitDesktop() {
+	d.mu.RLock()
+	solo := d.solo
+	wm := d.windowManager
+	tornCount := len(d.tornHosts)
+	d.mu.RUnlock()
+	docked := 0
+	if wm != nil {
+		docked = len(wm.Windows())
+	}
+	if !solo && tornCount+docked > 0 {
+		d.EnterSoloFromDesktop()
+		return
+	}
+	d.Quit()
 }
 
 // screenRect is a surface's OS-window geometry in screen pixels.

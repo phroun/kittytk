@@ -774,6 +774,53 @@ func TestReSoloFromDesktop(t *testing.T) {
 	d.RunOn(plat)
 }
 
+// The system menu's "Exit Desktop" command promotes a remaining app back
+// to solo rather than quitting: with a desktop revealed and a torn app on
+// it, ExitDesktop re-solos that app; with nothing left it quits the host.
+func TestExitDesktopReSolosOrQuits(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Solo")
+	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.EnterSoloMode(main)
+		d.ExitSoloMode() // desktop revealed, main is a torn window on it
+
+		// Exit Desktop with an app still present -> promote it back to solo.
+		d.ExitDesktop()
+		if !d.IsSolo() {
+			t.Error("Exit Desktop did not re-solo the remaining app")
+		}
+		if plat.quitCalled {
+			t.Error("Exit Desktop quit the host while an app remained")
+		}
+
+		// Back on a desktop with the app gone, Exit Desktop quits.
+		d.ExitSoloMode()
+		main.Close()
+		d.ExitDesktop()
+		if !plat.quitCalled {
+			t.Error("Exit Desktop did not quit with no app windows left")
+		}
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
 // A minimized follower (docked while its main window was on the desktop)
 // leaves the dock when the main window tears off: it comes along on its
 // own surface, so its dock entry must be removed and it un-minimized.
