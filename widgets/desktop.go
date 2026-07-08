@@ -1151,10 +1151,17 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		if core.DeliverLatchedWheel(e) {
 			return true
 		}
-		// Open menus scroll before anything beneath them.
-		if d.menuBar != nil && d.menuBar.ActiveMenu() != nil {
-			if d.menuBar.HandleMouseWheel(e) {
-				return true
+		// Menu wheel handling before anything beneath: an open dropdown
+		// scrolls its items; a wheel/two-finger pan over the (closed)
+		// bar pans an overflowing bar horizontally. Both paths live in
+		// MenuBar.HandleMouseWheel; it declines (false) when neither
+		// applies, so we fall through to the windows below.
+		if d.menuBar != nil {
+			overBar := d.menuBar.Bounds().Contains(core.UnitPoint{X: e.X, Y: e.Y})
+			if d.menuBar.ActiveMenu() != nil || overBar {
+				if d.menuBar.HandleMouseWheel(e) {
+					return true
+				}
 			}
 		}
 		return wm.HandleMouseWheel(e)

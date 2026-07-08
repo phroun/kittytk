@@ -2491,16 +2491,50 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 // HandleMouseRelease handles mouse release during drag.
 // HandleMouseWheel scrolls the active dropdown when it overflows.
 func (m *MenuBar) HandleMouseWheel(event core.MouseWheelEvent) bool {
-	menu := m.activeMenu
-	if menu == nil || !menu.visible || !menu.needsScrolling() {
+	// An open dropdown scrolls vertically through its items.
+	if menu := m.activeMenu; menu != nil && menu.visible && menu.needsScrolling() {
+		down := event.DeltaY > 0 || event.PreciseY > 0
+		up := event.DeltaY < 0 || event.PreciseY < 0
+		if down && menu.canScrollDown() {
+			menu.scrollDown(1)
+		} else if up && menu.canScrollUp() {
+			menu.scrollUp(1)
+		}
+		m.Update()
+		return true
+	}
+
+	// Otherwise, a wheel or two-finger pan over an overflowing bar steps
+	// the first visible menu - the same gesture the tab strip uses. The
+	// horizontal axis wins when present (two-finger pans are often
+	// diagonal); precise deltas contribute sign only (whole-menu steps).
+	if !m.menusNeedScrolling() {
 		return false
 	}
-	down := event.DeltaY > 0 || event.PreciseY > 0
-	up := event.DeltaY < 0 || event.PreciseY < 0
-	if down && menu.canScrollDown() {
-		menu.scrollDown(1)
-	} else if up && menu.canScrollUp() {
-		menu.scrollUp(1)
+	step := event.DeltaY
+	if event.DeltaX != 0 {
+		step = event.DeltaX
+	} else if event.PreciseX != 0 || event.PreciseY != 0 {
+		p := event.PreciseY
+		if event.PreciseX != 0 {
+			p = event.PreciseX
+		}
+		if p < 0 {
+			step = -1
+		} else if p > 0 {
+			step = 1
+		}
+	}
+	if step == 0 {
+		return false
+	}
+	if !m.canScrollLeft() && !m.canScrollRight() {
+		return false
+	}
+	if step < 0 && m.canScrollLeft() {
+		m.scrollOffset--
+	} else if step > 0 && m.canScrollRight() {
+		m.scrollOffset++
 	}
 	m.Update()
 	return true
