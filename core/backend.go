@@ -385,6 +385,13 @@ type FocusEvent struct {
 
 func (FocusEvent) isEvent() {}
 
+// MouseLeaveEvent signals that the pointer left the surface entirely, so
+// hover-only affordances (resize-edge highlights, hover cursors) can be
+// cleared - there is no move event when the pointer exits.
+type MouseLeaveEvent struct{}
+
+func (MouseLeaveEvent) isEvent() {}
+
 // QuitEvent indicates the user requested to quit.
 type QuitEvent struct{}
 

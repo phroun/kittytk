@@ -338,6 +338,10 @@ func (p *Platform) pumpEvents() bool {
 			case sdl2.WINDOWEVENT_FOCUS_LOST:
 				s.handler.Event(core.FocusEvent{Focused: false})
 				s.Invalidate(core.UnitRect{})
+			case sdl2.WINDOWEVENT_LEAVE:
+				// Pointer left the window: clear hover-only affordances.
+				s.handler.Event(core.MouseLeaveEvent{})
+				s.Invalidate(core.UnitRect{})
 			}
 		case *sdl2.TextInputEvent:
 			s := p.surfaceFor(e.WindowID)

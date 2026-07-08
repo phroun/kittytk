@@ -568,6 +568,15 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			break
 		}
 		handled = h.win.HandleMouseWheel(e)
+	case core.MouseLeaveEvent:
+		// Pointer left the torn surface: drop the resize-edge highlight and
+		// reset the cursor. A live resize/drag keeps driving from the global
+		// pointer, so leave its highlight alone.
+		if !h.resizing && !h.dragging {
+			h.win.SetResizeHoverRects(nil)
+			h.applyCursor(core.CursorDefault)
+		}
+		handled = true
 	}
 	// Parity contract: repaint after input until widgets migrate to
 	// precise invalidation.

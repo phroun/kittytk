@@ -404,6 +404,24 @@ func (m *WindowManager) CursorAt(x, y core.Unit) core.CursorShape {
 	return win.CursorShapeAt(x-b.X, y-b.Y)
 }
 
+// ClearResizeHover removes the resize-edge highlight from every window.
+// Called when the pointer leaves the surface, so no stale band lingers.
+func (m *WindowManager) ClearResizeHover() {
+	m.mu.RLock()
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.RUnlock()
+	changed := false
+	for _, win := range windows {
+		if win.SetResizeHoverRects(nil) {
+			changed = true
+		}
+	}
+	if changed {
+		m.RequestRepaint()
+	}
+}
+
 // SetDesktop sets the desktop widget (background behind windows).
 func (m *WindowManager) SetDesktop(desktop core.Widget) {
 	m.mu.Lock()

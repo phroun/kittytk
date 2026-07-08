@@ -1372,6 +1372,15 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		d.updateCursor(e.X, e.Y)
 		return handled
 
+	case core.MouseLeaveEvent:
+		// Pointer left the desktop surface: drop any resize-edge highlight
+		// and reset the cursor to the arrow.
+		wm.ClearResizeHover()
+		if cc, ok := d.platform.(platform.CursorController); ok {
+			cc.SetCursor(core.CursorDefault)
+		}
+		return true
+
 	case core.MouseReleaseEvent:
 		return wm.HandleMouseRelease(e)
 

@@ -56,3 +56,20 @@ func TestSetResizeHoverRectsChangeDetection(t *testing.T) {
 		t.Error("clearing when already clear should not report a change")
 	}
 }
+
+// ClearResizeHover removes the highlight from every window (used on
+// mouse-leave, when no move event arrives to clear it).
+func TestClearResizeHover(t *testing.T) {
+	m := NewWindowManager()
+	w := NewWindow("w")
+	w.SetBounds(core.UnitRect{Width: 200, Height: 120})
+	m.AddWindow(w)
+
+	w.SetResizeHoverRects([]core.UnitRect{{Width: 8, Height: 120}})
+	m.ClearResizeHover()
+
+	// Already clear -> setting nil again reports no change.
+	if w.SetResizeHoverRects(nil) {
+		t.Error("ClearResizeHover left a stale highlight")
+	}
+}
