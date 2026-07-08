@@ -52,6 +52,14 @@ func init() {
 				}
 				return nil
 			}),
+			"fixed_width": wprop("fixed_width", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
+				n, err := protocol.AsInt("fixed_width", v, f)
+				if err != nil {
+					return err
+				}
+				p.SetFixedWidth(core.Unit(n))
+				return nil
+			}),
 			"spacing": wprop("spacing", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
 				n, err := protocol.AsInt("spacing", v, f)
 				if err != nil {

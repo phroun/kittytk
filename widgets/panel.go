@@ -14,6 +14,12 @@ type Panel struct {
 	children      []core.Widget
 	layoutManager core.LayoutManager
 
+	// fixedWidth, when > 0, pins the panel's SizeHint width; its height
+	// still flows from content via height-for-width. This makes a
+	// width-constrained box whose content word-wraps at exactly this
+	// width instead of widening with the text.
+	fixedWidth core.Unit
+
 	// Appearance
 	background    style.CellStyle
 	backgroundSet bool // true if SetBackground was called
@@ -190,14 +196,28 @@ func (p *Panel) SetBackground(s style.CellStyle) {
 // exchanged at the boundary).
 func (p *Panel) SizeHint() core.UnitSize {
 	outer, interior := p.denominations()
+	var sh core.UnitSize
 	if p.layoutManager != nil {
-		return core.ExchangeSize(p.layoutManager.SizeHint(p), interior, outer)
+		sh = core.ExchangeSize(p.layoutManager.SizeHint(p), interior, outer)
+	} else {
+		font := p.EffectiveFont()
+		sh = core.ExchangeSize(core.UnitSize{
+			Width:  font.MeasureRunes(20), // 20 chars wide
+			Height: interior.TextHeight(10),
+		}, interior, outer)
 	}
-	font := p.EffectiveFont()
-	return core.ExchangeSize(core.UnitSize{
-		Width:  font.MeasureRunes(20), // 20 chars wide
-		Height: interior.TextHeight(10),
-	}, interior, outer)
+	if p.fixedWidth > 0 {
+		sh.Width = p.fixedWidth
+	}
+	return sh
+}
+
+// SetFixedWidth pins the panel's SizeHint width (0 clears it). Height
+// continues to flow from content, so a wrapping label inside grows the
+// box taller rather than wider.
+func (p *Panel) SetFixedWidth(w core.Unit) {
+	p.fixedWidth = w
+	p.Update()
 }
 
 // MinimumSize returns the minimum size in the outer currency.
