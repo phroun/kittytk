@@ -26,8 +26,9 @@ type ComboBox struct {
 
 	// Scroll state for drop-down
 	scrollOffset     int
-	maxVisible       int // User-configured maximum (0 = auto-size to screen)
-	popupVisibleRows int // Actual visible rows for current popup (calculated from screen space)
+	maxVisible       int  // User-configured maximum (0 = auto-size to screen)
+	popupVisibleRows int  // Actual visible rows for current popup (calculated from screen space)
+	popupDropUp      bool // popup opened above the box (drop-up) rather than below
 
 	// popupScreenMetrics is the screen/desktop denomination captured
 	// when the popup opens; popup-space geometry, painting, and input
@@ -590,6 +591,8 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 		}
 	}
 
+	c.popupDropUp = !popDown // stroke gaps the edge nearest the box
+
 	var popupY core.Unit
 	var maxRowsAvailable int
 	if popDown {
@@ -963,6 +966,14 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			popupPainter.DrawCell(centerX, endY, 'v', itemStyle)
 			popupPainter.DrawCell(centerX+metrics.CellWidth*2, endY, 'v', itemStyle)
 		}
+	}
+
+	// A 1-pixel frame just outside the popup, in the separator color,
+	// with the whole edge nearest the box gapped: the top for a normal
+	// drop-down, the bottom for a drop-up (graphical only).
+	if popupPainter.Graphical() {
+		lineStyle := style.DefaultStyle().WithBg(scheme.GetMenuSeparator().Fg)
+		paintPopupOuterStroke(popupPainter, localBounds, popupPainter.DeviceScale(), lineStyle, 0, localBounds.Width, c.popupDropUp)
 	}
 }
 

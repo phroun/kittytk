@@ -209,6 +209,16 @@ type Menu struct {
 	graphicalCached bool
 	graphicalKnown  bool
 
+	// strokeGap{X,W}: the horizontal span (in this menu's coordinate
+	// space) where the outer stroke omits one edge, so the border merges
+	// with the control that opened the menu instead of drawing a line
+	// against it - a menu-bar item, or a combobox. Zero width = no gap
+	// (context menus, submenus). strokeGapBottom selects the bottom edge
+	// (a drop-up) rather than the top (a drop-down).
+	strokeGapX      core.Unit
+	strokeGapW      core.Unit
+	strokeGapBottom bool
+
 	// Parent menu (for submenus)
 	parentMenu *Menu
 	parentItem *MenuItem
@@ -715,6 +725,62 @@ func (m *Menu) setGraphicalHint(graphical bool) {
 	m.graphicalKnown = true
 }
 
+// SetStrokeGap marks a horizontal span of one outer-stroke edge to omit
+// so the border merges with the control that opened this menu (the edge
+// nearest it). x/w are in the menu's coordinate space; bottom selects
+// the bottom edge (a drop-up) instead of the top. Passing w <= 0 clears
+// the gap (a full frame).
+func (m *Menu) SetStrokeGap(x, w core.Unit, bottom bool) {
+	m.strokeGapX = x
+	m.strokeGapW = w
+	m.strokeGapBottom = bottom
+}
+
+// paintPopupOuterStroke draws a 1-device-pixel frame just OUTSIDE bounds
+// in style s (its background is the stroke color). gapW > 0 omits the
+// span [gapX, gapX+gapW) from one horizontal edge - the bottom edge when
+// gapBottom (a drop-up), otherwise the top (a drop-down) - so the border
+// merges with the control that opened the popup. Graphical only (a no-op
+// on cell surfaces, where FillRectPixels returns false).
+func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s style.CellStyle, gapX, gapW core.Unit, gapBottom bool) {
+	x, y, w, h := bounds.X, bounds.Y, bounds.Width, bounds.Height
+	wPx, hPx := int(w)*scale, int(h)*scale
+
+	// Left and right verticals span the full height plus both corners.
+	p.FillRectPixels(x, y, -1, -1, 1, hPx+2, s)
+	p.FillRectPixels(x+w, y, 0, -1, 1, hPx+2, s)
+
+	// Horizontal edges between the verticals; the gapped one is split.
+	drawEdge := func(edgeY core.Unit, offY int, gapped bool) {
+		if !gapped || gapW <= 0 {
+			p.FillRectPixels(x, edgeY, 0, offY, wPx, 1, s)
+			return
+		}
+		gx, ge := gapX, gapX+gapW
+		if gx < x {
+			gx = x
+		}
+		if ge > x+w {
+			ge = x + w
+		}
+		if gx > x {
+			p.FillRectPixels(x, edgeY, 0, offY, int(gx-x)*scale, 1, s)
+		}
+		if ge < x+w {
+			p.FillRectPixels(ge, edgeY, 0, offY, int((x+w)-ge)*scale, 1, s)
+		}
+	}
+	drawEdge(y, -1, !gapBottom)   // top edge (gapped for drop-downs)
+	drawEdge(y+h, 0, gapBottom)   // bottom edge (gapped for drop-ups)
+}
+
+// paintOuterStroke draws the menu's 1-pixel outer frame with the edge
+// nearest its opening control gapped (see SetStrokeGap).
+func (m *Menu) paintOuterStroke(p *core.Painter, size core.UnitSize, scale int, s style.CellStyle) {
+	bounds := core.UnitRect{X: m.popupX, Y: m.popupY, Width: size.Width, Height: size.Height}
+	paintPopupOuterStroke(p, bounds, scale, s, m.strokeGapX, m.strokeGapW, m.strokeGapBottom)
+}
+
 // rowHeightAt returns the vertical space item idx occupies. Separators
 // collapse to a thin band on graphical surfaces; everything else (and
 // all rows on cell surfaces) is a full text row.
@@ -1081,6 +1147,12 @@ func (m *Menu) Paint(p *core.Painter) {
 			p.DrawCell(centerX, currentY, 'v', indicatorStyle)
 			p.DrawCell(centerX+metrics.CellWidth*2, currentY, 'v', indicatorStyle)
 		}
+	}
+
+	// A 1-pixel frame just outside the menu, in the separator color,
+	// with the edge nearest the opening control gapped (graphical only).
+	if g {
+		m.paintOuterStroke(p, size, scale, hairStyle)
 	}
 
 	// Draw active submenu
@@ -1853,6 +1925,10 @@ func (m *MenuBar) OpenMenu(index int) {
 	}
 
 	m.activeMenu.Show(x, y)
+
+	// Gap the dropdown's top stroke across the parent menu-bar item, so
+	// the border merges into the bar rather than underlining the item.
+	m.activeMenu.SetStrokeGap(x, m.menuTitleWidth(m.menus[index].title), false)
 
 	// Announce the menu for accessibility
 	m.announceCurrentMenu()
