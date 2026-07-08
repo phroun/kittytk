@@ -3,7 +3,7 @@ package text
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // The registered fallback chain must cover the glyphs trinket chrome

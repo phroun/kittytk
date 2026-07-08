@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/layout"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/layout"
 )
 
 func TestWrapTextMondayWordBoundaries(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // MenuItem represents an item in a menu.

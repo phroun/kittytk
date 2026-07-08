@@ -12,10 +12,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/phroun/tuitk/client"
-	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/trinkets"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/window"
 )
 
 func TestMDIDockChoreographyNoDuplicateEntries(t *testing.T) {

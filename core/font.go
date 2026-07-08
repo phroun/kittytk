@@ -4,7 +4,7 @@ package core
 import (
 	"sync"
 
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/style"
 )
 
 // TextMeasurer answers text measurement for the current render

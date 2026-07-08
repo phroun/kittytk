@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/phroun/tuitk/client"
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/raster"
-	"github.com/phroun/tuitk/style"
-	_ "github.com/phroun/tuitk/trinkets" // wire vocabulary registrations
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/raster"
+	"github.com/phroun/kittytk/style"
+	_ "github.com/phroun/kittytk/trinkets" // wire vocabulary registrations
+	"github.com/phroun/kittytk/window"
 )
 
 // The D23 proof: a protocol-built window rendered through the PIXEL
@@ -27,7 +27,7 @@ func TestRenderProtocolWindowToPNG(t *testing.T) {
 
 	conn := client.NewInProcess(nil)
 	ui, err := conn.Build(`
-w=new window title="Graphical tuitk" width=608 height=352 children={
+w=new window title="Graphical KittyTk" width=608 height=352 children={
 	p=new panel layout=vbox spacing=0 children={
 		new label caption="This window is rendered as PIXELS through the same"
 		new label caption="primitives the terminal uses - no trinket changed."

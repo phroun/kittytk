@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/window"
 )
 
 // MDIPane is a container trinket that manages multiple floating windows (MDI children).

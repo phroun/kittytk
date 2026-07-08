@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/image/font/gofont/gomono"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 func sans(size int) *core.Font { return &core.Font{Name: "Noto Sans", Size: size} }

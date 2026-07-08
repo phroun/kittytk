@@ -16,8 +16,8 @@ import (
 	"golang.org/x/image/font/gofont/gomonoitalic"
 	"golang.org/x/image/font/gofont/goregular"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/text/fonts"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/text/fonts"
 )
 
 // Aspect selects a style variant within a family.

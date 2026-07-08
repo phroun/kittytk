@@ -3,8 +3,8 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/layout"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/layout"
 )
 
 // fixed_width pins the panel's SizeHint width so a wrapping label inside

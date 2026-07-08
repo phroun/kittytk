@@ -4,11 +4,11 @@ import (
 	"image/color"
 	"testing"
 
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/raster"
+	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/window"
 	"github.com/phroun/purfecterm"
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/raster"
-	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/window"
 )
 
 // gfxHarness builds a graphical desktop hosting a terminal trinket.

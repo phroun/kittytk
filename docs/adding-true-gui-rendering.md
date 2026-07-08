@@ -1,8 +1,8 @@
-# Adding True GUI Rendering to tuitk
+# Adding True GUI Rendering to KittyTk
 
 ## Overview
 
-This document analyzes the architectural challenges and solutions for adding native GUI rendering backends (macOS, Windows, Web) to tuitk, allowing the same application code to compile against either TUI or native GUI targets.
+This document analyzes the architectural challenges and solutions for adding native GUI rendering backends (macOS, Windows, Web) to KittyTk, allowing the same application code to compile against either TUI or native GUI targets.
 
 ## The Core Challenge: Two Rendering Paradigms
 
@@ -320,7 +320,7 @@ func (label *Label) SizeHint() UnitSize {
    - QStyle system for platform-specific appearance
    - Best of both worlds, most work
 
-**Recommendation for tuitk:** Start with #1 (custom drawing), style it nicely. Native wrapping is enormous effort.
+**Recommendation for KittyTk:** Start with #1 (custom drawing), style it nicely. Native wrapping is enormous effort.
 
 ---
 
@@ -451,6 +451,6 @@ type DialogBackend interface {
 
 ## Summary
 
-The tuitk architecture is well-designed for multi-backend support. A basic GUI backend (custom drawing with consistent style) could be built with **moderate effort**. Full native look-and-feel would require significant additional work but is achievable.
+The KittyTk architecture is well-designed for multi-backend support. A basic GUI backend (custom drawing with consistent style) could be built with **moderate effort**. Full native look-and-feel would require significant additional work but is achievable.
 
 The key insight is that the cell-based renderer is a TUI-only aspect. The GUI version would transform the same layout information and trinkets into appropriate native OS windows with native content rendering.

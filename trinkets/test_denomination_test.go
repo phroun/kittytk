@@ -3,9 +3,9 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/layout"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/layout"
+	"github.com/phroun/kittytk/window"
 )
 
 // Replicates the demo's Selection-tab hierarchy: window → tabtrinket →

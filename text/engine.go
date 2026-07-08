@@ -1,5 +1,5 @@
-// Package text is tuitk's shared text engine (plan decisions D5/D6):
-// one tuitk-owned module for text shaping, measurement, and
+// Package text is KittyTk's shared text engine (plan decisions D5/D6):
+// one KittyTk-owned module for text shaping, measurement, and
 // rasterization, used identically by every graphical backend, so
 // server-side layout is deterministic and measurement can never
 // disagree with painting.
@@ -37,7 +37,7 @@ import (
 	"golang.org/x/image/math/fixed"
 	xbidi "golang.org/x/text/unicode/bidi"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // Direction is the paragraph base direction.

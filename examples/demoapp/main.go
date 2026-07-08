@@ -1,6 +1,6 @@
 // Command demoapp is the full TUI Toolkit demo as a display-protocol
 // APPLICATION: it links only client + protocol (no rendering backend),
-// dials a running tuitk display service, and drives its entire UI - the
+// dials a running KittyTk display service, and drives its entire UI - the
 // nine-tab trinket gallery, menu bars, status bar, the protocol-built
 // window, terminal child windows, dialogs and MDI - over the socket.
 //
@@ -19,8 +19,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/phroun/tuitk/client"
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // soloMode, set by -solo, makes the primary app the whole display: its

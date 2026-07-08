@@ -3,7 +3,7 @@ package window
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // A window left off-screen by a desktop shrink is corralled into view

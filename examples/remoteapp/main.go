@@ -1,6 +1,6 @@
 // Command remoteapp is a display-protocol APPLICATION: it contains
 // no rendering code at all - it links only client and protocol,
-// dials a running tuitk display service (start examples/demo in
+// dials a running KittyTk display service (start examples/demo in
 // another terminal), and drives its UI over the socket.
 //
 //	terminal 1:  go run ./examples/demo
@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/phroun/tuitk/client"
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/protocol"
 )
 
 func main() {

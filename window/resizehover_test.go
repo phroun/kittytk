@@ -3,7 +3,7 @@ package window
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // resizeEdgeRects produces one band per edge (two for a corner), sized to

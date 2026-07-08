@@ -4,7 +4,7 @@ package core
 import (
 	"sync"
 
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/style"
 )
 
 // Trinket is the base interface for all UI elements.

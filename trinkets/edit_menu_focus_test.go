@@ -3,8 +3,8 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/window"
 )
 
 // Desktop.FocusedTrinket reaches through the active window to its

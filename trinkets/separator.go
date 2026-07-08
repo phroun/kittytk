@@ -2,8 +2,8 @@
 package trinkets
 
 import (
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // captionFont75 returns the face used for divider/separator captions

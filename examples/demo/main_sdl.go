@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	sdlplat "github.com/phroun/tuitk/sdl"
-	"github.com/phroun/tuitk/trinkets"
+	sdlplat "github.com/phroun/kittytk/sdl"
+	"github.com/phroun/kittytk/trinkets"
 )
 
 // The graphical demo: the SAME demo application, rendered as pixels
@@ -17,7 +17,7 @@ import (
 //
 //	go run -tags sdl ./examples/demo
 func main() {
-	plat := sdlplat.New("tuitk demo", 1280, 800)
+	plat := sdlplat.New("KittyTk demo", 1280, 800)
 	plat.SetScale(2) // 2x font/cell size for now (per owner request)
 	pixelBackend, err := plat.EnsureBackend()
 	if err != nil {

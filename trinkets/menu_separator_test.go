@@ -3,8 +3,8 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/raster"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/raster"
 )
 
 // gfxFrameParent is a minimal Container that reports graphical window

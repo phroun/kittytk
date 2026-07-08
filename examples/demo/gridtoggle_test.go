@@ -3,11 +3,11 @@ package main
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/raster"
-	"github.com/phroun/tuitk/trinkets"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/raster"
+	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/window"
 )
 
 // Toggling the 32-unit-rows denomination on and back off must return

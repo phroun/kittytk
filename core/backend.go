@@ -4,7 +4,7 @@ package core
 import (
 	"image"
 
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/style"
 )
 
 // RenderBackend abstracts the rendering target.

@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/phroun/tuitk/client"
+	"github.com/phroun/kittytk/client"
 )
 
 func main() {

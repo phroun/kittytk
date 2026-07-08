@@ -3,7 +3,7 @@ package window
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // A window with no chrome of its own (a torn-off child) services its

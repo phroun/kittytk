@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // Space triggers like Enter - a brief press animation then the

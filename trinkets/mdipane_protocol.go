@@ -3,9 +3,9 @@ package trinkets
 import (
 	"fmt"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/window"
 )
 
 // Wire registration for MDIPane. Child windows are ordinary protocol

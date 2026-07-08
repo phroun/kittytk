@@ -3,7 +3,7 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // propMeasurer is a stand-in graphical text measurer: a distinctive

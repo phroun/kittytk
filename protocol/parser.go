@@ -1,4 +1,4 @@
-// Package protocol implements the tuitk display-protocol command
+// Package protocol implements the KittyTk display-protocol command
 // language (plan decisions D10-D17): named properties (nothing
 // positional), alias dictionaries, correlation keys with hierarchical
 // scoping and explicit surfacing, three-valued boolean flags,

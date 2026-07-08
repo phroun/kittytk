@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/phroun/tuitk/client"
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/display"
-	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/trinkets"
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/display"
+	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/trinkets"
 )
 
 // nullBackend is a headless RenderBackend.

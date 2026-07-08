@@ -3,7 +3,7 @@ package window
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // The tear handle sits in the title focus order between the maximize

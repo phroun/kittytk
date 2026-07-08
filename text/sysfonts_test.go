@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/phroun/tuitk/text/fonts"
+	"github.com/phroun/kittytk/text/fonts"
 )
 
 // loadFallbackFiles registers existing files at the TAIL of the

@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/phroun/tuitk/app"
-	"github.com/phroun/tuitk/client"
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/trinkets"
+	"github.com/phroun/kittytk/app"
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/trinkets"
 )
 
 // The MDI Demo tab, converted: the pane, its background control

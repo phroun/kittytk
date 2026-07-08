@@ -3,7 +3,7 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // newOverflowingMenuBar builds a bar narrow enough that its menus don't

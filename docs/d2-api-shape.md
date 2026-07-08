@@ -57,7 +57,7 @@ slice 3.)
 
 ## Milestone P0 — the demo runs on the protocol, in-process
 
-Owner-directed goal (2026-07-05): tuitk and its demo operating on the
+Owner-directed goal (2026-07-05): KittyTk and its demo operating on the
 D10–D17 protocol basis within a single process — commands and events
 as real protocol records, no sockets yet. Steps:
 
@@ -142,7 +142,7 @@ as real protocol records, no sockets yet. Steps:
    fixed with `protocol.SetVirtualIDSource`, which `trinkets` points
    at the same allocator as real trinket IDs (`core.NextObjectID`).
 
-**Milestone P0 complete (2026-07-05):** tuitk and its demo run on the
+**Milestone P0 complete (2026-07-05):** KittyTk and its demo run on the
 D10–D18 protocol basis in-process — UI built from protocol text,
 interactions delivered as protocol event records, commands dispatched
 by stable ID.

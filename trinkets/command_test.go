@@ -3,7 +3,7 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 func TestCommandRegistryBasics(t *testing.T) {

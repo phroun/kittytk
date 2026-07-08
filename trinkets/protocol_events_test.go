@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // buildWithEvents builds protocol UI with an event-collecting context,

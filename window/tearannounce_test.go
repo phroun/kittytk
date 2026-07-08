@@ -3,7 +3,7 @@ package window
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // a11yParent is a minimal Container that also provides an

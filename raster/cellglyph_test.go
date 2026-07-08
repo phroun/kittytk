@@ -3,7 +3,7 @@ package raster
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/style"
 )
 
 // DrawCell (the cell primitive) shapes through the engine, so chrome

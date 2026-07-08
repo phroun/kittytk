@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/raster"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/raster"
+	"github.com/phroun/kittytk/window"
 )
 
 // On pixel surfaces the horizontal divider band of a vertical

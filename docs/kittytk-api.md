@@ -1,11 +1,11 @@
 # TUI Toolkit API Reference
 
-Complete API for building tuitk applications.
+Complete API for building KittyTk applications.
 
 ## Package Structure
 
 ```
-tuitk/
+KittyTk/
   app/       - Application lifecycle
   backend/   - Terminal rendering
   core/      - Fundamental types, trinket interface, events
@@ -21,10 +21,10 @@ tuitk/
 package main
 
 import (
-    "github.com/phroun/tuitk/app"
-    "github.com/phroun/tuitk/backend"
-    "github.com/phroun/tuitk/trinkets"
-    "github.com/phroun/tuitk/window"
+    "github.com/phroun/KittyTk/app"
+    "github.com/phroun/KittyTk/backend"
+    "github.com/phroun/KittyTk/trinkets"
+    "github.com/phroun/KittyTk/window"
 )
 
 func main() {

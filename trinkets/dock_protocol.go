@@ -3,8 +3,8 @@ package trinkets
 import (
 	"fmt"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // Wire registration for DockRow and the virtual dockentry. Entries

@@ -3,9 +3,9 @@ package trinkets
 import (
 	"time"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/platform"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/platform"
+	"github.com/phroun/kittytk/window"
 )
 
 // Tear-off choreography (G4 granting, desktop side). On multi-surface

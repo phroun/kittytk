@@ -3,8 +3,8 @@ package trinkets
 import (
 	"fmt"
 
-	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/style"
 )
 
 // Wire registration for status bar content: a statusbar collects

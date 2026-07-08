@@ -2,7 +2,7 @@
 package trinkets
 
 import (
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // Spacer is a simple trinket that takes up space in a layout.

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/phroun/tuitk/client"
-	"github.com/phroun/tuitk/trinkets"
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/trinkets"
 )
 
 // The MDI tab script must build, surface its keys, and support the

@@ -2,7 +2,7 @@
 package layout
 
 import (
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // GridItem represents a trinket placed in a grid.

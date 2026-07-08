@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // The title ellipsis is three periods, not the "…" glyph, and the

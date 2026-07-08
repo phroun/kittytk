@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // DisplayEnv is the environment variable naming the display endpoint
 // (a unix socket path). DefaultSocketPath is used when unset.
-const DisplayEnv = "TUITK_DISPLAY"
+const DisplayEnv = "KITTYTK_DISPLAY"
 
 // DefaultSocketPath returns the conventional endpoint:
-// $TUITK_DISPLAY, else $XDG_RUNTIME_DIR/tuitk/display-0.sock.
+// $KITTYTK_DISPLAY, else $XDG_RUNTIME_DIR/kittytk/display-0.sock.
 func DefaultSocketPath() string {
 	if p := os.Getenv(DisplayEnv); p != "" {
 		return p
@@ -24,7 +24,7 @@ func DefaultSocketPath() string {
 	if runtimeDir == "" {
 		runtimeDir = os.TempDir()
 	}
-	return filepath.Join(runtimeDir, "tuitk", "display-0.sock")
+	return filepath.Join(runtimeDir, "kittytk", "display-0.sock")
 }
 
 // Dial connects to a display service (D22 transport: protocol text

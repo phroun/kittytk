@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // fakeBackend is a minimal RenderBackend with an injectable event

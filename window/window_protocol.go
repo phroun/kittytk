@@ -3,8 +3,8 @@ package window
 import (
 	"fmt"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // Wire registration for Window. Per D12, behavior flags are

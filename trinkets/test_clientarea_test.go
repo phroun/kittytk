@@ -3,9 +3,9 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/raster"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/raster"
+	"github.com/phroun/kittytk/window"
 )
 
 // The client-area contract per frame mode: cell frames reserve a full

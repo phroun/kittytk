@@ -2,7 +2,7 @@
 package layout
 
 import (
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // FlexDirection specifies the main axis direction.

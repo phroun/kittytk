@@ -5,8 +5,8 @@ import (
 	"time"
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/window"
 )
 
 // A tall menu opened from a detached window's own menu bar clamps to the

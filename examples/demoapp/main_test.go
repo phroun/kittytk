@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // Every script the demoapp sends over the socket must be well-formed

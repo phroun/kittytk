@@ -1,4 +1,4 @@
-module github.com/phroun/tuitk
+module github.com/phroun/kittytk
 
 go 1.25.0
 

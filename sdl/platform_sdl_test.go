@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/platform"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/platform"
 )
 
 type recordingHandler struct {

@@ -1,7 +1,7 @@
 //go:build sdl
 
 // Command sdldesktop is the GRAPHICAL display service (D23): a blank
-// tuitk desktop rendered as pixels in an SDL window, serving the
+// KittyTk desktop rendered as pixels in an SDL window, serving the
 // protocol socket. Applications are separate processes that dial in:
 //
 //	terminal 1:  go run -tags sdl ./examples/sdldesktop
@@ -12,15 +12,15 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/phroun/tuitk/app"
-	"github.com/phroun/tuitk/client"
-	"github.com/phroun/tuitk/display"
-	sdlplat "github.com/phroun/tuitk/sdl"
-	"github.com/phroun/tuitk/trinkets"
+	"github.com/phroun/kittytk/app"
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/display"
+	sdlplat "github.com/phroun/kittytk/sdl"
+	"github.com/phroun/kittytk/trinkets"
 )
 
 func main() {
-	plat := sdlplat.New("tuitk", 1024, 768)
+	plat := sdlplat.New("KittyTk", 1024, 768)
 	plat.SetScale(2) // 2x font/cell size for now (per owner request)
 	backend, err := plat.EnsureBackend()
 	if err != nil {

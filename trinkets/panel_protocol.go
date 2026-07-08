@@ -3,10 +3,10 @@ package trinkets
 import (
 	"fmt"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/layout"
-	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/layout"
+	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/style"
 )
 
 // Wire registration for Panel (see docs/property-vocabulary.md).

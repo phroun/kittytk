@@ -1,14 +1,14 @@
 package trinkets
 
 // The graphical paint path for PurfecTerm (D1): a faithful port of
-// the reference gtk/qt widget renderers onto tuitk's Painter and the
+// the reference gtk/qt widget renderers onto KittyTk's Painter and the
 // shared text engine. It drives purfecterm.Buffer directly - screen
 // splits, sprites, custom glyphs, screen scale/crop, selection,
 // blink animation, cursor shapes with the unfocused hollow-box form,
 // scrollbars, autoscroll, and the right-click context menu.
 //
 // Porting notes (deliberate deltas from the gtk reference):
-//   - terminalLeftPadding is 0: tuitk trinkets own their full bounds.
+//   - terminalLeftPadding is 0: KittyTk trinkets own their full bounds.
 //   - Rect fills round to whole units edge-to-edge (no seams);
 //     glyphs, sprites, and cursor overlays keep device-pixel
 //     precision through Painter.DrawImageOffset.
@@ -22,10 +22,10 @@ import (
 	"math"
 	"time"
 
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/text"
 	"github.com/phroun/purfecterm"
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/text"
 )
 
 const (

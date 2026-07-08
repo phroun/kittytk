@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/phroun/tuitk/client"
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // wireMainWindow subscribes the demo window's interactive trinkets:

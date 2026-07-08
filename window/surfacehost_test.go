@@ -3,9 +3,9 @@ package window
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/platform"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/platform"
+	"github.com/phroun/kittytk/style"
 )
 
 // fakeSurface records handler installation and invalidations.

@@ -3,7 +3,7 @@ package trinkets
 import (
 	"fmt"
 
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // Wire registration for MessageBox. Buttons are individual flags per

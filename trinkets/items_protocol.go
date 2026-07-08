@@ -3,8 +3,8 @@ package trinkets
 import (
 	"fmt"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // The virtual `item` type unifies list-shaped children (D13): combobox

@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // transport is how statements reach the display service: in-process

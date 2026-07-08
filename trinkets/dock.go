@@ -2,7 +2,7 @@
 package trinkets
 
 import (
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // DockEntry represents a minimized window in the dock.

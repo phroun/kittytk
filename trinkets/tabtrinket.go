@@ -6,8 +6,8 @@ import (
 
 	"fmt"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // TabTrinket displays multiple pages with tabs.

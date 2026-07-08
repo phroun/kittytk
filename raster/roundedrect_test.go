@@ -4,10 +4,10 @@ import (
 	"image/color"
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/raster"
-	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/raster"
+	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/window"
 )
 
 func TestDrawRoundedRect(t *testing.T) {

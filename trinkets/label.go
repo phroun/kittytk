@@ -4,8 +4,8 @@ package trinkets
 import (
 	"strings"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // Label displays static text. It cannot receive focus.

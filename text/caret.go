@@ -3,7 +3,7 @@ package text
 import (
 	"golang.org/x/image/math/fixed"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // The cluster-map operations (D6): caret placement and hit-testing

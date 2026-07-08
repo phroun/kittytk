@@ -6,7 +6,7 @@ import (
 
 	gtrender "github.com/go-text/render"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // Render rasterizes a shaped paragraph onto dst with the paragraph's

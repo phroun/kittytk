@@ -1,8 +1,8 @@
 package window
 
 import (
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/platform"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/platform"
 )
 
 // SurfaceHost is G4's native mode: one Window as the entire content
@@ -22,7 +22,7 @@ type SurfaceHost struct {
 func NewSurfaceHost(win *Window, surface platform.Surface) *SurfaceHost {
 	h := &SurfaceHost{win: win, surface: surface}
 
-	// Native chrome lives outside: no tuitk frame, no title bar,
+	// Native chrome lives outside: no KittyTk frame, no title bar,
 	// geometry belongs to the platform.
 	win.SetFlags(win.Flags() | WindowFlagFrameless | WindowFlagNoTitle | WindowFlagNoResize | WindowFlagNoMove)
 

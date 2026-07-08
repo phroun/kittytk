@@ -3,7 +3,7 @@ package client
 import (
 	"fmt"
 
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // Handle is the generic typed reference to one display-side object.

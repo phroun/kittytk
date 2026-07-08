@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/window"
 )
 
 // DialogButton represents standard dialog buttons.

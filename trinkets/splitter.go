@@ -2,8 +2,8 @@
 package trinkets
 
 import (
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // Splitter is a container trinket that divides space between two children

@@ -4,7 +4,7 @@ import (
 	"image/color"
 	"testing"
 
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/style"
 )
 
 // The backend resolves the 16 standard colors and the default fg/bg

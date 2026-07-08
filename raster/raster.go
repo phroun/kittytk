@@ -1,4 +1,4 @@
-// Package raster is the pixel implementation of tuitk's rendering
+// Package raster is the pixel implementation of KittyTk's rendering
 // primitives (D23): the same core.RenderBackend interface the TUI
 // speaks, drawn onto an RGBA framebuffer with real font glyphs and
 // real lines. There is no glyph-grid emulation stage - DrawRect
@@ -24,12 +24,12 @@ import (
 	"os"
 	"sync"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/text"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/text"
 )
 
-// Backend renders tuitk drawing primitives into an RGBA image.
+// Backend renders KittyTk drawing primitives into an RGBA image.
 type Backend struct {
 	img   *image.RGBA
 	w, h  int // pixels

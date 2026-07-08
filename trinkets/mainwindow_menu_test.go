@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/window"
 )
 
 // mockApp is a minimal ApplicationProvider for exercising the desktop's

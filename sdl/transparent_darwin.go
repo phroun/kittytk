@@ -7,7 +7,7 @@ package sdl
 #include <objc/runtime.h>
 #include <objc/message.h>
 
-static void tuitk_layer_nonopaque(id layer) {
+static void kittytk_layer_nonopaque(id layer) {
 	if (!layer) {
 		return;
 	}
@@ -27,13 +27,13 @@ static void tuitk_layer_nonopaque(id layer) {
 	}
 }
 
-// tuitk_make_window_transparent flips an NSWindow (and every backing
+// kittytk_make_window_transparent flips an NSWindow (and every backing
 // layer under its content view - SDL's Metal/GL surface lives on a
 // SUBVIEW, not a sublayer) to non-opaque with a clear background so
 // the framebuffer's alpha channel composites against whatever is
 // behind the window. SDL2 has no portable per-pixel window alpha;
 // this is the standard Cocoa-side arrangement for it.
-static void tuitk_make_window_transparent(void *nswindow) {
+static void kittytk_make_window_transparent(void *nswindow) {
 	id win = (id)nswindow;
 	if (!win) {
 		return;
@@ -49,7 +49,7 @@ static void tuitk_make_window_transparent(void *nswindow) {
 	if (!view) {
 		return;
 	}
-	tuitk_layer_nonopaque(((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("layer")));
+	kittytk_layer_nonopaque(((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("layer")));
 	id subviews = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
 	if (subviews) {
 		unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(
@@ -58,16 +58,16 @@ static void tuitk_make_window_transparent(void *nswindow) {
 		for (i = 0; i < n; i++) {
 			id sv = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
 				subviews, sel_registerName("objectAtIndex:"), i);
-			tuitk_layer_nonopaque(((id (*)(id, SEL))objc_msgSend)(sv, sel_registerName("layer")));
+			kittytk_layer_nonopaque(((id (*)(id, SEL))objc_msgSend)(sv, sel_registerName("layer")));
 		}
 	}
 }
 
-// tuitk_enable_miniaturize adds NSWindowStyleMaskMiniaturizable
+// kittytk_enable_miniaturize adds NSWindowStyleMaskMiniaturizable
 // (1 << 2) to a borderless window's style mask: without it Cocoa
 // silently refuses to miniaturize borderless windows, so torn-off
 // windows couldn't go to the Dock.
-static void tuitk_enable_miniaturize(void *nswindow) {
+static void kittytk_enable_miniaturize(void *nswindow) {
 	id win = (id)nswindow;
 	if (!win) {
 		return;
@@ -98,14 +98,14 @@ func makeWindowTransparent(win *sdl2.Window) bool {
 	if cocoa == nil {
 		return false
 	}
-	C.tuitk_make_window_transparent(cocoa)
+	C.kittytk_make_window_transparent(cocoa)
 	return true
 }
 
 // makeWindowMiniaturizable lets a borderless window go to the Dock.
 func makeWindowMiniaturizable(win *sdl2.Window) {
 	if cocoa := cocoaWindow(win); cocoa != nil {
-		C.tuitk_enable_miniaturize(cocoa)
+		C.kittytk_enable_miniaturize(cocoa)
 	}
 }
 

@@ -3,8 +3,8 @@
 package main
 
 import (
-	"github.com/phroun/tuitk/backend"
-	"github.com/phroun/tuitk/trinkets"
+	"github.com/phroun/kittytk/backend"
+	"github.com/phroun/kittytk/trinkets"
 )
 
 // The text-mode demo: the classic TUI desktop in your terminal.

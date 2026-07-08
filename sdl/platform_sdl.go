@@ -12,12 +12,12 @@ import (
 
 	sdl2 "github.com/veandco/go-sdl2/sdl"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/platform"
-	"github.com/phroun/tuitk/raster"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/platform"
+	"github.com/phroun/kittytk/raster"
 )
 
-// Platform runs tuitk over SDL2 windows: each surface is an OS
+// Platform runs KittyTk over SDL2 windows: each surface is an OS
 // window with its own raster backend, SDL presents and feeds input.
 // All callbacks on the OS-locked main thread per D21.
 type Platform struct {

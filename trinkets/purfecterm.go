@@ -6,8 +6,8 @@ import (
 
 	"github.com/phroun/purfecterm"
 	"github.com/phroun/purfecterm/cli"
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // PurfecTerm is a terminal emulator trinket that embeds PurfecTerm's CLI adapter.
@@ -246,7 +246,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 				break
 			}
 
-			// Convert purfecterm cell to tuitk style
+			// Convert purfecterm cell to KittyTk style
 			cellStyle := t.cellToStyle(cell)
 
 			// Get the character (use space if empty)
@@ -284,7 +284,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 	}
 }
 
-// cellToStyle converts a purfecterm RenderedCell to a tuitk CellStyle.
+// cellToStyle converts a purfecterm RenderedCell to a KittyTk CellStyle.
 func (t *PurfecTerm) cellToStyle(cell cli.RenderedCell) style.CellStyle {
 	s := style.DefaultStyle()
 
@@ -306,7 +306,7 @@ func (t *PurfecTerm) cellToStyle(cell cli.RenderedCell) style.CellStyle {
 	return s
 }
 
-// convertColor converts a purfecterm color to a tuitk color.
+// convertColor converts a purfecterm color to a KittyTk color.
 func (t *PurfecTerm) convertColor(c purfecterm.Color) style.Color {
 	// Check color type
 	switch c.Type {

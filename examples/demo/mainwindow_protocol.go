@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/phroun/tuitk/app"
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/layout"
-	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/trinkets"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/app"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/layout"
+	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/window"
 )
 
 // The TUI Toolkit Demo window is built from protocol text: the script

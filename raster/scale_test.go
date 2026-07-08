@@ -3,9 +3,9 @@ package raster_test
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/raster"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/raster"
+	"github.com/phroun/kittytk/style"
 )
 
 // At scale 2 the same unit-space drawing covers twice the pixels: one

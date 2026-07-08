@@ -3,7 +3,7 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // menuCapture wraps a factory to grab the first MenuItem it builds, so a

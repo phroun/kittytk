@@ -2,8 +2,8 @@
 package trinkets
 
 import (
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // Checkbox is a trinket with a checkable state.

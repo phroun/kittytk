@@ -1,8 +1,8 @@
 package trinkets
 
 import (
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/protocol"
 )
 
 // Wire registration for the spacer trinket (see docs/property-vocabulary.md).

@@ -3,9 +3,9 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/tuitk/raster"
+	"github.com/phroun/kittytk/raster"
 
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
 // fakeClip is a minimal PopupController that also carries a clipboard,
