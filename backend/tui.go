@@ -12,8 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/phroun/direct-key-handler/keyboard"
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 	"golang.org/x/term"
 )
 
@@ -368,10 +368,23 @@ func (t *TUIBackend) SetClip(clip core.UnitRect) {
 }
 
 // isInClip checks if a cell coordinate is within the clip region.
+// A cell is considered in clip if its starting position is within bounds.
 func (t *TUIBackend) isInClip(col, row int) bool {
 	x := t.metrics.CellToUnitsX(col)
 	y := t.metrics.CellToUnitsY(row)
 	return t.clipRect.Contains(core.UnitPoint{X: x, Y: y})
+}
+
+// cellFitsInClip checks if a cell fully fits within the clip region.
+// Used for optional trailing elements like Tuesday font spacing.
+func (t *TUIBackend) cellFitsInClip(col, row int) bool {
+	x := t.metrics.CellToUnitsX(col)
+	y := t.metrics.CellToUnitsY(row)
+	// Check if cell end position is within clip (cell end = start + cell width)
+	cellEndX := x + t.metrics.CellWidth
+	cellEndY := y + t.metrics.CellHeight
+	return x >= t.clipRect.X && cellEndX <= t.clipRect.X+t.clipRect.Width &&
+		y >= t.clipRect.Y && cellEndY <= t.clipRect.Y+t.clipRect.Height
 }
 
 // setCell sets a cell in the back buffer with clipping.
@@ -395,25 +408,46 @@ func (t *TUIBackend) DrawCell(x, y core.Unit, ch rune, s style.CellStyle) {
 	t.setCell(col, row, ch, s)
 }
 
-// DrawText draws a string starting at the given position.
-func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle) core.Unit {
+// DrawText draws a string starting at the given position using the given font.
+func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, font *core.Font) core.Unit {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if font == nil {
+		font = core.DefaultFont()
+	}
+
+	// Apply font's foreground color if set (for debugging/visualization)
+	effectiveStyle := s
+	if !font.Foreground.IsDefault {
+		effectiveStyle = s.WithFg(font.Foreground.Color)
+	}
 
 	col := t.metrics.UnitsToCellX(x)
 	row := t.metrics.UnitsToCellY(y)
 
 	startCol := col
+	isTuesday := font.Name == "Tuesday"
+
 	for _, ch := range text {
 		if col >= t.cols {
 			break
 		}
-		t.setCell(col, row, ch, s)
+		t.setCell(col, row, ch, effectiveStyle)
 		col++
+
 		// Handle wide characters (CJK, emoji)
 		if runeWidth(ch) > 1 {
 			if col < t.cols {
-				t.setCell(col, row, 0, s) // Placeholder for wide char
+				t.setCell(col, row, 0, effectiveStyle) // Placeholder for wide char
+				col++
+			}
+		} else if isTuesday && isAlphanumeric(ch) {
+			// Tuesday font: add space after alphabetic/numeric chars
+			// Only add the space if the cell fully fits in the clip region,
+			// allowing "half" of a wide Tuesday character to be shown when truncated
+			if col < t.cols && t.cellFitsInClip(col, row) {
+				t.setCell(col, row, ' ', effectiveStyle)
 				col++
 			}
 		}
@@ -422,10 +456,25 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle) co
 	return t.metrics.TextWidth(col - startCol)
 }
 
-// DrawTextAligned draws text aligned within a box.
-func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, vAlign core.Alignment, s style.CellStyle) {
+// isAlphanumeric returns true if the character is a letter or digit.
+func isAlphanumeric(ch rune) bool {
+	return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
+}
+
+// DrawTextAligned draws text aligned within a box using the given font.
+func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, vAlign core.Alignment, s style.CellStyle, font *core.Font) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if font == nil {
+		font = core.DefaultFont()
+	}
+
+	// Apply font's foreground color if set (for debugging/visualization)
+	effectiveStyle := s
+	if !font.Foreground.IsDefault {
+		effectiveStyle = s.WithFg(font.Foreground.Color)
+	}
 
 	// Convert bounds to cells
 	col1 := t.metrics.UnitsToCellX(bounds.X)
@@ -436,7 +485,18 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 	boxWidth := col2 - col1
 	boxHeight := row2 - row1
 
-	textLen := utf8.RuneCountInString(text)
+	isTuesday := font.Name == "Tuesday"
+
+	// Calculate text width in cells accounting for font
+	textCells := 0
+	for _, ch := range text {
+		textCells++
+		if runeWidth(ch) > 1 {
+			textCells++
+		} else if isTuesday && isAlphanumeric(ch) {
+			textCells++ // Extra cell for spacing
+		}
+	}
 
 	// Calculate horizontal position
 	var col int
@@ -444,9 +504,9 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 	case core.AlignLeft:
 		col = col1
 	case core.AlignCenter:
-		col = col1 + (boxWidth-textLen)/2
+		col = col1 + (boxWidth-textCells)/2
 	case core.AlignRight:
-		col = col2 - textLen
+		col = col2 - textCells
 	default:
 		col = col1
 	}
@@ -470,9 +530,26 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 			break
 		}
 		if col >= col1 {
-			t.setCell(col, row, ch, s)
+			t.setCell(col, row, ch, effectiveStyle)
 		}
 		col++
+
+		// Handle wide characters
+		if runeWidth(ch) > 1 {
+			if col < col2 && col >= col1 {
+				t.setCell(col, row, 0, effectiveStyle)
+			}
+			col++
+		} else if isTuesday && isAlphanumeric(ch) {
+			// Tuesday font: add space after alphabetic/numeric chars
+			// Only add the space if the cell fully fits within bounds,
+			// allowing "half" of a wide Tuesday character to be shown when truncated
+			cellEndX := t.metrics.CellToUnitsX(col) + t.metrics.CellWidth
+			if col < col2 && col >= col1 && cellEndX <= bounds.X+bounds.Width {
+				t.setCell(col, row, ' ', effectiveStyle)
+			}
+			col++
+		}
 	}
 }
 
@@ -725,7 +802,7 @@ func (t *TUIBackend) handleKey(key string) {
 
 	event := core.KeyPressEvent{
 		Key:       key,  // Full key string including modifier prefixes
-		Modifiers: mods, // Also provide parsed modifiers for widget convenience
+		Modifiers: mods, // Also provide parsed modifiers for trinket convenience
 		Text:      text,
 	}
 

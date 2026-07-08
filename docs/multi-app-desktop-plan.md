@@ -54,7 +54,7 @@ Restructure the toolkit so Desktop is the top-level object, with multiple Applic
 
 ```go
 // New way (explicit)
-desktop := widgets.NewDesktop()
+desktop := trinkets.NewDesktop()
 myApp := app.NewApplication("MyApp")
 desktop.AddApplication(myApp)
 desktop.Run()
@@ -180,7 +180,7 @@ contextMenu.AddActionItem(app.ActionByID("edit.copy"))
 
 ### Modified Files
 
-1. **widgets/desktop.go**
+1. **trinkets/desktop.go**
    - Add `applications []ApplicationProvider`
    - Add `activeApp ApplicationProvider`
    - Add `systemMenu *Menu`
@@ -196,7 +196,7 @@ contextMenu.AddActionItem(app.ActionByID("edit.copy"))
    - Add menu/status content methods
    - Keep `Run()` for backward compatibility (creates implicit Desktop)
 
-3. **widgets/menubar.go**
+3. **trinkets/menubar.go**
    - Add `systemMenu *Menu` field
    - Update `Paint()` to render system menu first
    - Add method to swap app menu content

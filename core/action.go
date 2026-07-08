@@ -164,12 +164,58 @@ func NewShortcut(key string) Shortcut {
 }
 
 // Matches returns true if the key event matches this shortcut.
+// Control combinations have two accepted spellings - caret ("^X")
+// and prefix ("C-x") - so both sides are canonicalized before
+// comparing; "^\\" matches an event reported as "C-\\".
 func (s Shortcut) Matches(event KeyPressEvent) bool {
 	if s == "" {
 		return false
 	}
-	// Direct comparison - both use key handler format
-	return event.Key == string(s)
+	if event.Key == string(s) {
+		return true
+	}
+	return canonicalKeyString(event.Key) == canonicalKeyString(string(s))
+}
+
+// canonicalKeyString reduces a key-handler-format string to a single
+// canonical spelling: modifier prefixes are kept in encounter order,
+// and a Control modifier on a single-character key becomes caret
+// notation with letters uppercased ("C-h" -> "^H"). Control on a
+// named key stays in prefix form ("C-Up").
+func canonicalKeyString(k string) string {
+	mods := ""
+	rest := k
+	ctrl := false
+	for {
+		if len(rest) > 1 && rest[0] == '^' {
+			ctrl = true
+			rest = rest[1:]
+			continue
+		}
+		if len(rest) > 2 {
+			switch rest[:2] {
+			case "C-":
+				ctrl = true
+				rest = rest[2:]
+				continue
+			case "M-", "A-", "S-", "s-", "H-":
+				mods += rest[:2]
+				rest = rest[2:]
+				continue
+			}
+		}
+		break
+	}
+	if !ctrl {
+		return mods + rest
+	}
+	if len(rest) == 1 {
+		if c := rest[0]; c >= 'a' && c <= 'z' {
+			rest = string(c - 'a' + 'A')
+		}
+		return mods + "^" + rest
+	}
+	return mods + "C-" + rest
 }
 
 // String returns the shortcut in key handler format.
@@ -186,6 +232,135 @@ func (s Shortcut) DisplayString() string {
 	}
 	// Return the key handler format directly - it's already compact and readable
 	return string(s)
+}
+
+// spokenKeyNames maps punctuation and whitespace keys to words a speech
+// engine can pronounce, so shortcuts like ^\ announce as "Control
+// Backslash" rather than a silent or literal glyph.
+var spokenKeyNames = map[string]string{
+	"\\": "Backslash",
+	"/":  "Slash",
+	"`":  "Backtick",
+	"~":  "Tilde",
+	"!":  "Exclamation",
+	"@":  "At Sign",
+	"#":  "Number Sign",
+	"$":  "Dollar Sign",
+	"%":  "Percent",
+	"^":  "Caret",
+	"&":  "Ampersand",
+	"*":  "Asterisk",
+	"(":  "Left Paren",
+	")":  "Right Paren",
+	"-":  "Minus",
+	"_":  "Underscore",
+	"=":  "Equals",
+	"+":  "Plus",
+	"[":  "Left Bracket",
+	"]":  "Right Bracket",
+	"{":  "Left Brace",
+	"}":  "Right Brace",
+	";":  "Semicolon",
+	":":  "Colon",
+	"'":  "Apostrophe",
+	"\"": "Quote",
+	",":  "Comma",
+	".":  "Period",
+	"<":  "Less Than",
+	">":  "Greater Than",
+	"?":  "Question Mark",
+	"|":  "Pipe",
+	" ":  "Space",
+}
+
+// AccessibilityString returns a fully spelled-out representation of the shortcut
+// for screen reader announcements.
+// Translates: M- → Meta, A- → Alt, C- → Control, ^ → Control, S- → Shift, s- → Super, H- → Hyper
+// Uppercase final letter implies Shift for hyphenated modifiers (e.g., M-O → Meta+Shift+O)
+// but NOT for ^ notation (^X is just Control+X, case is irrelevant with ^)
+func (s Shortcut) AccessibilityString() string {
+	if s == "" {
+		return ""
+	}
+
+	str := string(s)
+	var modifiers []string
+	hasExplicitShift := false
+	usedCaretNotation := false
+
+	// Parse modifier prefixes
+	for len(str) > 0 {
+		if len(str) >= 2 {
+			prefix := str[:2]
+			switch prefix {
+			case "M-":
+				modifiers = append(modifiers, "Meta")
+				str = str[2:]
+				continue
+			case "A-":
+				modifiers = append(modifiers, "Alt")
+				str = str[2:]
+				continue
+			case "C-":
+				modifiers = append(modifiers, "Control")
+				str = str[2:]
+				continue
+			case "S-":
+				modifiers = append(modifiers, "Shift")
+				hasExplicitShift = true
+				str = str[2:]
+				continue
+			case "s-":
+				modifiers = append(modifiers, "Super")
+				str = str[2:]
+				continue
+			case "H-":
+				modifiers = append(modifiers, "Hyper")
+				str = str[2:]
+				continue
+			}
+		}
+		// Check for ^ prefix (Control) - case of following letter doesn't imply shift
+		if len(str) >= 1 && str[0] == '^' {
+			modifiers = append(modifiers, "Control")
+			usedCaretNotation = true
+			str = str[1:]
+			continue
+		}
+		break
+	}
+
+	// The remaining string is the key
+	key := str
+
+	// Check if single letter key is uppercase (implies Shift)
+	// Only applies to hyphenated modifiers, NOT to ^ notation
+	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' && !hasExplicitShift && !usedCaretNotation {
+		modifiers = append(modifiers, "Shift")
+	}
+
+	// Spell out punctuation keys as words a speech engine can pronounce;
+	// a bare "\" or "/" would otherwise be announced as nothing (or a
+	// literal glyph), so the whole item failed to speak.
+	if spoken, ok := spokenKeyNames[key]; ok {
+		key = spoken
+	}
+
+	// Build the result with spaces (for natural speech)
+	if len(modifiers) == 0 {
+		return key
+	}
+
+	result := ""
+	for i, mod := range modifiers {
+		if i > 0 {
+			result += " "
+		}
+		result += mod
+	}
+	result += " " + key
+
+	return result
 }
 
 // ActionGroup manages a collection of related actions.
@@ -419,7 +594,7 @@ func DefaultShortcuts() *ShortcutMap {
 	m.Set(StandardActions.Replace, "^H")
 
 	// Note: Tab, S-Tab, Escape, Enter are handled by Window's FocusManager
-	// and dialog widgets directly, not through the global shortcut system.
+	// and dialog trinkets directly, not through the global shortcut system.
 
 	return m
 }

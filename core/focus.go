@@ -16,43 +16,43 @@ type FocusManagerOwner interface {
 type FocusManager struct {
 	mu sync.RWMutex
 
-	// The root widget/container for this focus scope
-	root Widget
+	// The root trinket/container for this focus scope
+	root Trinket
 
-	// Currently focused widget
-	focusedWidget Widget
+	// Currently focused trinket
+	focusedTrinket Trinket
 
-	// Focus chain (ordered list of focusable widgets)
-	focusChain []Widget
+	// Focus chain (ordered list of focusable trinkets)
+	focusChain []Trinket
 
 	// Focus policy determines how focus behaves
 	wrapAround bool // Whether tab wraps from last to first
 
 	// Callbacks
-	onFocusChanged func(old, new Widget)
+	onFocusChanged func(old, new Trinket)
 
 	// Accessibility manager for announcements
 	accessibilityManager *AccessibilityManager
 }
 
-// NewFocusManager creates a new focus manager for a widget scope.
-func NewFocusManager(root Widget) *FocusManager {
+// NewFocusManager creates a new focus manager for a trinket scope.
+func NewFocusManager(root Trinket) *FocusManager {
 	return &FocusManager{
 		root:       root,
 		wrapAround: true,
 	}
 }
 
-// SetRoot sets the root widget for this focus scope.
-func (fm *FocusManager) SetRoot(root Widget) {
+// SetRoot sets the root trinket for this focus scope.
+func (fm *FocusManager) SetRoot(root Trinket) {
 	fm.mu.Lock()
 	fm.root = root
 	fm.focusChain = nil // Clear cached chain
 	fm.mu.Unlock()
 }
 
-// Root returns the root widget.
-func (fm *FocusManager) Root() Widget {
+// Root returns the root trinket.
+func (fm *FocusManager) Root() Trinket {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
 	return fm.root
@@ -65,168 +65,168 @@ func (fm *FocusManager) SetAccessibilityManager(am *AccessibilityManager) {
 	fm.mu.Unlock()
 }
 
-// FocusedWidget returns the currently focused widget.
-func (fm *FocusManager) FocusedWidget() Widget {
+// FocusedTrinket returns the currently focused trinket.
+func (fm *FocusManager) FocusedTrinket() Trinket {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
-	return fm.focusedWidget
+	return fm.focusedTrinket
 }
 
-// SetFocusedWidget sets the focused widget.
-func (fm *FocusManager) SetFocusedWidget(widget Widget) bool {
-	if widget != nil && !fm.canFocus(widget) {
+// SetFocusedTrinket sets the focused trinket.
+func (fm *FocusManager) SetFocusedTrinket(trinket Trinket) bool {
+	if trinket != nil && !fm.canFocus(trinket) {
 		return false
 	}
 
 	fm.mu.Lock()
-	if fm.focusedWidget == widget {
+	if fm.focusedTrinket == trinket {
 		fm.mu.Unlock()
 		return true
 	}
 
-	oldFocus := fm.focusedWidget
-	fm.focusedWidget = widget
+	oldFocus := fm.focusedTrinket
+	fm.focusedTrinket = trinket
 	handler := fm.onFocusChanged
 	am := fm.accessibilityManager
 	fm.mu.Unlock()
 
-	// Clear focus on old widget (this sets focused=false and calls HandleFocusOut)
+	// Clear focus on old trinket (this sets focused=false and calls HandleFocusOut)
 	if oldFocus != nil {
 		oldFocus.ClearFocus()
 	}
 
-	// Set focus on new widget (this sets focused=true and calls HandleFocusIn)
-	if widget != nil {
-		widget.SetFocus()
+	// Set focus on new trinket (this sets focused=true and calls HandleFocusIn)
+	if trinket != nil {
+		trinket.SetFocus()
 	}
 
 	// Announce focus change for accessibility
-	if am != nil && widget != nil {
-		am.AnnounceFocus(widget)
+	if am != nil && trinket != nil {
+		am.AnnounceFocus(trinket)
 	}
 
 	// Call callback
 	if handler != nil {
-		handler(oldFocus, widget)
+		handler(oldFocus, trinket)
 	}
 
 	return true
 }
 
-// SetFocusedWidgetWithoutScroll sets the focused widget without scrolling into view.
+// SetFocusedTrinketWithoutScroll sets the focused trinket without scrolling into view.
 // Use this for mouse-initiated focus changes where visibility is already proven.
-func (fm *FocusManager) SetFocusedWidgetWithoutScroll(widget Widget) bool {
-	if widget != nil && !fm.canFocus(widget) {
+func (fm *FocusManager) SetFocusedTrinketWithoutScroll(trinket Trinket) bool {
+	if trinket != nil && !fm.canFocus(trinket) {
 		return false
 	}
 
 	fm.mu.Lock()
-	if fm.focusedWidget == widget {
+	if fm.focusedTrinket == trinket {
 		fm.mu.Unlock()
 		return true
 	}
 
-	oldFocus := fm.focusedWidget
-	fm.focusedWidget = widget
+	oldFocus := fm.focusedTrinket
+	fm.focusedTrinket = trinket
 	handler := fm.onFocusChanged
 	am := fm.accessibilityManager
 	fm.mu.Unlock()
 
-	// Clear focus on old widget (this sets focused=false and calls HandleFocusOut)
+	// Clear focus on old trinket (this sets focused=false and calls HandleFocusOut)
 	if oldFocus != nil {
 		oldFocus.ClearFocus()
 	}
 
-	// Set focus on new widget without scrolling
-	if widget != nil {
-		widget.SetFocusWithoutScroll()
+	// Set focus on new trinket without scrolling
+	if trinket != nil {
+		trinket.SetFocusWithoutScroll()
 	}
 
 	// Announce focus change for accessibility
-	if am != nil && widget != nil {
-		am.AnnounceFocus(widget)
+	if am != nil && trinket != nil {
+		am.AnnounceFocus(trinket)
 	}
 
 	// Call callback
 	if handler != nil {
-		handler(oldFocus, widget)
+		handler(oldFocus, trinket)
 	}
 
 	return true
 }
 
-// setFocusedWidgetInternal is called by widgets when they gain focus.
-// It updates the focus manager's state and clears focus from the old widget,
-// but does NOT call SetFocus on the new widget (to avoid recursion).
-func (fm *FocusManager) setFocusedWidgetInternal(widget Widget) bool {
-	if widget != nil && !fm.canFocus(widget) {
+// setFocusedTrinketInternal is called by trinkets when they gain focus.
+// It updates the focus manager's state and clears focus from the old trinket,
+// but does NOT call SetFocus on the new trinket (to avoid recursion).
+func (fm *FocusManager) setFocusedTrinketInternal(trinket Trinket) bool {
+	if trinket != nil && !fm.canFocus(trinket) {
 		return false
 	}
 
 	fm.mu.Lock()
-	if fm.focusedWidget == widget {
+	if fm.focusedTrinket == trinket {
 		fm.mu.Unlock()
 		return true
 	}
 
-	oldFocus := fm.focusedWidget
-	fm.focusedWidget = widget
+	oldFocus := fm.focusedTrinket
+	fm.focusedTrinket = trinket
 	handler := fm.onFocusChanged
 	am := fm.accessibilityManager
 	fm.mu.Unlock()
 
-	// Clear focus on old widget (this sets focused=false and calls HandleFocusOut)
+	// Clear focus on old trinket (this sets focused=false and calls HandleFocusOut)
 	if oldFocus != nil {
 		oldFocus.ClearFocus()
 	}
 
-	// Do NOT call widget.SetFocus() here - the widget already has focus
-	// This method is called FROM widget.SetFocus(), so calling it again would loop
+	// Do NOT call trinket.SetFocus() here - the trinket already has focus
+	// This method is called FROM trinket.SetFocus(), so calling it again would loop
 
 	// Announce focus change for accessibility
-	if am != nil && widget != nil {
-		am.AnnounceFocus(widget)
+	if am != nil && trinket != nil {
+		am.AnnounceFocus(trinket)
 	}
 
 	// Call callback
 	if handler != nil {
-		handler(oldFocus, widget)
+		handler(oldFocus, trinket)
 	}
 
 	return true
 }
 
-// ClearFocus removes focus from the current widget.
+// ClearFocus removes focus from the current trinket.
 func (fm *FocusManager) ClearFocus() {
-	fm.SetFocusedWidget(nil)
+	fm.SetFocusedTrinket(nil)
 }
 
-// canFocus checks if a widget can receive focus.
-func (fm *FocusManager) canFocus(widget Widget) bool {
-	if widget == nil {
+// canFocus checks if a trinket can receive focus.
+func (fm *FocusManager) canFocus(trinket Trinket) bool {
+	if trinket == nil {
 		return false
 	}
 
 	// Check enabled
-	if !widget.IsEnabled() {
+	if !trinket.IsEnabled() {
 		return false
 	}
 
 	// Check visible
-	if !widget.IsVisible() {
+	if !trinket.IsVisible() {
 		return false
 	}
 
 	// Check focus policy
-	policy := widget.FocusPolicy()
+	policy := trinket.FocusPolicy()
 	return policy == StrongFocus || policy == TabFocus || policy == ClickFocus
 }
 
-// FocusNext moves focus to the next widget in the focus chain.
+// FocusNext moves focus to the next trinket in the focus chain.
 func (fm *FocusManager) FocusNext() bool {
 	fm.mu.RLock()
 	root := fm.root
-	current := fm.focusedWidget
+	current := fm.focusedTrinket
 	wrap := fm.wrapAround
 	fm.mu.RUnlock()
 
@@ -244,7 +244,7 @@ func (fm *FocusManager) FocusNext() bool {
 		}
 	}
 
-	// Find next focusable widget
+	// Find next focusable trinket
 	for i := 1; i <= len(chain); i++ {
 		nextIdx := currentIdx + i
 		if nextIdx >= len(chain) {
@@ -256,18 +256,18 @@ func (fm *FocusManager) FocusNext() bool {
 		}
 
 		if fm.canFocus(chain[nextIdx]) {
-			return fm.SetFocusedWidget(chain[nextIdx])
+			return fm.SetFocusedTrinket(chain[nextIdx])
 		}
 	}
 
 	return false
 }
 
-// FocusPrevious moves focus to the previous widget in the focus chain.
+// FocusPrevious moves focus to the previous trinket in the focus chain.
 func (fm *FocusManager) FocusPrevious() bool {
 	fm.mu.RLock()
 	root := fm.root
-	current := fm.focusedWidget
+	current := fm.focusedTrinket
 	wrap := fm.wrapAround
 	fm.mu.RUnlock()
 
@@ -285,7 +285,7 @@ func (fm *FocusManager) FocusPrevious() bool {
 		}
 	}
 
-	// Find previous focusable widget
+	// Find previous focusable trinket
 	for i := 1; i <= len(chain); i++ {
 		prevIdx := currentIdx - i
 		if prevIdx < 0 {
@@ -297,14 +297,14 @@ func (fm *FocusManager) FocusPrevious() bool {
 		}
 
 		if fm.canFocus(chain[prevIdx]) {
-			return fm.SetFocusedWidget(chain[prevIdx])
+			return fm.SetFocusedTrinket(chain[prevIdx])
 		}
 	}
 
 	return false
 }
 
-// FocusFirst moves focus to the first focusable widget.
+// FocusFirst moves focus to the first focusable trinket.
 func (fm *FocusManager) FocusFirst() bool {
 	fm.mu.RLock()
 	root := fm.root
@@ -313,13 +313,13 @@ func (fm *FocusManager) FocusFirst() bool {
 	chain := fm.buildFocusChain(root)
 	for _, w := range chain {
 		if fm.canFocus(w) {
-			return fm.SetFocusedWidget(w)
+			return fm.SetFocusedTrinket(w)
 		}
 	}
 	return false
 }
 
-// FocusFirstWithoutScroll moves focus to the first focusable widget without scrolling.
+// FocusFirstWithoutScroll moves focus to the first focusable trinket without scrolling.
 // Use this for mouse-initiated focus changes where visibility is already proven.
 func (fm *FocusManager) FocusFirstWithoutScroll() bool {
 	fm.mu.RLock()
@@ -329,15 +329,15 @@ func (fm *FocusManager) FocusFirstWithoutScroll() bool {
 	chain := fm.buildFocusChain(root)
 	for _, w := range chain {
 		if fm.canFocus(w) {
-			return fm.SetFocusedWidgetWithoutScroll(w)
+			return fm.SetFocusedTrinketWithoutScroll(w)
 		}
 	}
 	return false
 }
 
-// FocusFirstNonFurtive moves focus to the first non-furtive focusable widget.
+// FocusFirstNonFurtive moves focus to the first non-furtive focusable trinket.
 // This should be used for initial focus selection when opening a window or dialog,
-// as furtive widgets (splitters, tab bars, etc.) should be skipped for initial focus.
+// as furtive trinkets (splitters, tab bars, etc.) should be skipped for initial focus.
 func (fm *FocusManager) FocusFirstNonFurtive() bool {
 	fm.mu.RLock()
 	root := fm.root
@@ -346,19 +346,19 @@ func (fm *FocusManager) FocusFirstNonFurtive() bool {
 	chain := fm.buildFocusChain(root)
 	for _, w := range chain {
 		if fm.canFocus(w) && !w.Furtive() {
-			return fm.SetFocusedWidget(w)
+			return fm.SetFocusedTrinket(w)
 		}
 	}
-	// Fall back to any focusable widget if all are furtive
+	// Fall back to any focusable trinket if all are furtive
 	for _, w := range chain {
 		if fm.canFocus(w) {
-			return fm.SetFocusedWidget(w)
+			return fm.SetFocusedTrinket(w)
 		}
 	}
 	return false
 }
 
-// FocusLast moves focus to the last focusable widget.
+// FocusLast moves focus to the last focusable trinket.
 func (fm *FocusManager) FocusLast() bool {
 	fm.mu.RLock()
 	root := fm.root
@@ -367,19 +367,19 @@ func (fm *FocusManager) FocusLast() bool {
 	chain := fm.buildFocusChain(root)
 	for i := len(chain) - 1; i >= 0; i-- {
 		if fm.canFocus(chain[i]) {
-			return fm.SetFocusedWidget(chain[i])
+			return fm.SetFocusedTrinket(chain[i])
 		}
 	}
 	return false
 }
 
-// buildFocusChain builds the ordered list of focusable widgets.
-func (fm *FocusManager) buildFocusChain(root Widget) []Widget {
+// buildFocusChain builds the ordered list of focusable trinkets.
+func (fm *FocusManager) buildFocusChain(root Trinket) []Trinket {
 	if root == nil {
 		return nil
 	}
 
-	var chain []Widget
+	var chain []Trinket
 	fm.collectFocusable(root, &chain)
 	return chain
 }
@@ -387,74 +387,74 @@ func (fm *FocusManager) buildFocusChain(root Widget) []Widget {
 // FocusChainProvider is implemented by containers that need custom focus ordering.
 // This allows containers like Splitter to insert themselves between their children.
 type FocusChainProvider interface {
-	// CollectFocusChain adds the widget and its children to the chain in the desired order.
+	// CollectFocusChain adds the trinket and its children to the chain in the desired order.
 	// Return true if the provider handled focus chain collection, false to use default behavior.
-	CollectFocusChain(collector func(Widget))
+	CollectFocusChain(collector func(Trinket))
 }
 
 // ScrollIntoViewHandler is implemented by scrollable containers (like ScrollArea)
-// that need to scroll to make focused widgets visible. When a widget gains focus,
+// that need to scroll to make focused trinkets visible. When a trinket gains focus,
 // the focus system walks up the parent chain and calls ScrollChildIntoView on each
 // handler, allowing nested scroll containers to each adjust their scroll position.
 type ScrollIntoViewHandler interface {
-	// ScrollChildIntoView scrolls the container to make the given descendant widget visible.
-	// The widget may be a direct child or a deeply nested descendant.
-	ScrollChildIntoView(child Widget)
+	// ScrollChildIntoView scrolls the container to make the given descendant trinket visible.
+	// The trinket may be a direct child or a deeply nested descendant.
+	ScrollChildIntoView(child Trinket)
 }
 
-// collectFocusable recursively collects focusable widgets.
-func (fm *FocusManager) collectFocusable(widget Widget, chain *[]Widget) {
-	fm.collectFocusableWithSkip(widget, chain, nil)
+// collectFocusable recursively collects focusable trinkets.
+func (fm *FocusManager) collectFocusable(trinket Trinket, chain *[]Trinket) {
+	fm.collectFocusableWithSkip(trinket, chain, nil)
 }
 
-// collectFocusableWithSkip recursively collects focusable widgets,
-// skipping the FocusChainProvider check for the skipProvider widget
+// collectFocusableWithSkip recursively collects focusable trinkets,
+// skipping the FocusChainProvider check for the skipProvider trinket
 // to avoid infinite recursion when a provider includes itself in its chain.
-func (fm *FocusManager) collectFocusableWithSkip(widget Widget, chain *[]Widget, skipProvider Widget) {
-	if widget == nil {
+func (fm *FocusManager) collectFocusableWithSkip(trinket Trinket, chain *[]Trinket, skipProvider Trinket) {
+	if trinket == nil {
 		return
 	}
 
-	// Stop at widgets that have their own FocusManager (like Window).
-	// Those widgets manage their own focus chain - we don't recurse into their children.
-	// We still add the widget itself to the chain if it's focusable.
-	if owner, ok := widget.(FocusManagerOwner); ok {
+	// Stop at trinkets that have their own FocusManager (like Window).
+	// Those trinkets manage their own focus chain - we don't recurse into their children.
+	// We still add the trinket itself to the chain if it's focusable.
+	if owner, ok := trinket.(FocusManagerOwner); ok {
 		if childFM := owner.FocusManager(); childFM != nil && childFM != fm {
-			// This widget has its own FocusManager, don't recurse into its children.
-			// Add the widget itself if focusable (allows tabbing TO the window).
-			policy := widget.FocusPolicy()
+			// This trinket has its own FocusManager, don't recurse into its children.
+			// Add the trinket itself if focusable (allows tabbing TO the window).
+			policy := trinket.FocusPolicy()
 			if policy == StrongFocus || policy == TabFocus {
-				*chain = append(*chain, widget)
+				*chain = append(*chain, trinket)
 			}
 			return
 		}
 	}
 
-	// Check if widget provides custom focus chain ordering
-	// Skip this check for the widget that initiated the FocusChainProvider call
-	if widget != skipProvider {
-		if provider, ok := widget.(FocusChainProvider); ok {
-			provider.CollectFocusChain(func(w Widget) {
-				fm.collectFocusableWithSkip(w, chain, widget)
+	// Check if trinket provides custom focus chain ordering
+	// Skip this check for the trinket that initiated the FocusChainProvider call
+	if trinket != skipProvider {
+		if provider, ok := trinket.(FocusChainProvider); ok {
+			provider.CollectFocusChain(func(w Trinket) {
+				fm.collectFocusableWithSkip(w, chain, trinket)
 			})
 			return
 		}
 	}
 
 	// Default behavior: add self if focusable, then recurse into children
-	policy := widget.FocusPolicy()
+	policy := trinket.FocusPolicy()
 	if policy == StrongFocus || policy == TabFocus {
-		*chain = append(*chain, widget)
+		*chain = append(*chain, trinket)
 	}
 
-	// If this widget was the skipProvider, CollectFocusChain already handled its children
+	// If this trinket was the skipProvider, CollectFocusChain already handled its children
 	// so don't recurse into them again
-	if widget == skipProvider {
+	if trinket == skipProvider {
 		return
 	}
 
 	// Recurse into children if container
-	if container, ok := widget.(Container); ok {
+	if container, ok := trinket.(Container); ok {
 		for _, child := range container.Children() {
 			fm.collectFocusableWithSkip(child, chain, nil)
 		}
@@ -476,7 +476,7 @@ func (fm *FocusManager) WrapAround() bool {
 }
 
 // FocusChain returns the current focus chain for debugging.
-func (fm *FocusManager) FocusChain() []Widget {
+func (fm *FocusManager) FocusChain() []Trinket {
 	fm.mu.RLock()
 	root := fm.root
 	fm.mu.RUnlock()
@@ -484,7 +484,7 @@ func (fm *FocusManager) FocusChain() []Widget {
 }
 
 // SetOnFocusChanged sets the focus changed callback.
-func (fm *FocusManager) SetOnFocusChanged(handler func(old, new Widget)) {
+func (fm *FocusManager) SetOnFocusChanged(handler func(old, new Trinket)) {
 	fm.mu.Lock()
 	fm.onFocusChanged = handler
 	fm.mu.Unlock()
@@ -494,10 +494,10 @@ func (fm *FocusManager) SetOnFocusChanged(handler func(old, new Widget)) {
 // Returns true if the event was handled.
 func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 	fm.mu.RLock()
-	focused := fm.focusedWidget
+	focused := fm.focusedTrinket
 	fm.mu.RUnlock()
 
-	// First, give the focused widget a chance to handle the event.
+	// First, give the focused trinket a chance to handle the event.
 	// This allows containers like MDIPane to intercept Tab for internal navigation.
 	if focused != nil {
 		if focused.HandleKeyPress(event) {
@@ -505,7 +505,7 @@ func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 		}
 	}
 
-	// Widget didn't handle it - do focus navigation for Tab keys
+	// Trinket didn't handle it - do focus navigation for Tab keys
 	switch event.Key {
 	case "Tab":
 		if event.Modifiers&ShiftModifier != 0 {
@@ -521,12 +521,12 @@ func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 }
 
 // FocusScope represents a focus containment boundary.
-// Widgets can have their own focus scope (like dialogs or tool windows).
+// Trinkets can have their own focus scope (like dialogs or tool windows).
 type FocusScope struct {
 	mu sync.RWMutex
 
-	// The widget that owns this scope
-	owner Widget
+	// The trinket that owns this scope
+	owner Trinket
 
 	// Focus manager for this scope
 	manager *FocusManager
@@ -538,8 +538,8 @@ type FocusScope struct {
 	activeChild *FocusScope
 }
 
-// NewFocusScope creates a new focus scope for a widget.
-func NewFocusScope(owner Widget) *FocusScope {
+// NewFocusScope creates a new focus scope for a trinket.
+func NewFocusScope(owner Trinket) *FocusScope {
 	return &FocusScope{
 		owner:   owner,
 		manager: NewFocusManager(owner),
@@ -553,8 +553,8 @@ func (fs *FocusScope) Manager() *FocusManager {
 	return fs.manager
 }
 
-// Owner returns the widget that owns this scope.
-func (fs *FocusScope) Owner() Widget {
+// Owner returns the trinket that owns this scope.
+func (fs *FocusScope) Owner() Trinket {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 	return fs.owner
@@ -586,7 +586,7 @@ func (fs *FocusScope) Activate() {
 		parent.mu.Unlock()
 	}
 
-	// Restore focus within this scope, skipping furtive widgets
+	// Restore focus within this scope, skipping furtive trinkets
 	fs.manager.FocusFirstNonFurtive()
 }
 
@@ -734,14 +734,14 @@ func (gfm *GlobalFocusManager) SetAccessibilityManager(am *AccessibilityManager)
 	gfm.mu.Unlock()
 }
 
-// FocusedWidget returns the currently focused widget across all scopes.
-func (gfm *GlobalFocusManager) FocusedWidget() Widget {
+// FocusedTrinket returns the currently focused trinket across all scopes.
+func (gfm *GlobalFocusManager) FocusedTrinket() Trinket {
 	gfm.mu.RLock()
 	activeScope := gfm.activeScope
 	gfm.mu.RUnlock()
 
 	if activeScope != nil {
-		return activeScope.Manager().FocusedWidget()
+		return activeScope.Manager().FocusedTrinket()
 	}
 	return nil
 }
@@ -763,4 +763,39 @@ func (gfm *GlobalFocusManager) HandleKeyPress(event KeyPressEvent) bool {
 		return activeScope.Manager().HandleKeyPress(event)
 	}
 	return false
+}
+
+// ActivityReporter is implemented by window-like containers that can
+// be the active one among their siblings (top-level windows, MDI
+// children). A trinket's focus indicators should only show when every
+// such ancestor is active.
+type ActivityReporter interface {
+	IsActive() bool
+}
+
+// FocusChainActive reports whether every window-like ancestor of w
+// (including w itself) is the active one in its container. A trinket
+// keeps its local focus while its window sits in the background, but
+// focus indicators - the text caret in particular - must not show
+// there, or two carets can be on screen at once. Trinkets outside any
+// window pass vacuously.
+func FocusChainActive(w Trinket) bool {
+	if w == nil {
+		return true
+	}
+	if ar, ok := w.(ActivityReporter); ok && !ar.IsActive() {
+		return false
+	}
+	current := w.Parent()
+	for current != nil {
+		if ar, ok := current.(ActivityReporter); ok && !ar.IsActive() {
+			return false
+		}
+		trinket, ok := current.(Trinket)
+		if !ok {
+			break
+		}
+		current = trinket.Parent()
+	}
+	return true
 }

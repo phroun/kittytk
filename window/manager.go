@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // Resize edge constants (can be combined for corners)
@@ -32,6 +32,13 @@ type DockProvider interface {
 
 // WindowManager manages all windows in the application.
 // It handles z-ordering, focus, modal windows, and window positioning.
+//
+// Scope (G4): the WindowManager composites windows WITHIN ONE
+// surface - its "screen" bounds are that surface's bounds, set by
+// the desktop from Surface.Size. Windows granted native mode live
+// outside its jurisdiction entirely (one window per surface, hosted
+// by SurfaceHost with OS-provided chrome); which mode a window gets
+// is host policy consulting Window.NativeRequested.
 type WindowManager struct {
 	mu sync.RWMutex
 
@@ -47,8 +54,8 @@ type WindowManager struct {
 	// Modal window stack
 	modalStack []*Window
 
-	// Desktop/root widget (what's behind all windows)
-	desktop core.Widget
+	// Desktop/root trinket (what's behind all windows)
+	desktop core.Trinket
 
 	// Screen bounds
 	screenBounds core.UnitRect
@@ -56,12 +63,31 @@ type WindowManager struct {
 	// Theme
 	theme *style.Theme
 
+	// Tear-off policy (G4 granting): when a drag crosses the surface
+	// edge, the host may lift the window out into its own OS surface.
+	// Returning true means the window left this manager.
+	tearOff func(win *Window, event core.MouseMoveEvent, offsetX, offsetY core.Unit) bool
+
 	// Drag state
 	dragging    *Window
 	dragStartX  core.Unit
 	dragStartY  core.Unit
 	dragOffsetX core.Unit
 	dragOffsetY core.Unit
+	// dragNeedsButton marks a drag armed programmatically (BeginDrag,
+	// re-dock): its press happened in another surface, so its release
+	// can be lost there too. Such a drag ends the moment motion
+	// arrives without the button held. Press-armed drags keep the
+	// historical behavior (terminal backends don't always report
+	// button state on motion).
+	dragNeedsButton bool
+	// dragIsTearHandle marks a drag begun on the %/# tear handle: only
+	// such a drag may tear the window off (or re-dock it); a plain
+	// title drag just moves it in-surface. dragMoved tracks whether the
+	// pointer left the press point, so a handle press released in place
+	// is a click (toggles detach) rather than a drag.
+	dragIsTearHandle bool
+	dragMoved        bool
 
 	// Resize state
 	resizing       *Window
@@ -89,6 +115,20 @@ type WindowManager struct {
 
 	// Popup overlays (painted on top of everything)
 	popups []*PopupOverlay
+
+	// Cycle order for M-Tab: tracks activation order of windows and dock.
+	// Items are *Window or nil (nil represents the dock).
+	cycleOrder []interface{}
+
+	// Smooth positioning: when the surface's backend supports sub-cell
+	// placement (pixel surfaces), drag and resize track the pointer at
+	// unit granularity instead of snapping to cell boundaries.
+	smoothPositioning bool
+
+	// resizeGrip narrows the resize-handle zones on graphical frames
+	// to the outer sliver of each edge (units; 0 = classic cell-wide
+	// zones), so trinkets at a window's edge remain clickable.
+	resizeGrip core.Unit
 }
 
 // PopupOverlay represents a popup that should be painted on top of all windows.
@@ -105,6 +145,8 @@ type PopupOverlay struct {
 	HandleMouseMove func(event core.MouseMoveEvent) bool
 	// HandleMouseRelease function to handle mouse release (returns true if handled)
 	HandleMouseRelease func(event core.MouseReleaseEvent) bool
+	// HandleMouseWheel function to handle wheel scrolling (returns true if handled)
+	HandleMouseWheel func(event core.MouseWheelEvent) bool
 }
 
 // NewWindowManager creates a new window manager.
@@ -112,6 +154,59 @@ func NewWindowManager() *WindowManager {
 	return &WindowManager{
 		theme: style.DefaultTheme(),
 	}
+}
+
+// SetSmoothPositioning controls whether drag and resize snap to cell
+// boundaries. Pixel-capable surfaces enable smooth positioning; cell-grid
+// surfaces leave it off so windows always land on whole cells.
+func (m *WindowManager) SetSmoothPositioning(smooth bool) {
+	m.mu.Lock()
+	m.smoothPositioning = smooth
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.Unlock()
+	for _, win := range windows {
+		win.SetSmoothPositioning(smooth)
+	}
+}
+
+// SetResizeGrip sets the resize-handle thickness in units for
+// graphical frames. Zero restores the cell-frame behavior (the whole
+// border row/column is the grip - it IS the frame there).
+func (m *WindowManager) SetResizeGrip(grip core.Unit) {
+	m.mu.Lock()
+	m.resizeGrip = grip
+	m.mu.Unlock()
+}
+
+// SmoothPositioning reports whether drag and resize track the pointer at
+// unit granularity rather than snapping to cell boundaries.
+// SetTearOffHandler installs the host's tear-off policy: called
+// during a title drag when the pointer leaves the surface. A nil
+// handler (the default) keeps every drag in-surface.
+func (m *WindowManager) SetTearOffHandler(h func(win *Window, event core.MouseMoveEvent, offsetX, offsetY core.Unit) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tearOff = h
+}
+
+// BeginDrag arms the title-bar drag state programmatically, as if the
+// user had pressed on the titlebar with the given grab offset. The
+// re-dock choreography uses it so a window dropped back onto the
+// desktop keeps following the held pointer.
+func (m *WindowManager) BeginDrag(win *Window, offsetX, offsetY core.Unit) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dragging = win
+	m.dragOffsetX = offsetX
+	m.dragOffsetY = offsetY
+	m.dragNeedsButton = true
+}
+
+func (m *WindowManager) SmoothPositioning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.smoothPositioning
 }
 
 // abs returns the absolute value of an integer.
@@ -142,11 +237,25 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	edgeThreshold := metrics.CellWidth
 	// Corner detection threshold (2 cells for corners)
 	cornerThreshold := metrics.CellWidth * 2
+	// Bottom band thickness (one row on cell frames)
+	bottomBand := metrics.CellHeight
+
+	// Graphical frames: only the outer sliver of an edge is the grip,
+	// so edge trinkets stay clickable (the frame is a hairline, not a
+	// cell band).
+	m.mu.RLock()
+	grip := m.resizeGrip
+	m.mu.RUnlock()
+	if grip > 0 {
+		edgeThreshold = grip
+		cornerThreshold = grip * 2
+		bottomBand = grip
+	}
 
 	edge := ResizeEdgeNone
 
 	// Check if at bottom edge
-	atBottom := y >= bounds.Y+bounds.Height-metrics.CellHeight && y < bounds.Y+bounds.Height
+	atBottom := y >= bounds.Y+bounds.Height-bottomBand && y < bounds.Y+bounds.Height
 
 	// Check horizontal edges (left/right)
 	if x >= bounds.X && x < bounds.X+edgeThreshold {
@@ -171,8 +280,150 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	return edge
 }
 
-// SetDesktop sets the desktop widget (background behind windows).
-func (m *WindowManager) SetDesktop(desktop core.Widget) {
+// resizeEdgeRects returns the window-local rectangles (one per set edge
+// bit, two for a corner) covering the size-sensitive band(s) for the
+// given resize edge, matching detectResizeEdge's thresholds. Used to
+// highlight the edge under the pointer.
+func (m *WindowManager) resizeEdgeRects(win *Window, edge int) []core.UnitRect {
+	b := win.Bounds()
+	metrics := core.DefaultCellMetrics()
+	edgeThreshold := metrics.CellWidth
+	bottomBand := metrics.CellHeight
+	m.mu.RLock()
+	grip := m.resizeGrip
+	m.mu.RUnlock()
+	if grip > 0 {
+		edgeThreshold = grip
+		bottomBand = grip
+	}
+
+	var rects []core.UnitRect
+	if edge&ResizeEdgeLeft != 0 {
+		rects = append(rects, core.UnitRect{Width: edgeThreshold, Height: b.Height})
+	}
+	if edge&ResizeEdgeRight != 0 {
+		rects = append(rects, core.UnitRect{X: b.Width - edgeThreshold, Width: edgeThreshold, Height: b.Height})
+	}
+	if edge&ResizeEdgeBottom != 0 {
+		rects = append(rects, core.UnitRect{Y: b.Height - bottomBand, Width: b.Width, Height: bottomBand})
+	}
+	return rects
+}
+
+// updateResizeHover highlights the size-sensitive edge(s) of the topmost
+// window under the pointer, clearing the highlight on every other window.
+// Called on mouse move when no drag or resize is in progress.
+func (m *WindowManager) updateResizeHover(x, y core.Unit) {
+	m.mu.RLock()
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.RUnlock()
+
+	var target *Window
+	edge := ResizeEdgeNone
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		if !win.IsVisible() || win.IsMinimized() {
+			continue
+		}
+		if win.Bounds().Contains(core.UnitPoint{X: x, Y: y}) {
+			target = win
+			edge = m.detectResizeEdge(win, x, y)
+			break
+		}
+	}
+
+	changed := false
+	for _, win := range windows {
+		var rects []core.UnitRect
+		if win == target && edge != ResizeEdgeNone {
+			rects = m.resizeEdgeRects(win, edge)
+		}
+		if win.SetResizeHoverRects(rects) {
+			changed = true
+		}
+	}
+	if changed {
+		m.RequestRepaint()
+	}
+}
+
+// topWindowAt returns the topmost visible, non-minimized window whose
+// bounds contain the point, or nil.
+func (m *WindowManager) topWindowAt(x, y core.Unit) *Window {
+	m.mu.RLock()
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.RUnlock()
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		if !win.IsVisible() || win.IsMinimized() {
+			continue
+		}
+		if win.Bounds().Contains(core.UnitPoint{X: x, Y: y}) {
+			return win
+		}
+	}
+	return nil
+}
+
+// resizeCursorForEdge maps a resize-edge bitmask to its directional
+// cursor. Bottom corners use the diagonal cursors; a lone left/right or
+// bottom edge uses the horizontal/vertical cursor.
+func resizeCursorForEdge(edge int) core.CursorShape {
+	left := edge&ResizeEdgeLeft != 0
+	right := edge&ResizeEdgeRight != 0
+	bottom := edge&(ResizeEdgeBottom|ResizeEdgeTop) != 0
+	switch {
+	case (left && bottom):
+		return core.CursorResizeNESW // bottom-left / top-right diagonal
+	case (right && bottom):
+		return core.CursorResizeNWSE // bottom-right / top-left diagonal
+	case left || right:
+		return core.CursorResizeH
+	case bottom:
+		return core.CursorResizeV
+	default:
+		return core.CursorDefault
+	}
+}
+
+// CursorAt resolves the mouse cursor for a desktop-coordinate point: a
+// resize cursor when over a window's size-sensitive edge, otherwise the
+// cursor requested by the trinket under the pointer (e.g. a text I-beam),
+// or the default arrow.
+func (m *WindowManager) CursorAt(x, y core.Unit) core.CursorShape {
+	win := m.topWindowAt(x, y)
+	if win == nil {
+		return core.CursorDefault
+	}
+	if s := resizeCursorForEdge(m.detectResizeEdge(win, x, y)); s != core.CursorDefault {
+		return s
+	}
+	b := win.Bounds()
+	return win.CursorShapeAt(x-b.X, y-b.Y)
+}
+
+// ClearResizeHover removes the resize-edge highlight from every window.
+// Called when the pointer leaves the surface, so no stale band lingers.
+func (m *WindowManager) ClearResizeHover() {
+	m.mu.RLock()
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.RUnlock()
+	changed := false
+	for _, win := range windows {
+		if win.SetResizeHoverRects(nil) {
+			changed = true
+		}
+	}
+	if changed {
+		m.RequestRepaint()
+	}
+}
+
+// SetDesktop sets the desktop trinket (background behind windows).
+func (m *WindowManager) SetDesktop(desktop core.Trinket) {
 	m.mu.Lock()
 	m.desktop = desktop
 	bounds := m.screenBounds
@@ -184,8 +435,8 @@ func (m *WindowManager) SetDesktop(desktop core.Widget) {
 	}
 }
 
-// Desktop returns the desktop widget.
-func (m *WindowManager) Desktop() core.Widget {
+// Desktop returns the desktop trinket.
+func (m *WindowManager) Desktop() core.Trinket {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.desktop
@@ -213,6 +464,28 @@ func (m *WindowManager) SetScreenBounds(bounds core.UnitRect) {
 }
 
 // ClientArea returns the area available for windows (excluding desktop chrome like menu bars).
+// ClampToClientArea keeps a window within reach on re-dock or
+// placement: title bar vertically inside the client area (below any
+// menu bar, above any dock/status bar) and a couple of columns
+// visible horizontally.
+func (m *WindowManager) ClampToClientArea(bounds core.UnitRect) core.UnitRect {
+	return clampWindowToClientArea(bounds, m.ClientArea(), m.ScreenCellMetrics())
+}
+
+// displayBounds returns where a window is drawn and hit-tested: its
+// logical bounds corralled into the current client area. The corral is
+// PROVISIONAL - never written back - so shrinking the desktop nudges an
+// off-screen window into view, and growing it again lets the window
+// re-spread to its original spot. A deliberate interaction commits the
+// corral (see commitDisplayBounds). Maximized windows are exempt (they
+// already track the client area).
+func (m *WindowManager) displayBounds(win *Window) core.UnitRect {
+	if win.IsMaximized() {
+		return win.Bounds()
+	}
+	return clampWindowToClientArea(win.Bounds(), m.ClientArea(), m.ScreenCellMetrics())
+}
+
 func (m *WindowManager) ClientArea() core.UnitRect {
 	m.mu.RLock()
 	screen := m.screenBounds
@@ -245,14 +518,24 @@ func (m *WindowManager) AddWindow(win *Window) {
 		}
 	}
 	m.windows = append(m.windows, win)
+	// Add to cycle order (for M-Tab cycling)
+	m.cycleOrder = append(m.cycleOrder, win)
 	handler := m.onWindowAdded
 	desktop := m.desktop
+	smooth := m.smoothPositioning
 	m.mu.Unlock()
 
-	// Set window's parent to desktop so widgets can traverse up to find timer provider
+	win.SetSmoothPositioning(smooth)
+
+	// Set window's parent to desktop so trinkets can traverse up to find timer provider
 	if desktop != nil {
 		if container, ok := desktop.(core.Container); ok {
 			win.SetParent(container)
+			// Ancestry decides capability lookups (graphical frames,
+			// smooth positioning, metrics): a window laid out before
+			// joining the manager used cell-frame insets, so re-lay it
+			// out under its real context.
+			win.Layout()
 		}
 	}
 
@@ -274,7 +557,7 @@ func (m *WindowManager) AddWindow(win *Window) {
 		return m.ClientArea()
 	})
 
-	// Set popup controller on window and its content so widgets can use overlays
+	// Set popup controller on window and its content so trinkets can use overlays
 	win.SetPopupController(m)
 	if content := win.Content(); content != nil {
 		m.setPopupControllerRecursive(content)
@@ -295,17 +578,32 @@ func (m *WindowManager) AddWindow(win *Window) {
 }
 
 // setPopupControllerRecursive sets this WindowManager as the popup controller
-// for a widget and all its descendants.
-func (m *WindowManager) setPopupControllerRecursive(widget core.Widget) {
-	// Set on this widget if it has the method
-	if setter, ok := widget.(interface{ SetPopupController(core.PopupController) }); ok {
-		setter.SetPopupController(m)
-	}
+// for a trinket and all its descendants.
+func (m *WindowManager) setPopupControllerRecursive(trinket core.Trinket) {
+	stampPopupController(trinket, m)
+}
 
-	// Recurse into children
-	if container, ok := widget.(core.Container); ok {
+// stampPopupController assigns the popup controller to a trinket and
+// its whole subtree. The WindowManager stamps windows it manages; a
+// TearOffHost stamps its torn window so popups (combobox dropdowns,
+// context menus) open on the torn surface instead of the desktop's.
+func stampPopupController(trinket core.Trinket, pc core.PopupController) {
+	if setter, ok := trinket.(interface{ SetPopupController(core.PopupController) }); ok {
+		setter.SetPopupController(pc)
+	}
+	// Prefer AllChildren over Children: a TabTrinket's Children() is only the
+	// active tab, so a combobox on an inactive tab would keep a stale
+	// controller (e.g. the desktop's, from when its tab was last active) and
+	// open its popup on the wrong surface after the window is torn off.
+	if ac, ok := trinket.(interface{ AllChildren() []core.Trinket }); ok {
+		for _, child := range ac.AllChildren() {
+			stampPopupController(child, pc)
+		}
+		return
+	}
+	if container, ok := trinket.(core.Container); ok {
 		for _, child := range container.Children() {
-			m.setPopupControllerRecursive(child)
+			stampPopupController(child, pc)
 		}
 	}
 }
@@ -316,6 +614,14 @@ func (m *WindowManager) RemoveWindow(win *Window) {
 	for i, w := range m.windows {
 		if w == win {
 			m.windows = append(m.windows[:i], m.windows[i+1:]...)
+			break
+		}
+	}
+
+	// Remove from cycle order
+	for i, it := range m.cycleOrder {
+		if it == win {
+			m.cycleOrder = append(m.cycleOrder[:i], m.cycleOrder[i+1:]...)
 			break
 		}
 	}
@@ -351,9 +657,9 @@ func (m *WindowManager) RemoveWindow(win *Window) {
 	// Activate the new active window
 	if newActive != nil {
 		newActive.SetActive(true)
-		// Focus the window's first widget if no widget is focused
+		// Focus the window's first trinket if no trinket is focused
 		if fm := newActive.FocusManager(); fm != nil {
-			if fm.FocusedWidget() == nil {
+			if fm.FocusedTrinket() == nil {
 				fm.FocusFirst()
 			}
 		}
@@ -413,14 +719,20 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 	// Move to top of z-order
 	m.bringToFront(win)
 
+	// Move to front of cycle order (for M-Tab cycling)
+	m.bringToCycleFront(win)
+
 	handler := m.onActiveChanged
 	desktop := m.desktop
 	m.mu.Unlock()
 
-	// Deactivate menu bar when a window becomes active
+	// Deactivate menu bar and dock when a window becomes active
 	if desktop != nil {
 		if deactivator, ok := desktop.(interface{ DeactivateMenuBar() }); ok {
 			deactivator.DeactivateMenuBar()
+		}
+		if dockProvider, ok := desktop.(DockProvider); ok {
+			dockProvider.UnfocusDock()
 		}
 	}
 
@@ -430,9 +742,9 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 	}
 	if win != nil {
 		win.SetActive(true)
-		// Focus the window's first widget if no widget is focused
+		// Focus the window's first trinket if no trinket is focused
 		if fm := win.FocusManager(); fm != nil {
-			if fm.FocusedWidget() == nil {
+			if fm.FocusedTrinket() == nil {
 				fm.FocusFirst()
 			}
 		}
@@ -511,9 +823,9 @@ func (m *WindowManager) FocusWindow(win *Window) {
 	}
 	if win != nil {
 		win.SetActive(true)
-		// Focus the window's first widget if no widget is focused
+		// Focus the window's first trinket if no trinket is focused
 		if fm := win.FocusManager(); fm != nil {
-			if fm.FocusedWidget() == nil {
+			if fm.FocusedTrinket() == nil {
 				fm.FocusFirst()
 			}
 		}
@@ -543,6 +855,20 @@ func (m *WindowManager) bringToFront(win *Window) {
 			return
 		}
 	}
+}
+
+// bringToCycleFront moves an item to the front (end) of the cycle order.
+// item should be *Window or nil (nil represents the dock).
+func (m *WindowManager) bringToCycleFront(item interface{}) {
+	// Remove existing occurrence
+	for i, it := range m.cycleOrder {
+		if it == item {
+			m.cycleOrder = append(m.cycleOrder[:i], m.cycleOrder[i+1:]...)
+			break
+		}
+	}
+	// Add to end (most recently activated)
+	m.cycleOrder = append(m.cycleOrder, item)
 }
 
 // isChildOf checks if child is a descendant of parent.
@@ -579,8 +905,14 @@ func (m *WindowManager) CloseModal() {
 	win.Close()
 }
 
-// MaximizeWindow maximizes a window to fill the client area.
+// MaximizeWindow maximizes a window to fill the client area. Windows that
+// can't be maximized (NoMaximize, or NoResize since maximizing is a
+// resize) are left untouched, so callers - double-click, drag-to-top
+// snap - don't silently resize a fixed-size dialog.
 func (m *WindowManager) MaximizeWindow(win *Window) {
+	if !canMaximize(win.Flags()) {
+		return
+	}
 	clientArea := m.ClientArea()
 	win.Maximize()
 	win.SetBounds(clientArea)
@@ -653,6 +985,7 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,
+		HandleMouseWheel:   request.HandleMouseWheel,
 	}
 	m.popups = append(m.popups, overlay)
 }
@@ -677,41 +1010,79 @@ func (m *WindowManager) HasPopups() bool {
 }
 
 // MapToScreen implements core.PopupController.
-// It converts local widget coordinates to screen coordinates.
-func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
-	// Traverse up the widget hierarchy to accumulate offsets
-	// Each widget's Bounds().X/Y is its position within its parent
-	result := local
-	metrics := core.DefaultCellMetrics()
+func (m *WindowManager) MapToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoint {
+	return MapTrinketToScreen(trinket, local)
+}
 
-	current := widget
+// MapTrinketToScreen converts local trinket coordinates to surface
+// coordinates by walking the ancestry, exchanging denominations at
+// each re-denominating container boundary. Pure ancestry - both the
+// WindowManager and a TearOffHost use it.
+func MapTrinketToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoint {
+	// Traverse up the trinket hierarchy to accumulate offsets.
+	// Each trinket's Bounds().X/Y is its position within its parent,
+	// denominated in the parent's currency. The accumulated point is
+	// kept in the currency of the space it currently describes.
+	result := local
+
+	current := trinket
 	for current != nil {
+		parent := current.Parent()
+
+		// Leaving a container that re-denominates its interior: the
+		// accumulated point is in its interior currency; re-express it
+		// in the outer currency its bounds live in. (Windows exchange
+		// in the parent branch below, where the client-area offset must
+		// be added in the outer currency - skip them here.)
+		if _, isWin := current.(*Window); !isWin {
+			if mp, ok := current.(core.CellMetricsProvider); ok {
+				if ov := mp.CellMetricsOverride(); ov != nil {
+					outer := core.ParentCellMetrics(current)
+					result.X = core.ExchangeX(result.X, *ov, outer)
+					result.Y = core.ExchangeY(result.Y, *ov, outer)
+				}
+			}
+		}
+
 		bounds := current.Bounds()
 		result.X += bounds.X
 		result.Y += bounds.Y
 
-		parent := current.Parent()
 		if parent == nil {
 			break
 		}
 
-		// Check if parent is a scroll container and adjust for scroll offset
-		if scroller, ok := parent.(core.ScrollOffsetProvider); ok {
+		// Check if parent is a scroll container and adjust for scroll
+		// offset. Unit-denominated scrollers (smooth surfaces) report
+		// units directly; classic scrollers report cells of their own
+		// denomination.
+		if su, ok := parent.(core.ScrollOffsetUnitsProvider); ok {
+			ox, oy := su.ScrollOffsetUnits()
+			result.X -= ox
+			result.Y -= oy
+		} else if scroller, ok := parent.(core.ScrollOffsetProvider); ok {
+			pm := core.DefaultCellMetrics()
+			if pw, ok := parent.(core.Trinket); ok {
+				pm = core.FindEffectiveCellMetrics(pw)
+			}
 			scrollX, scrollY := scroller.ScrollOffset()
-			result.X -= core.Unit(scrollX) * metrics.CellWidth
-			result.Y -= core.Unit(scrollY) * metrics.CellHeight
+			result.X -= core.Unit(scrollX) * pm.CellWidth
+			result.Y -= core.Unit(scrollY) * pm.CellHeight
 		}
 
-		// Check if parent is a Window - if so, add the content area offset
-		// The content widget's bounds are (0,0) but it's painted at an offset
-		// to account for the window's title bar and frame
+		// Crossing a window's content boundary: content coordinates are
+		// interior currency; exchange to the window's outer currency,
+		// then add the client-area offset (outer currency).
 		if win, ok := parent.(*Window); ok {
+			outer, interior := win.denominations()
+			result.X = core.ExchangeX(result.X, interior, outer)
+			result.Y = core.ExchangeY(result.Y, interior, outer)
 			offset := win.ClientAreaOffset()
 			result.X += offset.X
 			result.Y += offset.Y
 		}
 
-		if pw, ok := parent.(core.Widget); ok {
+		if pw, ok := parent.(core.Trinket); ok {
 			current = pw
 		} else {
 			break
@@ -721,9 +1092,21 @@ func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) co
 	return result
 }
 
-// widgetIsInWindow checks if a widget is contained within a window.
-func (m *WindowManager) widgetIsInWindow(widget core.Widget, win *Window) bool {
-	current := widget
+// ScreenCellMetrics returns the grid metrics of the screen/desktop
+// surface - the denomination popup overlays are composited in.
+func (m *WindowManager) ScreenCellMetrics() core.CellMetrics {
+	m.mu.RLock()
+	desktop := m.desktop
+	m.mu.RUnlock()
+	if dw, ok := desktop.(core.Trinket); ok && dw != nil {
+		return core.FindEffectiveCellMetrics(dw)
+	}
+	return core.DefaultCellMetrics()
+}
+
+// trinketIsInWindow checks if a trinket is contained within a window.
+func (m *WindowManager) trinketIsInWindow(trinket core.Trinket, win *Window) bool {
+	current := trinket
 	for current != nil {
 		if current == win.Content() {
 			return true
@@ -732,7 +1115,7 @@ func (m *WindowManager) widgetIsInWindow(widget core.Widget, win *Window) bool {
 		if parent == nil {
 			break
 		}
-		if pw, ok := parent.(core.Widget); ok {
+		if pw, ok := parent.(core.Trinket); ok {
 			current = pw
 		} else {
 			break
@@ -877,6 +1260,15 @@ func (m *WindowManager) CascadeWindows() {
 
 // HandleMousePress processes mouse events for windows.
 func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
+	m.mu.Lock()
+	if m.dragging != nil && m.dragNeedsButton {
+		// A press while an armed-without-press drag is live means its
+		// release was lost: disarm and process the press normally.
+		m.dragging = nil
+		m.dragNeedsButton = false
+	}
+	m.mu.Unlock()
+
 	m.mu.RLock()
 	windows := m.windows
 	desktop := m.desktop
@@ -950,8 +1342,13 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 			continue
 		}
 
-		bounds := win.Bounds()
+		bounds := m.displayBounds(win)
 		if bounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
+			// Deliberate interaction: commit the provisional corral so
+			// this window's displayed position becomes its real one and
+			// all downstream geometry (resize edges, drag offsets) agrees.
+			win.SetBounds(bounds)
+
 			// Close any active menu before processing window click
 			if desktop != nil {
 				if menuCloser, ok := desktop.(interface {
@@ -985,6 +1382,26 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 
 				// Activate (focus + raise) for titlebar interaction
 				m.ActivateWindow(win)
+
+				// The tear handle is draggable AND clickable: grab it to
+				// begin a tear-capable drag; a release in place is a click
+				// that toggles detach/dock.
+				if win.Flags()&WindowFlagTearable != 0 &&
+					win.buttonAtPosition(event.X-bounds.X, event.Y-bounds.Y) == TitleButtonTear {
+					m.mu.Lock()
+					m.dragging = win
+					m.dragStartX = event.X
+					m.dragStartY = event.Y
+					m.dragOffsetX = event.X - bounds.X
+					m.dragOffsetY = event.Y - bounds.Y
+					m.dragIsTearHandle = true
+					m.dragMoved = false
+					m.dragNeedsButton = false
+					m.pressedWindow = nil
+					m.mu.Unlock()
+					win.SetTearHighlight(true) // Show the tear-off halo while grabbed.
+					return true
+				}
 
 				// First, let the window handle button clicks (close, minimize, maximize)
 				// Pass the event to the window - if it handles a button click, don't drag
@@ -1040,6 +1457,9 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 					m.dragStartY = event.Y
 					m.dragOffsetX = event.X - bounds.X
 					m.dragOffsetY = event.Y - bounds.Y
+					m.dragNeedsButton = false
+					m.dragIsTearHandle = false
+					m.dragMoved = false
 					m.pressedWindow = nil // Clear pressed window for drag
 					m.mu.Unlock()
 				}
@@ -1119,8 +1539,11 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			newBounds.Height = resizeOriginal.Height + deltaY
 		}
 
-		// Align to cell boundaries
-		newBounds = metrics.AlignRect(newBounds)
+		// Align to cell boundaries (skipped on pixel surfaces, where
+		// windows resize smoothly at unit granularity)
+		if !m.SmoothPositioning() {
+			newBounds = metrics.AlignRect(newBounds)
+		}
 
 		// Enforce minimum window size (at least 3 cells wide, 2 cells tall)
 		minWidth := metrics.CellWidth * 3
@@ -1161,12 +1584,62 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		}
 
 		resizing.SetBounds(newBounds)
+		// Keep the edge highlight on the edge being dragged, tracking the
+		// window's new size instead of leaving it stale at the start bounds.
+		resizing.SetResizeHoverRects(m.resizeEdgeRects(resizing, resizeEdge))
 		m.RequestRepaint()
 		return true
 	}
 
 	// Handle drag
 	if dragging != nil {
+		m.mu.RLock()
+		needsButton := m.dragNeedsButton
+		m.mu.RUnlock()
+		if needsButton && event.Buttons&core.LeftButton == 0 {
+			// The release was lost in another surface (re-dock
+			// hand-off): the gesture is over, stop following hovers.
+			m.mu.Lock()
+			if m.dragging == dragging {
+				m.dragging = nil
+				m.dragNeedsButton = false
+			}
+			m.mu.Unlock()
+			dragging.SetTearHighlight(false)
+			return true
+		}
+
+		// Any motion during a drag marks it moved (a handle press that
+		// never moves is a click, not a drag).
+		m.mu.Lock()
+		if m.dragging == dragging {
+			m.dragMoved = true
+		}
+		isTearHandle := m.dragIsTearHandle
+		m.mu.Unlock()
+
+		// Tear-off: past the surface edge, the host may lift the window
+		// out into its own OS surface (G4 granting) - but ONLY when the
+		// drag was begun on the tear handle. A plain title drag just
+		// moves the window in-surface.
+		m.mu.RLock()
+		tear := m.tearOff
+		screen := m.screenBounds
+		m.mu.RUnlock()
+		if tear != nil && isTearHandle && !dragging.IsMaximized() &&
+			(event.X < screen.X || event.Y < screen.Y ||
+				event.X >= screen.X+screen.Width || event.Y >= screen.Y+screen.Height) {
+			if tear(dragging, event, offsetX, offsetY) {
+				m.mu.Lock()
+				if m.dragging == dragging {
+					m.dragging = nil
+				}
+				m.mu.Unlock()
+				dragging.SetTearHighlight(false)
+				return true
+			}
+		}
+
 		// Track if we just restored from maximized (to avoid immediate re-maximize)
 		justRestored := false
 
@@ -1217,10 +1690,12 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		bounds.X = newX
 		bounds.Y = newY
 
-		// Dragging into menu bar area = maximize gesture
-		// But keep dragging so user can drag back down to restore
-		// Don't re-maximize immediately after restoring (wait for next mouse move)
-		if bounds.Y < clientArea.Y && dragging.Flags()&WindowFlagNoMaximize == 0 && !justRestored {
+		// Dragging into menu bar area = maximize gesture. Skipped for a
+		// tear-handle drag: that gesture tears the window off, so it
+		// must not snap-maximize on the way up. Also skipped for windows
+		// that can't be maximized (fixed-size dialogs), which then fall
+		// through to the normal clamped move.
+		if !isTearHandle && bounds.Y < clientArea.Y && canMaximize(dragging.Flags()) && !justRestored {
 			if !dragging.IsMaximized() {
 				m.MaximizeWindow(dragging)
 				m.RequestRepaint()
@@ -1228,40 +1703,22 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		// Keep titlebar visible vertically (within client area)
-		// Don't allow titlebar above client area
-		if bounds.Y < clientArea.Y {
-			bounds.Y = clientArea.Y
-		}
-		// Don't allow titlebar below client area
-		maxY := clientArea.Y + clientArea.Height - metrics.CellHeight
-		if bounds.Y > maxY {
-			bounds.Y = maxY
-		}
-
-		// Allow window to go almost completely off-screen horizontally
-		// Just keep 1 unit (border) visible for retrieval
-		minVisibleX := core.Unit(1) // Just border visible on right
-		minVisibleFromLeft := core.Unit(1) // Just border visible on left
-
-		// Left constraint: window can go so far left that only right border is visible
-		minX := clientArea.X - bounds.Width + minVisibleFromLeft
-		if bounds.X < minX {
-			bounds.X = minX
-		}
-		// Right constraint: window can go so far right that only left border is visible
-		maxX := clientArea.X + clientArea.Width - minVisibleX
-		if bounds.X > maxX {
-			bounds.X = maxX
-		}
+		// Keep the window retrievable: title bar vertically within the
+		// client area, at least a couple of columns visible horizontally
+		// on each side (dragging it down to a few pixels made it
+		// impossible to grab back).
+		bounds = clampWindowToClientArea(bounds, clientArea, metrics)
 
 		// Limit height to client area height (windows can be wider but not taller)
 		if bounds.Height > clientArea.Height {
 			bounds.Height = clientArea.Height
 		}
 
-		// Align position to cell boundaries (important after restore from maximized)
-		bounds = metrics.AlignRect(bounds)
+		// Align position to cell boundaries (important after restore from
+		// maximized); pixel surfaces drag smoothly at unit granularity
+		if !m.SmoothPositioning() {
+			bounds = metrics.AlignRect(bounds)
+		}
 
 		dragging.SetBounds(bounds)
 
@@ -1270,6 +1727,9 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 		return true
 	}
+
+	// Not dragging or resizing: highlight the resize edge under the pointer.
+	m.updateResizeHover(event.X, event.Y)
 
 	// Forward to desktop first (for menu bar drag navigation)
 	m.mu.RLock()
@@ -1287,14 +1747,14 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		}
 	}
 
-	// Forward to active window (for splitter/widget dragging, but not if minimized)
+	// Forward to active window (for splitter/trinket dragging, but not if minimized)
 	if active != nil && !active.IsMinimized() {
-		bounds := active.Bounds()
+		bounds := m.displayBounds(active)
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
 		if active.HandleMouseMove(localEvent) {
-			// Request repaint since widget state may have changed
+			// Request repaint since trinket state may have changed
 			m.RequestRepaint()
 			return true
 		}
@@ -1310,13 +1770,25 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	resizing := m.resizing
 	pressedWin := m.pressedWindow
 	popups := m.popups
+	tearHandleClick := m.dragIsTearHandle && !m.dragMoved
 	m.dragging = nil
 	m.resizing = nil
 	m.resizeEdge = ResizeEdgeNone
 	m.pressedWindow = nil
+	m.dragIsTearHandle = false
+	m.dragMoved = false
 	m.mu.Unlock()
 
 	if dragging != nil || resizing != nil {
+		// The tear-off halo only shows while the handle is grabbed.
+		if dragging != nil {
+			dragging.SetTearHighlight(false)
+		}
+		// A tear-handle press released in place is a click: toggle the
+		// window between docked and detached (retaining position/size).
+		if dragging != nil && tearHandleClick {
+			dragging.requestTear()
+		}
 		return true
 	}
 
@@ -1333,7 +1805,7 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Check if we should raise the pressed window (focus-without-raise behavior)
 	// Only raise if release is over a non-occluded part of the window
 	if pressedWin != nil && !pressedWin.IsMinimized() {
-		bounds := pressedWin.Bounds()
+		bounds := m.displayBounds(pressedWin)
 		releasePoint := core.UnitPoint{X: event.X, Y: event.Y}
 		if bounds.Contains(releasePoint) {
 			// Check that no other window is on top at this position
@@ -1344,7 +1816,7 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 			topmostAtPoint := (*Window)(nil)
 			for i := len(windows) - 1; i >= 0; i-- {
 				win := windows[i]
-				if win.IsVisible() && !win.IsMinimized() && win.Bounds().Contains(releasePoint) {
+				if win.IsVisible() && !win.IsMinimized() && m.displayBounds(win).Contains(releasePoint) {
 					topmostAtPoint = win
 					break
 				}
@@ -1373,14 +1845,14 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		}
 	}
 
-	// Forward to active window (for splitter/widget release, but not if minimized)
+	// Forward to active window (for splitter/trinket release, but not if minimized)
 	if active != nil && !active.IsMinimized() {
-		bounds := active.Bounds()
+		bounds := m.displayBounds(active)
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
 		if active.HandleMouseRelease(localEvent) {
-			// Request repaint since widget state may have changed
+			// Request repaint since trinket state may have changed
 			m.RequestRepaint()
 			return true
 		}
@@ -1450,10 +1922,13 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 }
 
 // CycleWindows cycles through windows and the dock (if it has entries).
+// Uses activation order: most recently activated item is at the end.
+// The dock participates in this order like a window (nil in cycleOrder).
 func (m *WindowManager) CycleWindows(forward bool) {
 	m.mu.Lock()
 	desktop := m.desktop
-	windows := m.windows
+	cycleOrder := make([]interface{}, len(m.cycleOrder))
+	copy(cycleOrder, m.cycleOrder)
 	activeWindow := m.activeWindow
 	m.mu.Unlock()
 
@@ -1469,74 +1944,94 @@ func (m *WindowManager) CycleWindows(forward bool) {
 		}
 	}
 
-	// Collect non-minimized windows
-	var nonMinimized []*Window
-	for _, w := range windows {
-		if !w.IsMinimized() {
-			nonMinimized = append(nonMinimized, w)
-		}
-	}
-
-	// If dock is currently focused
-	if isDockFocused && dockProvider != nil {
-		dockProvider.UnfocusDock()
-		if len(nonMinimized) > 0 {
-			if forward {
-				// Move to first non-minimized window
-				m.ActivateWindow(nonMinimized[0])
-			} else {
-				// Move to last non-minimized window
-				m.ActivateWindow(nonMinimized[len(nonMinimized)-1])
+	// Build effective cycle list: non-minimized windows + dock (if has entries)
+	// Filter cycleOrder to only include valid items
+	var effectiveCycle []interface{}
+	for _, item := range cycleOrder {
+		if item == nil {
+			// Dock - include only if it has entries
+			if hasDock {
+				effectiveCycle = append(effectiveCycle, nil)
+			}
+		} else if win, ok := item.(*Window); ok {
+			// Window - include only if not minimized
+			if !win.IsMinimized() {
+				effectiveCycle = append(effectiveCycle, win)
 			}
 		}
-		return
 	}
 
-	// If no non-minimized windows, focus dock if available
-	if len(nonMinimized) == 0 {
-		if hasDock && dockProvider != nil {
-			dockProvider.FocusDock()
-			m.RequestRepaint()
+	// Add dock to cycle if it has entries but isn't in the order yet
+	if hasDock {
+		hasDockInCycle := false
+		for _, item := range effectiveCycle {
+			if item == nil {
+				hasDockInCycle = true
+				break
+			}
 		}
+		if !hasDockInCycle {
+			effectiveCycle = append(effectiveCycle, nil)
+		}
+	}
+
+	// Nothing to cycle to
+	if len(effectiveCycle) == 0 {
 		return
 	}
 
-	// Find current window index in non-minimized list
+	// Find current position in cycle
 	currentIdx := -1
-	for i, w := range nonMinimized {
-		if w == activeWindow {
-			currentIdx = i
-			break
-		}
-	}
-
-	// Calculate next index
-	if forward {
-		if currentIdx == len(nonMinimized)-1 {
-			// At last window - go to dock if available
-			if hasDock && dockProvider != nil {
-				dockProvider.FocusDock()
-				m.RequestRepaint()
-				return
+	if isDockFocused {
+		for i, item := range effectiveCycle {
+			if item == nil {
+				currentIdx = i
+				break
 			}
-			// Otherwise wrap to first window
-			m.ActivateWindow(nonMinimized[0])
-		} else {
-			m.ActivateWindow(nonMinimized[currentIdx+1])
 		}
 	} else {
-		if currentIdx <= 0 {
-			// At first window (or no active window) - go to dock if available
-			if hasDock && dockProvider != nil {
-				dockProvider.FocusDock()
-				m.RequestRepaint()
-				return
+		for i, item := range effectiveCycle {
+			if item == activeWindow {
+				currentIdx = i
+				break
 			}
-			// Otherwise wrap to last window
-			m.ActivateWindow(nonMinimized[len(nonMinimized)-1])
-		} else {
-			m.ActivateWindow(nonMinimized[currentIdx-1])
 		}
+	}
+
+	// Default to end if not found
+	if currentIdx < 0 {
+		currentIdx = len(effectiveCycle) - 1
+	}
+
+	// Calculate next index with wrapping
+	var nextIdx int
+	if forward {
+		nextIdx = (currentIdx + 1) % len(effectiveCycle)
+	} else {
+		nextIdx = (currentIdx - 1 + len(effectiveCycle)) % len(effectiveCycle)
+	}
+
+	// Activate the target
+	nextItem := effectiveCycle[nextIdx]
+	if nextItem == nil {
+		// Moving to dock - deactivate current window first
+		if activeWindow != nil {
+			activeWindow.SetActive(false)
+		}
+		m.mu.Lock()
+		m.activeWindow = nil
+		m.bringToCycleFront(nil)
+		m.mu.Unlock()
+		if dockProvider != nil {
+			dockProvider.FocusDock()
+		}
+		m.RequestRepaint()
+	} else if win, ok := nextItem.(*Window); ok {
+		// Moving to a window
+		if isDockFocused && dockProvider != nil {
+			dockProvider.UnfocusDock()
+		}
+		m.ActivateWindow(win)
 	}
 }
 
@@ -1558,12 +2053,23 @@ func (m *WindowManager) Paint(p *core.Painter) {
 	// Paint windows from bottom to top, clipped to client area
 	for _, win := range windows {
 		if win.IsVisible() && !win.IsMinimized() {
-			bounds := win.Bounds()
+			// Draw at the provisional (corralled) position so windows
+			// left off-screen by a desktop shrink are nudged into view.
+			bounds := m.displayBounds(win)
 
 			// Calculate visible portion within client area
 			visibleBounds := bounds.Intersection(clientArea)
 			if visibleBounds.IsEmpty() {
 				continue
+			}
+
+			// Tear-off affordance: a black halo just larger than the
+			// window, drawn in desktop space (not clipped to the client
+			// area) so a maximized window bleeds it over the menu and
+			// status bars. Painted before the window so only the ring
+			// beyond the frame shows.
+			if win.TearIndicatorActive() {
+				win.PaintTearHalo(p, bounds)
 			}
 
 			// Offset into window's local coordinates
@@ -1636,4 +2142,48 @@ func (m *WindowManager) RequestRepaint() {
 	if handler != nil {
 		handler()
 	}
+}
+
+// HandleMouseWheel routes a wheel event to the topmost visible
+// window under the pointer (position routing; gesture latching
+// happens above, in the desktop).
+func (m *WindowManager) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	m.mu.RLock()
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.RUnlock()
+
+	pos := core.UnitPoint{X: event.X, Y: event.Y}
+
+	// Popup overlays float above everything.
+	m.mu.RLock()
+	popups := make([]*PopupOverlay, len(m.popups))
+	copy(popups, m.popups)
+	m.mu.RUnlock()
+	for i := len(popups) - 1; i >= 0; i-- {
+		popup := popups[i]
+		if popup.HandleMouseWheel != nil && popup.Bounds.Contains(pos) {
+			if popup.HandleMouseWheel(event) {
+				m.RequestRepaint()
+				return true
+			}
+		}
+	}
+
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		b := m.displayBounds(win)
+		if !win.IsVisible() || win.IsMinimized() || !b.Contains(pos) {
+			continue
+		}
+		local := event
+		local.X -= b.X
+		local.Y -= b.Y
+		if win.HandleMouseWheel(local) {
+			m.RequestRepaint()
+			return true
+		}
+		return false // topmost window under the pointer owns the point
+	}
+	return false
 }

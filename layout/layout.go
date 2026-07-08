@@ -1,21 +1,21 @@
-// Package layout provides layout managers for arranging widgets.
+// Package layout provides layout managers for arranging trinkets.
 package layout
 
 import (
-	"github.com/phroun/tuitk/core"
+	"github.com/phroun/kittytk/core"
 )
 
-// LayoutItem wraps a widget with additional layout properties.
+// LayoutItem wraps a trinket with additional layout properties.
 type LayoutItem struct {
-	Widget  core.Widget
+	Trinket  core.Trinket
 	Stretch int        // Stretch factor (0 = use preferred size)
 	Align   core.Alignment
 }
 
 // NewLayoutItem creates a layout item with default properties.
-func NewLayoutItem(widget core.Widget) *LayoutItem {
+func NewLayoutItem(trinket core.Trinket) *LayoutItem {
 	return &LayoutItem{
-		Widget:  widget,
+		Trinket:  trinket,
 		Stretch: 0,
 		Align:   core.AlignLeft,
 	}
@@ -35,7 +35,7 @@ func (i *LayoutItem) WithAlign(align core.Alignment) *LayoutItem {
 
 // Spacer represents fixed or stretching empty space in a layout.
 type Spacer struct {
-	core.WidgetBase
+	core.TrinketBase
 	fixedSize core.UnitSize
 	stretch   int
 }
@@ -121,10 +121,41 @@ func calculateStretch(available core.Unit, items []stretchItem) []core.Unit {
 		return sizes
 	}
 
-	// Calculate space to distribute
+	// Over-committed: shrink stretch items below their minimums,
+	// distributing the deficit proportionally. (Stretch items are
+	// elastic in both directions; non-stretch items keep their hints.)
+	// Without this, a stale or oversized hint acts as a ratchet -
+	// layouts can grow an expanding item but never shrink it back.
 	extra := available - totalMinimum
 	if extra < 0 {
-		extra = 0
+		deficit := -extra
+		var stretchMinTotal core.Unit
+		for _, item := range items {
+			if item.stretch > 0 {
+				stretchMinTotal += item.minimum
+			}
+		}
+		sizes := make([]core.Unit, len(items))
+		var taken core.Unit
+		for i, item := range items {
+			sizes[i] = item.minimum
+			if item.stretch > 0 && stretchMinTotal > 0 {
+				cut := (deficit * item.minimum) / stretchMinTotal
+				if cut > sizes[i] {
+					cut = sizes[i]
+				}
+				sizes[i] -= cut
+				taken += cut
+			}
+		}
+		// Trim any rounding remainder from stretch items that still have size.
+		for i := 0; i < len(items) && taken < deficit; i++ {
+			if items[i].stretch > 0 && sizes[i] > 0 {
+				sizes[i]--
+				taken++
+			}
+		}
+		return sizes
 	}
 
 	// Distribute proportionally

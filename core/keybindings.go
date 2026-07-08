@@ -80,6 +80,9 @@ const (
 	ActionAppHide       = "app-hide"
 	ActionAppHideOthers = "app-hide-others"
 	ActionAppShowAll    = "app-show-all"
+
+	// Key pass-through
+	ActionPassNextKeyToTrinket = "pass-next-key-to-trinket"
 )
 
 // NewKeyBindings creates a new key bindings map with defaults.
@@ -156,6 +159,9 @@ func (kb *KeyBindings) SetDefaults() {
 	kb.bindings[ActionAppHide] = []string{"^H"}
 	kb.bindings[ActionAppHideOthers] = []string{"M-^H"}
 	kb.bindings[ActionAppShowAll] = []string{} // No default binding
+
+	// Key pass-through (Ctrl+Backslash)
+	kb.bindings[ActionPassNextKeyToTrinket] = []string{"^\\"}
 }
 
 // Bind sets the keys for an action (replaces existing).
