@@ -6,8 +6,11 @@ package interop_test
 // pinning end to end (the client generates an identity, pins the host).
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,5 +84,37 @@ func TestPythonClientInteropTLS(t *testing.T) {
 	// The client must have pinned the host fingerprint.
 	if b, err := os.ReadFile(filepath.Join(cdir, "known_hosts")); err != nil || len(b) == 0 {
 		t.Errorf("client did not pin the host in known_hosts (err=%v)", err)
+	}
+}
+
+// TestPythonTwoTLSConnections is the Python analogue of the C two-
+// connection TLS stress: a second connection builds while its reader
+// thread is mid-read, which corrupts a shared SSL object if reads and
+// writes are not serialized.
+func TestPythonTwoTLSConnections(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(display.HostIdentityEnv, filepath.Join(dir, "host_identity.pem"))
+	t.Setenv(display.AuthStoreEnv, filepath.Join(dir, "authorizations"))
+
+	_, addr, stop := startServiceCfg(t, display.Config{
+		Endpoint:    "tls://127.0.0.1:0",
+		PromptLocal: true,
+		Authorize:   func(display.AuthRequest) display.AuthDecision { return display.AuthAllowOnce },
+	})
+	defer stop()
+
+	cdir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "python3", "twoconn_smoke.py", "tls://"+addr)
+	cmd.Env = append(os.Environ(),
+		"KITTYTK_IDENTITY="+filepath.Join(cdir, "identity.pem"),
+		"KITTYTK_KNOWN_HOSTS="+filepath.Join(cdir, "known_hosts"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python two-connection TLS smoke failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "OK") {
+		t.Fatalf("python two-connection TLS smoke did not report OK:\n%s", out)
 	}
 }
