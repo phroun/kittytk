@@ -1,4 +1,4 @@
-// Package window provides windowing support for the TUI toolkit.
+// Package window provides windowing support for KittyTK.
 package window
 
 import (

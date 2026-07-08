@@ -1,4 +1,4 @@
-// Package backend provides rendering backends for the TUI toolkit.
+// Package backend provides rendering backends for KittyTK.
 package backend
 
 import (

@@ -1,4 +1,4 @@
-// Package app provides the main application framework for the TUI toolkit.
+// Package app provides the main application framework for KittyTK.
 package app
 
 import (

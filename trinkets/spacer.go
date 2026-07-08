@@ -1,4 +1,4 @@
-// Package trinkets provides standard UI trinkets for the TUI toolkit.
+// Package trinkets provides standard UI trinkets for KittyTK.
 package trinkets
 
 import (

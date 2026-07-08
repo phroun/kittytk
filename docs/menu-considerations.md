@@ -1,6 +1,6 @@
 # Menu Bar and MDI Architecture Considerations
 
-This document captures design discussions and considerations for implementing context-sensitive menu bars and MDI (Multiple Document Interface) support in the TUI toolkit.
+This document captures design discussions and considerations for implementing context-sensitive menu bars and MDI (Multiple Document Interface) support in KittyTK.
 
 ## Implementation Status
 

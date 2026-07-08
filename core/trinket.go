@@ -1,4 +1,4 @@
-// Package core provides fundamental types for the TUI toolkit.
+// Package core provides fundamental types for KittyTK.
 package core
 
 import (

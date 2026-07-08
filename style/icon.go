@@ -1,4 +1,4 @@
-// Package style provides theming and visual styling for the TUI toolkit.
+// Package style provides theming and visual styling for KittyTK.
 package style
 
 // IconSize represents standard icon dimensions.
