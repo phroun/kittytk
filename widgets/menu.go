@@ -644,7 +644,8 @@ func (m *Menu) announceCurrentItem() {
 	if len(extras) > 0 {
 		announcement += ", " + strings.Join(extras, ", ")
 	}
-	am.AnnouncePolite(announcement)
+	// Arrowing through menu items is navigation: throttle the speech.
+	am.AnnounceNavigation(announcement)
 }
 
 // calculateSize calculates the menu size.
@@ -1753,7 +1754,8 @@ func (m *MenuBar) announceCurrentMenu() {
 	}
 	menu := m.menus[m.currentIndex]
 	if am := core.FindAccessibilityManager(m); am != nil {
-		am.AnnouncePolite(menu.title + ", menu")
+		// Arrowing across the menu bar is navigation: throttle the speech.
+		am.AnnounceNavigation(menu.title + ", menu")
 	}
 }
 

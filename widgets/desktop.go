@@ -1223,6 +1223,10 @@ func (d *Desktop) scheduleTick(p platform.Platform) {
 			return
 		}
 		d.ProcessTimers()
+		// Flush a held navigation announcement once the user has paused.
+		if am := d.AccessibilityManager(); am != nil {
+			am.ProcessPending()
+		}
 		d.mu.RLock()
 		s := d.surface
 		torn := append([]*window.TearOffHost(nil), d.tornHosts...)

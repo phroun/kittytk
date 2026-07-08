@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // AccessibleRole describes the semantic role of a widget for assistive technology.
@@ -192,6 +193,12 @@ type AccessibilityAnnouncement struct {
 
 	// Source is the widget that generated the announcement.
 	Source Widget
+
+	// Vocal reports whether this announcement should be spoken aloud.
+	// Non-navigation announcements are always Vocal. Navigation
+	// announcements set it false while throttled - the status bar still
+	// shows every one, but only the first and the settled-on item speak.
+	Vocal bool
 }
 
 // AccessibilityManager handles accessibility features.
@@ -211,6 +218,24 @@ type AccessibilityManager struct {
 
 	// FocusedWidget tracks the currently focused widget for announcements.
 	FocusedWidget Widget
+
+	// Navigation-announcement throttle state (see AnnounceNavigation).
+	nowFn           func() time.Time // clock; overridable in tests
+	lastAnnounceAt  time.Time        // when the last navigation announcement fired
+	pending         AccessibilityAnnouncement
+	pendingActive   bool
+	pendingDeadline time.Time
+}
+
+// navigationThrottle is the quiet window for navigation announcements: a
+// burst of moves within this interval collapses to the first and the last.
+const navigationThrottle = 500 * time.Millisecond
+
+func (am *AccessibilityManager) now() time.Time {
+	if am.nowFn != nil {
+		return am.nowFn()
+	}
+	return time.Now()
 }
 
 // NewAccessibilityManager creates a new accessibility manager.
@@ -221,8 +246,14 @@ func NewAccessibilityManager() *AccessibilityManager {
 	}
 }
 
-// Announce queues an announcement.
+// Announce queues an announcement. Non-navigation announcements are
+// always spoken (Vocal), so throttling doesn't apply to them.
 func (am *AccessibilityManager) Announce(message string, priority string) {
+	am.emit(AccessibilityAnnouncement{Message: message, Priority: priority, Vocal: true})
+}
+
+// emit delivers an announcement to the channel and OnAnnounce handler.
+func (am *AccessibilityManager) emit(announcement AccessibilityAnnouncement) {
 	am.mu.Lock()
 	enabled := am.Enabled
 	handler := am.OnAnnounce
@@ -232,11 +263,6 @@ func (am *AccessibilityManager) Announce(message string, priority string) {
 		return
 	}
 
-	announcement := AccessibilityAnnouncement{
-		Message:  message,
-		Priority: priority,
-	}
-
 	// Try to send to channel (non-blocking)
 	select {
 	case am.Announcements <- announcement:
@@ -244,7 +270,6 @@ func (am *AccessibilityManager) Announce(message string, priority string) {
 		// Channel full, drop the announcement
 	}
 
-	// Also call handler if set
 	if handler != nil {
 		handler(announcement)
 	}
@@ -258,6 +283,57 @@ func (am *AccessibilityManager) AnnouncePolite(message string) {
 // AnnounceAssertive queues an assertive announcement (interrupts).
 func (am *AccessibilityManager) AnnounceAssertive(message string) {
 	am.Announce(message, "assertive")
+}
+
+// AnnounceNavigation speaks a navigation announcement (focus/selection
+// movement) through a throttle so rapid arrowing doesn't flood the screen
+// reader: the first move in a burst speaks immediately; a move within the
+// quiet window is held as pending, replacing any earlier pending and
+// restarting the window, and is spoken only after the user pauses (see
+// ProcessPending). The net effect is you hear the first item and the one
+// you finally land on, not every item you skated past.
+func (am *AccessibilityManager) AnnounceNavigation(message string) {
+	am.mu.Lock()
+	if !am.Enabled {
+		am.mu.Unlock()
+		return
+	}
+	now := am.now()
+	withinWindow := !am.lastAnnounceAt.IsZero() && now.Sub(am.lastAnnounceAt) < navigationThrottle
+	am.lastAnnounceAt = now
+	vocal := !withinWindow
+	if withinWindow {
+		// Hold speech for the pause; replace any earlier pending and
+		// restart the quiet window. The status bar still shows this move.
+		am.pending = AccessibilityAnnouncement{Message: message, Priority: "polite", Vocal: true}
+		am.pendingActive = true
+		am.pendingDeadline = now.Add(navigationThrottle)
+	} else {
+		// First of a burst: speak immediately, drop any stale pending.
+		am.pendingActive = false
+	}
+	am.mu.Unlock()
+
+	// Every navigation announcement is emitted (so the status bar shows
+	// all of them); only Vocal ones are spoken.
+	am.emit(AccessibilityAnnouncement{Message: message, Priority: "polite", Vocal: vocal})
+}
+
+// ProcessPending speaks a held navigation announcement once its quiet
+// window has elapsed. Call it periodically from the main loop (the
+// desktop tick does) so the last item of a rapid burst is spoken after
+// the user pauses.
+func (am *AccessibilityManager) ProcessPending() {
+	am.mu.Lock()
+	if !am.pendingActive || am.now().Before(am.pendingDeadline) {
+		am.mu.Unlock()
+		return
+	}
+	ann := am.pending // Vocal: true
+	am.pendingActive = false
+	am.lastAnnounceAt = am.now()
+	am.mu.Unlock()
+	am.emit(ann)
 }
 
 // AnnounceFocus announces focus change on a widget.
@@ -327,7 +403,10 @@ func (am *AccessibilityManager) AnnounceFocus(widget Widget) {
 	}
 
 	if len(parts) > 0 {
-		am.AnnouncePolite(strings.Join(parts, ", "))
+		// Focus changes are navigation: throttle the speech so rapid
+		// arrowing doesn't flood the screen reader (the status bar still
+		// shows every move).
+		am.AnnounceNavigation(strings.Join(parts, ", "))
 	}
 }
 

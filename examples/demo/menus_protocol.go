@@ -239,7 +239,10 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 					statusBar.SetText(fmt.Sprintf("%s [%s] %s", prefix, announcement.Priority, announcement.Message))
 				}
 			}
-			if speakAnnouncements && runtime.GOOS == "darwin" {
+			// Speech is throttled at the source (navigation announcements
+			// mark themselves non-vocal while the user arrows quickly); the
+			// status bar above still shows every one.
+			if speakAnnouncements && announcement.Vocal && runtime.GOOS == "darwin" {
 				go func(msg string) {
 					speechMu.Lock()
 					if speechCmd != nil && speechCmd.Process != nil {
