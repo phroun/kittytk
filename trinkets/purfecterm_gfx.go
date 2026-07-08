@@ -1,7 +1,7 @@
 package trinkets
 
 // The graphical paint path for PurfecTerm (D1): a faithful port of
-// the reference gtk/qt Trinket renderers onto tuitk's Painter and the
+// the reference gtk/qt widget renderers onto tuitk's Painter and the
 // shared text engine. It drives purfecterm.Buffer directly - screen
 // splits, sprites, custom glyphs, screen scale/crop, selection,
 // blink animation, cursor shapes with the unfocused hollow-box form,
@@ -13,7 +13,7 @@ package trinkets
 //     glyphs, sprites, and cursor overlays keep device-pixel
 //     precision through Painter.DrawImageOffset.
 //   - Scrollbars are overlay lanes inside the trinket (macOS style)
-//     instead of composed native trinkets.
+//     instead of composed native widgets.
 
 import (
 	"fmt"
