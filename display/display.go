@@ -168,6 +168,10 @@ func readBatch(scanner *protocol.Scanner) ([]*protocol.Statement, error) {
 
 // execute runs one batch on the UI thread and replies.
 func (c *conn) execute(batch []*protocol.Statement) {
+	// Session-level app verbs the protocol session doesn't model are
+	// handled here before the rest of the batch runs against the session.
+	batch = c.handleAppVerbs(batch)
+
 	script := &protocol.Script{Statements: batch}
 	reply, err := c.session.Execute(script, c.factory)
 	if err != nil {
@@ -194,6 +198,24 @@ func (c *conn) execute(batch []*protocol.Statement) {
 	c.server.desktop.RequestUpdate()
 
 	c.send(protocol.EncodeReply(reply))
+}
+
+// handleAppVerbs consumes the session-level application verbs the display
+// implements directly (the protocol session has a closed verb set), and
+// returns the remaining statements for the session to run.
+//
+//	rawkey    - pass the next key straight to the focused widget (the
+//	            "raw key input" action), targeting the active app/window.
+func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement {
+	rest := batch[:0:0]
+	for _, stmt := range batch {
+		if stmt.Key == "" && stmt.Verb == "rawkey" {
+			c.server.desktop.ActivatePassNextKeyToWidget()
+			continue
+		}
+		rest = append(rest, stmt)
+	}
+	return rest
 }
 
 // teardown runs on the UI thread at disconnect: the app and its

@@ -50,6 +50,33 @@ func init() {
 			target.(*Window).SetNativeRequested(b)
 			return nil
 		},
+		// font overrides the window's font (its content inherits it);
+		// empty / "default" clears the override back to the desktop's.
+		"font": func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+			s, err := protocol.AsString("font", v, f)
+			if err != nil {
+				return err
+			}
+			target.(*Window).SetFont(namedFont(s))
+			return nil
+		},
+		// denomination overrides the window's row height in units (its
+		// content re-grids to it); 0 clears the override.
+		"denomination": func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+			n, err := protocol.AsInt("denomination", v, f)
+			if err != nil {
+				return err
+			}
+			w := target.(*Window)
+			if n <= 0 {
+				w.SetCellMetrics(nil)
+			} else {
+				m := core.DefaultCellMetrics()
+				m.CellHeight = core.Unit(n)
+				w.SetCellMetrics(&m)
+			}
+			return nil
+		},
 	}
 
 	for _, dim := range []string{"x", "y", "width", "height"} {
@@ -127,4 +154,19 @@ func init() {
 			return nil
 		},
 	})
+}
+
+// namedFont maps a protocol font name to a built-in font, or nil (inherit
+// from the desktop) for empty / "default".
+func namedFont(name string) *core.Font {
+	switch name {
+	case "monday", "monday12", "mono":
+		return core.FontMonday12
+	case "tuesday", "tuesday12":
+		return core.FontTuesday12
+	case "uitext", "uitext12", "ui":
+		return core.FontUIText12
+	default:
+		return nil
+	}
 }
