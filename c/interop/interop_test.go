@@ -9,7 +9,9 @@ package interop_c_test
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -227,4 +229,92 @@ func TestCDemoBuildsOverService(t *testing.T) {
 		t.Fatalf("c demo build did not report OK:\n%s", out)
 	}
 	t.Logf("c demo build: OK")
+}
+
+// findCounter walks the desktop for the counter app's window: a panel with
+// a label over a button.
+func findCounter(d *trinkets.Desktop) (*trinkets.Label, *trinkets.Button) {
+	var lbl *trinkets.Label
+	var btn *trinkets.Button
+	onUI(d, func() {
+		for _, a := range d.Applications() {
+			for _, w := range a.Windows() {
+				p, ok := w.Content().(*trinkets.Panel)
+				if !ok {
+					continue
+				}
+				kids := p.Children()
+				if len(kids) != 2 {
+					continue
+				}
+				l, okl := kids[0].(*trinkets.Label)
+				b, okb := kids[1].(*trinkets.Button)
+				if okl && okb {
+					lbl, btn = l, b
+				}
+			}
+		}
+	})
+	return lbl, btn
+}
+
+// TestCCounterExample proves the minimal counter example works end to end:
+// clicking the button (server-side) makes the C app rewrite the label.
+func TestCCounterExample(t *testing.T) {
+	bin := buildC(t, "counter.c")
+	desktop, sock, stop := startService(t)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin) // counter takes no arg; find the host via env
+	cmd.Env = append(os.Environ(), "KITTYTK_DISPLAY="+sock)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start counter: %v", err)
+	}
+	defer func() { _ = cmd.Process.Kill() }()
+
+	// Wait for the counter window to appear on the desktop.
+	var lbl *trinkets.Label
+	var btn *trinkets.Button
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		lbl, btn = findCounter(desktop)
+		if lbl != nil && btn != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("counter window never appeared (stderr: %s)", stderr.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// The initial caption.
+	var got string
+	onUI(desktop, func() { got = lbl.Text() })
+	if got != "Count: 0" {
+		t.Errorf("initial label = %q, want %q", got, "Count: 0")
+	}
+
+	// Give the client a moment to send its click subscription, then click,
+	// confirming each increment before the next (robust to the sub race).
+	time.Sleep(300 * time.Millisecond)
+	for want := 1; want <= 3; want++ {
+		onUI(desktop, func() { btn.Click() })
+		ok := false
+		for i := 0; i < 100; i++ {
+			onUI(desktop, func() { got = lbl.Text() })
+			if got == fmt.Sprintf("Count: %d", want) {
+				ok = true
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if !ok {
+			t.Fatalf("after click %d, label = %q, want Count: %d", want, got, want)
+		}
+	}
+	t.Logf("counter reached %q after 3 clicks", got)
 }

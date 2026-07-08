@@ -10,6 +10,8 @@ kittytk.h / kittytk.c   the client library: wire format (scanner, quoting,
                         flat inbound parser, events), socket transport,
                         reader + event pthreads, subscriptions, UI ids
 scripts.h / scripts.c   the demo's protocol-text build scripts
+counter.c               the smallest useful app: a label + a button that
+                        increments the number on the label
 demoapp.c               the interactive demo (menus, MDI, dialogs, secondary)
 interop_smoke.c         bidirectional interop client (for the Go harness)
 demoapp_smoke.c         full-demo build client (for the Go harness)
@@ -28,7 +30,12 @@ go run -tags sdl ./examples/kittytk-sdl       # graphical
 # terminal 2 — the C app:
 ./demoapp                                     # attaches to the host
 ./demoapp --solo                              # becomes the whole display
+./counter                                     # the minimal example
 ```
+
+The minimal example, `counter.c`, is the whole KittyTK pattern in ~40 lines
+of C: dial, build a window with a label and a button, subscribe to the
+button's click, and rewrite the label on each click.
 
 ## Verify
 
