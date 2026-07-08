@@ -94,7 +94,7 @@ func authPromptScript(req AuthRequest) string {
 	// reply; the trailing top-level bindings re-surface each button by
 	// its dotted path so the wiring can find it.
 	return "" +
-		"w=new window title=\"Connection Request\" width=560 height=300 children={\n" +
+		"w=new window title=\"Connection Request\" width=470 height=210 children={\n" +
 		"  root=new panel layout=vbox spacing=6 children={\n" +
 		"    q=new label caption=" + protocol.Quote(q) + "\n" +
 		"    src=new label caption=" + protocol.Quote(from) + "\n" +
@@ -220,19 +220,11 @@ func showAuthPrompt(d *trinkets.Desktop, req AuthRequest, deliver func(AuthDecis
 		return false
 	}
 
-	// Center the prompt on the desktop's client area.
-	ca := wm.ClientArea()
-	b := win.Bounds()
-	b.X = ca.X + (ca.Width-b.Width)/2
-	b.Y = ca.Y + (ca.Height-b.Height)/2
-	if b.X < ca.X {
-		b.X = ca.X
-	}
-	if b.Y < ca.Y {
-		b.Y = ca.Y
-	}
-	win.SetBounds(b)
-
+	// Let the window manager place it: positionWindow snaps to the
+	// cell grid (clientArea origin + a cell-multiple cascade), so the
+	// frame renders correctly in the TUI. Hand-computing a centered
+	// pixel offset here lands the window between cells, which drops the
+	// left border and titlebar in the terminal renderer.
 	wm.ShowModal(win)
 	d.RequestUpdate()
 	return true
