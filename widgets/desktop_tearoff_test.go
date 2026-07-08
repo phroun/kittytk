@@ -514,3 +514,49 @@ func TestMaximizedWindowRedockRefillsClientArea(t *testing.T) {
 	}
 	d.RunOn(plat)
 }
+
+// Clicking the tear handle on a maximized window restores it to its
+// unmaximized size as part of the tear-off, so it lands on its own
+// surface at its normal bounds rather than the client-area size.
+func TestTearOffRestoresMaximizedWindow(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	win := window.NewWindow("max")
+	win.SetTearable(true)
+	normal := core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100}
+	d.SetOnStartup(func() {
+		d.WindowManager().AddWindow(win)
+		win.SetBounds(normal)
+		win.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		wm := d.WindowManager()
+		wm.MaximizeWindow(win)
+		if !win.IsMaximized() || win.Bounds() == normal {
+			t.Fatal("window did not maximize to the client area")
+		}
+
+		d.tearOffInPlace(win)
+
+		if !win.IsDetached() {
+			t.Fatal("window not detached after tear-off")
+		}
+		if win.IsMaximized() {
+			t.Error("torn window is still maximized; should have restored")
+		}
+		// The torn surface is sized to the restored (normal) bounds, not
+		// the client area. Desktop origin is (50,60) px, scale 1.
+		torn := plat.surfaces[1]
+		if torn.opts.WidthPx != int(normal.Width) || torn.opts.HeightPx != int(normal.Height) {
+			t.Errorf("torn surface size = %dx%d, want %dx%d (restored size)",
+				torn.opts.WidthPx, torn.opts.HeightPx, normal.Width, normal.Height)
+		}
+		d.QuitWithCode(0)
+	}
+	d.RunOn(plat)
+}

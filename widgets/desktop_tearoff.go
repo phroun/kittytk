@@ -87,6 +87,12 @@ func (d *Desktop) tearOffInPlace(win *window.Window) {
 	if !win.IsTearable() || win.IsDetached() {
 		return
 	}
+	// A maximized window restores to its unmaximized size as part of the
+	// tear-off, so it lands on its own surface at its normal bounds rather
+	// than filling one the size of the desktop's client area.
+	if win.IsMaximized() {
+		win.Restore()
+	}
 	b := win.Bounds()
 	d.createTornHost(win, b.X, b.Y)
 }
