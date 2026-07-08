@@ -2376,13 +2376,17 @@ func (s *StatusBar) Paint(p *core.Painter) {
 	bounds := s.Bounds()
 	scheme := s.GetScheme()
 	metrics := s.EffectiveCellMetrics()
+	font := s.EffectiveFont()
 
 	statusBarStyle := scheme.GetStatusBar()
 
 	// Draw background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', statusBarStyle)
 
-	// Draw sections
+	// Draw sections. The whole status bar renders in the proportional
+	// font: section auto-width comes from proportional text measurement
+	// (plus a one-cell margin on each side), and each section's text is
+	// clipped to its slot so it can't spill into the next one.
 	x := core.Unit(0)
 	for _, section := range s.sections {
 		// Calculate section width
@@ -2391,47 +2395,37 @@ func (s *StatusBar) Paint(p *core.Painter) {
 			// Stretch to remaining space
 			sectionWidth = bounds.Width - x
 		} else if section.Width == 0 {
-			// Auto width based on content
-			textLen := len(section.Text)
+			// Auto width based on measured content
+			var textW core.Unit
 			if len(section.Spans) > 0 {
-				textLen = 0
 				for _, span := range section.Spans {
-					textLen += len(span.Text)
+					textW += font.MeasureText(span.Text)
 				}
+			} else {
+				textW = font.MeasureText(section.Text)
 			}
-			sectionWidth = core.Unit(textLen+2) * metrics.CellWidth
+			sectionWidth = textW + 2*metrics.CellWidth
 		} else {
 			sectionWidth = core.Unit(section.Width) * metrics.CellWidth
 		}
 
-		// Draw text - either from spans or plain text
+		// Draw text - either from spans or plain text - clipped to the slot.
 		textX := x + metrics.CellWidth
-		maxX := x + sectionWidth
+		slot := p.WithClip(core.UnitRect{X: x, Y: 0, Width: sectionWidth, Height: bounds.Height})
 
 		if len(section.Spans) > 0 {
-			// Draw styled spans
+			// Draw styled spans, advancing by each span's measured width.
 			for _, span := range section.Spans {
 				spanStyle := statusBarStyle
 				if span.Style != nil {
 					spanStyle = *span.Style
 				}
-				for _, ch := range span.Text {
-					if textX >= maxX {
-						break
-					}
-					p.DrawCell(textX, 0, ch, spanStyle)
-					textX += metrics.CellWidth
-				}
+				slot.DrawText(textX, 0, span.Text, spanStyle, font)
+				textX += font.MeasureText(span.Text)
 			}
 		} else {
 			// Draw plain text
-			for _, ch := range section.Text {
-				if textX >= maxX {
-					break
-				}
-				p.DrawCell(textX, 0, ch, statusBarStyle)
-				textX += metrics.CellWidth
-			}
+			slot.DrawText(textX, 0, section.Text, statusBarStyle, font)
 		}
 
 		x += sectionWidth
