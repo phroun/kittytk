@@ -2491,20 +2491,25 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 // HandleMouseRelease handles mouse release during drag.
 // HandleMouseWheel scrolls the active dropdown when it overflows.
 func (m *MenuBar) HandleMouseWheel(event core.MouseWheelEvent) bool {
-	// An open dropdown scrolls vertically through its items.
-	if menu := m.activeMenu; menu != nil && menu.visible && menu.needsScrolling() {
-		down := event.DeltaY > 0 || event.PreciseY > 0
-		up := event.DeltaY < 0 || event.PreciseY < 0
-		if down && menu.canScrollDown() {
-			menu.scrollDown(1)
-		} else if up && menu.canScrollUp() {
-			menu.scrollUp(1)
+	// An open dropdown OWNS the wheel: it scrolls its own items and the
+	// gesture never falls through to pan the bar underneath (those are
+	// two separate things). It is consumed even when the dropdown is too
+	// short to scroll, so the bar below it stays put.
+	if menu := m.activeMenu; menu != nil && menu.visible {
+		if menu.needsScrolling() {
+			down := event.DeltaY > 0 || event.PreciseY > 0
+			up := event.DeltaY < 0 || event.PreciseY < 0
+			if down && menu.canScrollDown() {
+				menu.scrollDown(1)
+			} else if up && menu.canScrollUp() {
+				menu.scrollUp(1)
+			}
+			m.Update()
 		}
-		m.Update()
 		return true
 	}
 
-	// Otherwise, a wheel or two-finger pan over an overflowing bar steps
+	// With no dropdown open, a wheel or two-finger pan over an overflowing bar steps
 	// the first visible menu - the same gesture the tab strip uses. The
 	// horizontal axis wins when present (two-finger pans are often
 	// diagonal); precise deltas contribute sign only (whole-menu steps).

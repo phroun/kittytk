@@ -86,6 +86,25 @@ func TestMenuBarWheelClampsAtEnds(t *testing.T) {
 	}
 }
 
+// An open dropdown owns the wheel: scrolling it (even a short one that
+// can't scroll) must never pan the bar underneath - those are separate
+// gestures.
+func TestMenuBarWheelDropdownDoesNotPanBar(t *testing.T) {
+	m := newOverflowingMenuBar()
+	m.OpenMenu(0) // a short dropdown (no items) that can't scroll
+	if m.ActiveMenu() == nil {
+		t.Fatal("menu did not open")
+	}
+	before := m.scrollOffset
+
+	if !m.HandleMouseWheel(core.MouseWheelEvent{DeltaX: 1}) {
+		t.Error("open dropdown should consume the wheel")
+	}
+	if m.scrollOffset != before {
+		t.Errorf("wheel over open dropdown panned the bar: offset %d -> %d", before, m.scrollOffset)
+	}
+}
+
 // A bar that fits entirely never consumes wheel events - they belong to
 // whatever is under the pointer.
 func TestMenuBarWheelIgnoredWhenNoOverflow(t *testing.T) {
