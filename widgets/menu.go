@@ -11,10 +11,10 @@ import (
 
 // MenuItem represents an item in a menu.
 type MenuItem struct {
-	Text            string          // Display text (with & removed, && converted to &)
-	rawText         string          // Original text with & markup
-	acceleratorChar rune            // The accelerator character (lowercase), 0 if none
-	acceleratorPos  int             // Position in display text where accelerator appears, -1 if none
+	Text            string // Display text (with & removed, && converted to &)
+	rawText         string // Original text with & markup
+	acceleratorChar rune   // The accelerator character (lowercase), 0 if none
+	acceleratorPos  int    // Position in display text where accelerator appears, -1 if none
 	Shortcut        core.Shortcut
 	Icon            *style.TextIcon
 	Enabled         bool
@@ -584,7 +584,7 @@ func (m *Menu) findPrevEnabled(from int) int {
 		from = 0
 	}
 	for i := 1; i <= n; i++ {
-		idx := ((from - i) % n + n) % n
+		idx := ((from-i)%n + n) % n
 		item := m.items[idx]
 		if !item.Separator && item.Enabled {
 			return idx
@@ -771,8 +771,8 @@ func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s s
 			p.FillRectPixels(ge, edgeY, 0, offY, int((x+w)-ge)*scale, 1, s)
 		}
 	}
-	drawEdge(y, -1, !gapBottom)   // top edge (gapped for drop-downs)
-	drawEdge(y+h, 0, gapBottom)   // bottom edge (gapped for drop-ups)
+	drawEdge(y, -1, !gapBottom) // top edge (gapped for drop-downs)
+	drawEdge(y+h, 0, gapBottom) // bottom edge (gapped for drop-ups)
 }
 
 // paintScrollBumper draws a top/bottom scroll indicator row like a
@@ -1545,6 +1545,10 @@ type MenuBar struct {
 	showShortcuts bool
 	hideCalendar  bool // when true, omit the right-hand date/time area
 
+	// graphicalCached records whether the last paint was on a pixel
+	// surface; measurement (dateTimeWidth) has no painter and reads it.
+	graphicalCached bool
+
 	// Scroll state for overflow handling
 	scrollOffset int // Index of first visible menu
 
@@ -1633,11 +1637,31 @@ func (m *MenuBar) SetHideCalendar(hide bool) {
 	m.Update()
 }
 
+// dateTimeFormat is the clock layout; it is always 18 characters wide,
+// so a monospace measurement of the template matches any rendered time.
+const dateTimeFormat = " Mon Jan 02 15:04 "
+
+// dateTimeFont returns the face the clock renders in on graphical
+// surfaces: a monospace family at 80% of the standard size, which reads
+// as a compact clock and frees horizontal space for the menus. Returns
+// nil on text surfaces, where the clock stays one cell per character.
+func (m *MenuBar) dateTimeFont() *core.Font {
+	if !m.graphicalCached {
+		return nil
+	}
+	f := *core.FontMonday12                      // monospace, deliberately not the UI face
+	f.Size = (core.FontMonday12.Size*8 + 5) / 10 // ~80%, rounded
+	return &f
+}
+
 // dateTimeWidth returns the width reserved for the date/time display,
 // or zero when the calendar is hidden.
 func (m *MenuBar) dateTimeWidth() core.Unit {
 	if m.hideCalendar {
 		return 0
+	}
+	if f := m.dateTimeFont(); f != nil {
+		return f.MeasureText(dateTimeFormat)
 	}
 	metrics := m.EffectiveCellMetrics()
 	// " Mon Jan 02 15:04 " = 18 chars
@@ -1672,7 +1696,6 @@ func (m *MenuBar) canScrollRight() bool {
 // isLastMenuFullyVisible returns true if the last menu is completely visible.
 func (m *MenuBar) isLastMenuFullyVisible() bool {
 	bounds := m.Bounds()
-	metrics := m.EffectiveCellMetrics()
 
 	scrollButtonsWidth := core.Unit(0)
 	if m.menusNeedScrolling() {
@@ -1680,7 +1703,7 @@ func (m *MenuBar) isLastMenuFullyVisible() bool {
 	}
 	leftEllipseWidth := core.Unit(0)
 	if m.scrollOffset > 0 {
-		leftEllipseWidth = metrics.TextWidth(3) // "..."
+		leftEllipseWidth = m.ellipsisWidth() // "..."
 	}
 
 	availableWidth := bounds.Width - m.dateTimeWidth() - scrollButtonsWidth
@@ -1710,12 +1733,11 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 
 	// Check if menu is visible from current scroll position
 	bounds := m.Bounds()
-	metrics := m.EffectiveCellMetrics()
 
 	scrollButtonsWidth := m.scrollButtonWidth() * 2
 	leftEllipseWidth := core.Unit(0)
 	if m.scrollOffset > 0 {
-		leftEllipseWidth = metrics.TextWidth(3) // "..."
+		leftEllipseWidth = m.ellipsisWidth() // "..."
 	}
 
 	availableWidth := bounds.Width - m.dateTimeWidth() - scrollButtonsWidth
@@ -1731,7 +1753,7 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 				for m.scrollOffset < index {
 					m.scrollOffset++
 					// Recalculate with new scroll offset
-					leftEllipseWidth = metrics.TextWidth(3) // "..." (always present when scrolled)
+					leftEllipseWidth = m.ellipsisWidth() // "..." (always present when scrolled)
 					x = leftEllipseWidth
 					for j := m.scrollOffset; j <= index; j++ {
 						mw := m.menuTitleWidth(m.menus[j].title)
@@ -1771,7 +1793,6 @@ func (m *MenuBar) clampScrollOffset() {
 
 	// Calculate how much space we have for menus
 	bounds := m.Bounds()
-	metrics := m.EffectiveCellMetrics()
 	scrollButtonsWidth := m.scrollButtonWidth() * 2
 	availableWidth := bounds.Width - m.dateTimeWidth() - scrollButtonsWidth
 
@@ -1781,7 +1802,7 @@ func (m *MenuBar) clampScrollOffset() {
 		testOffset := m.scrollOffset - 1
 		leftEllipseWidth := core.Unit(0)
 		if testOffset > 0 {
-			leftEllipseWidth = metrics.TextWidth(3) // "..."
+			leftEllipseWidth = m.ellipsisWidth() // "..."
 		}
 
 		x := leftEllipseWidth
@@ -1791,7 +1812,7 @@ func (m *MenuBar) clampScrollOffset() {
 			// Reserve space for right ellipsis if not the last menu
 			rightEllipsisWidth := core.Unit(0)
 			if i < len(m.menus)-1 {
-				rightEllipsisWidth = metrics.TextWidth(3)
+				rightEllipsisWidth = m.ellipsisWidth()
 			}
 			if x+menuWidth+rightEllipsisWidth > availableWidth {
 				fitsWithMoreMenus = false
@@ -2092,12 +2113,11 @@ func (m *MenuBar) CloseMenuWithoutRestore() {
 
 // calculateMenuX calculates the x position of a menu (accounting for scroll offset).
 func (m *MenuBar) calculateMenuX(index int) core.Unit {
-	metrics := m.EffectiveCellMetrics()
 
 	// Start after left ellipsis if scrolled
 	x := core.Unit(0)
 	if m.scrollOffset > 0 {
-		x = metrics.TextWidth(3) // "..."
+		x = m.ellipsisWidth() // "..."
 	}
 
 	// Calculate position from scroll offset using font-aware width
@@ -2132,12 +2152,33 @@ func (m *MenuBar) menuTitleWidth(title string) core.Unit {
 	return metrics.CellWidth*2 + font.MeasureText(title)
 }
 
+// ellipsisText is the overflow marker (three periods, not the unicode
+// glyph), and ellipsisWidth its width in the menu bar's proportional
+// font - so it measures and renders the same as the menu titles.
+const ellipsisText = "..."
+
+func (m *MenuBar) ellipsisWidth() core.Unit {
+	return m.EffectiveFont().MeasureText(ellipsisText)
+}
+
+// drawEllipsis paints the overflow marker in the menu bar's proportional
+// font at (x, 0) and returns its width.
+func (m *MenuBar) drawEllipsis(p *core.Painter, x core.Unit, s style.CellStyle) core.Unit {
+	font := m.EffectiveFont()
+	p.DrawText(x, 0, ellipsisText, s, font)
+	return font.MeasureText(ellipsisText)
+}
+
 // Paint renders the menu bar (without dropdown - use PaintDropdown for that).
 func (m *MenuBar) Paint(p *core.Painter) {
 	bounds := m.Bounds()
 	scheme := m.GetScheme()
 	metrics := m.EffectiveCellMetrics()
 	font := m.EffectiveFont()
+
+	// Remember the surface kind for measurement paths (dateTimeWidth has
+	// no painter of its own).
+	m.graphicalCached = p.Graphical()
 
 	// Clamp scroll offset if container was resized and more menus can now fit
 	m.clampScrollOffset()
@@ -2154,7 +2195,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// stop). When the calendar is hidden it reserves no width, so menus and
 	// the overflow ellipsis run to the full right edge.
 	now := time.Now()
-	dateTimeStr := now.Format(" Mon Jan 02 15:04 ")
+	dateTimeStr := now.Format(dateTimeFormat)
 	dateTimeStyle := scheme.GetMenuBarInfo()
 	dateTimeWidth := m.dateTimeWidth()
 	dateTimeX := bounds.Width - dateTimeWidth
@@ -2199,11 +2240,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// Draw left ellipsis if scrolled
 	x := core.Unit(0)
 	if m.scrollOffset > 0 {
-		ellipsisStr := "..."
-		for i, ch := range ellipsisStr {
-			p.DrawCell(core.Unit(i)*metrics.CellWidth, 0, ch, menuBarStyle)
-		}
-		x = core.Unit(len(ellipsisStr)) * metrics.CellWidth
+		x = m.drawEllipsis(p, 0, menuBarStyle)
 	}
 
 	// Draw visible menus
@@ -2214,7 +2251,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		// Reserve space for right ellipsis if there are more menus after this one
 		rightEllipsisWidth := core.Unit(0)
 		if i < len(m.menus)-1 {
-			rightEllipsisWidth = metrics.TextWidth(3) // "..."
+			rightEllipsisWidth = m.ellipsisWidth() // "..."
 		}
 
 		// Check if this menu fits (with room for right ellipsis if needed)
@@ -2282,17 +2319,12 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					p.DrawText(textX, 0, menu.title, s, font)
 				}
 
-				// Draw as much ellipsis as fits in remaining space (in normal style)
-				ellipsisX := x + menuWidth
-				for _, ch := range "..." {
-					if ellipsisX < availableWidth {
-						p.DrawCell(ellipsisX, 0, ch, menuBarStyle)
-						ellipsisX += metrics.CellWidth
-					}
-				}
+				// Draw the ellipsis after the menu (in normal style); the
+				// painter clips it to the bar's bounds.
+				m.drawEllipsis(p, x+menuWidth, menuBarStyle)
 			} else {
 				// Not selected, or not enough room for full menu - show partial with ellipsis
-				ellipsisWidth := metrics.TextWidth(3) // "..."
+				ellipsisWidth := m.ellipsisWidth() // "..."
 
 				// Calculate how many chars we can show: space + chars + "..."
 				// Need at least 4 chars width for " X..." (space, one char, ellipsis)
@@ -2302,7 +2334,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					textX := x + metrics.CellWidth
 
 					// Calculate how many title chars we can show
-					charsAvailable := int((remainingWidth-metrics.CellWidth-ellipsisWidth) / metrics.CellWidth)
+					charsAvailable := int((remainingWidth - metrics.CellWidth - ellipsisWidth) / metrics.CellWidth)
 					titleRunes := []rune(menu.title)
 					for idx := 0; idx < charsAvailable && idx < len(titleRunes); idx++ {
 						charStyle := s
@@ -2313,19 +2345,10 @@ func (m *MenuBar) Paint(p *core.Painter) {
 						textX += metrics.CellWidth
 					}
 					// Draw ellipsis in the menu style (never accelerator color)
-					for _, ch := range "..." {
-						p.DrawCell(textX, 0, ch, s)
-						textX += metrics.CellWidth
-					}
+					m.drawEllipsis(p, textX, s)
 				} else if remainingWidth >= ellipsisWidth {
 					// Just show "..." to indicate more menus
-					ellipsisX := x
-					for _, ch := range "..." {
-						if ellipsisX < availableWidth {
-							p.DrawCell(ellipsisX, 0, ch, menuBarStyle)
-							ellipsisX += metrics.CellWidth
-						}
-					}
+					m.drawEllipsis(p, x, menuBarStyle)
 				}
 			}
 			break
@@ -2395,7 +2418,10 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		x += menuWidth
 	}
 
-	// Draw date/time background and text (unless the calendar is hidden)
+	// Draw date/time background and text (unless the calendar is hidden).
+	// The background always fills the full bar height; on graphical
+	// surfaces the clock text renders in a compact 80% monospace face
+	// (vertically centered), while text mode keeps one cell per char.
 	if !m.hideCalendar {
 		p.FillRect(core.UnitRect{
 			X:      dateTimeX,
@@ -2404,8 +2430,16 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			Height: metrics.CellHeight,
 		}, ' ', dateTimeStyle)
 
-		for i, ch := range dateTimeStr {
-			p.DrawCell(dateTimeX+core.Unit(i)*metrics.CellWidth, 0, ch, dateTimeStyle)
+		if f := m.dateTimeFont(); f != nil {
+			y := (metrics.CellHeight - f.LineHeight()) / 2
+			if y < 0 {
+				y = 0
+			}
+			p.DrawText(dateTimeX, y, dateTimeStr, dateTimeStyle, f)
+		} else {
+			for i, ch := range dateTimeStr {
+				p.DrawCell(dateTimeX+core.Unit(i)*metrics.CellWidth, 0, ch, dateTimeStyle)
+			}
 		}
 	}
 
@@ -2624,7 +2658,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 
 		// Check for click on left ellipsis ("...") to scroll left and open that menu
 		if m.scrollOffset > 0 {
-			ellipsisWidth := metrics.TextWidth(3) // "..."
+			ellipsisWidth := m.ellipsisWidth() // "..."
 			if event.X >= 0 && event.X < ellipsisWidth {
 				// Track mouse down for potential drag (same as clicking a menu)
 				m.mouseDown = true
@@ -2642,7 +2676,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 		// Find which menu was clicked (accounting for scroll offset)
 		x := core.Unit(0)
 		if m.scrollOffset > 0 {
-			x = metrics.TextWidth(3) // "..."
+			x = m.ellipsisWidth() // "..."
 		}
 
 		for i := m.scrollOffset; i < len(m.menus); i++ {
@@ -2755,7 +2789,7 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// Find which menu the mouse is over (accounting for scroll offset)
 		x := core.Unit(0)
 		if m.scrollOffset > 0 {
-			x = metrics.TextWidth(3) // "..."
+			x = m.ellipsisWidth() // "..."
 		}
 
 		for i := m.scrollOffset; i < len(m.menus); i++ {
