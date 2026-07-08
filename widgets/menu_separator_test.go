@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/raster"
 )
 
 // gfxFrameParent is a minimal Container that reports graphical window
@@ -60,5 +61,38 @@ func TestMenuGraphicalSeparatorLayout(t *testing.T) {
 	}
 	if kind, idx := m.hitRow(cellH + 1); kind != 3 || idx != 1 {
 		t.Errorf("hitRow at Open = (%d,%d), want (3,1)", kind, idx)
+	}
+}
+
+// A real menu-bar dropdown is NOT parented into the widget tree, so
+// FindGraphicalFrames can't see the surface. Painting on a pixel
+// backend must still switch it to the thin-separator layout (regression
+// for the dropdown that kept rendering full-height dashed separators).
+func TestMenuUnparentedGraphicalAfterPaint(t *testing.T) {
+	b, err := raster.New(320, 320)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	m := NewMenu("t") // no parent, like a dropdown
+	m.AddItem(NewMenuItem("New"))
+	m.AddItem(NewMenuItem("Open"))
+	m.AddSeparator()
+	m.AddItem(NewMenuItem("Quit"))
+	m.Show(0, 0)
+	cellH := m.EffectiveCellMetrics().CellHeight
+
+	// Before any paint the orphan can't tell it's graphical.
+	if got := m.calculateSize().Height; got != cellH*4 {
+		t.Fatalf("pre-paint height = %d, want %d (cell layout)", got, cellH*4)
+	}
+
+	m.Paint(core.NewPainter(b))
+
+	// After painting on the pixel backend the separator is a thin band.
+	if got, want := m.calculateSize().Height, cellH*3+separatorBandUnits; got != want {
+		t.Errorf("post-paint height = %d, want %d (thin separator)", got, want)
 	}
 }

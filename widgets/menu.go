@@ -202,6 +202,13 @@ type Menu struct {
 	// Position when shown as popup
 	popupX, popupY core.Unit
 
+	// graphicalCached records whether the last paint was on a pixel
+	// surface. Popup menus are not parented into the widget tree, so
+	// FindGraphicalFrames can't discover the surface; the painter can,
+	// and layout/hit-test (which have no painter) read this cache.
+	graphicalCached bool
+	graphicalKnown  bool
+
 	// Parent menu (for submenus)
 	parentMenu *Menu
 	parentItem *MenuItem
@@ -690,8 +697,22 @@ const separatorBandUnits core.Unit = 3
 
 // graphicalSurface reports whether this dropdown paints on a pixel
 // surface, where separators shrink to a thin band and gain hairlines.
+// Popup menus aren't parented into the widget tree, so prefer the value
+// the painter observed on the last paint; fall back to a tree walk
+// (which succeeds for menus that do have a parent chain).
 func (m *Menu) graphicalSurface() bool {
+	if m.graphicalKnown {
+		return m.graphicalCached
+	}
 	return core.FindGraphicalFrames(m.Self())
+}
+
+// setGraphicalHint lets an owner that CAN see the surface (the MenuBar,
+// which is parented to the desktop) tell an unparented popup menu which
+// surface it lives on, before its first paint.
+func (m *Menu) setGraphicalHint(graphical bool) {
+	m.graphicalCached = graphical
+	m.graphicalKnown = true
 }
 
 // rowHeightAt returns the vertical space item idx occupies. Separators
@@ -852,6 +873,12 @@ func (m *Menu) Paint(p *core.Painter) {
 	if !m.visible {
 		return
 	}
+
+	// Record the surface kind for the layout/hit-test paths, which have
+	// no painter of their own (see graphicalSurface). Set before
+	// calculateSize so this paint's geometry already reflects it.
+	m.graphicalCached = p.Graphical()
+	m.graphicalKnown = true
 
 	scheme := m.GetScheme()
 	theme := m.Theme() // Still needed for DefaultBorder
@@ -1205,6 +1232,9 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 	}
 
 	m.closeSubMenu()
+
+	// The submenu shares this menu's surface kind.
+	item.SubMenu.setGraphicalHint(m.graphicalSurface())
 
 	size := m.calculateSize()
 
@@ -1757,6 +1787,9 @@ func (m *MenuBar) OpenMenu(index int) {
 	m.CloseMenu()
 	m.currentIndex = index
 	m.activeMenu = m.menus[index]
+	// The MenuBar is parented to the desktop, so it can see the surface
+	// kind; hand it to the (unparented) dropdown before it lays out.
+	m.activeMenu.setGraphicalHint(core.FindGraphicalFrames(m.Self()))
 	m.acceleratorsActive = false // Disable bar accelerators when menu is down
 
 	// Set up callback so when user presses on a menu item, we enter drag mode
