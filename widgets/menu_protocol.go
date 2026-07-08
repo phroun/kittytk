@@ -78,6 +78,23 @@ func init() {
 	protocol.RegisterType("menuitem", &protocol.TypeSpec{
 		Virtual: true,
 		New:     func() any { return NewMenuItem("") },
+		// Over a connection that consumes events (the display protocol),
+		// triggering a menu item emits a command event the app handles -
+		// the same seam buttons use through FireAction. In-process menus
+		// build with no event sink (Emit is nil) and dispatch through a
+		// real command registry instead, so there we stay out of the way
+		// and let the app's registered handlers own activation.
+		Bind: func(ctx *protocol.BindContext, target any) {
+			if ctx == nil || ctx.Emit == nil {
+				return
+			}
+			m := target.(*MenuItem)
+			m.SetOnTriggered(func() {
+				if id := m.ID(); id != "" {
+					ctx.EmitEvent(protocol.NewEvent("command").WithWord("action", id))
+				}
+			})
+		},
 		Props: map[string]protocol.PropertyApplier{
 			"caption": wprop("caption", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("caption", v, f)

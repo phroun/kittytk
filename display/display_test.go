@@ -210,3 +210,80 @@ wbtn=w.p.btn
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// A window built as a child of an MDI pane must NOT also be adopted as a
+// top-level application window - otherwise the same window object lives
+// both on the desktop and in the pane (a linked "clone").
+func TestMDIChildNotAdoptedAsAppWindow(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "display.sock")
+
+	desktop := widgets.NewDesktop()
+	desktop.SetBackend(&nullBackend{})
+
+	ready := make(chan *display.Server, 1)
+	desktop.SetOnStartup(func() {
+		srv, err := display.Serve(desktop, sock)
+		if err != nil {
+			t.Errorf("serve: %v", err)
+			desktop.Quit()
+			return
+		}
+		ready <- srv
+	})
+
+	exited := make(chan int, 1)
+	go func() { exited <- desktop.Run() }()
+	var srv *display.Server
+	select {
+	case srv = <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop did not start")
+	}
+	defer func() {
+		srv.Close()
+		desktop.Quit()
+		select {
+		case <-exited:
+		case <-time.After(5 * time.Second):
+			t.Error("desktop did not exit")
+		}
+	}()
+
+	conn, err := client.Dial(sock, "MDI App", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// A host window whose content is an MDI pane.
+	if _, err := conn.Build(`
+w=new window title="Host" width=320 height=240 children={
+	pane=new mdipane children={cp=new panel layout=vbox children={new label caption="pane"}}
+}
+pane=w.pane
+`); err != nil {
+		t.Fatalf("build host: %v", err)
+	}
+
+	// Spawn a document window INTO the pane.
+	if _, err := conn.Exec(`set pane children={d=new window title="Doc" width=120 height=80 children={new label caption="doc"}}`); err != nil {
+		t.Fatalf("spawn mdi child: %v", err)
+	}
+
+	// The application must own exactly one top-level window (the host);
+	// the MDI document lives inside the pane, not on the desktop.
+	var titles []string
+	onUI(desktop, func() {
+		for _, a := range desktop.Applications() {
+			if a.Name() != "MDI App" {
+				continue
+			}
+			for _, w := range a.Windows() {
+				titles = append(titles, w.Title())
+			}
+		}
+	})
+	if len(titles) != 1 || titles[0] != "Host" {
+		t.Errorf("app top-level windows = %v, want [Host] (MDI child must not be adopted)", titles)
+	}
+}

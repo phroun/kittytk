@@ -198,9 +198,16 @@ func (c *conn) execute(batch []*protocol.Statement) {
 	for _, target := range c.factory.take() {
 		switch t := target.(type) {
 		case *window.Window:
-			c.app.AddWindow(t)
+			// A window built as a child of an existing widget (e.g. an
+			// MDI document appended into an mdipane) already has a home;
+			// only genuinely top-level windows join the application.
+			if t.Parent() == nil {
+				c.app.AddWindow(t)
+			}
 		case *widgets.MessageBox:
-			c.app.AddWindow(&t.Window)
+			if t.Window.Parent() == nil {
+				c.app.AddWindow(&t.Window)
+			}
 		case interface{ Menus() []*widgets.Menu }:
 			c.app.SetMenuBarContent(t.Menus())
 		case interface {
