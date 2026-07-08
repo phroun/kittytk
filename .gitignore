@@ -1,5 +1,8 @@
-# Binary executables
+# Binary executables (example commands built into the repo root)
 demo
+demoapp
+sdldesktop
+remoteapp
 *.exe
 *.exe~
 *.dll
