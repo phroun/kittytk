@@ -268,6 +268,49 @@ func (b *Backend) fillPx(x0, y0, x1, y1 int, c color.RGBA) {
 	}
 }
 
+// blendRectPx blends `over` at the given alpha (0..1) over the existing
+// pixels in the rectangle, respecting the clip and rounded clip - the
+// translucent counterpart of fillPx.
+func (b *Backend) blendRectPx(x0, y0, x1, y1 int, over color.RGBA, alpha float64) {
+	if b.hasClip {
+		cx0, cy0 := b.px(b.clip.X), b.px(b.clip.Y)
+		cx1, cy1 := b.px(b.clip.X+b.clip.Width), b.px(b.clip.Y+b.clip.Height)
+		if x0 < cx0 {
+			x0 = cx0
+		}
+		if y0 < cy0 {
+			y0 = cy0
+		}
+		if x1 > cx1 {
+			x1 = cx1
+		}
+		if y1 > cy1 {
+			y1 = cy1
+		}
+	}
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+	if x1 > b.w {
+		x1 = b.w
+	}
+	if y1 > b.h {
+		y1 = b.h
+	}
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			if b.hasRoundClip && !b.pointVisible(x, y) {
+				continue
+			}
+			under := b.img.RGBAAt(x, y)
+			b.img.SetRGBA(x, y, blend(over, under, alpha))
+		}
+	}
+}
+
 func blend(over, under color.RGBA, alpha float64) color.RGBA {
 	mix := func(a, b uint8) uint8 {
 		return uint8(float64(a)*alpha + float64(b)*(1-alpha))
@@ -988,6 +1031,13 @@ func (b *Backend) DrawCaret(x, y, height core.Unit, s style.CellStyle) {
 func (b *Backend) FillRectPx(xPx, yPx, wPx, hPx int, s style.CellStyle) {
 	_, bg := b.styleColors(s)
 	b.fillPx(xPx, yPx, xPx+wPx, yPx+hPx, bg)
+}
+
+// FillRectPxAlpha blends a device-pixel rectangle with the given RGB at
+// alpha (0..1) over existing pixels, respecting the clip. Implements
+// core.TranslucentPixelFiller.
+func (b *Backend) FillRectPxAlpha(xPx, yPx, wPx, hPx int, r, g, bl uint8, alpha float64) {
+	b.blendRectPx(xPx, yPx, xPx+wPx, yPx+hPx, color.RGBA{R: r, G: g, B: bl, A: 255}, alpha)
 }
 
 func (b *Backend) PollEvent() core.Event                  { return nil }

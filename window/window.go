@@ -135,6 +135,11 @@ type Window struct {
 	// so the frame draws its black tear-off halo (see TearIndicatorActive).
 	tearHighlight bool
 
+	// resizeHoverRects are window-local rectangles (one per hovered resize
+	// edge, two for a corner) that the frame highlights while the pointer
+	// is over a size-sensitive edge. Set by the window manager on hover.
+	resizeHoverRects []core.UnitRect
+
 	// Detached main-window chrome, set by the desktop when the window is
 	// torn off: a menu bar between the title bar and content, and a
 	// status bar along the bottom edge. Kept as generic core.Widget so
@@ -1260,6 +1265,58 @@ func (w *Window) Paint(p *core.Painter) {
 	// Detached-window chrome: the menu bar (between title and content)
 	// and status bar (bottom edge), then the menu bar's dropdown on top.
 	w.paintChrome(p, outer, interior)
+
+	// Resize-edge hover highlight: translucent white bands along the
+	// size-sensitive edge(s) under the pointer, clipped to the frame's
+	// rounded corners.
+	w.paintResizeHover(p, localBounds)
+}
+
+// resizeHoverAlpha is the opacity of the resize-edge hover highlight.
+const resizeHoverAlpha = 0.25
+
+// SetResizeHoverRects sets the window-local rectangles highlighted while
+// the pointer hovers a resize edge (empty clears the highlight). Returns
+// true when the set changed, so the caller can repaint only on change.
+func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if sameRects(w.resizeHoverRects, rects) {
+		return false
+	}
+	w.resizeHoverRects = rects
+	return true
+}
+
+func sameRects(a, b []core.UnitRect) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// paintResizeHover fills the hovered resize edges with a translucent white
+// band, clipped to the window's rounded corner radius. No-op on cell
+// surfaces (FillRectPixelsAlpha returns false there).
+func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
+	w.mu.RLock()
+	rects := w.resizeHoverRects
+	w.mu.RUnlock()
+	if len(rects) == 0 {
+		return
+	}
+	scale := p.DeviceScale()
+	rp := p.WithRoundedClipRegion(localBounds, windowCornerRadius)
+	for _, r := range rects {
+		rp.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
+			int(r.Width)*scale, int(r.Height)*scale,
+			255, 255, 255, resizeHoverAlpha)
+	}
 }
 
 // paintChrome paints the detached window's menu bar and status bar in

@@ -143,6 +143,14 @@ type RoundedRectDrawer interface {
 	StrokeRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle)
 }
 
+// TranslucentPixelFiller is an optional RenderBackend capability: fill a
+// device-pixel rectangle with a color at partial opacity, blended over
+// the existing pixels and respecting the clip (including a rounded clip
+// region). The resize-edge hover highlight uses it. Cell surfaces omit it.
+type TranslucentPixelFiller interface {
+	FillRectPxAlpha(xPx, yPx, wPx, hPx int, r, g, b uint8, alpha float64)
+}
+
 // ArcWedgeDrawer is an optional RenderBackend capability: fill the
 // part of a rect lying outside the quarter ellipse inscribed in it
 // and centered on the chosen corner - antialiased - painting the fill
@@ -578,6 +586,24 @@ func (p *Painter) FillRectPixels(x, y Unit, offXPx, offYPx, wPx, hPx int, s styl
 	scale := p.DeviceScale()
 	p.applyClip()
 	pf.FillRectPx(int(sx)*scale+offXPx, int(sy)*scale+offYPx, wPx, hPx, s)
+	return true
+}
+
+// FillRectPixelsAlpha blends, in device pixels, the rectangle anchored at
+// unit (x, y) plus a device-pixel offset (wPx x hPx device pixels) with
+// the given RGB at alpha (0..1), over the existing pixels and respecting
+// the clip - including any rounded clip region, so a fill along a window
+// edge follows its corner curve. Returns false on backends that can't
+// blend (e.g. cell surfaces).
+func (p *Painter) FillRectPixelsAlpha(x, y Unit, offXPx, offYPx, wPx, hPx int, r, g, b uint8, alpha float64) bool {
+	tf, ok := p.backend.(TranslucentPixelFiller)
+	if !ok {
+		return false
+	}
+	sx, sy := p.toScreen(x, y)
+	scale := p.DeviceScale()
+	p.applyClip()
+	tf.FillRectPxAlpha(int(sx)*scale+offXPx, int(sy)*scale+offYPx, wPx, hPx, r, g, b, alpha)
 	return true
 }
 

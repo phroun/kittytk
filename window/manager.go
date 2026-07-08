@@ -280,6 +280,74 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	return edge
 }
 
+// resizeEdgeRects returns the window-local rectangles (one per set edge
+// bit, two for a corner) covering the size-sensitive band(s) for the
+// given resize edge, matching detectResizeEdge's thresholds. Used to
+// highlight the edge under the pointer.
+func (m *WindowManager) resizeEdgeRects(win *Window, edge int) []core.UnitRect {
+	b := win.Bounds()
+	metrics := core.DefaultCellMetrics()
+	edgeThreshold := metrics.CellWidth
+	bottomBand := metrics.CellHeight
+	m.mu.RLock()
+	grip := m.resizeGrip
+	m.mu.RUnlock()
+	if grip > 0 {
+		edgeThreshold = grip
+		bottomBand = grip
+	}
+
+	var rects []core.UnitRect
+	if edge&ResizeEdgeLeft != 0 {
+		rects = append(rects, core.UnitRect{Width: edgeThreshold, Height: b.Height})
+	}
+	if edge&ResizeEdgeRight != 0 {
+		rects = append(rects, core.UnitRect{X: b.Width - edgeThreshold, Width: edgeThreshold, Height: b.Height})
+	}
+	if edge&ResizeEdgeBottom != 0 {
+		rects = append(rects, core.UnitRect{Y: b.Height - bottomBand, Width: b.Width, Height: bottomBand})
+	}
+	return rects
+}
+
+// updateResizeHover highlights the size-sensitive edge(s) of the topmost
+// window under the pointer, clearing the highlight on every other window.
+// Called on mouse move when no drag or resize is in progress.
+func (m *WindowManager) updateResizeHover(x, y core.Unit) {
+	m.mu.RLock()
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
+	m.mu.RUnlock()
+
+	var target *Window
+	edge := ResizeEdgeNone
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		if !win.IsVisible() || win.IsMinimized() {
+			continue
+		}
+		if win.Bounds().Contains(core.UnitPoint{X: x, Y: y}) {
+			target = win
+			edge = m.detectResizeEdge(win, x, y)
+			break
+		}
+	}
+
+	changed := false
+	for _, win := range windows {
+		var rects []core.UnitRect
+		if win == target && edge != ResizeEdgeNone {
+			rects = m.resizeEdgeRects(win, edge)
+		}
+		if win.SetResizeHoverRects(rects) {
+			changed = true
+		}
+	}
+	if changed {
+		m.RequestRepaint()
+	}
+}
+
 // SetDesktop sets the desktop widget (background behind windows).
 func (m *WindowManager) SetDesktop(desktop core.Widget) {
 	m.mu.Lock()
@@ -1572,6 +1640,9 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 		return true
 	}
+
+	// Not dragging or resizing: highlight the resize edge under the pointer.
+	m.updateResizeHover(event.X, event.Y)
 
 	// Forward to desktop first (for menu bar drag navigation)
 	m.mu.RLock()
