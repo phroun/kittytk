@@ -6,15 +6,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/widgets"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/window"
 )
 
 // Application is the main entry point for a TUI application.
 // It manages the event loop, windows, and global state.
-// Application implements the widgets.ApplicationProvider interface
+// Application implements the trinkets.ApplicationProvider interface
 // for integration with multi-application Desktop environments.
 type Application struct {
 	mu sync.RWMutex
@@ -37,8 +37,8 @@ type Application struct {
 	// Theme
 	theme *style.Theme
 
-	// Desktop widget (behind all windows)
-	desktop core.Widget
+	// Desktop trinket (behind all windows)
+	desktop core.Trinket
 
 	// Running state
 	running atomic.Bool
@@ -60,11 +60,17 @@ type Application struct {
 	onActivate   func()
 	onDeactivate func()
 
-	// Event filters (processed before widgets)
+	// Event filters (processed before trinkets)
 	eventFilters []EventFilter
 
 	// Application name
 	name string
+
+	// menuName is the title of the application's own menu on its
+	// detached main window's menu bar. It is only used when the main
+	// window is torn off an SDL desktop; on the desktop bar the app menu
+	// carries the app name. Defaults to "≡".
+	menuName string
 
 	// Exit code
 	exitCode int
@@ -72,20 +78,28 @@ type Application struct {
 	// Windows owned by this application (for ApplicationProvider interface)
 	windows []*window.Window
 
+	// mainWindow is the app's optional main window; when detached it
+	// hosts the app's own menu bar and the desktop shows a reduced bar.
+	mainWindow *window.Window
+
 	// Menu bar content for this application
-	menuBarContent []*widgets.Menu
+	menuBarContent []*trinkets.Menu
+
+	// Command registry: menu (and future) handlers keyed by stable
+	// command ID - the app-side half of the D2 dispatch seam.
+	commands *core.CommandRegistry
 
 	// Status bar content for this application
-	statusBarContent []widgets.StatusSection
+	statusBarContent []trinkets.StatusSection
 
-	// Pass-next-key-to-widget mode for this application
-	passNextKeyToWidget bool
+	// Pass-next-key-to-trinket mode for this application
+	passNextKeyToTrinket bool
 
 	// Saved status bar content to restore after pass-next-key mode
-	savedStatusBarContent []widgets.StatusSection
+	savedStatusBarContent []trinkets.StatusSection
 }
 
-// EventFilter is a function that can intercept events before they reach widgets.
+// EventFilter is a function that can intercept events before they reach trinkets.
 // Return true to consume the event (prevent further processing).
 type EventFilter func(event core.Event) bool
 
@@ -109,6 +123,7 @@ func New(backend core.RenderBackend) *Application {
 		updateChan:           make(chan struct{}, 100),
 		theme:                style.DefaultTheme(),
 		accessibilityManager: core.NewAccessibilityManager(),
+		commands:             core.NewCommandRegistry(),
 	}
 
 	if backend != nil {
@@ -138,6 +153,7 @@ func NewSecondary() *Application {
 		quitChan:   make(chan struct{}),
 		updateChan: make(chan struct{}, 100),
 		theme:      style.DefaultTheme(),
+		commands:   core.NewCommandRegistry(),
 	}
 }
 
@@ -153,6 +169,26 @@ func (app *Application) Name() string {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	return app.name
+}
+
+// SetMenuName sets the title of the application's own menu as it appears
+// on the detached main window's menu bar (e.g. "&File" or "&Menu"). It is
+// ignored while the app is docked in an SDL desktop. An empty value falls
+// back to the default "≡".
+func (app *Application) SetMenuName(name string) {
+	app.mu.Lock()
+	app.menuName = name
+	app.mu.Unlock()
+}
+
+// MenuName returns the detached-menu title, defaulting to "≡" when unset.
+func (app *Application) MenuName() string {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	if app.menuName == "" {
+		return "≡"
+	}
+	return app.menuName
 }
 
 // Backend returns the render backend.
@@ -205,8 +241,8 @@ func (app *Application) SetTheme(theme *style.Theme) {
 	app.RequestUpdate()
 }
 
-// SetDesktop sets the desktop widget.
-func (app *Application) SetDesktop(desktop core.Widget) {
+// SetDesktop sets the desktop trinket.
+func (app *Application) SetDesktop(desktop core.Trinket) {
 	app.mu.Lock()
 	app.desktop = desktop
 	wm := app.windowManager
@@ -215,14 +251,15 @@ func (app *Application) SetDesktop(desktop core.Widget) {
 	if wm != nil {
 		wm.SetDesktop(desktop)
 
-		// Wire up dock row integration if desktop is a *widgets.Desktop
-		if d, ok := desktop.(*widgets.Desktop); ok {
+		// Wire up dock row integration if desktop is a *trinkets.Desktop
+		if d, ok := desktop.(*trinkets.Desktop); ok {
 			dockRow := d.DockRow()
 			if dockRow != nil {
 				// When a window is minimized, add it to the dock row
 				wm.SetOnWindowMinimized(func(win *window.Window) {
-					entry := &widgets.DockEntry{
-						Title: win.Title(),
+					entry := &trinkets.DockEntry{
+						Title:    win.Title(),
+						WindowID: win.ObjectID(),
 						OnClick: func() {
 							wm.RestoreWindow(win)
 						},
@@ -232,7 +269,7 @@ func (app *Application) SetDesktop(desktop core.Widget) {
 
 				// When a window is restored, remove it from the dock row
 				wm.SetOnWindowRestored(func(win *window.Window) {
-					dockRow.RemoveEntryByTitle(win.Title())
+					dockRow.RemoveEntryByID(win.ObjectID())
 				})
 			}
 
@@ -250,8 +287,8 @@ func (app *Application) SetDesktop(desktop core.Widget) {
 	}
 }
 
-// Desktop returns the desktop widget.
-func (app *Application) Desktop() core.Widget {
+// Desktop returns the desktop trinket.
+func (app *Application) Desktop() core.Trinket {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	return app.desktop
@@ -301,7 +338,7 @@ func (app *Application) Run() int {
 
 	// If we have a Desktop, delegate to it
 	if desktop != nil {
-		if d, ok := desktop.(*widgets.Desktop); ok {
+		if d, ok := desktop.(*trinkets.Desktop); ok {
 			// Pass backend to Desktop
 			d.SetBackend(backend)
 
@@ -601,7 +638,7 @@ func (app *Application) processTimers() {
 	desktop := app.desktop
 	app.mu.RUnlock()
 	if desktop != nil {
-		if d, ok := desktop.(*widgets.Desktop); ok {
+		if d, ok := desktop.(*trinkets.Desktop); ok {
 			d.ProcessTimers()
 		}
 	}
@@ -738,8 +775,8 @@ func (app *Application) ScreenSize() core.UnitSize {
 	return core.UnitSize{}
 }
 
-// Compile-time check that Application implements widgets.ApplicationProvider
-var _ widgets.ApplicationProvider = (*Application)(nil)
+// Compile-time check that Application implements trinkets.ApplicationProvider
+var _ trinkets.ApplicationProvider = (*Application)(nil)
 
 // --- ApplicationProvider interface implementation ---
 
@@ -761,10 +798,14 @@ func (app *Application) AddWindow(w *window.Window) {
 
 	// Also add to Desktop's WindowManager if we have one
 	if desktop != nil {
-		if d, ok := desktop.(*widgets.Desktop); ok {
+		if d, ok := desktop.(*trinkets.Desktop); ok {
 			if wm := d.WindowManager(); wm != nil {
 				wm.AddWindow(w)
 			}
+			// If this app's main window is already torn off, a new
+			// non-tearable child (e.g. a dialog) is torn off too, so it
+			// appears with its detached parent rather than docked here.
+			d.SyncAddedWindowDetachState(w)
 		}
 	}
 }
@@ -783,7 +824,7 @@ func (app *Application) RemoveWindow(w *window.Window) {
 
 	// Also remove from Desktop's WindowManager if we have one
 	if desktop != nil {
-		if d, ok := desktop.(*widgets.Desktop); ok {
+		if d, ok := desktop.(*trinkets.Desktop); ok {
 			if wm := d.WindowManager(); wm != nil {
 				wm.RemoveWindow(w)
 			}
@@ -791,29 +832,63 @@ func (app *Application) RemoveWindow(w *window.Window) {
 	}
 }
 
+// MainWindow returns the application's main window, or nil if unset.
+func (app *Application) MainWindow() *window.Window {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.mainWindow
+}
+
+// SetMainWindow marks a window as the application's main window. When
+// that window is torn off it carries the app's own menu bar, and the
+// desktop shows only the reduced (Psi/Window/calendar) bar.
+func (app *Application) SetMainWindow(w *window.Window) {
+	app.mu.Lock()
+	app.mainWindow = w
+	app.mu.Unlock()
+}
+
 // MenuBarContent returns the menu bar content for this application.
-func (app *Application) MenuBarContent() []*widgets.Menu {
+func (app *Application) MenuBarContent() []*trinkets.Menu {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	return app.menuBarContent
 }
 
-// SetMenuBarContent sets the menu bar content for this application.
-func (app *Application) SetMenuBarContent(menus []*widgets.Menu) {
+// SetMenuBarContent sets the menu bar content for this application and
+// binds the menus' handlers into the app's command registry, so all
+// menu activation dispatches by stable command ID (the D2 seam).
+func (app *Application) SetMenuBarContent(menus []*trinkets.Menu) {
 	app.mu.Lock()
-	defer app.mu.Unlock()
 	app.menuBarContent = menus
+	commands := app.commands
+	app.mu.Unlock()
+
+	if commands != nil {
+		for _, menu := range menus {
+			menu.BindCommands(commands)
+		}
+	}
+}
+
+// Commands returns the application's command registry: handlers keyed
+// by stable command ID. Menu bar content is bound automatically;
+// additional commands may be registered directly.
+func (app *Application) Commands() *core.CommandRegistry {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.commands
 }
 
 // StatusBarContent returns the status bar content for this application.
-func (app *Application) StatusBarContent() []widgets.StatusSection {
+func (app *Application) StatusBarContent() []trinkets.StatusSection {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	return app.statusBarContent
 }
 
 // SetStatusBarContent sets the status bar content for this application.
-func (app *Application) SetStatusBarContent(sections []widgets.StatusSection) {
+func (app *Application) SetStatusBarContent(sections []trinkets.StatusSection) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	app.statusBarContent = sections
@@ -853,48 +928,48 @@ func (app *Application) SetOnDeactivate(handler func()) {
 	app.mu.Unlock()
 }
 
-// PassNextKeyToWidget returns whether pass-next-key mode is active.
-func (app *Application) PassNextKeyToWidget() bool {
+// PassNextKeyToTrinket returns whether pass-next-key mode is active.
+func (app *Application) PassNextKeyToTrinket() bool {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
-	return app.passNextKeyToWidget
+	return app.passNextKeyToTrinket
 }
 
-// ActivatePassNextKeyToWidget activates pass-next-key-to-widget mode.
+// ActivatePassNextKeyToTrinket activates pass-next-key-to-trinket mode.
 // The next keypress will bypass all global shortcut handling and go directly
-// to the focused widget. The status bar shows a message while active.
-func (app *Application) ActivatePassNextKeyToWidget() {
+// to the focused trinket. The status bar shows a message while active.
+func (app *Application) ActivatePassNextKeyToTrinket() {
 	app.mu.Lock()
-	if app.passNextKeyToWidget {
+	if app.passNextKeyToTrinket {
 		app.mu.Unlock()
 		return // Already active
 	}
-	app.passNextKeyToWidget = true
+	app.passNextKeyToTrinket = true
 	// Save current status bar content
 	app.savedStatusBarContent = app.statusBarContent
 	// Show pass-next-key message
-	app.statusBarContent = []widgets.StatusSection{
-		{Text: "Raw Key Input: The next key pressed will be passed directly to the focused widget."},
+	app.statusBarContent = []trinkets.StatusSection{
+		{Text: "Raw Key Input: The next key pressed will be passed directly to the focused trinket."},
 	}
 	desktop := app.desktop
 	app.mu.Unlock()
 
 	// Refresh desktop status bar
 	if desktop != nil {
-		if d, ok := desktop.(*widgets.Desktop); ok {
+		if d, ok := desktop.(*trinkets.Desktop); ok {
 			d.RefreshStatusBar()
 		}
 	}
 }
 
-// ClearPassNextKeyToWidget clears pass-next-key-to-widget mode.
-func (app *Application) ClearPassNextKeyToWidget() {
+// ClearPassNextKeyToTrinket clears pass-next-key-to-trinket mode.
+func (app *Application) ClearPassNextKeyToTrinket() {
 	app.mu.Lock()
-	if !app.passNextKeyToWidget {
+	if !app.passNextKeyToTrinket {
 		app.mu.Unlock()
 		return // Not active
 	}
-	app.passNextKeyToWidget = false
+	app.passNextKeyToTrinket = false
 	// Restore saved status bar content
 	app.statusBarContent = app.savedStatusBarContent
 	app.savedStatusBarContent = nil
@@ -903,7 +978,7 @@ func (app *Application) ClearPassNextKeyToWidget() {
 
 	// Refresh desktop status bar
 	if desktop != nil {
-		if d, ok := desktop.(*widgets.Desktop); ok {
+		if d, ok := desktop.(*trinkets.Desktop); ok {
 			d.RefreshStatusBar()
 		}
 	}

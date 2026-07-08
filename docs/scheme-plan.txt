@@ -1,5 +1,5 @@
 Ok, now we are going to add support for color Schemes.
-Every widget should have a Scheme set, which is an integer, and defaults to -1.
+Every trinket should have a Scheme set, which is an integer, and defaults to -1.
 If it is set to -1, it inherits the Scheme of its container.
 All windows inherit their scheme from their MDI parent.
 All popups inherit their scheme from the container that spawned them.
@@ -7,7 +7,7 @@ The menubar, statusbar, and dock inherit their scheme from the Desktop.
 All regular windows on the desktop inherit their scheme from the Desktop itself.
 The Desktop's scheme defaults to 0.
 We will pre-initialize scheme 0 and set it up with default values.
-If an invalid/undefined scheme number (other than -1) is ever specified for any widget, it shall use scheme 0 instead.
+If an invalid/undefined scheme number (other than -1) is ever specified for any trinket, it shall use scheme 0 instead.
 
 Each of the colors in a scheme can be an entire ANSI sequence, or a nil/blank value.
 When it is nil, it has a special meaning, which is given in the list below.
@@ -77,13 +77,13 @@ FocusedMenuAccelerator
 FocusedMenuShortcut
 
 
-WidgetGroupFG (bright white, used as a default for other things)
-WidgetGroupBG (black, used as a default for other things)
-WidgetContentFG (regular white, used as a default for other things)
-WidgetContentBG (black, used as a default for other things)
+TrinketGroupFG (bright white, used as a default for other things)
+TrinketGroupBG (black, used as a default for other things)
+TrinketContentFG (regular white, used as a default for other things)
+TrinketContentBG (black, used as a default for other things)
 
 
-Basic Widget Related Colors:
+Basic Trinket Related Colors:
 LabelFG (nil = WindowFG)
 LabelBG (nil = inherit)
 DisabledLabelFG (nil = DisabledTextFG)
@@ -140,19 +140,19 @@ FocusedSplitter (nil = FocusBG + FocusFG)
 FocusedSplitterHandle (nil = FocusedSplitter)
 FocusedSplitterTitle (nil = FocusedSplititer)
 
-Tab Widget (Page Control) Related Colors:
+Tab Trinket (Page Control) Related Colors:
 TabsFG (nil = WindowFG, but currently we are using bright white)
 TabsBG (nil = inherit)
 TabsButton (nil = same as TabsFG+TabsBG)
 PressedTabsButton (nil = black on white)
 DisabledTabsButton (nil = same as DisabledTextFG on TabsBG)
-ActiveTabFG (currently bright and bold yellow, but nil = WidgetGroupFG)
-ActiveTabBG (nil = WidgetGroupBG; but currently we are using 49 ansi default)
+ActiveTabFG (currently bright and bold yellow, but nil = TrinketGroupFG)
+ActiveTabBG (nil = TrinketGroupBG; but currently we are using 49 ansi default)
 FocusedTab (nil = same as FocusBG + FocusFG)
 
 List Related Colors:
-ListBG (nil = WidgetContentBG, used as background for treeview and listview)
-ListFG (nil = WidgetContentFG, used as foreground for treeview and listview)
+ListBG (nil = TrinketContentBG, used as background for treeview and listview)
+ListFG (nil = TrinketContentFG, used as foreground for treeview and listview)
 FocusedListBG (nil = ListBG)
 FocusedListFG (nil = ListFG)
 SelectedListItem (nil = same as Selection)

@@ -2,9 +2,9 @@
 
 ## Overview
 
-Added mouse event forwarding from tuitk to embedded PurfecTerm CLI instances.
+Added mouse event forwarding from KittyTK to embedded PurfecTerm CLI instances.
 
-**Initial Commit:** `a7b29ed` - "Add mouse event forwarding to PurfecTerm widget"
+**Initial Commit:** `a7b29ed` - "Add mouse event forwarding to PurfecTerm trinket"
 **Drag Fix Commit:** (pending) - "Fix mouse drag events by tracking held button state"
 **Date:** 2026-03-10
 **Branch:** `claude/document-menu-colors-Dd2pR`
@@ -22,7 +22,7 @@ of relying on the event's `Buttons` field.
 
 ## Changes Made
 
-### File: `widgets/purfecterm.go`
+### File: `trinkets/purfecterm.go`
 
 #### Added import
 ```go
@@ -180,7 +180,7 @@ git revert a7b29ed
 
 ### Option 2: Manual revert
 
-1. Remove `"fmt"` from imports in `widgets/purfecterm.go`
+1. Remove `"fmt"` from imports in `trinkets/purfecterm.go`
 
 2. Replace the entire `HandleMousePress` function with:
 ```go
@@ -201,7 +201,7 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 
 ## Technical Notes
 
-- Coordinates are converted from tuitk units to 1-based cell coordinates
+- Coordinates are converted from KittyTK units to 1-based cell coordinates
 - The CLI adapter expects: `Mouse@x,y` position update sent before press/release/scroll events
 - Drag events include position in the event string: `MouseLeftDrag@x,y`
 - The CLI adapter handles mouse mode detection (1000/1002/1003) internally

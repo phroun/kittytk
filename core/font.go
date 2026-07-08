@@ -1,7 +1,45 @@
 // Package core provides fundamental types for the TUI toolkit.
 package core
 
-import "github.com/phroun/tuitk/style"
+import (
+	"sync"
+
+	"github.com/phroun/kittytk/style"
+)
+
+// TextMeasurer answers text measurement for the current render
+// target (G1: measurement comes from the target, where the fonts
+// are). The text-based system's answer is the built-in cell
+// arithmetic - one character occupies one cell's worth of layout
+// units - which is exact for terminals. A graphical display service
+// installs its shaping engine here so measurement matches the
+// proportional render; the same engine paints, so the two can never
+// disagree.
+type TextMeasurer interface {
+	MeasureText(f *Font, text string) Unit
+	LineHeight(f *Font) Unit
+}
+
+var (
+	textMeasurerMu sync.RWMutex
+	textMeasurer   TextMeasurer
+)
+
+// SetTextMeasurer installs the render target's text measurer. Pass
+// nil to restore the text-mode cell arithmetic. Called by the
+// display service when its backend provides measurement (pixel
+// backends do); one render target per process.
+func SetTextMeasurer(m TextMeasurer) {
+	textMeasurerMu.Lock()
+	textMeasurer = m
+	textMeasurerMu.Unlock()
+}
+
+func currentTextMeasurer() TextMeasurer {
+	textMeasurerMu.RLock()
+	defer textMeasurerMu.RUnlock()
+	return textMeasurer
+}
 
 // FontStyle represents text styling attributes that can be combined.
 type FontStyle uint16
@@ -49,7 +87,12 @@ func ExplicitFontColor(c style.Color) FontColor {
 // Fonts provide metrics for text measurement in units and control text attributes.
 // Use MeasureText or MeasureRunes to determine the width of text in units.
 type Font struct {
-	// Name identifies the font family.
+	// Name identifies the font family. "ui-text" is the internal
+	// default: each renderer maps it to its own UI face (the
+	// text-based system treats it as Monday, the standard cell font;
+	// the graphical engine maps it to its default proportional
+	// family). Controls that genuinely require monospace name a
+	// concrete family ("Monday") explicitly.
 	// Built-in fonts: "Monday" (standard width), "Tuesday" (double width)
 	Name string
 
@@ -68,6 +111,15 @@ type Font struct {
 
 // Predefined fonts
 var (
+	// FontUIText12 is the UI default: the renderer picks the face
+	// ("ui-text" maps to Monday in text mode, to the service's
+	// proportional UI family in graphical mode).
+	FontUIText12 = &Font{
+		Name:       "ui-text",
+		Size:       12,
+		Foreground: DefaultFontColor(), // Use scheme colors
+	}
+
 	// FontMonday12 is the standard fixed-width font (8 units per character).
 	FontMonday12 = &Font{
 		Name:       "Monday",
@@ -85,22 +137,35 @@ var (
 	}
 )
 
-// DefaultFont returns the default font (Monday 12pt).
+// DefaultFont returns the default UI font ("ui-text" 12pt; each
+// renderer maps the name to its own face).
 func DefaultFont() *Font {
-	return FontMonday12
+	return FontUIText12
 }
 
 // LineHeight returns the height of a line of text in units.
+// The answer comes from the render target: cell height on the
+// text-based system, font metrics on a graphical one.
 func (f *Font) LineHeight() Unit {
-	// All current fonts are 16 units tall
+	if m := currentTextMeasurer(); m != nil {
+		return m.LineHeight(f)
+	}
+	// Text-based system: every line is one cell row (16 units).
 	return 16
 }
 
 // MeasureText returns the width in units needed to display the given text.
-// This accounts for the font's metrics and handles special characters.
+// The answer comes from the render target. On the text-based system a
+// character occupies one cell's worth of layout units (two for wide
+// CJK characters) - the arithmetic below. A graphical target installs
+// its shaping engine via SetTextMeasurer and answers with real
+// proportional advances instead.
 // For Tuesday font, only alphabetic characters are double-width; punctuation
 // and symbols remain standard width to simulate proportional font behavior.
 func (f *Font) MeasureText(text string) Unit {
+	if m := currentTextMeasurer(); m != nil {
+		return m.MeasureText(f, text)
+	}
 	if f == nil {
 		f = DefaultFont()
 	}
@@ -178,7 +243,7 @@ func (f *Font) HasStyle(s FontStyle) bool {
 // WithStyle returns a copy of the font with additional style flags.
 func (f *Font) WithStyle(s FontStyle) *Font {
 	if f == nil {
-		return &Font{Name: "Monday", Size: 12, Style: s}
+		return &Font{Name: "ui-text", Size: 12, Style: s}
 	}
 	copy := *f
 	copy.Style |= s
@@ -188,7 +253,7 @@ func (f *Font) WithStyle(s FontStyle) *Font {
 // WithForeground returns a copy of the font with the specified foreground color.
 func (f *Font) WithForeground(c FontColor) *Font {
 	if f == nil {
-		return &Font{Name: "Monday", Size: 12, Foreground: c}
+		return &Font{Name: "ui-text", Size: 12, Foreground: c}
 	}
 	copy := *f
 	copy.Foreground = c
@@ -198,7 +263,7 @@ func (f *Font) WithForeground(c FontColor) *Font {
 // WithBackground returns a copy of the font with the specified background color.
 func (f *Font) WithBackground(c FontColor) *Font {
 	if f == nil {
-		return &Font{Name: "Monday", Size: 12, Background: c}
+		return &Font{Name: "ui-text", Size: 12, Background: c}
 	}
 	copy := *f
 	copy.Background = c
@@ -242,21 +307,21 @@ func isWideChar(ch rune) bool {
 	return false
 }
 
-// FontProvider is implemented by widgets that can provide a font.
+// FontProvider is implemented by trinkets that can provide a font.
 type FontProvider interface {
 	// Font returns the font set on this provider, or nil if not set.
 	Font() *Font
 }
 
-// FindEffectiveFont walks up the widget tree to find the effective font.
-// It checks the widget, then its parent window, then the desktop/MDI pane.
+// FindEffectiveFont walks up the trinket tree to find the effective font.
+// It checks the trinket, then its parent window, then the desktop/MDI pane.
 // Returns DefaultFont() if no font is set anywhere in the chain.
-func FindEffectiveFont(w Widget) *Font {
+func FindEffectiveFont(w Trinket) *Font {
 	if w == nil {
 		return DefaultFont()
 	}
 
-	// Check if the widget itself has a font
+	// Check if the trinket itself has a font
 	if fp, ok := w.(FontProvider); ok {
 		if f := fp.Font(); f != nil {
 			return f
@@ -271,8 +336,8 @@ func FindEffectiveFont(w Widget) *Font {
 				return f
 			}
 		}
-		if widget, ok := current.(Widget); ok {
-			current = widget.Parent()
+		if trinket, ok := current.(Trinket); ok {
+			current = trinket.Parent()
 		} else {
 			break
 		}

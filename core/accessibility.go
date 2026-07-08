@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
-// AccessibleRole describes the semantic role of a widget for assistive technology.
+// AccessibleRole describes the semantic role of a trinket for assistive technology.
 type AccessibleRole int
 
 const (
@@ -105,7 +106,7 @@ func (r AccessibleRole) String() string {
 	return "unknown"
 }
 
-// AccessibleState represents the current state of a widget for accessibility.
+// AccessibleState represents the current state of a trinket for accessibility.
 type AccessibleState int
 
 const (
@@ -123,8 +124,8 @@ const (
 	StateBusy
 )
 
-// AccessibleInfo contains accessibility information for a widget.
-// Widgets should populate this to support assistive technology.
+// AccessibleInfo contains accessibility information for a trinket.
+// Trinkets should populate this to support assistive technology.
 type AccessibleInfo struct {
 	// Role describes what kind of element this is.
 	Role AccessibleRole
@@ -148,16 +149,16 @@ type AccessibleInfo struct {
 	// State represents the current accessible state.
 	State AccessibleState
 
-	// KeyboardShortcut is the shortcut to activate this widget.
+	// KeyboardShortcut is the shortcut to activate this trinket.
 	KeyboardShortcut string
 
 	// LiveRegion indicates how updates should be announced.
 	// "off" = don't announce, "polite" = wait for idle, "assertive" = interrupt
 	LiveRegion string
 
-	// RelatedWidgets contains IDs of related widgets.
-	// For example, a label's related widget would be the input it labels.
-	RelatedWidgets []string
+	// RelatedTrinkets contains IDs of related trinkets.
+	// For example, a label's related trinket would be the input it labels.
+	RelatedTrinkets []string
 
 	// RowIndex and ColumnIndex for table/grid cells.
 	RowIndex    int
@@ -175,7 +176,7 @@ type AccessibleInfo struct {
 	SetSize       int
 }
 
-// Accessible is an interface for widgets that support accessibility.
+// Accessible is an interface for trinkets that support accessibility.
 type Accessible interface {
 	// AccessibleInfo returns the accessibility information.
 	AccessibleInfo() AccessibleInfo
@@ -190,8 +191,14 @@ type AccessibilityAnnouncement struct {
 	// or wait for idle ("polite").
 	Priority string
 
-	// Source is the widget that generated the announcement.
-	Source Widget
+	// Source is the trinket that generated the announcement.
+	Source Trinket
+
+	// Vocal reports whether this announcement should be spoken aloud.
+	// Non-navigation announcements are always Vocal. Navigation
+	// announcements set it false while throttled - the status bar still
+	// shows every one, but only the first and the settled-on item speak.
+	Vocal bool
 }
 
 // AccessibilityManager handles accessibility features.
@@ -209,8 +216,26 @@ type AccessibilityManager struct {
 	// This can be connected to platform TTS or other accessibility services.
 	OnAnnounce func(announcement AccessibilityAnnouncement)
 
-	// FocusedWidget tracks the currently focused widget for announcements.
-	FocusedWidget Widget
+	// FocusedTrinket tracks the currently focused trinket for announcements.
+	FocusedTrinket Trinket
+
+	// Navigation-announcement throttle state (see AnnounceNavigation).
+	nowFn           func() time.Time // clock; overridable in tests
+	lastAnnounceAt  time.Time        // when the last navigation announcement fired
+	pending         AccessibilityAnnouncement
+	pendingActive   bool
+	pendingDeadline time.Time
+}
+
+// navigationThrottle is the quiet window for navigation announcements: a
+// burst of moves within this interval collapses to the first and the last.
+const navigationThrottle = 500 * time.Millisecond
+
+func (am *AccessibilityManager) now() time.Time {
+	if am.nowFn != nil {
+		return am.nowFn()
+	}
+	return time.Now()
 }
 
 // NewAccessibilityManager creates a new accessibility manager.
@@ -221,8 +246,14 @@ func NewAccessibilityManager() *AccessibilityManager {
 	}
 }
 
-// Announce queues an announcement.
+// Announce queues an announcement. Non-navigation announcements are
+// always spoken (Vocal), so throttling doesn't apply to them.
 func (am *AccessibilityManager) Announce(message string, priority string) {
+	am.emit(AccessibilityAnnouncement{Message: message, Priority: priority, Vocal: true})
+}
+
+// emit delivers an announcement to the channel and OnAnnounce handler.
+func (am *AccessibilityManager) emit(announcement AccessibilityAnnouncement) {
 	am.mu.Lock()
 	enabled := am.Enabled
 	handler := am.OnAnnounce
@@ -232,11 +263,6 @@ func (am *AccessibilityManager) Announce(message string, priority string) {
 		return
 	}
 
-	announcement := AccessibilityAnnouncement{
-		Message:  message,
-		Priority: priority,
-	}
-
 	// Try to send to channel (non-blocking)
 	select {
 	case am.Announcements <- announcement:
@@ -244,7 +270,6 @@ func (am *AccessibilityManager) Announce(message string, priority string) {
 		// Channel full, drop the announcement
 	}
 
-	// Also call handler if set
 	if handler != nil {
 		handler(announcement)
 	}
@@ -260,10 +285,61 @@ func (am *AccessibilityManager) AnnounceAssertive(message string) {
 	am.Announce(message, "assertive")
 }
 
-// AnnounceFocus announces focus change on a widget.
-func (am *AccessibilityManager) AnnounceFocus(widget Widget) {
+// AnnounceNavigation speaks a navigation announcement (focus/selection
+// movement) through a throttle so rapid arrowing doesn't flood the screen
+// reader: the first move in a burst speaks immediately; a move within the
+// quiet window is held as pending, replacing any earlier pending and
+// restarting the window, and is spoken only after the user pauses (see
+// ProcessPending). The net effect is you hear the first item and the one
+// you finally land on, not every item you skated past.
+func (am *AccessibilityManager) AnnounceNavigation(message string) {
 	am.mu.Lock()
-	am.FocusedWidget = widget
+	if !am.Enabled {
+		am.mu.Unlock()
+		return
+	}
+	now := am.now()
+	withinWindow := !am.lastAnnounceAt.IsZero() && now.Sub(am.lastAnnounceAt) < navigationThrottle
+	am.lastAnnounceAt = now
+	vocal := !withinWindow
+	if withinWindow {
+		// Hold speech for the pause; replace any earlier pending and
+		// restart the quiet window. The status bar still shows this move.
+		am.pending = AccessibilityAnnouncement{Message: message, Priority: "polite", Vocal: true}
+		am.pendingActive = true
+		am.pendingDeadline = now.Add(navigationThrottle)
+	} else {
+		// First of a burst: speak immediately, drop any stale pending.
+		am.pendingActive = false
+	}
+	am.mu.Unlock()
+
+	// Every navigation announcement is emitted (so the status bar shows
+	// all of them); only Vocal ones are spoken.
+	am.emit(AccessibilityAnnouncement{Message: message, Priority: "polite", Vocal: vocal})
+}
+
+// ProcessPending speaks a held navigation announcement once its quiet
+// window has elapsed. Call it periodically from the main loop (the
+// desktop tick does) so the last item of a rapid burst is spoken after
+// the user pauses.
+func (am *AccessibilityManager) ProcessPending() {
+	am.mu.Lock()
+	if !am.pendingActive || am.now().Before(am.pendingDeadline) {
+		am.mu.Unlock()
+		return
+	}
+	ann := am.pending // Vocal: true
+	am.pendingActive = false
+	am.lastAnnounceAt = am.now()
+	am.mu.Unlock()
+	am.emit(ann)
+}
+
+// AnnounceFocus announces focus change on a trinket.
+func (am *AccessibilityManager) AnnounceFocus(trinket Trinket) {
+	am.mu.Lock()
+	am.FocusedTrinket = trinket
 	enabled := am.Enabled
 	am.mu.Unlock()
 
@@ -273,11 +349,11 @@ func (am *AccessibilityManager) AnnounceFocus(widget Widget) {
 
 	// Get accessible info if available
 	var info AccessibleInfo
-	if accessible, ok := widget.(Accessible); ok {
+	if accessible, ok := trinket.(Accessible); ok {
 		info = accessible.AccessibleInfo()
 	} else {
-		// Default to widget name
-		info.Name = widget.Name()
+		// Default to trinket name
+		info.Name = trinket.Name()
 		info.Role = RoleNone
 	}
 
@@ -327,12 +403,15 @@ func (am *AccessibilityManager) AnnounceFocus(widget Widget) {
 	}
 
 	if len(parts) > 0 {
-		am.AnnouncePolite(strings.Join(parts, ", "))
+		// Focus changes are navigation: throttle the speech so rapid
+		// arrowing doesn't flood the screen reader (the status bar still
+		// shows every move).
+		am.AnnounceNavigation(strings.Join(parts, ", "))
 	}
 }
 
 // AnnounceAction announces an action being taken.
-func (am *AccessibilityManager) AnnounceAction(widget Widget, action string) {
+func (am *AccessibilityManager) AnnounceAction(trinket Trinket, action string) {
 	am.mu.Lock()
 	enabled := am.Enabled
 	am.mu.Unlock()
@@ -342,11 +421,11 @@ func (am *AccessibilityManager) AnnounceAction(widget Widget, action string) {
 	}
 
 	var name string
-	if accessible, ok := widget.(Accessible); ok {
+	if accessible, ok := trinket.(Accessible); ok {
 		info := accessible.AccessibleInfo()
 		name = info.Name
 	} else {
-		name = widget.Name()
+		name = trinket.Name()
 	}
 
 	if name != "" {
@@ -371,31 +450,31 @@ func formatPosition(position, total int) string {
 	return fmt.Sprintf("%d of %d", position, total)
 }
 
-// AccessibleWidget provides a base implementation of accessibility features.
-// Embed this in widgets to get default accessibility support.
-type AccessibleWidget struct {
+// AccessibleTrinket provides a base implementation of accessibility features.
+// Embed this in trinkets to get default accessibility support.
+type AccessibleTrinket struct {
 	accessibleName        string
 	accessibleDescription string
 	accessibleRole        AccessibleRole
 }
 
 // SetAccessibleName sets the accessible name.
-func (aw *AccessibleWidget) SetAccessibleName(name string) {
+func (aw *AccessibleTrinket) SetAccessibleName(name string) {
 	aw.accessibleName = name
 }
 
 // SetAccessibleDescription sets the accessible description.
-func (aw *AccessibleWidget) SetAccessibleDescription(desc string) {
+func (aw *AccessibleTrinket) SetAccessibleDescription(desc string) {
 	aw.accessibleDescription = desc
 }
 
 // SetAccessibleRole sets the accessible role.
-func (aw *AccessibleWidget) SetAccessibleRole(role AccessibleRole) {
+func (aw *AccessibleTrinket) SetAccessibleRole(role AccessibleRole) {
 	aw.accessibleRole = role
 }
 
 // AccessibleInfo returns the accessibility information.
-func (aw *AccessibleWidget) AccessibleInfo() AccessibleInfo {
+func (aw *AccessibleTrinket) AccessibleInfo() AccessibleInfo {
 	return AccessibleInfo{
 		Name:        aw.accessibleName,
 		Description: aw.accessibleDescription,
@@ -460,12 +539,12 @@ type AccessibilityProvider interface {
 	AccessibilityManager() *AccessibilityManager
 }
 
-// FindAccessibilityManager traverses up the widget parent chain to find an AccessibilityManager.
+// FindAccessibilityManager traverses up the trinket parent chain to find an AccessibilityManager.
 // Returns nil if no provider is found.
-func FindAccessibilityManager(w Widget) *AccessibilityManager {
+func FindAccessibilityManager(w Trinket) *AccessibilityManager {
 	current := w
 	for current != nil {
-		// Check if current widget provides AccessibilityManager
+		// Check if current trinket provides AccessibilityManager
 		if provider, ok := current.(AccessibilityProvider); ok {
 			return provider.AccessibilityManager()
 		}

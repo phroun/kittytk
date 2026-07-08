@@ -1,30 +1,164 @@
-// Package main demonstrates the TUI toolkit capabilities.
+// Package main demonstrates the KittyTK capabilities.
 package main
 
 import (
 	"fmt"
-	"os/exec"
-	"runtime"
-	"sync"
 
-	"github.com/phroun/tuitk/app"
-	"github.com/phroun/tuitk/backend"
-	"github.com/phroun/tuitk/core"
-	"github.com/phroun/tuitk/layout"
-	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/widgets"
-	"github.com/phroun/tuitk/window"
+	"github.com/phroun/kittytk/app"
+	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/display"
+	"github.com/phroun/kittytk/layout"
+	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/style"
+	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/window"
 )
 
-func main() {
-	// Create the TUI backend
-	opts := backend.DefaultTUIOptions()
-	tuiBackend := backend.NewTUIBackend(opts)
+// fixedWidthBox is a bordered panel whose width is pinned, so its
+// content width does not grow when the font changes. Word wrap only
+// happens when width is genuinely constrained; an unconstrained label's
+// SizeHint scales with the font and simply widens instead of wrapping.
+// Height is NOT pinned: it flows from the content via height-for-width,
+// so wrapping onto more lines makes the box taller.
+type fixedWidthBox struct {
+	*trinkets.Panel
+	width core.Unit
+}
 
-	// Create desktop - owns the backend and runs the event loop
-	desktop := widgets.NewDesktop()
-	desktop.SetBackend(tuiBackend)
+func newFixedWidthBox(width core.Unit, content core.Trinket) *fixedWidthBox {
+	f := &fixedWidthBox{Panel: trinkets.NewPanel(), width: width}
+	f.SetBorder(true)
+	f.SetBorderStyle(style.BorderSingle) // zero-value BorderStyle renders invisibly
 
+	boxLayout := layout.NewBoxLayout(core.Vertical)
+	f.AddChild(content)
+	f.SetLayoutManager(boxLayout)
+	boxLayout.ItemAt(0).WithAlign(core.AlignFill)
+	return f
+}
+
+func (f *fixedWidthBox) SizeHint() core.UnitSize {
+	return core.UnitSize{Width: f.width, Height: f.Panel.SizeHint().Height}
+}
+
+// idCaptureFactory records built targets by object ID so the app can
+// reach the real trinkets behind surfaced reply names.
+type idCaptureFactory struct {
+	inner protocol.Factory
+	byID  map[uint64]any
+}
+
+func (f *idCaptureFactory) New(typeName string) (protocol.Object, error) {
+	o, err := f.inner.New(typeName)
+	if err != nil {
+		return nil, err
+	}
+	type built interface {
+		Target() any
+		ID() uint64
+	}
+	if b, ok := o.(built); ok {
+		f.byID[b.ID()] = b.Target()
+	}
+	return o, nil
+}
+
+// Forward EventControl so the script's sub statements and D20 echo
+// suppression reach the wrapped RegistryFactory.
+func (f *idCaptureFactory) Subscribe(id uint64, typ string) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Subscribe(id, typ)
+	}
+}
+func (f *idCaptureFactory) Unsubscribe(id uint64, typ string) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Unsubscribe(id, typ)
+	}
+}
+func (f *idCaptureFactory) Suppressed(fn func()) {
+	if ec, ok := f.inner.(protocol.EventControl); ok {
+		ec.Suppressed(fn)
+		return
+	}
+	fn()
+}
+
+// protocolWindowScript is the Protocol Demo window's entire content,
+// expressed in the display-protocol command language (D10-D18).
+const protocolWindowScript = `
+alias C="caption"
+
+root=new panel layout=vbox children={
+	new label C="This window's content was built from protocol text." wrap
+	status=new label C="Interact below; events appear here."
+	new separator
+	cb=new checkbox C="Tri-state checkbox (watch the label above)" tristate
+	inp=new textinput placeholder="Type here..."
+	combo=new combobox children={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
+	btn=new button C="Dispatch demo.hello" action=demo.hello
+}
+watch=root.status
+wcb=root.cb
+winp=root.inp
+wcombo=root.combo
+`
+
+// createProtocolWindow builds the Protocol Demo window through the
+// client veneer: typed handles over the wire objects, replica-backed
+// reads, write-through setters. No raw dispatcher, no sub statements
+// in the script - handles subscribe what they mirror.
+func createProtocolWindow(application *app.Application, desktop *trinkets.Desktop) *window.Window {
+	conn := client.NewInProcess(func(id string) { application.Commands().Dispatch(id) })
+	ui, err := conn.Build(protocolWindowScript)
+	if err != nil {
+		return nil
+	}
+
+	status := ui.Label("watch")
+
+	ui.Checkbox("wcb").OnToggle(func(s protocol.FlagState) {
+		state := "off"
+		switch s {
+		case protocol.FlagTrue:
+			state = "on"
+		case protocol.FlagIndeterminate:
+			state = "mixed"
+		}
+		status.SetCaption("event toggle checked=" + state)
+	})
+	ui.TextInput("winp").OnChange(func(s string) {
+		status.SetCaption(`event change text="` + s + `"`)
+	})
+	ui.Selector("wcombo").OnChange(func(i int) {
+		status.SetCaption(fmt.Sprintf("event change selected=%d", i))
+	})
+	conn.OnCommand("demo.hello", func() {
+		status.SetCaption("event command action=demo.hello")
+	})
+
+	// The command also lands in the app's registry (slice-1 seam).
+	application.Commands().Register("demo.hello", func() {
+		if sb := desktop.StatusBar(); sb != nil {
+			sb.SetText("demo.hello dispatched from protocol-built button!")
+		}
+	})
+
+	rootTrinket, ok := ui.Object("root").Target().(core.Trinket)
+	if !ok {
+		return nil
+	}
+	w := window.NewWindow("Protocol Demo")
+	w.SetBounds(core.UnitRect{X: 8 * 8, Y: 16 * 4, Width: 8 * 56, Height: 16 * 16})
+	w.SetContent(rootTrinket)
+	return w
+}
+
+// buildDemo assembles the entire demo application onto a desktop
+// whose backend is already set. The same construction runs on the
+// text backend and on the SDL pixel backend (selection by binary,
+// D23/O3): see main_tui.go and main_sdl.go.
+func buildDemo(desktop *trinkets.Desktop) {
 	// Create the application - owns windows, provides menu/status content
 	application := app.New(nil) // nil backend - Desktop owns it now
 	application.SetName("TUI Demo")
@@ -32,18 +166,19 @@ func main() {
 	// Set up application's menu bar content
 	application.SetMenuBarContent(createMenus(desktop, application))
 
-	// Set up application's status bar content
-	redStyle := style.DefaultStyle().WithFg(style.ColorRed).WithBg(style.ColorWhite)
-	normalStatusContent := []widgets.StatusSection{
-		{Spans: []widgets.StatusTextSpan{
-			{Text: "Ready - Press "},
-			{Text: "F10", Style: &redStyle},
-			{Text: " for menu, Tab to navigate, "},
-			{Text: "Ctrl+Q", Style: &redStyle},
-			{Text: " to quit"},
-		}},
+	// Status bar content is protocol data too: sections of styled
+	// text spans.
+	application.SetStatusBarContent(buildStatusSections(`
+sb=new statusbar children={
+	new section children={
+		new span text="Ready - Press "
+		new span text="F10" fg=red bg=white
+		new span text=" for menu, Tab to navigate, "
+		new span text="Ctrl+Q" fg=red bg=white
+		new span text=" to quit"
 	}
-	application.SetStatusBarContent(normalStatusContent)
+}
+`))
 
 	// Register application with desktop
 	desktop.AddApplication(application)
@@ -59,7 +194,7 @@ func main() {
 					fm := activeWin.FocusManager()
 					if fm != nil {
 						chain := fm.FocusChain()
-						focused := fm.FocusedWidget()
+						focused := fm.FocusedTrinket()
 
 						focusable := 0
 						for _, w := range chain {
@@ -97,1268 +232,84 @@ func main() {
 
 	// Create windows in startup callback (after screen bounds are set)
 	desktop.SetOnStartup(func() {
-		// Create the main demo window - owned by the application
+		// P0 step 4: a window whose content is built entirely from
+		// protocol text, with interactions flowing back as event
+		// records. See createProtocolWindow.
+		if pw := createProtocolWindow(application, desktop); pw != nil {
+			application.AddWindow(pw)
+		}
+		// Create the main demo window - owned by the application, and
+		// mark it the app's main window (its menus/status move to its own
+		// chrome when it is torn off).
 		mainWindow := createMainWindow(desktop, application)
 		application.AddWindow(mainWindow)
-	})
+		application.SetMainWindow(mainWindow)
 
-	// Run the desktop event loop
-	desktop.Run()
-}
-
-// createMenus creates the application's menu bar content.
-// The first menu is named after the app - standard items (Hide, Show All, Quit)
-// are automatically appended by the Desktop.
-func createMenus(desktop *widgets.Desktop, application *app.Application) []*widgets.Menu {
-	var menus []*widgets.Menu
-
-	// App menu (named after the application - standard items added automatically)
-	appMenu := widgets.NewMenu("&Demo")
-	newItem := widgets.NewMenuItem("&New")
-	newItem.SetShortcut(core.NewShortcut("^N"))
-	appMenu.AddItem(newItem)
-
-	openItem := widgets.NewMenuItem("&Open...")
-	openItem.SetShortcut(core.NewShortcut("^O"))
-	appMenu.AddItem(openItem)
-
-	saveItem := widgets.NewMenuItem("&Save")
-	saveItem.SetShortcut(core.NewShortcut("^S"))
-	appMenu.AddItem(saveItem)
-
-	// Note: Hide, Hide Others, Show All, and Quit are added automatically
-	menus = append(menus, appMenu)
-
-	// Edit menu
-	editMenu := widgets.NewMenu("&Edit")
-	cutItem := widgets.NewMenuItem("Cu&t")
-	cutItem.SetShortcut(core.NewShortcut("^X"))
-	editMenu.AddItem(cutItem)
-
-	copyItem := widgets.NewMenuItem("&Copy")
-	copyItem.SetShortcut(core.NewShortcut("^C"))
-	editMenu.AddItem(copyItem)
-
-	pasteItem := widgets.NewMenuItem("&Paste")
-	pasteItem.SetShortcut(core.NewShortcut("^V"))
-	editMenu.AddItem(pasteItem)
-
-	editMenu.AddSeparator()
-
-	// Raw Key Input - passes the next keypress directly to the focused widget
-	rawKeyItem := widgets.NewMenuItem("&Raw Key Input")
-	rawKeyItem.SetShortcut(core.NewShortcut("^\\"))
-	rawKeyItem.SetOnTriggered(func() {
-		desktop.ActivatePassNextKeyToWidget()
-	})
-	editMenu.AddItem(rawKeyItem)
-
-	menus = append(menus, editMenu)
-
-	// View menu
-	viewMenu := widgets.NewMenu("&View")
-	toolbarItem := widgets.NewMenuItem("&Toolbar")
-	toolbarItem.SetCheckable(true)
-	toolbarItem.SetChecked(true)
-	viewMenu.AddItem(toolbarItem)
-
-	statusBarItem := widgets.NewMenuItem("&Status Bar")
-	statusBarItem.SetCheckable(true)
-	statusBarItem.SetChecked(true)
-	viewMenu.AddItem(statusBarItem)
-
-	viewMenu.AddSeparator()
-
-	// Track accessibility settings
-	var showVisualAnnouncements, speakAnnouncements bool
-
-	// Track current speech process so we can interrupt it
-	var (
-		speechMu  sync.Mutex
-		speechCmd *exec.Cmd
-	)
-
-	updateAccessibilityHandler := func() {
-		am := desktop.AccessibilityManager()
-		if am == nil {
-			return
-		}
-
-		if !showVisualAnnouncements && !speakAnnouncements {
-			// Both disabled
-			am.OnAnnounce = nil
-			return
-		}
-
-		am.OnAnnounce = func(announcement core.AccessibilityAnnouncement) {
-			// Visual output to status bar
-			if showVisualAnnouncements {
-				if statusBar := desktop.StatusBar(); statusBar != nil {
-					prefix := "📢"
-					if announcement.Priority == "assertive" {
-						prefix = "⚠️"
-					}
-					statusBar.SetText(fmt.Sprintf("%s [%s] %s", prefix, announcement.Priority, announcement.Message))
-				}
-			}
-
-			// Text-to-speech on macOS using 'say' command
-			if speakAnnouncements && runtime.GOOS == "darwin" {
-				go func(msg string) {
-					speechMu.Lock()
-					// Kill any previous speech
-					if speechCmd != nil && speechCmd.Process != nil {
-						_ = speechCmd.Process.Kill()
-						_ = speechCmd.Wait()
-					}
-					// Start new speech
-					speechCmd = exec.Command("say", "-r", "250", msg)
-					speechMu.Unlock()
-
-					_ = speechCmd.Run()
-
-					speechMu.Lock()
-					speechCmd = nil
-					speechMu.Unlock()
-				}(announcement.Message)
-			}
-		}
-	}
-
-	// Screen reader visual output toggle
-	screenReaderItem := widgets.NewMenuItem("Show A&nnouncements in Status Bar")
-	screenReaderItem.SetCheckable(true)
-	screenReaderItem.SetChecked(false)
-	screenReaderItem.SetOnTriggered(func() {
-		showVisualAnnouncements = screenReaderItem.Checked
-		updateAccessibilityHandler()
-		if showVisualAnnouncements {
-			if am := desktop.AccessibilityManager(); am != nil {
-				am.AnnouncePolite("Visual announcements enabled")
+		// D22: this desktop IS a display service. Remote apps dial
+		// the socket and appear as full applications:
+		//   go run ./examples/remoteapp
+		if _, err := display.Serve(desktop, client.DefaultSocketPath()); err != nil {
+			if sb := desktop.StatusBar(); sb != nil {
+				sb.SetText("display service unavailable: " + err.Error())
 			}
 		}
 	})
-	viewMenu.AddItem(screenReaderItem)
 
-	// Text-to-speech toggle (macOS only)
-	speakItem := widgets.NewMenuItem("Speak Announcements (macOS)")
-	speakItem.SetCheckable(true)
-	speakItem.SetChecked(false)
-	if runtime.GOOS != "darwin" {
-		speakItem.SetEnabled(false)
+}
+
+// demoWindowScript builds the Demo Window, terminal included. The
+// feed= pseudo-property streams bytes (with \e / \xNN escapes) into
+// the terminal - the banner arrives over the wire before the local
+// shell starts.
+const demoWindowScript = `
+w=new window title="Demo Window" width=480 height=320 children={
+	sp=new splitter orientation=vertical position=0.3 caption="Terminal" children={
+		tp=new panel layout=vbox spacing=8 children={
+			new label caption="This is a child window."
+			new textinput placeholder="Type something..."
+			closebtn=new button caption="Close"
+		}
+		term=new terminal
 	}
-	speakItem.SetOnTriggered(func() {
-		speakAnnouncements = speakItem.Checked
-		updateAccessibilityHandler()
-		if speakAnnouncements {
-			if am := desktop.AccessibilityManager(); am != nil {
-				am.AnnouncePolite("Text to speech enabled")
-			}
-		}
-	})
-	viewMenu.AddItem(speakItem)
+}
+closer=w.sp.tp.closebtn
+term=w.sp.term
 
-	menus = append(menus, viewMenu)
+set term feed="\e[1;36mThis banner arrived as protocol text:\e[0m set term feed=\"...\"\r\n\r\n"
+set term shell
 
-	// Window menu
-	windowMenu := widgets.NewMenu("&Window")
-	newWindowItem := widgets.NewMenuItem("&New Window")
-	newWindowItem.SetOnTriggered(func() {
-		// Create a NEW application with its own identity, menus, and status bar
-		newApp := createSecondaryApplication(desktop)
-		desktop.AddApplication(newApp)
-	})
-	windowMenu.AddItem(newWindowItem)
+sub closer click
+`
 
-	windowMenu.AddSeparator()
-
-	tileItem := widgets.NewMenuItem("&Tile")
-	tileItem.SetOnTriggered(func() {
-		desktop.WindowManager().TileWindows()
-	})
-	windowMenu.AddItem(tileItem)
-
-	cascadeItem := widgets.NewMenuItem("&Cascade")
-	cascadeItem.SetOnTriggered(func() {
-		desktop.WindowManager().CascadeWindows()
-	})
-	windowMenu.AddItem(cascadeItem)
-	menus = append(menus, windowMenu)
-
-	// Alphabet menu (26 items for testing scrolling)
-	alphabetMenu := widgets.NewMenu("&Alphabet")
-	for i := 0; i < 26; i++ {
-		letter := string(rune('A' + i))
-		item := widgets.NewMenuItem("&" + letter + " - Letter " + letter)
-		alphabetMenu.AddItem(item)
+// createDemoWindow builds a child window with an embedded terminal
+// from protocol text.
+func createDemoWindow(desktop *trinkets.Desktop, application *app.Application) *window.Window {
+	dispatcher := protocol.NewEventDispatcher()
+	ctx := &protocol.BindContext{
+		Emit: func(ev *protocol.Event) { dispatcher.Dispatch(ev) },
 	}
-	menus = append(menus, alphabetMenu)
-
-	// Help menu
-	helpMenu := widgets.NewMenu("&Help")
-	aboutItem := widgets.NewMenuItem("&About")
-	aboutItem.SetOnTriggered(func() {
-		showAboutDialog(desktop, application)
-	})
-	helpMenu.AddItem(aboutItem)
-	menus = append(menus, helpMenu)
-
-	return menus
-}
-
-// createMainWindow creates the main demo window.
-func createMainWindow(desktop *widgets.Desktop, application *app.Application) *window.Window {
-	mainWindow := window.NewWindow("TUI Toolkit Demo")
-	mainWindow.SetSize(core.UnitSize{
-		Width:  core.Unit(60 * 8), // 60 columns
-		Height: core.Unit(18 * 16), // 18 rows
-	})
-
-	// Create tab widget to organize demos
-	tabWidget := widgets.NewTabWidget()
-
-	// Add demo tabs
-	tabWidget.AddTab("Basic Widgets", createBasicWidgetsDemo(desktop))
-	tabWidget.AddTab("Selection", createSelectionDemo(tabWidget, mainWindow, desktop))
-	tabWidget.AddTab("Lists", createListDemo())
-	tabWidget.AddTab("Scroll Selection", createScrollSelectionDemo(tabWidget))
-	tabWidget.AddTab("Scroll Lists", createScrollListDemo())
-	tabWidget.AddTab("Progress", createProgressDemo())
-	tabWidget.AddTab("Bottom Tabs", createBottomTabsDemo())
-	tabWidget.AddTab("Vertical Tabs", createVerticalTabsDemo())
-	tabWidget.AddTab("MDI Demo", createMDIDemo(desktop, application, mainWindow))
-
-	mainWindow.SetContent(tabWidget)
-
-	return mainWindow
-}
-
-// createBasicWidgetsDemo creates a panel with basic widgets.
-func createBasicWidgetsDemo(desktop *widgets.Desktop) core.Widget {
-	panel := widgets.NewPanel()
-	boxLayout := layout.NewBoxLayout(core.Vertical)
-	boxLayout.SetSpacing(0)
-
-	// Label
-	label := widgets.NewLabel("This is a demo of basic widgets:")
-	panel.AddChild(label)
-
-	// Text input
-	textInput := widgets.NewTextInput()
-	textInput.SetPlaceholder("Enter text here...")
-	textInput.SetOnTextChanged(func(text string) {
-		if statusBar := desktop.StatusBar(); statusBar != nil {
-			statusBar.SetText(fmt.Sprintf("Text: %s", text))
-		}
-	})
-	panel.AddChild(textInput)
-
-	// Add a spacer before buttons
-	spacer := widgets.NewSpacer()
-	panel.AddChild(spacer)
-
-	// Buttons in a horizontal layout
-	buttonPanel := widgets.NewPanel()
-	hLayout := layout.NewBoxLayout(core.Horizontal)
-	hLayout.SetSpacing(8)
-
-	okButton := widgets.NewButton("OK")
-	okButton.SetOnClick(func() {
-		if sb := desktop.StatusBar(); sb != nil {
-			sb.SetText("OK button clicked!")
-		}
-	})
-	buttonPanel.AddChild(okButton)
-
-	cancelButton := widgets.NewButton("Cancel")
-	cancelButton.SetOnClick(func() {
-		if sb := desktop.StatusBar(); sb != nil {
-			sb.SetText("Cancel button clicked!")
-		}
-	})
-	buttonPanel.AddChild(cancelButton)
-
-	applyButton := widgets.NewButton("Apply")
-	applyButton.SetOnClick(func() {
-		if sb := desktop.StatusBar(); sb != nil {
-			sb.SetText("Apply button clicked!")
-		}
-	})
-	buttonPanel.AddChild(applyButton)
-
-	buttonPanel.SetLayoutManager(hLayout)
-	panel.AddChild(buttonPanel)
-
-	// Disabled button
-	disabledButton := widgets.NewButton("Disabled")
-	disabledButton.SetEnabled(false)
-	panel.AddChild(disabledButton)
-
-	panel.SetLayoutManager(boxLayout)
-	return panel
-}
-
-// createSelectionDemo creates a panel with selection widgets using a draggable splitter.
-func createSelectionDemo(tabWidget *widgets.TabWidget, mainWindow *window.Window, desktop *widgets.Desktop) core.Widget {
-	// Use a vertical splitter to divide checkboxes from radio buttons
-	splitter := widgets.NewVSplitter()
-	splitter.SetPosition(0.4) // Checkboxes get 40% of space
-
-	// Top panel: Checkboxes
-	checkPanel := widgets.NewPanel()
-	checkLayout := layout.NewBoxLayout(core.Vertical)
-	checkLayout.SetSpacing(0)
-
-	checkLabel := widgets.NewLabel("Checkboxes:")
-	checkPanel.AddChild(checkLabel)
-
-	check1 := widgets.NewCheckbox("Enable feature A")
-	check1.SetChecked(true)
-	checkPanel.AddChild(check1)
-
-	check2 := widgets.NewCheckbox("Enable feature B")
-	checkPanel.AddChild(check2)
-
-	check3 := widgets.NewCheckbox("Tri-state checkbox")
-	check3.SetTriState(true)
-	checkPanel.AddChild(check3)
-
-	// Font switching checkboxes
-	fontLabel := widgets.NewLabel("Font Options:")
-	checkPanel.AddChild(fontLabel)
-
-	windowFontCheck := widgets.NewCheckbox("Window: Tuesday (double-width)")
-	windowFontCheck.SetOnToggled(func(checked bool) {
-		if checked {
-			mainWindow.SetFont(core.FontTuesday12)
-		} else {
-			mainWindow.SetFont(nil) // Inherit from desktop
-		}
-	})
-	checkPanel.AddChild(windowFontCheck)
-
-	desktopFontCheck := widgets.NewCheckbox("Desktop: Tuesday (double-width)")
-	desktopFontCheck.SetOnToggled(func(checked bool) {
-		if checked {
-			desktop.SetFont(core.FontTuesday12)
-		} else {
-			desktop.SetFont(nil) // Use default (Monday)
-		}
-	})
-	checkPanel.AddChild(desktopFontCheck)
-
-	checkPanel.SetLayoutManager(checkLayout)
-	splitter.SetFirst(checkPanel)
-
-	// Bottom panel: Radio buttons and ComboBox
-	radioPanel := widgets.NewPanel()
-	radioLayout := layout.NewBoxLayout(core.Vertical)
-	radioLayout.SetSpacing(0)
-
-	radioLabel := widgets.NewLabel("Radio buttons:")
-	radioPanel.AddChild(radioLabel)
-
-	radioGroup := widgets.NewRadioGroup()
-	radio1 := widgets.NewRadioButton("Option 1")
-	radio2 := widgets.NewRadioButton("Option 2")
-	radio3 := widgets.NewRadioButton("Option 3")
-	radioGroup.AddButton(radio1)
-	radioGroup.AddButton(radio2)
-	radioGroup.AddButton(radio3)
-
-	radioPanel.AddChild(radio1)
-	radioPanel.AddChild(radio2)
-	radioPanel.AddChild(radio3)
-
-	// Background color radio buttons
-	bgLabel := widgets.NewLabel("Tab Background Color:")
-	radioPanel.AddChild(bgLabel)
-
-	bgGroup := widgets.NewRadioGroup()
-	bgDefault := widgets.NewRadioButton("Default")
-	bgGreen := widgets.NewRadioButton("Dark Green")
-	bgGray := widgets.NewRadioButton("TrueColor #333")
-	bgGroup.AddButton(bgDefault)
-	bgGroup.AddButton(bgGreen)
-	bgGroup.AddButton(bgGray)
-	bgDefault.SetChecked(true)
-
-	// Set up callbacks to change TabWidget background
-	bgDefault.SetOnToggled(func(checked bool) {
-		if checked {
-			tabWidget.SetBackgroundColor(nil) // Inherit/default
-			tabWidget.Update()
-		}
-	})
-	bgGreen.SetOnToggled(func(checked bool) {
-		if checked {
-			green := style.ColorGreen
-			tabWidget.SetBackgroundColor(&green)
-			tabWidget.Update()
-		}
-	})
-	bgGray.SetOnToggled(func(checked bool) {
-		if checked {
-			gray := style.RGB(0x33, 0x33, 0x33)
-			tabWidget.SetBackgroundColor(&gray)
-			tabWidget.Update()
-		}
-	})
-
-	radioPanel.AddChild(bgDefault)
-	radioPanel.AddChild(bgGreen)
-	radioPanel.AddChild(bgGray)
-
-	// ComboBox
-	comboLabel := widgets.NewLabel("ComboBox:")
-	radioPanel.AddChild(comboLabel)
-
-	combo := widgets.NewComboBox()
-	combo.AddItem("First item")
-	combo.AddItem("Second item")
-	combo.AddItem("Third item")
-	combo.AddItem("Fourth item")
-	radioPanel.AddChild(combo)
-
-	// Alphabet ComboBox (26 items for testing scrolling)
-	alphabetLabel := widgets.NewLabel("Alphabet ComboBox:")
-	radioPanel.AddChild(alphabetLabel)
-
-	alphabetCombo := widgets.NewComboBox()
-	for i := 0; i < 26; i++ {
-		letter := string(rune('A' + i))
-		alphabetCombo.AddItem(letter + " - Letter " + letter)
+	factory := &idCaptureFactory{
+		inner: protocol.NewRegistryFactory(ctx),
+		byID:  make(map[uint64]any),
 	}
-	radioPanel.AddChild(alphabetCombo)
-
-	radioPanel.SetLayoutManager(radioLayout)
-	splitter.SetSecond(radioPanel)
-
-	return splitter
-}
-
-// createListDemo creates a panel with list widgets using a draggable splitter.
-func createListDemo() core.Widget {
-	// Use a horizontal splitter to divide space between ListView and TreeView
-	splitter := widgets.NewHSplitter()
-	splitter.SetPosition(0.5) // Start with 50/50 split
-
-	// ListView
-	listViewPanel := widgets.NewPanel()
-	listLayout := layout.NewBoxLayout(core.Vertical)
-
-	listLabel := widgets.NewLabel("ListView:")
-	listViewPanel.AddChild(listLabel)
-
-	listView := widgets.NewListView()
-	for i := 1; i <= 20; i++ {
-		item := widgets.NewListItem(fmt.Sprintf("Item %d", i))
-		listView.AddItem(item)
+	script, err := protocol.Parse(demoWindowScript)
+	if err != nil {
+		panic(fmt.Sprintf("demo window script: %v", err))
 	}
-	listViewPanel.AddChild(listView)
-
-	listViewPanel.SetLayoutManager(listLayout)
-	splitter.SetFirst(listViewPanel)
-
-	// TreeView
-	treeViewPanel := widgets.NewPanel()
-	treeLayout := layout.NewBoxLayout(core.Vertical)
-
-	treeLabel := widgets.NewLabel("TreeView:")
-	treeViewPanel.AddChild(treeLabel)
-
-	treeView := widgets.NewTreeView()
-
-	// Build tree structure
-	root1 := widgets.NewTreeItem("Documents")
-	root1.Expanded = true
-	child1 := widgets.NewTreeItem("Work")
-	child1.Expanded = true
-	child1.AddChild(widgets.NewTreeItem("Report.txt"))
-	child1.AddChild(widgets.NewTreeItem("Presentation.pptx"))
-	child1.AddChild(widgets.NewTreeItem("Budget.xlsx"))
-	child1.AddChild(widgets.NewTreeItem("Meeting Notes.md"))
-	root1.AddChild(child1)
-	child2 := widgets.NewTreeItem("Personal")
-	child2.AddChild(widgets.NewTreeItem("Notes.txt"))
-	child2.AddChild(widgets.NewTreeItem("Journal.md"))
-	child2.AddChild(widgets.NewTreeItem("Ideas.txt"))
-	root1.AddChild(child2)
-	child3 := widgets.NewTreeItem("Projects")
-	child3.AddChild(widgets.NewTreeItem("Alpha"))
-	child3.AddChild(widgets.NewTreeItem("Beta"))
-	child3.AddChild(widgets.NewTreeItem("Gamma"))
-	root1.AddChild(child3)
-
-	root2 := widgets.NewTreeItem("Pictures")
-	root2.AddChild(widgets.NewTreeItem("Vacation"))
-	root2.AddChild(widgets.NewTreeItem("Family"))
-	root2.AddChild(widgets.NewTreeItem("Pets"))
-	root2.AddChild(widgets.NewTreeItem("Events"))
-	root2.AddChild(widgets.NewTreeItem("Screenshots"))
-
-	root3 := widgets.NewTreeItem("Downloads")
-	root3.AddChild(widgets.NewTreeItem("Software"))
-	root3.AddChild(widgets.NewTreeItem("Documents"))
-	root3.AddChild(widgets.NewTreeItem("Music"))
-
-	root4 := widgets.NewTreeItem("Music")
-	root4.AddChild(widgets.NewTreeItem("Rock"))
-	root4.AddChild(widgets.NewTreeItem("Jazz"))
-	root4.AddChild(widgets.NewTreeItem("Classical"))
-	root4.AddChild(widgets.NewTreeItem("Electronic"))
-
-	root5 := widgets.NewTreeItem("Videos")
-	root5.AddChild(widgets.NewTreeItem("Movies"))
-	root5.AddChild(widgets.NewTreeItem("TV Shows"))
-	root5.AddChild(widgets.NewTreeItem("Tutorials"))
-
-	root6 := widgets.NewTreeItem("Code")
-	codeChild1 := widgets.NewTreeItem("Go")
-	codeChild1.AddChild(widgets.NewTreeItem("main.go"))
-	codeChild1.AddChild(widgets.NewTreeItem("utils.go"))
-	root6.AddChild(codeChild1)
-	codeChild2 := widgets.NewTreeItem("Python")
-	codeChild2.AddChild(widgets.NewTreeItem("script.py"))
-	root6.AddChild(codeChild2)
-
-	treeView.AddRootItem(root1)
-	treeView.AddRootItem(root2)
-	treeView.AddRootItem(root3)
-	treeView.AddRootItem(root4)
-	treeView.AddRootItem(root5)
-	treeView.AddRootItem(root6)
-
-	treeViewPanel.AddChild(treeView)
-
-	treeViewPanel.SetLayoutManager(treeLayout)
-	splitter.SetSecond(treeViewPanel)
-
-	return splitter
-}
-
-// createScrollSelectionDemo creates a panel with selection widgets wrapped in scroll areas.
-func createScrollSelectionDemo(tabWidget *widgets.TabWidget) core.Widget {
-	// Use a vertical splitter to divide checkboxes from radio buttons
-	splitter := widgets.NewVSplitter()
-	splitter.SetPosition(0.4) // Checkboxes get 40% of space
-
-	// Top panel: Checkboxes (wrapped in scroll area)
-	checkPanel := widgets.NewPanel()
-	checkLayout := layout.NewBoxLayout(core.Vertical)
-	checkLayout.SetSpacing(0)
-
-	checkLabel := widgets.NewLabel("Checkboxes (scrollable):")
-	checkPanel.AddChild(checkLabel)
-
-	// Add more checkboxes to demonstrate scrolling
-	for i := 1; i <= 15; i++ {
-		check := widgets.NewCheckbox(fmt.Sprintf("Feature option %d", i))
-		if i%3 == 0 {
-			check.SetChecked(true)
-		}
-		checkPanel.AddChild(check)
+	reply, err := protocol.NewSession().Execute(script, factory)
+	if err != nil {
+		panic(fmt.Sprintf("demo window script: %v", err))
 	}
 
-	checkPanel.SetLayoutManager(checkLayout)
-
-	// Wrap in scroll area
-	checkScroll := widgets.NewScrollArea()
-	checkScroll.SetContent(checkPanel)
-	checkScroll.SetVerticalScrollBarPolicy(widgets.ScrollBarAsNeeded)
-	checkScroll.SetHorizontalScrollBarPolicy(widgets.ScrollBarAsNeeded)
-	splitter.SetFirst(checkScroll)
-
-	// Bottom panel: Radio buttons and ComboBox (wrapped in scroll area)
-	radioPanel := widgets.NewPanel()
-	radioLayout := layout.NewBoxLayout(core.Vertical)
-	radioLayout.SetSpacing(0)
-
-	radioLabel := widgets.NewLabel("Radio buttons (scrollable):")
-	radioPanel.AddChild(radioLabel)
-
-	radioGroup := widgets.NewRadioGroup()
-	for i := 1; i <= 10; i++ {
-		radio := widgets.NewRadioButton(fmt.Sprintf("Radio option %d with longer text", i))
-		radioGroup.AddButton(radio)
-		radioPanel.AddChild(radio)
-	}
-
-	// Background color radio buttons
-	bgLabel := widgets.NewLabel("Tab Background Color:")
-	radioPanel.AddChild(bgLabel)
-
-	bgGroup := widgets.NewRadioGroup()
-	bgDefault := widgets.NewRadioButton("Default")
-	bgGreen := widgets.NewRadioButton("Dark Green")
-	bgGray := widgets.NewRadioButton("TrueColor #333")
-	bgGroup.AddButton(bgDefault)
-	bgGroup.AddButton(bgGreen)
-	bgGroup.AddButton(bgGray)
-	bgDefault.SetChecked(true)
-
-	// Set up callbacks to change TabWidget background
-	bgDefault.SetOnToggled(func(checked bool) {
-		if checked {
-			tabWidget.SetBackgroundColor(nil) // Inherit/default
-			tabWidget.Update()
-		}
-	})
-	bgGreen.SetOnToggled(func(checked bool) {
-		if checked {
-			green := style.ColorGreen
-			tabWidget.SetBackgroundColor(&green)
-			tabWidget.Update()
-		}
-	})
-	bgGray.SetOnToggled(func(checked bool) {
-		if checked {
-			gray := style.RGB(0x33, 0x33, 0x33)
-			tabWidget.SetBackgroundColor(&gray)
-			tabWidget.Update()
-		}
-	})
-
-	radioPanel.AddChild(bgDefault)
-	radioPanel.AddChild(bgGreen)
-	radioPanel.AddChild(bgGray)
-
-	// ComboBox
-	comboLabel := widgets.NewLabel("ComboBox:")
-	radioPanel.AddChild(comboLabel)
-
-	combo := widgets.NewComboBox()
-	combo.AddItem("First item")
-	combo.AddItem("Second item")
-	combo.AddItem("Third item")
-	combo.AddItem("Fourth item")
-	radioPanel.AddChild(combo)
-
-	radioPanel.SetLayoutManager(radioLayout)
-
-	// Wrap in scroll area
-	radioScroll := widgets.NewScrollArea()
-	radioScroll.SetContent(radioPanel)
-	radioScroll.SetVerticalScrollBarPolicy(widgets.ScrollBarAsNeeded)
-	radioScroll.SetHorizontalScrollBarPolicy(widgets.ScrollBarAsNeeded)
-	splitter.SetSecond(radioScroll)
-
-	return splitter
-}
-
-// createScrollListDemo creates a panel with list widgets wrapped in scroll areas.
-func createScrollListDemo() core.Widget {
-	// Use a horizontal splitter to divide space between ListView and TreeView
-	splitter := widgets.NewHSplitter()
-	splitter.SetPosition(0.5) // Start with 50/50 split
-
-	// ListView (wrapped in scroll area)
-	listViewPanel := widgets.NewPanel()
-	listLayout := layout.NewBoxLayout(core.Vertical)
-
-	listLabel := widgets.NewLabel("ListView (scrollable container):")
-	listViewPanel.AddChild(listLabel)
-
-	listView := widgets.NewListView()
-	for i := 1; i <= 20; i++ {
-		item := widgets.NewListItem(fmt.Sprintf("Item %d", i))
-		listView.AddItem(item)
-	}
-	listViewPanel.AddChild(listView)
-
-	// Add some extra widgets to make the panel taller than the view
-	extraLabel := widgets.NewLabel("Extra content below ListView:")
-	listViewPanel.AddChild(extraLabel)
-
-	for i := 1; i <= 5; i++ {
-		btn := widgets.NewButton(fmt.Sprintf("Button %d", i))
-		listViewPanel.AddChild(btn)
-	}
-
-	listViewPanel.SetLayoutManager(listLayout)
-
-	// Wrap in scroll area
-	listScroll := widgets.NewScrollArea()
-	listScroll.SetContent(listViewPanel)
-	listScroll.SetVerticalScrollBarPolicy(widgets.ScrollBarAsNeeded)
-	listScroll.SetHorizontalScrollBarPolicy(widgets.ScrollBarAsNeeded)
-	splitter.SetFirst(listScroll)
-
-	// TreeView (wrapped in scroll area)
-	treeViewPanel := widgets.NewPanel()
-	treeLayout := layout.NewBoxLayout(core.Vertical)
-
-	treeLabel := widgets.NewLabel("TreeView (scrollable container):")
-	treeViewPanel.AddChild(treeLabel)
-
-	treeView := widgets.NewTreeView()
-
-	// Build tree structure
-	root1 := widgets.NewTreeItem("Documents")
-	root1.Expanded = true
-	child1 := widgets.NewTreeItem("Work")
-	child1.Expanded = true
-	child1.AddChild(widgets.NewTreeItem("Report.txt"))
-	child1.AddChild(widgets.NewTreeItem("Presentation.pptx"))
-	child1.AddChild(widgets.NewTreeItem("Budget.xlsx"))
-	child1.AddChild(widgets.NewTreeItem("Meeting Notes.md"))
-	root1.AddChild(child1)
-	child2 := widgets.NewTreeItem("Personal")
-	child2.AddChild(widgets.NewTreeItem("Notes.txt"))
-	child2.AddChild(widgets.NewTreeItem("Journal.md"))
-	child2.AddChild(widgets.NewTreeItem("Ideas.txt"))
-	root1.AddChild(child2)
-	child3 := widgets.NewTreeItem("Projects")
-	child3.AddChild(widgets.NewTreeItem("Alpha"))
-	child3.AddChild(widgets.NewTreeItem("Beta"))
-	child3.AddChild(widgets.NewTreeItem("Gamma"))
-	root1.AddChild(child3)
-
-	root2 := widgets.NewTreeItem("Pictures")
-	root2.AddChild(widgets.NewTreeItem("Vacation"))
-	root2.AddChild(widgets.NewTreeItem("Family"))
-	root2.AddChild(widgets.NewTreeItem("Pets"))
-	root2.AddChild(widgets.NewTreeItem("Events"))
-	root2.AddChild(widgets.NewTreeItem("Screenshots"))
-
-	root3 := widgets.NewTreeItem("Downloads")
-	root3.AddChild(widgets.NewTreeItem("Software"))
-	root3.AddChild(widgets.NewTreeItem("Documents"))
-	root3.AddChild(widgets.NewTreeItem("Music"))
-
-	root4 := widgets.NewTreeItem("Music")
-	root4.AddChild(widgets.NewTreeItem("Rock"))
-	root4.AddChild(widgets.NewTreeItem("Jazz"))
-	root4.AddChild(widgets.NewTreeItem("Classical"))
-	root4.AddChild(widgets.NewTreeItem("Electronic"))
-
-	root5 := widgets.NewTreeItem("Videos")
-	root5.AddChild(widgets.NewTreeItem("Movies"))
-	root5.AddChild(widgets.NewTreeItem("TV Shows"))
-	root5.AddChild(widgets.NewTreeItem("Tutorials"))
-
-	root6 := widgets.NewTreeItem("Code")
-	codeChild1 := widgets.NewTreeItem("Go")
-	codeChild1.AddChild(widgets.NewTreeItem("main.go"))
-	codeChild1.AddChild(widgets.NewTreeItem("utils.go"))
-	root6.AddChild(codeChild1)
-	codeChild2 := widgets.NewTreeItem("Python")
-	codeChild2.AddChild(widgets.NewTreeItem("script.py"))
-	root6.AddChild(codeChild2)
-
-	treeView.AddRootItem(root1)
-	treeView.AddRootItem(root2)
-	treeView.AddRootItem(root3)
-	treeView.AddRootItem(root4)
-	treeView.AddRootItem(root5)
-	treeView.AddRootItem(root6)
-
-	treeViewPanel.AddChild(treeView)
-
-	// Add extra content below TreeView
-	extraLabel2 := widgets.NewLabel("Extra content below TreeView:")
-	treeViewPanel.AddChild(extraLabel2)
-
-	textInput := widgets.NewTextInput()
-	textInput.SetPlaceholder("Type something...")
-	treeViewPanel.AddChild(textInput)
-
-	treeViewPanel.SetLayoutManager(treeLayout)
-
-	// Wrap in scroll area
-	treeScroll := widgets.NewScrollArea()
-	treeScroll.SetContent(treeViewPanel)
-	treeScroll.SetVerticalScrollBarPolicy(widgets.ScrollBarAsNeeded)
-	treeScroll.SetHorizontalScrollBarPolicy(widgets.ScrollBarAsNeeded)
-	splitter.SetSecond(treeScroll)
-
-	return splitter
-}
-
-// createProgressDemo creates a panel with progress indicators.
-func createProgressDemo() core.Widget {
-	panel := widgets.NewPanel()
-	boxLayout := layout.NewBoxLayout(core.Vertical)
-	boxLayout.SetSpacing(16)
-
-	// Horizontal progress bars
-	hLabel := widgets.NewLabel("Horizontal Progress Bars:")
-	panel.AddChild(hLabel)
-
-	progress1 := widgets.NewProgressBar()
-	progress1.SetValue(25)
-	panel.AddChild(progress1)
-
-	progress2 := widgets.NewProgressBar()
-	progress2.SetValue(50)
-	panel.AddChild(progress2)
-
-	progress3 := widgets.NewProgressBar()
-	progress3.SetValue(75)
-	panel.AddChild(progress3)
-
-	progress4 := widgets.NewProgressBar()
-	progress4.SetValue(100)
-	panel.AddChild(progress4)
-
-	// Indeterminate progress
-	indeterminateLabel := widgets.NewLabel("Indeterminate Progress:")
-	panel.AddChild(indeterminateLabel)
-
-	indeterminate := widgets.NewProgressBar()
-	indeterminate.SetIndeterminate(true)
-	panel.AddChild(indeterminate)
-
-	panel.SetLayoutManager(boxLayout)
-	return panel
-}
-
-// createBottomTabsDemo creates a panel with a nested TabWidget using bottom tabs.
-func createBottomTabsDemo() core.Widget {
-	// Create a TabWidget with tabs at the bottom
-	bottomTabs := widgets.NewTabWidget()
-	bottomTabs.SetTabPosition(widgets.TabsBottom)
-
-	// Add some content tabs
-	tab1Panel := widgets.NewPanel()
-	tab1Layout := layout.NewBoxLayout(core.Vertical)
-	tab1Label := widgets.NewLabel("This TabWidget has tabs at the bottom.")
-	tab1Panel.AddChild(tab1Label)
-	tab1Desc := widgets.NewLabel("Notice how the tab connectors are inverted:")
-	tab1Panel.AddChild(tab1Desc)
-	tab1Example := widgets.NewLabel("  Top tabs use: _/ and \\_")
-	tab1Panel.AddChild(tab1Example)
-	tab1Example2 := widgets.NewLabel("  Bottom tabs use: \\_ and _/")
-	tab1Panel.AddChild(tab1Example2)
-	tab1Panel.SetLayoutManager(tab1Layout)
-	bottomTabs.AddTab("First", tab1Panel)
-
-	tab2Panel := widgets.NewPanel()
-	tab2Layout := layout.NewBoxLayout(core.Vertical)
-	tab2Label := widgets.NewLabel("Second tab content")
-	tab2Panel.AddChild(tab2Label)
-	tab2Button := widgets.NewButton("Click me")
-	tab2Panel.AddChild(tab2Button)
-	tab2Panel.SetLayoutManager(tab2Layout)
-	bottomTabs.AddTab("Second", tab2Panel)
-
-	tab3Panel := widgets.NewPanel()
-	tab3Layout := layout.NewBoxLayout(core.Vertical)
-	tab3Label := widgets.NewLabel("Third tab with an input field:")
-	tab3Panel.AddChild(tab3Label)
-	tab3Input := widgets.NewTextInput()
-	tab3Input.SetPlaceholder("Type here...")
-	tab3Panel.AddChild(tab3Input)
-	tab3Panel.SetLayoutManager(tab3Layout)
-	bottomTabs.AddTab("Third", tab3Panel)
-
-	return bottomTabs
-}
-
-// createDemoWindow creates a simple demo window with an embedded terminal.
-func createDemoWindow(desktop *widgets.Desktop, application *app.Application) *window.Window {
-	w := window.NewWindow("Demo Window")
-	w.SetSize(core.UnitSize{
-		Width:  core.Unit(60 * 8),
-		Height: core.Unit(20 * 16),
-	})
-
-	// Create a vertical splitter to divide the window
-	splitter := widgets.NewVSplitter()
-	splitter.SetTitle("Terminal")
-	splitter.SetPosition(0.3) // Top panel gets 30% of space
-
-	// Top panel with controls
-	topPanel := widgets.NewPanel()
-	boxLayout := layout.NewBoxLayout(core.Vertical)
-	boxLayout.SetSpacing(8)
-
-	label := widgets.NewLabel("This is a child window.")
-	topPanel.AddChild(label)
-
-	textInput := widgets.NewTextInput()
-	textInput.SetPlaceholder("Type something...")
-	topPanel.AddChild(textInput)
-
-	closeButton := widgets.NewButton("Close")
-	closeButton.SetOnClick(func() {
+	w := factory.byID[reply.IDs["w"]].(*window.Window)
+	// Main demo windows can be torn off (the %/# title handle);
+	// dialogs deliberately can't, so the difference is visible.
+	w.SetTearable(true)
+	// The close button is subscribed per-connection, so any number of
+	// demo windows coexist without command-ID collisions.
+	dispatcher.On(reply.IDs["closer"], "click", func(*protocol.Event) {
 		w.Close()
 	})
-	topPanel.AddChild(closeButton)
-
-	topPanel.SetLayoutManager(boxLayout)
-	splitter.SetFirst(topPanel)
-
-	// Bottom panel with PurfecTerm terminal
-	terminal := widgets.NewPurfecTerm()
-	splitter.SetSecond(terminal)
-
-	// Start the terminal shell
-	terminal.Start()
-
-	w.SetContent(splitter)
-
-	return w
-}
-
-// createVerticalTabsDemo creates a panel with vertical tabs demonstration.
-func createVerticalTabsDemo() core.Widget {
-	// Use a horizontal splitter to show left and right tab widgets side by side
-	splitter := widgets.NewHSplitter()
-	splitter.SetPosition(0.5)
-
-	// Left: TabWidget with tabs on the left
-	leftTabWidget := widgets.NewTabWidget()
-	leftTabWidget.SetTabPosition(widgets.TabsLeft)
-
-	leftTab1 := widgets.NewPanel()
-	leftTab1Layout := layout.NewBoxLayout(core.Vertical)
-	leftTab1Label := widgets.NewLabel("This is the first tab in a\nTabsLeft layout.")
-	leftTab1.AddChild(leftTab1Label)
-	leftTab1Desc := widgets.NewLabel("Tabs are displayed vertically\nalong the left edge.")
-	leftTab1.AddChild(leftTab1Desc)
-	leftTab1.SetLayoutManager(leftTab1Layout)
-	leftTabWidget.AddTab("First", leftTab1)
-
-	leftTab2 := widgets.NewPanel()
-	leftTab2Layout := layout.NewBoxLayout(core.Vertical)
-	leftTab2Label := widgets.NewLabel("Second tab content")
-	leftTab2.AddChild(leftTab2Label)
-	leftTab2Button := widgets.NewButton("A Button")
-	leftTab2.AddChild(leftTab2Button)
-	leftTab2.SetLayoutManager(leftTab2Layout)
-	leftTabWidget.AddTab("Second", leftTab2)
-
-	leftTab3 := widgets.NewPanel()
-	leftTab3Layout := layout.NewBoxLayout(core.Vertical)
-	leftTab3Input := widgets.NewTextInput()
-	leftTab3Input.SetPlaceholder("Type here...")
-	leftTab3.AddChild(leftTab3Input)
-	leftTab3.SetLayoutManager(leftTab3Layout)
-	leftTabWidget.AddTab("Third", leftTab3)
-
-	// Add more tabs to demonstrate scrolling
-	leftExtraTabNames := []string{"Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth", "Eleventh", "Twelfth", "Thirteenth"}
-	for _, name := range leftExtraTabNames {
-		panel := widgets.NewPanel()
-		panelLayout := layout.NewBoxLayout(core.Vertical)
-		label := widgets.NewLabel(name + " tab content\nin TabsLeft layout.")
-		panel.AddChild(label)
-		panel.SetLayoutManager(panelLayout)
-		leftTabWidget.AddTab(name, panel)
-	}
-
-	splitter.SetFirst(leftTabWidget)
-
-	// Right: TabWidget with tabs on the right
-	rightTabWidget := widgets.NewTabWidget()
-	rightTabWidget.SetTabPosition(widgets.TabsRight)
-
-	rightTab1 := widgets.NewPanel()
-	rightTab1Layout := layout.NewBoxLayout(core.Vertical)
-	rightTab1Label := widgets.NewLabel("This is the first tab in a\nTabsRight layout.")
-	rightTab1.AddChild(rightTab1Label)
-	rightTab1Desc := widgets.NewLabel("Tabs are displayed vertically\nalong the right edge.")
-	rightTab1.AddChild(rightTab1Desc)
-	rightTab1.SetLayoutManager(rightTab1Layout)
-	rightTabWidget.AddTab("Alpha", rightTab1)
-
-	rightTab2 := widgets.NewPanel()
-	rightTab2Layout := layout.NewBoxLayout(core.Vertical)
-	rightTab2Label := widgets.NewLabel("Beta tab content")
-	rightTab2.AddChild(rightTab2Label)
-	rightTab2Check := widgets.NewCheckbox("Enable option")
-	rightTab2.AddChild(rightTab2Check)
-	rightTab2.SetLayoutManager(rightTab2Layout)
-	rightTabWidget.AddTab("Beta", rightTab2)
-
-	rightTab3 := widgets.NewPanel()
-	rightTab3Layout := layout.NewBoxLayout(core.Vertical)
-	rightTab3Label := widgets.NewLabel("Gamma tab content")
-	rightTab3.AddChild(rightTab3Label)
-	rightTab3.SetLayoutManager(rightTab3Layout)
-	rightTabWidget.AddTab("Gamma", rightTab3)
-
-	// Add more tabs to demonstrate scrolling
-	rightExtraTabNames := []string{"Delta", "Epsilon", "Zeta", "Eta", "Theta", "Iota", "Kappa", "Lambda", "Mu", "Nu"}
-	for _, name := range rightExtraTabNames {
-		panel := widgets.NewPanel()
-		panelLayout := layout.NewBoxLayout(core.Vertical)
-		label := widgets.NewLabel(name + " tab content\nin TabsRight layout.")
-		panel.AddChild(label)
-		panel.SetLayoutManager(panelLayout)
-		rightTabWidget.AddTab(name, panel)
-	}
-
-	splitter.SetSecond(rightTabWidget)
-
-	return splitter
-}
-
-// MDI child window counter for unique naming
-var mdiChildCount int
-
-// createMDIDemo creates an MDIPane widget demonstration.
-// The MDIPane is a reusable widget that can be embedded anywhere.
-func createMDIDemo(desktop *widgets.Desktop, application *app.Application, parentWindow *window.Window) core.Widget {
-	// Use a VSplitter to divide space between MDIPane and DockRow
-	splitter := widgets.NewVSplitter()
-	splitter.SetPosition(0.9) // MDIPane gets 90%, DockRow gets 10%
-	splitter.SetTitle("Dock")
-
-	// Create an MDIPane - this is a widget that can be embedded in tabs, splitters, etc.
-	mdiPane := widgets.NewMDIPane()
-	mdiPane.SetBackgroundChar('░') // Light shade pattern
-
-	// Set fixed size using Units (80 columns x 25 rows)
-	// To fix both dimensions, set min and max to the same value
-	metrics := core.DefaultCellMetrics()
-	fixedSize := core.UnitSize{
-		Width:  80 * metrics.CellWidth,
-		Height: 25 * metrics.CellHeight,
-	}
-	mdiPane.SetMinimumSize(fixedSize)
-	mdiPane.SetMaximumSize(fixedSize)
-
-	// Wrap the MDIPane in a ScrollArea for scrolling when larger than view
-	mdiScrollArea := widgets.NewScrollArea()
-	mdiScrollArea.SetContent(mdiPane)
-
-	// Create a dock row at the bottom for minimized windows
-	dockRow := widgets.NewDockRow()
-	dockRow.SetEntryWidth(20)
-
-	// Track minimized windows to their dock entries
-	dockEntries := make(map[*window.Window]*widgets.DockEntry)
-
-	// Wire up minimize callback to add dock entries
-	mdiPane.SetOnWindowMinimized(func(win *window.Window) {
-		entry := &widgets.DockEntry{
-			Title: win.Title(),
-			OnClick: func() {
-				mdiPane.RestoreWindow(win)
-			},
-		}
-		dockEntries[win] = entry
-		dockRow.AddEntry(entry)
-	})
-
-	// Wire up restore callback to remove dock entries
-	mdiPane.SetOnWindowRestored(func(win *window.Window) {
-		if entry, ok := dockEntries[win]; ok {
-			dockRow.RemoveEntry(entry)
-			delete(dockEntries, win)
-		}
-	})
-
-	// Also remove from dock when window is closed
-	mdiPane.SetOnWindowRemoved(func(win *window.Window) {
-		if entry, ok := dockEntries[win]; ok {
-			dockRow.RemoveEntry(entry)
-			delete(dockEntries, win)
-		}
-	})
-
-	// Create a control panel as background content
-	controlPanel := widgets.NewPanel()
-	controlLayout := layout.NewBoxLayout(core.Vertical)
-	controlLayout.SetSpacing(8)
-
-	// Description
-	descLabel := widgets.NewLabel("MDIPane Widget Demo")
-	controlPanel.AddChild(descLabel)
-
-	infoLabel := widgets.NewLabel("This MDIPane widget manages floating windows.\nClick [_] to minimize windows to the dock below.")
-	controlPanel.AddChild(infoLabel)
-
-	// Button to spawn new MDI child window
-	spawnButton := widgets.NewButton("Spawn Window in MDIPane")
-	spawnButton.SetOnClick(func() {
-		mdiChildCount++
-		childWindow := createMDIPaneChildWindow(mdiPane, mdiChildCount)
-		mdiPane.AddWindow(childWindow)
-	})
-	controlPanel.AddChild(spawnButton)
-
-	// Button row for window management
-	buttonPanel := widgets.NewPanel()
-	hLayout := layout.NewBoxLayout(core.Horizontal)
-	hLayout.SetSpacing(8)
-
-	tileButton := widgets.NewButton("Tile")
-	tileButton.SetOnClick(func() {
-		mdiPane.TileWindows()
-	})
-	buttonPanel.AddChild(tileButton)
-
-	cascadeButton := widgets.NewButton("Cascade")
-	cascadeButton.SetOnClick(func() {
-		mdiPane.CascadeWindows()
-	})
-	buttonPanel.AddChild(cascadeButton)
-
-	nextButton := widgets.NewButton("Next")
-	nextButton.SetOnClick(func() {
-		mdiPane.NextWindow()
-	})
-	buttonPanel.AddChild(nextButton)
-
-	prevButton := widgets.NewButton("Prev")
-	prevButton.SetOnClick(func() {
-		mdiPane.PrevWindow()
-	})
-	buttonPanel.AddChild(prevButton)
-
-	buttonPanel.SetLayoutManager(hLayout)
-	controlPanel.AddChild(buttonPanel)
-
-	// Status label showing active window
-	statusLabel := widgets.NewLabel("Active: none")
-	controlPanel.AddChild(statusLabel)
-
-	// Update status when active window changes
-	mdiPane.SetOnActiveWindowChanged(func(win *window.Window) {
-		if win != nil {
-			statusLabel.SetText(fmt.Sprintf("Active: %s", win.Title()))
-		} else {
-			statusLabel.SetText("Active: none")
-		}
-	})
-
-	// Add a spacer
-	spacer := widgets.NewSpacer()
-	controlPanel.AddChild(spacer)
-
-	// Tips
-	tipLabel := widgets.NewLabel("Tips:")
-	controlPanel.AddChild(tipLabel)
-
-	tip1 := widgets.NewLabel("- Click [_] to minimize to dock")
-	controlPanel.AddChild(tip1)
-
-	tip2 := widgets.NewLabel("- Click dock entry to restore")
-	controlPanel.AddChild(tip2)
-
-	tip3 := widgets.NewLabel("- Double-click title to maximize")
-	controlPanel.AddChild(tip3)
-
-	controlPanel.SetLayoutManager(controlLayout)
-
-	// Set the control panel as background content of the MDI pane
-	mdiPane.SetContent(controlPanel)
-
-	// Set up the splitter: ScrollArea (containing MDIPane) on top, DockRow on bottom
-	splitter.SetFirst(mdiScrollArea)
-	splitter.SetSecond(dockRow)
-
-	// Spawn an initial window to show capabilities
-	mdiChildCount++
-	initialWindow := createMDIPaneChildWindow(mdiPane, mdiChildCount)
-	mdiPane.AddWindow(initialWindow)
-
-	return splitter
-}
-
-// createMDIPaneChildWindow creates a window for use in an MDIPane.
-func createMDIPaneChildWindow(mdiPane *widgets.MDIPane, id int) *window.Window {
-	w := window.NewWindow(fmt.Sprintf("Document %d", id))
-
-	// Position with cascade offset
-	offset := (id - 1) % 5
-	w.SetBounds(core.UnitRect{
-		X:      core.Unit((offset*2 + 1) * 8),
-		Y:      core.Unit((offset + 1) * 16),
-		Width:  core.Unit(30 * 8),
-		Height: core.Unit(8 * 16),
-	})
-
-	panel := widgets.NewPanel()
-	boxLayout := layout.NewBoxLayout(core.Vertical)
-	boxLayout.SetSpacing(8)
-
-	label := widgets.NewLabel(fmt.Sprintf("Document #%d", id))
-	panel.AddChild(label)
-
-	textInput := widgets.NewTextInput()
-	textInput.SetPlaceholder("Enter document content...")
-	panel.AddChild(textInput)
-
-	buttonPanel := widgets.NewPanel()
-	hLayout := layout.NewBoxLayout(core.Horizontal)
-	hLayout.SetSpacing(8)
-
-	newButton := widgets.NewButton("New")
-	newButton.SetOnClick(func() {
-		mdiChildCount++
-		newWin := createMDIPaneChildWindow(mdiPane, mdiChildCount)
-		mdiPane.AddWindow(newWin)
-	})
-	buttonPanel.AddChild(newButton)
-
-	closeButton := widgets.NewButton("Close")
-	closeButton.SetOnClick(func() {
-		mdiPane.RemoveWindow(w)
-	})
-	buttonPanel.AddChild(closeButton)
-
-	buttonPanel.SetLayoutManager(hLayout)
-	panel.AddChild(buttonPanel)
-
-	panel.SetLayoutManager(boxLayout)
-	w.SetContent(panel)
-
-	return w
-}
-
-// createMDIChildWindow creates a simple MDI child window.
-func createMDIChildWindow(parentWindow *window.Window, id int) *window.Window {
-	w := window.NewWindow(fmt.Sprintf("MDI Child %d", id))
-
-	// Offset each child window slightly for cascading effect
-	offset := (id - 1) % 5
-	w.SetBounds(core.UnitRect{
-		X:      core.Unit((offset*3 + 2) * 8),
-		Y:      core.Unit((offset*2 + 2) * 16),
-		Width:  core.Unit(35 * 8),  // 35 columns
-		Height: core.Unit(10 * 16), // 10 rows
-	})
-
-	panel := widgets.NewPanel()
-	boxLayout := layout.NewBoxLayout(core.Vertical)
-	boxLayout.SetSpacing(8)
-
-	label := widgets.NewLabel(fmt.Sprintf("This is MDI Child Window #%d", id))
-	panel.AddChild(label)
-
-	textInput := widgets.NewTextInput()
-	textInput.SetPlaceholder("Enter some text...")
-	panel.AddChild(textInput)
-
-	// Button row
-	buttonPanel := widgets.NewPanel()
-	hLayout := layout.NewBoxLayout(core.Horizontal)
-	hLayout.SetSpacing(8)
-
-	closeButton := widgets.NewButton("Close")
-	closeButton.SetOnClick(func() {
-		w.Close()
-	})
-	buttonPanel.AddChild(closeButton)
-
-	spawnButton := widgets.NewButton("Spawn Another")
-	spawnButton.SetOnClick(func() {
-		mdiChildCount++
-		childWindow := createMDIChildWindow(parentWindow, mdiChildCount)
-		childWindow.SetParentWindow(parentWindow)
-	})
-	buttonPanel.AddChild(spawnButton)
-
-	buttonPanel.SetLayoutManager(hLayout)
-	panel.AddChild(buttonPanel)
-
-	panel.SetLayoutManager(boxLayout)
-	w.SetContent(panel)
-
 	return w
 }
 
@@ -1366,24 +317,22 @@ func createMDIChildWindow(parentWindow *window.Window, id int) *window.Window {
 var secondaryAppCount int
 
 // createSecondaryApplication creates a new application with its own menus and status bar.
-func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
+func createSecondaryApplication(desktop *trinkets.Desktop) *app.Application {
 	secondaryAppCount++
 	appNum := secondaryAppCount
 
 	// Create new application (nil backend - Desktop owns it)
 	newApp := app.New(nil)
-	newApp.SetName(fmt.Sprintf("Secondary App %d", appNum))
+	newApp.SetName(fmt.Sprintf("App %d", appNum))
 
 	// Create simple menu bar for this application
 	menus := createSecondaryMenus(desktop, newApp, appNum)
 	newApp.SetMenuBarContent(menus)
 
 	// Create unique status bar content
-	newApp.SetStatusBarContent([]widgets.StatusSection{
-		{Spans: []widgets.StatusTextSpan{
-			{Text: fmt.Sprintf("Secondary Application #%d", appNum)},
-		}},
-	})
+	newApp.SetStatusBarContent(buildStatusSections(fmt.Sprintf(`
+sb=new statusbar children={new section children={new span text="Secondary Application #%d"}}
+`, appNum)))
 
 	// Create window for this application
 	w := window.NewWindow(fmt.Sprintf("App %d Window", appNum))
@@ -1396,26 +345,26 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 	})
 
 	// Create a vertical splitter to divide the window
-	splitter := widgets.NewVSplitter()
+	splitter := trinkets.NewVSplitter()
 	splitter.SetTitle("Terminal")
 	splitter.SetPosition(0.3) // Top panel gets 30% of space
 
 	// Top panel with controls
-	topPanel := widgets.NewPanel()
+	topPanel := trinkets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	boxLayout.SetSpacing(8)
 
-	label := widgets.NewLabel(fmt.Sprintf("This window belongs to Application #%d", appNum))
+	label := trinkets.NewLabel(fmt.Sprintf("This window belongs to Application #%d", appNum))
 	topPanel.AddChild(label)
 
-	infoLabel := widgets.NewLabel("Notice the menu bar and status bar change\nwhen this window is focused.")
+	infoLabel := trinkets.NewLabel("Notice the menu bar and status bar change\nwhen this window is focused.")
 	topPanel.AddChild(infoLabel)
 
-	textInput := widgets.NewTextInput()
+	textInput := trinkets.NewTextInput()
 	textInput.SetPlaceholder("Enter text here...")
 	topPanel.AddChild(textInput)
 
-	closeButton := widgets.NewButton("Close Window")
+	closeButton := trinkets.NewButton("Close Window")
 	closeButton.SetOnClick(func() {
 		w.Close()
 	})
@@ -1425,10 +374,10 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 	splitter.SetFirst(topPanel)
 
 	// Bottom panel with PurfecTerm terminal
-	terminal := widgets.NewPurfecTerm()
+	terminal := trinkets.NewPurfecTerm()
 
 	// Debug callback - show clicked cell info in status bar
-	terminal.SetOnCellClicked(func(info widgets.CellDebugInfo) {
+	terminal.SetOnCellClicked(func(info trinkets.CellDebugInfo) {
 		// Format attributes (B=bold, U=underline, R=reverse)
 		attrs := ""
 		if info.Bold {
@@ -1473,10 +422,12 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 			charStr = fmt.Sprintf("0x%02X", info.Char)
 		}
 
-		newApp.SetStatusBarContent([]widgets.StatusSection{
-			{Text: fmt.Sprintf("[%d,%d] %s Fg:%s Bg:%s Attr:%s",
-				info.Col, info.Row, charStr, fg, bg, attrs)},
-		})
+		// Dynamic update: rebuild the status content as protocol
+		// text; protocol.Quote makes arbitrary cell contents safe.
+		debugText := fmt.Sprintf("[%d,%d] %s Fg:%s Bg:%s Attr:%s",
+			info.Col, info.Row, charStr, fg, bg, attrs)
+		newApp.SetStatusBarContent(buildStatusSections(
+			`sb=new statusbar children={new section text=` + protocol.Quote(debugText) + `}`))
 	})
 
 	splitter.SetSecond(terminal)
@@ -1486,102 +437,59 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 
 	w.SetContent(splitter)
 
+	// This window is the main window of its own application, and can be
+	// torn off the desktop to become a standalone OS surface.
+	w.SetTearable(true)
+
 	newApp.AddWindow(w)
+	newApp.SetMainWindow(w)
 
 	return newApp
 }
 
-// createSecondaryMenus creates a simple menu bar for secondary applications.
-// The first menu is named after the app - standard items are added automatically.
-func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application, appNum int) []*widgets.Menu {
-	var menus []*widgets.Menu
-
-	// App menu (named after the application - standard items added automatically)
-	appMenu := widgets.NewMenu(fmt.Sprintf("&App %d", appNum))
-	closeItem := widgets.NewMenuItem("&Close Window")
-	closeItem.SetShortcut(core.NewShortcut("^W"))
-	closeItem.SetOnTriggered(func() {
-		// Close the first window of this application
-		windows := application.Windows()
-		if len(windows) > 0 {
-			windows[0].Close()
-		}
-	})
-	appMenu.AddItem(closeItem)
-
-	// Note: Hide, Hide Others, Show All, and Quit are added automatically
-	menus = append(menus, appMenu)
-
-	// Edit menu (for testing Raw Key Input in secondary apps)
-	editMenu := widgets.NewMenu("&Edit")
-	cutItem := widgets.NewMenuItem("Cu&t")
-	cutItem.SetShortcut(core.NewShortcut("^X"))
-	editMenu.AddItem(cutItem)
-
-	copyItem := widgets.NewMenuItem("&Copy")
-	copyItem.SetShortcut(core.NewShortcut("^C"))
-	editMenu.AddItem(copyItem)
-
-	pasteItem := widgets.NewMenuItem("&Paste")
-	pasteItem.SetShortcut(core.NewShortcut("^V"))
-	editMenu.AddItem(pasteItem)
-
-	editMenu.AddSeparator()
-
-	// Raw Key Input - passes the next keypress directly to the focused widget
-	rawKeyItem := widgets.NewMenuItem("&Raw Key Input")
-	rawKeyItem.SetShortcut(core.NewShortcut("^\\"))
-	rawKeyItem.SetOnTriggered(func() {
-		desktop.ActivatePassNextKeyToWidget()
-	})
-	editMenu.AddItem(rawKeyItem)
-	menus = append(menus, editMenu)
-
-	// Info menu (app-specific)
-	infoMenu := widgets.NewMenu("&Info")
-	infoItem := widgets.NewMenuItem("&About This App")
-	infoItem.SetOnTriggered(func() {
-		dialog := widgets.NewMessageBox(
-			fmt.Sprintf("About App %d", appNum),
-			fmt.Sprintf("This is Secondary Application #%d\n\nIt has its own menus and status bar.", appNum),
-			widgets.ButtonOK,
-		)
-		dialog.SetIcon(widgets.IconInformation)
-		application.AddWindow(&dialog.Window)
-	})
-	infoMenu.AddItem(infoItem)
-	menus = append(menus, infoMenu)
-
-	// Help menu
-	helpMenu := widgets.NewMenu("&Help")
-	aboutItem := widgets.NewMenuItem("&About")
-	aboutItem.SetOnTriggered(func() {
-		dialog := widgets.NewMessageBox(
-			"About",
-			"Secondary Application\n\nDemonstrates multi-application support.",
-			widgets.ButtonOK,
-		)
-		dialog.SetIcon(widgets.IconInformation)
-		application.AddWindow(&dialog.Window)
-	})
-	helpMenu.AddItem(aboutItem)
-	menus = append(menus, helpMenu)
-
-	return menus
+// showAboutDialog shows the about dialog.
+// buildStatusSections executes a statusbar script and returns the
+// section list for SetStatusBarContent.
+func buildStatusSections(script string) []trinkets.StatusSection {
+	factory := &idCaptureFactory{
+		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
+		byID:  make(map[uint64]any),
+	}
+	parsed, err := protocol.Parse(script)
+	if err != nil {
+		panic(fmt.Sprintf("statusbar script: %v", err))
+	}
+	reply, err := protocol.NewSession().Execute(parsed, factory)
+	if err != nil {
+		panic(fmt.Sprintf("statusbar script: %v", err))
+	}
+	bar := factory.byID[reply.IDs["sb"]].(interface{ Sections() []trinkets.StatusSection })
+	return bar.Sections()
 }
 
-// showAboutDialog shows the about dialog.
-func showAboutDialog(desktop *widgets.Desktop, application *app.Application) {
-	dialog := widgets.NewMessageBox(
-		"About TUI Toolkit",
-		"TUI Toolkit Demo\n\nA comprehensive terminal UI framework.\n\nVersion 0.1.0",
-		widgets.ButtonOK,
-	)
-	dialog.SetIcon(widgets.IconInformation)
-	dialog.SetOnFinished(func(result widgets.DialogResult) {
-		// Dialog closed
-	})
-
-	// MessageBox is itself a window, add it to the application
+// protocolMessageBox executes a messagebox script and shows the
+// dialog. Dialogs are one-shot protocol objects: built from text,
+// closed by their own buttons (the finish event is available via a
+// sub statement in the script when a caller cares).
+func protocolMessageBox(application *app.Application, script string) {
+	factory := &idCaptureFactory{
+		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
+		byID:  make(map[uint64]any),
+	}
+	parsed, err := protocol.Parse(script)
+	if err != nil {
+		panic(fmt.Sprintf("messagebox script: %v", err))
+	}
+	reply, err := protocol.NewSession().Execute(parsed, factory)
+	if err != nil {
+		panic(fmt.Sprintf("messagebox script: %v", err))
+	}
+	dialog := factory.byID[reply.IDs["dlg"]].(*trinkets.MessageBox)
 	application.AddWindow(&dialog.Window)
+}
+
+func showAboutDialog(desktop *trinkets.Desktop, application *app.Application) {
+	protocolMessageBox(application, `
+dlg=new messagebox title="About KittyTK" icon=information ok text="KittyTK Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion 0.1.0"
+`)
 }

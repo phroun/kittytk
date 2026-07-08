@@ -230,6 +230,90 @@ func (m CellMetrics) AlignRect(r UnitRect) UnitRect {
 	}
 }
 
+// CellMetricsProvider is implemented by trinkets that can provide a
+// grid-metrics override. Grid metrics are a per-container layout
+// vocabulary: each container may define how many units a virtual
+// row/column occupies, inherited through the container chain like
+// fonts (see FontProvider), rooted at the display service's default.
+type CellMetricsProvider interface {
+	// CellMetricsOverride returns the metrics set on this provider,
+	// or nil to inherit from the parent chain.
+	CellMetricsOverride() *CellMetrics
+}
+
+// FindEffectiveCellMetrics walks up the trinket tree to find the
+// effective grid metrics, mirroring FindEffectiveFont. It checks the
+// trinket, then its ancestors (window, MDI pane, desktop). Returns
+// DefaultCellMetrics() if no override is set anywhere in the chain.
+func FindEffectiveCellMetrics(w Trinket) CellMetrics {
+	if w == nil {
+		return DefaultCellMetrics()
+	}
+
+	if mp, ok := w.(CellMetricsProvider); ok {
+		if m := mp.CellMetricsOverride(); m != nil {
+			return *m
+		}
+	}
+
+	current := w.Parent()
+	for current != nil {
+		if mp, ok := current.(CellMetricsProvider); ok {
+			if m := mp.CellMetricsOverride(); m != nil {
+				return *m
+			}
+		}
+		if trinket, ok := current.(Trinket); ok {
+			current = trinket.Parent()
+		} else {
+			break
+		}
+	}
+
+	return DefaultCellMetrics()
+}
+
+// ExchangeX converts an X-axis value denominated in `from` metrics into
+// `to` metrics: the same number of columns, re-expressed. Identity when
+// the denominations match.
+func ExchangeX(v Unit, from, to CellMetrics) Unit {
+	if from.CellWidth == to.CellWidth || from.CellWidth <= 0 || to.CellWidth <= 0 {
+		return v
+	}
+	return Unit(float64(v) * float64(to.CellWidth) / float64(from.CellWidth))
+}
+
+// ExchangeY converts a Y-axis value denominated in `from` metrics into
+// `to` metrics: the same number of rows, re-expressed.
+func ExchangeY(v Unit, from, to CellMetrics) Unit {
+	if from.CellHeight == to.CellHeight || from.CellHeight <= 0 || to.CellHeight <= 0 {
+		return v
+	}
+	return Unit(float64(v) * float64(to.CellHeight) / float64(from.CellHeight))
+}
+
+// ExchangeSize converts a size between denominations.
+func ExchangeSize(s UnitSize, from, to CellMetrics) UnitSize {
+	return UnitSize{
+		Width:  ExchangeX(s.Width, from, to),
+		Height: ExchangeY(s.Height, from, to),
+	}
+}
+
+// ParentCellMetrics returns the effective metrics of w's parent context
+// — the denomination in which w's bounds are expressed. A trinket with a
+// metrics override denominates its interior; its own bounds live in the
+// parent's currency.
+func ParentCellMetrics(w Trinket) CellMetrics {
+	if w == nil {
+		return DefaultCellMetrics()
+	}
+	if pw, ok := w.Parent().(Trinket); ok && pw != nil {
+		return FindEffectiveCellMetrics(pw)
+	}
+	return DefaultCellMetrics()
+}
+
 // Transform handles coordinate transformation between different coordinate spaces.
 type Transform struct {
 	// Offset added to coordinates
