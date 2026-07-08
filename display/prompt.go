@@ -94,10 +94,10 @@ func authPromptScript(req AuthRequest) string {
 	// reply; the trailing top-level bindings re-surface each button by
 	// its dotted path so the wiring can find it.
 	return "" +
-		"w=new window title=\"Connection Request\" width=470 height=210 children={\n" +
+		"w=new window title=\"Connection Request\" width=470 height=250 children={\n" +
 		"  root=new panel layout=vbox spacing=6 children={\n" +
-		"    q=new label caption=" + protocol.Quote(q) + "\n" +
-		"    src=new label caption=" + protocol.Quote(from) + "\n" +
+		"    q=new label caption=" + protocol.Quote(q) + " wrap\n" +
+		"    src=new label caption=" + protocol.Quote(from) + " wrap\n" +
 		"    al=new label caption=\"Allow:\"\n" +
 		"    arow=new panel layout=hbox spacing=6 children={\n" +
 		"      b_once=new button caption=\"Once Only\"\n" +
