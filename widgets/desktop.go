@@ -1041,7 +1041,19 @@ func (d *Desktop) SetOnShutdown(handler func()) {
 func (d *Desktop) FocusedWidget() core.Widget {
 	d.mu.RLock()
 	wm := d.windowManager
+	torn := d.tornFocusOwner
 	d.mu.RUnlock()
+
+	// A torn-off window keeps its own focus manager and is no longer in
+	// the window manager's stack. When it currently owns focus, menu
+	// actions (and global shortcuts) must target its focused widget, not
+	// whatever docked window the window manager still calls active.
+	if torn != nil {
+		if fw := torn.FocusManager().FocusedWidget(); fw != nil {
+			return fw
+		}
+	}
+
 	if wm == nil {
 		return nil
 	}

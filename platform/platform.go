@@ -108,6 +108,10 @@ type NativeSurface interface {
 	// Re-dock ghosting turns the old window invisible while its live
 	// mouse session finishes, instead of destroying it mid-gesture.
 	SetOpacity(opacity float64)
+	// Raise brings the surface to the front of the window stack and
+	// gives it input focus. Used when tearing a window off so it lands
+	// on top of any child surfaces that detach with it.
+	Raise()
 	// Close destroys the surface and its OS window.
 	Close()
 }

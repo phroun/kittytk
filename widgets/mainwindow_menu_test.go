@@ -15,6 +15,7 @@ type mockApp struct {
 	menuName string
 	main     *window.Window
 	menus    []*Menu
+	windows  []*window.Window
 }
 
 func (a *mockApp) Name() string { return a.name }
@@ -24,7 +25,7 @@ func (a *mockApp) MenuName() string {
 	}
 	return a.menuName
 }
-func (a *mockApp) Windows() []*window.Window         { return nil }
+func (a *mockApp) Windows() []*window.Window         { return a.windows }
 func (a *mockApp) MainWindow() *window.Window        { return a.main }
 func (a *mockApp) AddWindow(*window.Window)          {}
 func (a *mockApp) RemoveWindow(*window.Window)       {}

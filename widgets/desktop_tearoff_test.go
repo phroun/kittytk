@@ -19,6 +19,7 @@ type msSurface struct {
 	invalidated bool
 	opacity     float64
 	minimized   bool
+	raised      bool
 	opts        platform.SurfaceOptions
 }
 
@@ -32,6 +33,7 @@ func (s *msSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *msSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *msSurface) Close()                               { s.closed = true }
 func (s *msSurface) SetOpacity(o float64)                 { s.opacity = o }
+func (s *msSurface) Raise()                               { s.raised = true }
 func (s *msSurface) Minimized() bool                      { return s.minimized }
 func (s *msSurface) Minimize()                            { s.minimized = true }
 func (s *msSurface) WorkAreaPx() (int, int, int, int)     { return 0, 0, 1600, 1000 }
@@ -384,6 +386,68 @@ func TestDesktopBlurDimsActiveWindow(t *testing.T) {
 		desk.handler.Event(core.FocusEvent{Focused: true})
 		if !win.IsActive() {
 			t.Error("active window not re-lit when the desktop re-focused")
+		}
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
+// Tearing off an app's main window carries its non-tearable children
+// onto their own surfaces centered over it, raises the main window above
+// those children, and gives it focus so the tear ends with it on top.
+func TestMainWindowTearOffCascadeCenterRaise(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("main")
+	main.SetTearable(true)
+	child := window.NewWindow("child") // non-tearable dialog-style child
+
+	app := &mockApp{name: "App", main: main, windows: []*window.Window{main, child}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+		wm.AddWindow(child)
+		child.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 100, Height: 80})
+		child.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.tearOffInPlace(main)
+
+		if len(plat.surfaces) != 3 {
+			t.Fatalf("want 3 surfaces (desktop + main + child), got %d", len(plat.surfaces))
+		}
+		mainSurf := plat.surfaces[1]
+		childSurf := plat.surfaces[2]
+
+		if !mainSurf.raised {
+			t.Error("main window surface was not raised above its children")
+		}
+		if !main.IsDetached() {
+			t.Error("main window not marked detached")
+		}
+		if child.IsTearable() || !child.IsDetached() {
+			t.Error("non-tearable child should have followed the main window off")
+		}
+
+		// Desktop origin is (50,60) px, scale 1. Main torn at unit (100,100)
+		// so its surface sits at (150,160). The child (100x80) centers over
+		// the 300x200 main: unit (100+100, 100+60) = (200,160) -> px (250,220).
+		if childSurf.x != 250 || childSurf.y != 220 {
+			t.Errorf("child not centered over main: surface at (%d,%d), want (250,220)", childSurf.x, childSurf.y)
+		}
+
+		if d.tornFocusOwner != main {
+			t.Error("torn main window did not take focus")
 		}
 		d.QuitWithCode(0)
 	}

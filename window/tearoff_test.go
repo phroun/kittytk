@@ -18,6 +18,7 @@ type nativeFakeSurface struct {
 	closed    bool
 	opacity   float64
 	minimized bool
+	raised    bool
 }
 
 func (s *nativeFakeSurface) Size() core.UnitSize                  { return s.size }
@@ -31,6 +32,7 @@ func (s *nativeFakeSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x
 func (s *nativeFakeSurface) WorkAreaPx() (int, int, int, int)     { return 0, 30, 1600, 970 }
 func (s *nativeFakeSurface) Close()                               { s.closed = true }
 func (s *nativeFakeSurface) SetOpacity(o float64)                 { s.opacity = o }
+func (s *nativeFakeSurface) Raise()                               { s.raised = true }
 func (s *nativeFakeSurface) Minimized() bool                      { return false }
 func (s *nativeFakeSurface) Minimize()                            { s.minimized = true }
 

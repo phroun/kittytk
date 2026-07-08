@@ -875,6 +875,15 @@ func (s *sdlSurface) SetOpacity(opacity float64) {
 	_ = s.win.window.SetWindowOpacity(float32(opacity))
 }
 
+// Raise implements platform.NativeSurface: brings the OS window to the
+// front and gives it input focus.
+func (s *sdlSurface) Raise() {
+	if s.closed || s.win.window == nil {
+		return
+	}
+	s.win.window.Raise()
+}
+
 // Close implements platform.NativeSurface: destroys the OS window.
 // The main window ignores it (quitting the app is Platform.Quit).
 func (s *sdlSurface) Close() {

@@ -182,24 +182,68 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	// it: dialogs and other windows that can't be torn off by hand live on
 	// their own surfaces while the main window is detached, and re-dock
 	// with it. Only fires for a genuine main window (a follower being torn
-	// here is not any app's main window, so it does not recurse).
+	// here is not any app's main window, so it does not recurse). The main
+	// window then rises above those children and takes focus, so the tear
+	// ends with it on top rather than buried under a large child surface.
 	if app := d.applicationForMainWindow(win); app != nil {
 		d.tearOffFollowers(app, win)
+		if n, ok := host.Surface().(platform.NativeSurface); ok {
+			n.Raise()
+		}
+		d.windowFocusChanged(win)
 	}
 	return host
 }
 
 // tearOffFollowers tears every non-tearable child of app (other than the
-// main window itself) onto its own surface at its current desktop
-// position. Called when the app's main window is torn off.
+// main window itself) onto its own surface, centered over the detached
+// main window. Called when the app's main window is torn off.
 func (d *Desktop) tearOffFollowers(app ApplicationProvider, main *window.Window) {
 	for _, w := range app.Windows() {
 		if w == main || w.IsTearable() || w.IsDetached() {
 			continue
 		}
 		b := w.Bounds()
-		d.createTornHost(w, b.X, b.Y)
+		x, y := d.centerOverMain(main, b.Width, b.Height, b)
+		d.createTornHost(w, x, y)
 	}
+}
+
+// centerOverMain returns the desktop-unit top-left at which a child of
+// size childW x childH is centered over the app's torn-off main window.
+// Falls back to the supplied rectangle's origin when the main window's
+// torn surface can't be located.
+func (d *Desktop) centerOverMain(main *window.Window, childW, childH core.Unit, fallback core.UnitRect) (core.Unit, core.Unit) {
+	d.mu.RLock()
+	surf := d.surface
+	hosts := make([]*window.TearOffHost, len(d.tornHosts))
+	copy(hosts, d.tornHosts)
+	d.mu.RUnlock()
+
+	deskNative, ok := surf.(platform.NativeSurface)
+	if !ok {
+		return fallback.X, fallback.Y
+	}
+	var mainNative platform.NativeSurface
+	for _, h := range hosts {
+		if h.Window() == main {
+			if n, ok := h.Surface().(platform.NativeSurface); ok {
+				mainNative = n
+			}
+			break
+		}
+	}
+	if mainNative == nil {
+		return fallback.X, fallback.Y
+	}
+
+	scale := d.deviceScale()
+	deskX, deskY := deskNative.ScreenPositionPx()
+	mx, my := mainNative.ScreenPositionPx()
+	mainUnitX := core.Unit((mx - deskX) / scale)
+	mainUnitY := core.Unit((my - deskY) / scale)
+	mb := main.Bounds()
+	return mainUnitX + (mb.Width-childW)/2, mainUnitY + (mb.Height-childH)/2
 }
 
 // redockFollowers re-docks every torn non-tearable child of app back onto
@@ -247,7 +291,8 @@ func (d *Desktop) SyncAddedWindowDetachState(win *window.Window) {
 		return
 	}
 	b := win.Bounds()
-	d.createTornHost(win, b.X, b.Y)
+	x, y := d.centerOverMain(main, b.Width, b.Height, b)
+	d.createTornHost(win, x, y)
 }
 
 // applicationForWindow returns the application that owns win, or nil.
