@@ -11,17 +11,17 @@ import (
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
 	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 )
 
-// applyTerminalTheme walks a widget subtree and puts every PurfecTerm
+// applyTerminalTheme walks a trinket subtree and puts every PurfecTerm
 // into the given dark/light mode, so terminals follow the app theme
 // toggle along with the rest of the UI.
-func applyTerminalTheme(w core.Widget, dark bool) {
+func applyTerminalTheme(w core.Trinket, dark bool) {
 	if w == nil {
 		return
 	}
-	if term, ok := w.(*widgets.PurfecTerm); ok {
+	if term, ok := w.(*trinkets.PurfecTerm); ok {
 		term.SetDarkTheme(dark)
 	}
 	if c, ok := w.(core.Container); ok {
@@ -37,7 +37,7 @@ func applyTerminalTheme(w core.Widget, dark bool) {
 
 // buildMenuBar executes a menubar script and returns the menus plus
 // the id->target table for reaching surfaced items (checkable state).
-func buildMenuBar(script string) ([]*widgets.Menu, map[uint64]any, *protocol.Reply) {
+func buildMenuBar(script string) ([]*trinkets.Menu, map[uint64]any, *protocol.Reply) {
 	factory := &idCaptureFactory{
 		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
 		byID:  make(map[uint64]any),
@@ -50,7 +50,7 @@ func buildMenuBar(script string) ([]*widgets.Menu, map[uint64]any, *protocol.Rep
 	if err != nil {
 		panic(fmt.Sprintf("menu script: %v", err))
 	}
-	bar := factory.byID[reply.IDs["bar"]].(interface{ Menus() []*widgets.Menu })
+	bar := factory.byID[reply.IDs["bar"]].(interface{ Menus() []*trinkets.Menu })
 	return bar.Menus(), factory.byID, reply
 }
 
@@ -113,7 +113,7 @@ editmenu=bar.editmenu
 	return b.String()
 }
 
-func createMenus(desktop *widgets.Desktop, application *app.Application) []*widgets.Menu {
+func createMenus(desktop *trinkets.Desktop, application *app.Application) []*trinkets.Menu {
 	menus, byID, reply := buildMenuBar(mainMenuScript())
 
 	commands := application.Commands()
@@ -121,7 +121,7 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		application.AddWindow(createDemoWindow(desktop, application))
 	})
 	commands.Register("demo.edit.rawkey", func() {
-		desktop.ActivatePassNextKeyToWidget()
+		desktop.ActivatePassNextKeyToTrinket()
 	})
 	// Toggle the app between the dark and light theme palettes. The UI
 	// chrome recolors on the next full-frame repaint (the 16 standard
@@ -139,7 +139,7 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		}
 		desktop.Update()
 	})
-	// Edit actions operate on the focused widget; the context menus
+	// Edit actions operate on the focused trinket; the context menus
 	// on edit boxes invoke the same methods.
 	type editActor interface {
 		Cut()
@@ -148,7 +148,7 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		SelectAll()
 	}
 	editTarget := func() editActor {
-		if fw := desktop.FocusedWidget(); fw != nil {
+		if fw := desktop.FocusedTrinket(); fw != nil {
 			if ea, ok := fw.(editActor); ok {
 				return ea
 			}
@@ -176,18 +176,18 @@ func createMenus(desktop *widgets.Desktop, application *app.Application) []*widg
 		}
 	})
 
-	// Grey out Cut when the focused widget reports it doesn't apply
+	// Grey out Cut when the focused trinket reports it doesn't apply
 	// (a terminal's output can't be cut). Refreshed each time the
-	// Edit menu opens; the focused widget is the previous active
+	// Edit menu opens; the focused trinket is the previous active
 	// window's while the menu is up.
-	if em, ok := byID[reply.IDs["editmenu"]].(*widgets.Menu); ok {
-		cut, _ := byID[reply.IDs["cutitem"]].(*widgets.MenuItem)
+	if em, ok := byID[reply.IDs["editmenu"]].(*trinkets.Menu); ok {
+		cut, _ := byID[reply.IDs["cutitem"]].(*trinkets.MenuItem)
 		em.SetOnAboutToShow(func() {
 			if cut == nil {
 				return
 			}
 			enabled := true
-			if fw := desktop.FocusedWidget(); fw != nil {
+			if fw := desktop.FocusedTrinket(); fw != nil {
 				if cq, ok := fw.(interface{ CutEnabled() bool }); ok {
 					enabled = cq.CutEnabled()
 				}
@@ -308,7 +308,7 @@ cutitem=bar.editmenu.cutitem
 `, appNum)
 }
 
-func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application, appNum int) []*widgets.Menu {
+func createSecondaryMenus(desktop *trinkets.Desktop, application *app.Application, appNum int) []*trinkets.Menu {
 	menus, byID, reply := buildMenuBar(secondaryMenuScript(appNum))
 
 	// Each secondary application has its OWN registry, so the same
@@ -321,7 +321,7 @@ func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application
 		}
 	})
 
-	// Edit actions operate on the focused widget, just like the main
+	// Edit actions operate on the focused trinket, just like the main
 	// menu; the context menus on edit boxes invoke the same methods.
 	type editActor interface {
 		Cut()
@@ -330,7 +330,7 @@ func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application
 		SelectAll()
 	}
 	editTarget := func() editActor {
-		if fw := desktop.FocusedWidget(); fw != nil {
+		if fw := desktop.FocusedTrinket(); fw != nil {
 			if ea, ok := fw.(editActor); ok {
 				return ea
 			}
@@ -358,16 +358,16 @@ func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application
 		}
 	})
 
-	// Grey out Cut when the focused widget reports it doesn't apply
+	// Grey out Cut when the focused trinket reports it doesn't apply
 	// (a terminal's output can't be cut), matching the main Edit menu.
-	if em, ok := byID[reply.IDs["editmenu"]].(*widgets.Menu); ok {
-		cut, _ := byID[reply.IDs["cutitem"]].(*widgets.MenuItem)
+	if em, ok := byID[reply.IDs["editmenu"]].(*trinkets.Menu); ok {
+		cut, _ := byID[reply.IDs["cutitem"]].(*trinkets.MenuItem)
 		em.SetOnAboutToShow(func() {
 			if cut == nil {
 				return
 			}
 			enabled := true
-			if fw := desktop.FocusedWidget(); fw != nil {
+			if fw := desktop.FocusedTrinket(); fw != nil {
 				if cq, ok := fw.(interface{ CutEnabled() bool }); ok {
 					enabled = cq.CutEnabled()
 				}
@@ -377,7 +377,7 @@ func createSecondaryMenus(desktop *widgets.Desktop, application *app.Application
 	}
 
 	commands.Register("demo.app.rawkey", func() {
-		desktop.ActivatePassNextKeyToWidget()
+		desktop.ActivatePassNextKeyToTrinket()
 	})
 	commands.Register("demo.app.info", func() {
 		protocolMessageBox(application, fmt.Sprintf(

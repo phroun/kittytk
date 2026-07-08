@@ -74,7 +74,7 @@ const (
 // Windows support maximization, minimization, MDI-style child windows,
 // and optional Mac-like menu integration.
 type Window struct {
-	core.WidgetBase
+	core.TrinketBase
 	mu sync.RWMutex
 
 	// Window properties
@@ -96,7 +96,7 @@ type Window struct {
 	normalBounds core.UnitRect
 
 	// Content
-	content core.Widget
+	content core.Trinket
 	layout  core.LayoutManager
 
 	// Focus management
@@ -147,12 +147,12 @@ type Window struct {
 
 	// Detached main-window chrome, set by the desktop when the window is
 	// torn off: a menu bar between the title bar and content, and a
-	// status bar along the bottom edge. Kept as generic core.Widget so
-	// the window package needn't import widgets. Both only occupy space,
+	// status bar along the bottom edge. Kept as generic core.Trinket so
+	// the window package needn't import trinkets. Both only occupy space,
 	// paint, and receive input while the window is detached; either may
 	// be hidden.
-	menuBar          core.Widget
-	statusBar        core.Widget
+	menuBar          core.Trinket
+	statusBar        core.Trinket
 	menuBarVisible   bool
 	statusBarVisible bool
 
@@ -164,7 +164,7 @@ type Window struct {
 	shortcutResolver func(core.KeyPressEvent) bool
 
 	// passNextKeyRaw makes HandleKeyPress route the very next key straight
-	// to the focused widget, bypassing this window's own menu-bar shortcut
+	// to the focused trinket, bypassing this window's own menu-bar shortcut
 	// handling - the detached-window half of the app's "raw key input"
 	// feature. onRawKeyDone fires once that key is consumed.
 	passNextKeyRaw bool
@@ -205,7 +205,7 @@ func NewWindow(title string) *Window {
 		maxWidth:    1<<30 - 1,
 		maxHeight:   1<<30 - 1,
 	}
-	w.WidgetBase = *core.NewWidgetBase()
+	w.TrinketBase = *core.NewTrinketBase()
 	w.Init(w)
 	w.SetFocusPolicy(core.StrongFocus)
 	w.focusManager = core.NewFocusManager(nil)
@@ -261,7 +261,7 @@ func (w *Window) SetSmoothPositioning(smooth bool) {
 }
 
 // SmoothWindowPositioning implements core.SmoothPositioningProvider,
-// letting widgets inside this window (e.g. MDI panes) inherit the
+// letting trinkets inside this window (e.g. MDI panes) inherit the
 // surface's positioning granularity.
 func (w *Window) SmoothWindowPositioning() bool {
 	w.mu.RLock()
@@ -291,19 +291,19 @@ func (w *Window) State() WindowState {
 	return w.state
 }
 
-// SetContent sets the window's content widget.
-func (w *Window) SetContent(widget core.Widget) {
+// SetContent sets the window's content trinket.
+func (w *Window) SetContent(trinket core.Trinket) {
 	w.mu.Lock()
-	w.content = widget
+	w.content = trinket
 	fm := w.focusManager
-	if widget != nil {
-		widget.SetParent(w)
+	if trinket != nil {
+		trinket.SetParent(w)
 	}
 	w.mu.Unlock()
 
-	// Update focus manager root and focus first non-furtive widget
+	// Update focus manager root and focus first non-furtive trinket
 	if fm != nil {
-		fm.SetRoot(widget)
+		fm.SetRoot(trinket)
 		fm.FocusFirstNonFurtive()
 	}
 
@@ -311,8 +311,8 @@ func (w *Window) SetContent(widget core.Widget) {
 	w.Update()
 }
 
-// Content returns the window's content widget.
-func (w *Window) Content() core.Widget {
+// Content returns the window's content trinket.
+func (w *Window) Content() core.Trinket {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.content
@@ -491,7 +491,7 @@ func (w *Window) IsMinimized() bool {
 
 // IsActive returns true if this window is the active window in its container
 // (WindowManager or MDIPane). This is separate from focus - a window is active
-// when it's selected, even if a child widget has keyboard focus.
+// when it's selected, even if a child trinket has keyboard focus.
 func (w *Window) IsActive() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -670,8 +670,8 @@ func (w *Window) IsDetached() bool {
 
 // SetWindowMenuBar installs (or clears) the window's own menu bar,
 // shown between the title bar and content while the window is detached.
-// The desktop supplies it as a generic widget. Passing nil removes it.
-func (w *Window) SetWindowMenuBar(mb core.Widget) {
+// The desktop supplies it as a generic trinket. Passing nil removes it.
+func (w *Window) SetWindowMenuBar(mb core.Trinket) {
 	w.mu.Lock()
 	w.menuBar = mb
 	w.menuBarVisible = mb != nil
@@ -686,7 +686,7 @@ func (w *Window) SetWindowMenuBar(mb core.Widget) {
 // WindowMenuBar returns the window's own menu bar (the chrome a detached
 // main window hosts), or nil. Used by the desktop to route a torn-off
 // child window's shortcuts through its app's menu bar.
-func (w *Window) WindowMenuBar() core.Widget {
+func (w *Window) WindowMenuBar() core.Trinket {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.menuBar
@@ -702,14 +702,14 @@ func (w *Window) SetShortcutResolver(fn func(core.KeyPressEvent) bool) {
 }
 
 // WindowStatusBar returns the window's own status bar chrome, or nil.
-func (w *Window) WindowStatusBar() core.Widget {
+func (w *Window) WindowStatusBar() core.Trinket {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.statusBar
 }
 
 // BeginRawKeyInput arms the window to pass its next key straight to the
-// focused widget, bypassing this window's menu-bar shortcut handling.
+// focused trinket, bypassing this window's menu-bar shortcut handling.
 // onDone runs after that key is consumed, so the caller can restore any
 // prompt it showed. This is the detached-window path for the app's "raw
 // key input" feature; on a docked window the desktop handles it instead.
@@ -722,7 +722,7 @@ func (w *Window) BeginRawKeyInput(onDone func()) {
 
 // SetWindowStatusBar installs (or clears) the window's own status bar,
 // shown along the bottom edge while the window is detached.
-func (w *Window) SetWindowStatusBar(sb core.Widget) {
+func (w *Window) SetWindowStatusBar(sb core.Trinket) {
 	w.mu.Lock()
 	w.statusBar = sb
 	w.statusBarVisible = sb != nil
@@ -881,7 +881,7 @@ func (w *Window) SetPopupController(pc core.PopupController) {
 }
 
 // PopupController returns the popup controller for this window.
-// This implements the interface needed by widgets like ComboBox.
+// This implements the interface needed by trinkets like ComboBox.
 func (w *Window) PopupController() core.PopupController {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -909,12 +909,12 @@ func (w *Window) UnregisterPopup(id string) {
 }
 
 // MapToScreen implements core.PopupController by delegating to the stored controller.
-func (w *Window) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
+func (w *Window) MapToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoint {
 	w.mu.RLock()
 	pc := w.popupController
 	w.mu.RUnlock()
 	if pc != nil {
-		return pc.MapToScreen(widget, local)
+		return pc.MapToScreen(trinket, local)
 	}
 	return local
 }
@@ -956,7 +956,7 @@ func (w *Window) SetFont(f *core.Font) {
 	w.mu.Lock()
 	w.font = f
 	w.mu.Unlock()
-	w.Layout() // Recalculate layout since font affects widget sizes
+	w.Layout() // Recalculate layout since font affects trinket sizes
 	w.Update()
 }
 
@@ -972,8 +972,8 @@ func (w *Window) EffectiveFont() *core.Font {
 
 	// Check parent's effective font (walks up the chain through MDI pane, desktop, etc.)
 	if parent := w.Parent(); parent != nil {
-		if widget, ok := parent.(core.Widget); ok {
-			return core.FindEffectiveFont(widget)
+		if trinket, ok := parent.(core.Trinket); ok {
+			return core.FindEffectiveFont(trinket)
 		}
 	}
 
@@ -982,7 +982,7 @@ func (w *Window) EffectiveFont() *core.Font {
 
 // BackgroundColor returns the window's explicit background color, if set.
 func (w *Window) BackgroundColor() *style.Color {
-	return w.WidgetBase.BackgroundColor()
+	return w.TrinketBase.BackgroundColor()
 }
 
 // SchemeBackgroundColor returns the window's scheme-derived background color.
@@ -1096,7 +1096,7 @@ func (w *Window) denominations() (outer, interior core.CellMetrics) {
 	return core.ParentCellMetrics(w.Self()), interior
 }
 
-// layoutContent lays out the content widget.
+// layoutContent lays out the content trinket.
 func (w *Window) layoutContent() {
 	w.mu.RLock()
 	content := w.content
@@ -1129,23 +1129,23 @@ func (w *Window) layoutContent() {
 }
 
 // Children implements core.Container.
-func (w *Window) Children() []core.Widget {
+func (w *Window) Children() []core.Trinket {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
 	if w.content == nil {
 		return nil
 	}
-	return []core.Widget{w.content}
+	return []core.Trinket{w.content}
 }
 
 // AddChild implements core.Container.
-func (w *Window) AddChild(child core.Widget) {
+func (w *Window) AddChild(child core.Trinket) {
 	w.SetContent(child)
 }
 
 // RemoveChild implements core.Container.
-func (w *Window) RemoveChild(child core.Widget) {
+func (w *Window) RemoveChild(child core.Trinket) {
 	w.mu.Lock()
 	if w.content == child {
 		w.content = nil
@@ -1154,7 +1154,7 @@ func (w *Window) RemoveChild(child core.Widget) {
 }
 
 // ChildAt implements core.Container.
-func (w *Window) ChildAt(pos core.UnitPoint) core.Widget {
+func (w *Window) ChildAt(pos core.UnitPoint) core.Trinket {
 	w.mu.RLock()
 	content := w.content
 	w.mu.RUnlock()
@@ -1219,12 +1219,12 @@ func (w *Window) Paint(p *core.Painter) {
 			policy := parent.FocusPolicy()
 			if policy == core.StrongFocus || policy == core.TabFocus {
 				// MDI-style container: check if parent has focus OR this window has internal focus.
-				// When clicking on a widget inside the window, focus goes to that widget (not parent).
+				// When clicking on a trinket inside the window, focus goes to that trinket (not parent).
 				if !parent.HasFocus() {
 					windowHasInternalFocus := false
 					if fm := w.FocusManager(); fm != nil {
-						if focusedWidget := fm.FocusedWidget(); focusedWidget != nil {
-							windowHasInternalFocus = focusedWidget.HasFocus()
+						if focusedTrinket := fm.FocusedTrinket(); focusedTrinket != nil {
+							windowHasInternalFocus = focusedTrinket.HasFocus()
 						}
 					}
 					focused = windowHasInternalFocus
@@ -1341,10 +1341,10 @@ func sameRects(a, b []core.UnitRect) bool {
 	return true
 }
 
-// CursorShapeAt returns the mouse cursor requested by the widget under
+// CursorShapeAt returns the mouse cursor requested by the trinket under
 // the given window-local point (e.g. a text field's I-beam), or the
 // default arrow when the point is outside the content area or over a
-// widget with no preference.
+// trinket with no preference.
 func (w *Window) CursorShapeAt(localX, localY core.Unit) core.CursorShape {
 	w.mu.RLock()
 	content := w.content
@@ -1360,13 +1360,13 @@ func (w *Window) CursorShapeAt(localX, localY core.Unit) core.CursorShape {
 	outer, interior := w.denominations()
 	cx := core.ExchangeX(localX-cb.X, outer, interior)
 	cy := core.ExchangeY(localY-cb.Y, outer, interior)
-	return cursorShapeAtWidget(content, core.UnitPoint{X: cx, Y: cy})
+	return cursorShapeAtTrinket(content, core.UnitPoint{X: cx, Y: cy})
 }
 
-// cursorShapeAtWidget descends to the deepest widget containing pos and
+// cursorShapeAtTrinket descends to the deepest trinket containing pos and
 // returns its requested cursor, or the default when none applies.
-func cursorShapeAtWidget(widget core.Widget, pos core.UnitPoint) core.CursorShape {
-	cur := widget
+func cursorShapeAtTrinket(trinket core.Trinket, pos core.UnitPoint) core.CursorShape {
+	cur := trinket
 	p := pos
 	for {
 		c, ok := cur.(core.Container)
@@ -1436,11 +1436,11 @@ func (w *Window) paintChrome(p *core.Painter, outer, interior core.CellMetrics) 
 	}
 }
 
-// chromeMouseTarget returns the chrome widget that should receive a
+// chromeMouseTarget returns the chrome trinket that should receive a
 // mouse event at window-local (x, y), its rect, and true when the chrome
 // owns the event. An open menu owns all mouse input; otherwise the menu
 // bar / status bar own their own rows.
-func (w *Window) chromeMouseTarget(x, y core.Unit) (core.Widget, core.UnitRect, bool) {
+func (w *Window) chromeMouseTarget(x, y core.Unit) (core.Trinket, core.UnitRect, bool) {
 	w.mu.RLock()
 	mb, sb := w.menuBar, w.statusBar
 	w.mu.RUnlock()
@@ -1494,8 +1494,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 				if !parent.HasFocus() {
 					windowHasInternalFocus := false
 					if fm := w.FocusManager(); fm != nil {
-						if focusedWidget := fm.FocusedWidget(); focusedWidget != nil {
-							windowHasInternalFocus = focusedWidget.HasFocus()
+						if focusedTrinket := fm.FocusedTrinket(); focusedTrinket != nil {
+							windowHasInternalFocus = focusedTrinket.HasFocus()
 						}
 					}
 					focused = windowHasInternalFocus
@@ -1695,8 +1695,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 				if !parent.HasFocus() {
 					windowHasInternalFocus := false
 					if fm := w.FocusManager(); fm != nil {
-						if focusedWidget := fm.FocusedWidget(); focusedWidget != nil {
-							windowHasInternalFocus = focusedWidget.HasFocus()
+						if focusedTrinket := fm.FocusedTrinket(); focusedTrinket != nil {
+							windowHasInternalFocus = focusedTrinket.HasFocus()
 						}
 					}
 					focused = windowHasInternalFocus
@@ -2097,7 +2097,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		if event.Modifiers&core.ShiftModifier != 0 {
 			prev := w.prevTitleFocus(titleFocus)
 			if prev == titleFocus {
-				// At first title element, loop to content's last widget
+				// At first title element, loop to content's last trinket
 				w.SetTitleFocus(TitleFocusNone)
 				if fm := w.FocusManager(); fm != nil {
 					fm.FocusLast()
@@ -2110,7 +2110,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		// Move to next title element or exit to content
 		next := w.nextTitleFocus(titleFocus)
 		if next == TitleFocusNone {
-			// Exit title bar, focus first widget in content
+			// Exit title bar, focus first trinket in content
 			w.SetTitleFocus(TitleFocusNone)
 			if fm := w.FocusManager(); fm != nil {
 				fm.FocusFirst()
@@ -2121,10 +2121,10 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		return true
 
 	case "S-Tab", "Shift-Tab":
-		// Move to previous title element, or loop to content's last widget
+		// Move to previous title element, or loop to content's last trinket
 		prev := w.prevTitleFocus(titleFocus)
 		if prev == titleFocus {
-			// At first title element, loop to content's last widget
+			// At first title element, loop to content's last trinket
 			w.SetTitleFocus(TitleFocusNone)
 			if fm := w.FocusManager(); fm != nil {
 				fm.FocusLast()
@@ -2588,7 +2588,7 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	rawDone := w.onRawKeyDone
 	w.mu.RUnlock()
 
-	// Raw key input: this key goes straight to the focused widget,
+	// Raw key input: this key goes straight to the focused trinket,
 	// bypassing the window's own menu-bar shortcut handling, then the mode
 	// clears and the caller restores its prompt.
 	if rawNext {
@@ -2620,7 +2620,7 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	// The detached window's own menu bar services its app shortcuts
 	// (Cut/Copy/Paste, Close Window, Quit, ...) globally - checked before
-	// the focused widget sees the key, matching the desktop bar while
+	// the focused trinket sees the key, matching the desktop bar while
 	// docked. A detached main window carries its own bar (mb); a torn-off
 	// child carries no chrome but borrows its app's bar via the resolver.
 	if mb != nil {
@@ -2646,23 +2646,23 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 		(event.Key == "Tab" && event.Modifiers&core.ShiftModifier != 0)
 	isTab := event.Key == "Tab" && event.Modifiers&core.ShiftModifier == 0
 
-	// For Tab/Shift+Tab, first give the focused widget a chance to handle it.
+	// For Tab/Shift+Tab, first give the focused trinket a chance to handle it.
 	// This is critical for containers like MDIPane that manage their own Tab navigation.
-	// If the focused widget handles it, we're done.
+	// If the focused trinket handles it, we're done.
 	if (isTab || isShiftTab) && fm != nil {
-		focused := fm.FocusedWidget()
+		focused := fm.FocusedTrinket()
 		if focused != nil && focused.HandleKeyPress(event) {
 			return true
 		}
 
-		// Focused widget didn't handle it.
-		// For Shift+Tab at first widget, enter title bar (blur item if enabled, otherwise title).
+		// Focused trinket didn't handle it.
+		// For Shift+Tab at first trinket, enter title bar (blur item if enabled, otherwise title).
 		if isShiftTab {
 			chain := fm.FocusChain()
-			for _, widget := range chain {
-				if widget.IsVisible() && widget.IsEnabled() {
-					if widget == focused {
-						// At first widget, enter blur item if enabled, otherwise title bar
+			for _, trinket := range chain {
+				if trinket.IsVisible() && trinket.IsEnabled() {
+					if trinket == focused {
+						// At first trinket, enter blur item if enabled, otherwise title bar
 						if w.hasKeyboardBlurEnabled() {
 							w.SetTitleFocus(TitleFocusBlur)
 						} else {
@@ -2671,30 +2671,30 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 						fm.ClearFocus()
 						return true
 					}
-					break // Not at first widget
+					break // Not at first trinket
 				}
 			}
-			// Not at first widget, move to previous
+			// Not at first trinket, move to previous
 			return fm.FocusPrevious()
 		}
 
-		// Regular Tab - check if at last widget
+		// Regular Tab - check if at last trinket
 		if isTab {
 			chain := fm.FocusChain()
-			// Find the last visible/enabled widget
-			var lastWidget core.Widget
-			for _, widget := range chain {
-				if widget.IsVisible() && widget.IsEnabled() {
-					lastWidget = widget
+			// Find the last visible/enabled trinket
+			var lastTrinket core.Trinket
+			for _, trinket := range chain {
+				if trinket.IsVisible() && trinket.IsEnabled() {
+					lastTrinket = trinket
 				}
 			}
-			if focused == lastWidget && w.hasKeyboardBlurEnabled() {
-				// At last widget with blur enabled, go to blur item
+			if focused == lastTrinket && w.hasKeyboardBlurEnabled() {
+				// At last trinket with blur enabled, go to blur item
 				w.SetTitleFocus(TitleFocusBlur)
 				fm.ClearFocus()
 				return true
 			}
-			// Not at last widget, or blur not enabled - move to next
+			// Not at last trinket, or blur not enabled - move to next
 			return fm.FocusNext()
 		}
 	}
@@ -2920,7 +2920,7 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 // SetBounds sets the window bounds and triggers layout.
 func (w *Window) SetBounds(bounds core.UnitRect) {
 	oldSize := w.Bounds().Size()
-	w.WidgetBase.SetBounds(bounds)
+	w.TrinketBase.SetBounds(bounds)
 	newSize := bounds.Size()
 	// Manually call our HandleResize since embedded SetBounds won't do it
 	if oldSize != newSize {

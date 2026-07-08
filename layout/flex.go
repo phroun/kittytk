@@ -1,4 +1,4 @@
-// Package layout provides layout managers for arranging widgets.
+// Package layout provides layout managers for arranging trinkets.
 package layout
 
 import (
@@ -47,16 +47,16 @@ const (
 	FlexJustifySpaceEvenly
 )
 
-// FlexItem represents a widget with flex properties.
+// FlexItem represents a trinket with flex properties.
 type FlexItem struct {
-	Widget    core.Widget
+	Trinket   core.Trinket
 	Grow      float64   // Flex grow factor
 	Shrink    float64   // Flex shrink factor
 	Basis     core.Unit // Base size (0 = auto)
 	AlignSelf FlexAlign // Override container alignment
 }
 
-// FlexLayout arranges widgets using flexbox-like semantics.
+// FlexLayout arranges trinkets using flexbox-like semantics.
 // This is similar to CSS Flexbox.
 type FlexLayout struct {
 	BaseLayout
@@ -119,23 +119,23 @@ func (l *FlexLayout) SetAlignItems(align FlexAlign) {
 	l.alignItems = align
 }
 
-// AddWidget adds a widget with default flex properties.
-func (l *FlexLayout) AddWidget(widget core.Widget) {
+// AddTrinket adds a trinket with default flex properties.
+func (l *FlexLayout) AddTrinket(trinket core.Trinket) {
 	l.items = append(l.items, &FlexItem{
-		Widget: widget,
-		Grow:   0,
-		Shrink: 1,
-		Basis:  0,
+		Trinket: trinket,
+		Grow:    0,
+		Shrink:  1,
+		Basis:   0,
 	})
 }
 
-// AddWidgetWithFlex adds a widget with flex properties.
-func (l *FlexLayout) AddWidgetWithFlex(widget core.Widget, grow, shrink float64, basis core.Unit) {
+// AddTrinketWithFlex adds a trinket with flex properties.
+func (l *FlexLayout) AddTrinketWithFlex(trinket core.Trinket, grow, shrink float64, basis core.Unit) {
 	l.items = append(l.items, &FlexItem{
-		Widget: widget,
-		Grow:   grow,
-		Shrink: shrink,
-		Basis:  basis,
+		Trinket: trinket,
+		Grow:    grow,
+		Shrink:  shrink,
+		Basis:   basis,
 	})
 }
 
@@ -174,7 +174,7 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 	totalShrink := float64(0)
 
 	for i, item := range l.items {
-		hint := item.Widget.SizeHint()
+		hint := item.Trinket.SizeHint()
 		var base core.Unit
 
 		if item.Basis > 0 {
@@ -225,7 +225,7 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 	// Calculate positions
 	positions := l.calculatePositions(mainSize, finalSizes, totalSpacing)
 
-	// Position widgets
+	// Position trinkets
 	for i, item := range l.items {
 		var itemBounds core.UnitRect
 
@@ -253,7 +253,7 @@ func (l *FlexLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 		// Apply cross-axis alignment
 		itemBounds = l.alignCross(item, itemBounds)
-		item.Widget.SetBounds(itemBounds)
+		item.Trinket.SetBounds(itemBounds)
 	}
 }
 
@@ -331,7 +331,7 @@ func (l *FlexLayout) alignCross(item *FlexItem, bounds core.UnitRect) core.UnitR
 		align = item.AlignSelf
 	}
 
-	hint := item.Widget.SizeHint()
+	hint := item.Trinket.SizeHint()
 	var itemCross, boundsCross core.Unit
 	if l.isMainHorizontal() {
 		itemCross = hint.Height
@@ -379,7 +379,7 @@ func (l *FlexLayout) SizeHint(container core.Container) core.UnitSize {
 	var mainTotal, crossMax core.Unit
 
 	for _, item := range l.items {
-		hint := item.Widget.SizeHint()
+		hint := item.Trinket.SizeHint()
 		var main, cross core.Unit
 
 		if l.isMainHorizontal() {
@@ -423,7 +423,7 @@ func (l *FlexLayout) MinimumSize(container core.Container) core.UnitSize {
 	var mainTotal, crossMax core.Unit
 
 	for _, item := range l.items {
-		minSize := item.Widget.MinimumSize()
+		minSize := item.Trinket.MinimumSize()
 		var main, cross core.Unit
 
 		if l.isMainHorizontal() {

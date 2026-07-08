@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// AccessibleRole describes the semantic role of a widget for assistive technology.
+// AccessibleRole describes the semantic role of a trinket for assistive technology.
 type AccessibleRole int
 
 const (
@@ -106,7 +106,7 @@ func (r AccessibleRole) String() string {
 	return "unknown"
 }
 
-// AccessibleState represents the current state of a widget for accessibility.
+// AccessibleState represents the current state of a trinket for accessibility.
 type AccessibleState int
 
 const (
@@ -124,8 +124,8 @@ const (
 	StateBusy
 )
 
-// AccessibleInfo contains accessibility information for a widget.
-// Widgets should populate this to support assistive technology.
+// AccessibleInfo contains accessibility information for a trinket.
+// Trinkets should populate this to support assistive technology.
 type AccessibleInfo struct {
 	// Role describes what kind of element this is.
 	Role AccessibleRole
@@ -149,16 +149,16 @@ type AccessibleInfo struct {
 	// State represents the current accessible state.
 	State AccessibleState
 
-	// KeyboardShortcut is the shortcut to activate this widget.
+	// KeyboardShortcut is the shortcut to activate this trinket.
 	KeyboardShortcut string
 
 	// LiveRegion indicates how updates should be announced.
 	// "off" = don't announce, "polite" = wait for idle, "assertive" = interrupt
 	LiveRegion string
 
-	// RelatedWidgets contains IDs of related widgets.
-	// For example, a label's related widget would be the input it labels.
-	RelatedWidgets []string
+	// RelatedTrinkets contains IDs of related trinkets.
+	// For example, a label's related trinket would be the input it labels.
+	RelatedTrinkets []string
 
 	// RowIndex and ColumnIndex for table/grid cells.
 	RowIndex    int
@@ -176,7 +176,7 @@ type AccessibleInfo struct {
 	SetSize       int
 }
 
-// Accessible is an interface for widgets that support accessibility.
+// Accessible is an interface for trinkets that support accessibility.
 type Accessible interface {
 	// AccessibleInfo returns the accessibility information.
 	AccessibleInfo() AccessibleInfo
@@ -191,8 +191,8 @@ type AccessibilityAnnouncement struct {
 	// or wait for idle ("polite").
 	Priority string
 
-	// Source is the widget that generated the announcement.
-	Source Widget
+	// Source is the trinket that generated the announcement.
+	Source Trinket
 
 	// Vocal reports whether this announcement should be spoken aloud.
 	// Non-navigation announcements are always Vocal. Navigation
@@ -216,8 +216,8 @@ type AccessibilityManager struct {
 	// This can be connected to platform TTS or other accessibility services.
 	OnAnnounce func(announcement AccessibilityAnnouncement)
 
-	// FocusedWidget tracks the currently focused widget for announcements.
-	FocusedWidget Widget
+	// FocusedTrinket tracks the currently focused trinket for announcements.
+	FocusedTrinket Trinket
 
 	// Navigation-announcement throttle state (see AnnounceNavigation).
 	nowFn           func() time.Time // clock; overridable in tests
@@ -336,10 +336,10 @@ func (am *AccessibilityManager) ProcessPending() {
 	am.emit(ann)
 }
 
-// AnnounceFocus announces focus change on a widget.
-func (am *AccessibilityManager) AnnounceFocus(widget Widget) {
+// AnnounceFocus announces focus change on a trinket.
+func (am *AccessibilityManager) AnnounceFocus(trinket Trinket) {
 	am.mu.Lock()
-	am.FocusedWidget = widget
+	am.FocusedTrinket = trinket
 	enabled := am.Enabled
 	am.mu.Unlock()
 
@@ -349,11 +349,11 @@ func (am *AccessibilityManager) AnnounceFocus(widget Widget) {
 
 	// Get accessible info if available
 	var info AccessibleInfo
-	if accessible, ok := widget.(Accessible); ok {
+	if accessible, ok := trinket.(Accessible); ok {
 		info = accessible.AccessibleInfo()
 	} else {
-		// Default to widget name
-		info.Name = widget.Name()
+		// Default to trinket name
+		info.Name = trinket.Name()
 		info.Role = RoleNone
 	}
 
@@ -411,7 +411,7 @@ func (am *AccessibilityManager) AnnounceFocus(widget Widget) {
 }
 
 // AnnounceAction announces an action being taken.
-func (am *AccessibilityManager) AnnounceAction(widget Widget, action string) {
+func (am *AccessibilityManager) AnnounceAction(trinket Trinket, action string) {
 	am.mu.Lock()
 	enabled := am.Enabled
 	am.mu.Unlock()
@@ -421,11 +421,11 @@ func (am *AccessibilityManager) AnnounceAction(widget Widget, action string) {
 	}
 
 	var name string
-	if accessible, ok := widget.(Accessible); ok {
+	if accessible, ok := trinket.(Accessible); ok {
 		info := accessible.AccessibleInfo()
 		name = info.Name
 	} else {
-		name = widget.Name()
+		name = trinket.Name()
 	}
 
 	if name != "" {
@@ -450,31 +450,31 @@ func formatPosition(position, total int) string {
 	return fmt.Sprintf("%d of %d", position, total)
 }
 
-// AccessibleWidget provides a base implementation of accessibility features.
-// Embed this in widgets to get default accessibility support.
-type AccessibleWidget struct {
+// AccessibleTrinket provides a base implementation of accessibility features.
+// Embed this in trinkets to get default accessibility support.
+type AccessibleTrinket struct {
 	accessibleName        string
 	accessibleDescription string
 	accessibleRole        AccessibleRole
 }
 
 // SetAccessibleName sets the accessible name.
-func (aw *AccessibleWidget) SetAccessibleName(name string) {
+func (aw *AccessibleTrinket) SetAccessibleName(name string) {
 	aw.accessibleName = name
 }
 
 // SetAccessibleDescription sets the accessible description.
-func (aw *AccessibleWidget) SetAccessibleDescription(desc string) {
+func (aw *AccessibleTrinket) SetAccessibleDescription(desc string) {
 	aw.accessibleDescription = desc
 }
 
 // SetAccessibleRole sets the accessible role.
-func (aw *AccessibleWidget) SetAccessibleRole(role AccessibleRole) {
+func (aw *AccessibleTrinket) SetAccessibleRole(role AccessibleRole) {
 	aw.accessibleRole = role
 }
 
 // AccessibleInfo returns the accessibility information.
-func (aw *AccessibleWidget) AccessibleInfo() AccessibleInfo {
+func (aw *AccessibleTrinket) AccessibleInfo() AccessibleInfo {
 	return AccessibleInfo{
 		Name:        aw.accessibleName,
 		Description: aw.accessibleDescription,
@@ -539,12 +539,12 @@ type AccessibilityProvider interface {
 	AccessibilityManager() *AccessibilityManager
 }
 
-// FindAccessibilityManager traverses up the widget parent chain to find an AccessibilityManager.
+// FindAccessibilityManager traverses up the trinket parent chain to find an AccessibilityManager.
 // Returns nil if no provider is found.
-func FindAccessibilityManager(w Widget) *AccessibilityManager {
+func FindAccessibilityManager(w Trinket) *AccessibilityManager {
 	current := w
 	for current != nil {
-		// Check if current widget provides AccessibilityManager
+		// Check if current trinket provides AccessibilityManager
 		if provider, ok := current.(AccessibilityProvider); ok {
 			return provider.AccessibilityManager()
 		}

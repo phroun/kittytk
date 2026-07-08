@@ -7,7 +7,7 @@ import (
 	"github.com/phroun/tuitk/client"
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 )
 
 // The MDI Demo tab, converted: the pane, its background control
@@ -21,8 +21,8 @@ sp=new splitter orientation=vertical position=0.9 caption="Dock" children={
 	sa=new scrollarea children={
 		mdi=new mdipane fill="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
 			cp=new panel layout=vbox spacing=8 children={
-				new label caption="MDIPane Widget Demo"
-				new label caption="This MDIPane widget manages floating windows.\nClick [_] to minimize windows to the dock below."
+				new label caption="MDIPane Trinket Demo"
+				new label caption="This MDIPane trinket manages floating windows.\nClick [_] to minimize windows to the dock below."
 				new button caption="Spawn Window in MDIPane" action=demo.mdi.spawn
 				new panel layout=hbox spacing=8 children={
 					new button caption="Tile" action=demo.mdi.tile
@@ -53,7 +53,7 @@ var mdiChildCount int
 // unique names keep batches self-describing).
 var mdiDockSeq int
 
-func createMDIDemo(desktop *widgets.Desktop, application *app.Application, _ any) core.Widget {
+func createMDIDemo(desktop *trinkets.Desktop, application *app.Application, _ any) core.Trinket {
 	conn := client.NewInProcess(func(id string) { application.Commands().Dispatch(id) })
 	ui, err := conn.Build(mdiTabScript)
 	if err != nil {
@@ -125,9 +125,9 @@ func createMDIDemo(desktop *widgets.Desktop, application *app.Application, _ any
 	// Spawn the initial document.
 	spawnMDIChild(conn, mdiH)
 
-	root, ok := ui.Object("sp").Target().(core.Widget)
+	root, ok := ui.Object("sp").Target().(core.Trinket)
 	if !ok {
-		panic("mdi tab: no root widget")
+		panic("mdi tab: no root trinket")
 	}
 	return root
 }

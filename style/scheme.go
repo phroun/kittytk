@@ -3,7 +3,7 @@ package style
 
 import "sync"
 
-// Scheme defines a color scheme that can be applied to widgets.
+// Scheme defines a color scheme that can be applied to trinkets.
 // A Theme can contain multiple Schemes (e.g., default, modal dialogs, toolbars).
 // Each color field is a pointer; nil means use the fallback defined in scheme-plan.txt.
 type Scheme struct {
@@ -77,16 +77,16 @@ type Scheme struct {
 	FocusedMenuShortcut    *CellStyle
 
 	// =========================================================================
-	// Widget Group Colors (used as defaults for other things)
+	// Trinket Group Colors (used as defaults for other things)
 	// =========================================================================
 
-	WidgetGroupFG   *CellStyle // bright white (FG only)
-	WidgetGroupBG   *CellStyle // black (BG only)
-	WidgetContentFG *CellStyle // regular white (FG only)
-	WidgetContentBG *CellStyle // black (BG only)
+	TrinketGroupFG   *CellStyle // bright white (FG only)
+	TrinketGroupBG   *CellStyle // black (BG only)
+	TrinketContentFG *CellStyle // regular white (FG only)
+	TrinketContentBG *CellStyle // black (BG only)
 
 	// =========================================================================
-	// Basic Widget Related Colors
+	// Basic Trinket Related Colors
 	// =========================================================================
 
 	// Label
@@ -173,7 +173,7 @@ type Scheme struct {
 	PressedSplitterTitle  *CellStyle // nil = PressedSplitter
 
 	// =========================================================================
-	// Tab Widget (Page Control) Related Colors
+	// Tab Trinket (Page Control) Related Colors
 	// =========================================================================
 
 	TabsFG                *CellStyle // nil = WindowFG, currently bright white
@@ -181,8 +181,8 @@ type Scheme struct {
 	TabsButton            *CellStyle // nil = TabsFG + TabsBG
 	PressedTabsButton     *CellStyle // nil = black on white
 	DisabledTabsButton    *CellStyle // nil = DisabledTextFG on TabsBG
-	ActiveTabFG           *CellStyle // currently bright and bold yellow, nil = WidgetGroupFG
-	ActiveTabBG           *CellStyle // nil = WidgetGroupBG, currently ansi 49
+	ActiveTabFG           *CellStyle // currently bright and bold yellow, nil = TrinketGroupFG
+	ActiveTabBG           *CellStyle // nil = TrinketGroupBG, currently ansi 49
 	FocusedTab            *CellStyle // nil = FocusBG + FocusFG
 	TabCloseButton        *CellStyle // close button on tabs
 	FocusedTabCloseButton *CellStyle
@@ -192,8 +192,8 @@ type Scheme struct {
 	// List Related Colors (TreeView, ListView)
 	// =========================================================================
 
-	ListBG           *CellStyle // nil = WidgetContentBG
-	ListFG           *CellStyle // nil = WidgetContentFG
+	ListBG           *CellStyle // nil = TrinketContentBG
+	ListFG           *CellStyle // nil = TrinketContentFG
 	FocusedListBG    *CellStyle // nil = ListBG
 	FocusedListFG    *CellStyle // nil = ListFG
 	SelectedListItem *CellStyle // nil = Selection
@@ -229,7 +229,7 @@ type Scheme struct {
 type SchemeID int
 
 const (
-	// SchemeInherit means the widget inherits its scheme from its container.
+	// SchemeInherit means the trinket inherits its scheme from its container.
 	SchemeInherit SchemeID = -1
 	// SchemeDefault is the default scheme (index 0).
 	SchemeDefault SchemeID = 0
@@ -365,11 +365,11 @@ func DefaultScheme() *Scheme {
 		FocusedMenuAccelerator: ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
 		FocusedMenuShortcut:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
 
-		// Widget Group Colors
-		WidgetGroupFG:   ptr(DefaultStyle().WithFg(ColorBrightWhite)),
-		WidgetGroupBG:   ptr(DefaultStyle().WithBg(ColorBlack)),
-		WidgetContentFG: ptr(DefaultStyle().WithFg(ColorWhite)),
-		WidgetContentBG: ptr(DefaultStyle().WithBg(ColorBlack)),
+		// Trinket Group Colors
+		TrinketGroupFG:   ptr(DefaultStyle().WithFg(ColorBrightWhite)),
+		TrinketGroupBG:   ptr(DefaultStyle().WithBg(ColorBlack)),
+		TrinketContentFG: ptr(DefaultStyle().WithFg(ColorWhite)),
+		TrinketContentBG: ptr(DefaultStyle().WithBg(ColorBlack)),
 
 		// Label
 		LabelFG:         nil, // WindowFG
@@ -449,7 +449,7 @@ func DefaultScheme() *Scheme {
 		PressedSplitterHandle: nil, // PressedSplitter
 		PressedSplitterTitle:  nil, // PressedSplitter
 
-		// Tab Widget
+		// Tab Trinket
 		TabsFG:                ptr(DefaultStyle().WithFg(ColorBrightWhite)),
 		TabsBG:                ptr(DefaultStyle().WithBg(ColorBlue)), // blue tab bar background
 		TabsButton:            nil,                                   // TabsFG + TabsBG
@@ -623,12 +623,12 @@ func (s *Scheme) GetFocusedMenuItemText() CellStyle    { return or(s.FocusedMenu
 func (s *Scheme) GetFocusedMenuAccelerator() CellStyle { return or(s.FocusedMenuAccelerator) }
 func (s *Scheme) GetFocusedMenuShortcut() CellStyle    { return or(s.FocusedMenuShortcut) }
 
-// --- Widget Group Colors ---
+// --- Trinket Group Colors ---
 
-func (s *Scheme) GetWidgetGroupFG() Color   { return orFG(s.WidgetGroupFG) }
-func (s *Scheme) GetWidgetGroupBG() Color   { return orBG(s.WidgetGroupBG) }
-func (s *Scheme) GetWidgetContentFG() Color { return orFG(s.WidgetContentFG) }
-func (s *Scheme) GetWidgetContentBG() Color { return orBG(s.WidgetContentBG) }
+func (s *Scheme) GetTrinketGroupFG() Color   { return orFG(s.TrinketGroupFG) }
+func (s *Scheme) GetTrinketGroupBG() Color   { return orBG(s.TrinketGroupBG) }
+func (s *Scheme) GetTrinketContentFG() Color { return orFG(s.TrinketContentFG) }
+func (s *Scheme) GetTrinketContentBG() Color { return orBG(s.TrinketContentBG) }
 
 // --- Label Colors ---
 
@@ -926,7 +926,7 @@ func (s *Scheme) GetPressedSplitterTitle() CellStyle {
 	return s.GetPressedSplitter()
 }
 
-// --- Tab Widget Colors ---
+// --- Tab Trinket Colors ---
 
 func (s *Scheme) GetTabsFG(active bool) Color {
 	if s.TabsFG != nil {
@@ -980,14 +980,14 @@ func (s *Scheme) GetActiveTabFG() Color {
 	if s.ActiveTabFG != nil {
 		return s.ActiveTabFG.Fg
 	}
-	return s.GetWidgetGroupFG()
+	return s.GetTrinketGroupFG()
 }
 
 func (s *Scheme) GetActiveTabBG() Color {
 	if s.ActiveTabBG != nil {
 		return s.ActiveTabBG.Bg
 	}
-	return s.GetWidgetGroupBG()
+	return s.GetTrinketGroupBG()
 }
 
 func (s *Scheme) GetActiveTabAttrs() TextStyle {
@@ -1010,14 +1010,14 @@ func (s *Scheme) GetListBG() Color {
 	if s.ListBG != nil {
 		return s.ListBG.Bg
 	}
-	return s.GetWidgetContentBG()
+	return s.GetTrinketContentBG()
 }
 
 func (s *Scheme) GetListFG() Color {
 	if s.ListFG != nil {
 		return s.ListFG.Fg
 	}
-	return s.GetWidgetContentFG()
+	return s.GetTrinketContentFG()
 }
 
 func (s *Scheme) GetFocusedListBG() Color {

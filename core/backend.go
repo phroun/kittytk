@@ -117,7 +117,7 @@ type SmoothPositioner interface {
 	SmoothPositioning() bool
 }
 
-// SmoothPositioningProvider is the widget-side carrier of the same
+// SmoothPositioningProvider is the trinket-side carrier of the same
 // capability: window-manager hosts stamp it onto the windows they
 // manage, and nested window hosts (MDI panes) discover it by walking
 // their ancestry with FindSmoothPositioning.
@@ -168,7 +168,7 @@ type ArcWedgeDrawer interface {
 // (Porter-Duff over). DrawImage anchors at a unit position;
 // DrawImagePx anchors at a device pixel for sub-unit placement
 // (sprite fine positioning, animation offsets). The carrier for
-// PurfecTerm's sprites and custom glyphs, and any widget with image
+// PurfecTerm's sprites and custom glyphs, and any trinket with image
 // content.
 type ImageDrawer interface {
 	DrawImage(x, y Unit, img image.Image)
@@ -182,7 +182,7 @@ type DeviceScaler interface {
 }
 
 // GraphicalModer is the D1 mode query: a backend reports true when
-// it paints pixels rather than character cells. Widgets branch their
+// it paints pixels rather than character cells. Trinkets branch their
 // rendering on Painter.Graphical() - e.g. label-type text passes
 // style.ColorTransparent backgrounds only on graphical targets,
 // where glyphs can blend over existing pixels.
@@ -213,7 +213,7 @@ type RoundedClipper interface {
 // ResizeGripProvider reports the window resize-grip thickness (in
 // units) for graphical frames: only the outer sliver of a window
 // edge acts as a resize handle (a quarter of a layout column, never
-// less than 4 device pixels), so widgets living at the window's
+// less than 4 device pixels), so trinkets living at the window's
 // edge remain clickable. Zero means the cell-frame behavior: the
 // whole border row/column is the grip (it IS the frame there).
 // The desktop provides it; window hosts discover it by ancestry
@@ -222,10 +222,10 @@ type ResizeGripProvider interface {
 	GraphicalResizeGrip() Unit
 }
 
-// FindResizeGrip walks up the widget tree for a ResizeGripProvider.
+// FindResizeGrip walks up the trinket tree for a ResizeGripProvider.
 // Default (no provider found): 0 - classic full-cell grip zones.
-func FindResizeGrip(w Widget) Unit {
-	for current := Widget(w); current != nil; {
+func FindResizeGrip(w Trinket) Unit {
+	for current := Trinket(w); current != nil; {
 		if p, ok := current.(ResizeGripProvider); ok {
 			return p.GraphicalResizeGrip()
 		}
@@ -238,7 +238,7 @@ func FindResizeGrip(w Widget) Unit {
 	return 0
 }
 
-// GraphicalFrameProvider is the widget-side carrier of the frame
+// GraphicalFrameProvider is the trinket-side carrier of the frame
 // mode: the desktop reports true when its backend paints rounded
 // window frames, and windows discover it by walking their ancestry
 // with FindGraphicalFrames. It governs the client-area contract: on
@@ -249,11 +249,11 @@ type GraphicalFrameProvider interface {
 	GraphicalWindowFrames() bool
 }
 
-// FindGraphicalFrames walks up the widget tree for a
+// FindGraphicalFrames walks up the trinket tree for a
 // GraphicalFrameProvider. Default (no provider found): false - the
 // cell-frame client area, the only always-safe answer.
-func FindGraphicalFrames(w Widget) bool {
-	for current := Widget(w); current != nil; {
+func FindGraphicalFrames(w Trinket) bool {
+	for current := Trinket(w); current != nil; {
 		if p, ok := current.(GraphicalFrameProvider); ok {
 			return p.GraphicalWindowFrames()
 		}
@@ -272,7 +272,7 @@ func FindGraphicalFrames(w Widget) bool {
 // would be output. Callers pass the same style they would use for a
 // block cursor; the backend renders the bar in the color that block
 // would appear (the style's background). Cell surfaces omit the
-// capability and widgets fall back to their cell-idiom caret
+// capability and trinkets fall back to their cell-idiom caret
 // (reverse-video block).
 type CaretDrawer interface {
 	DrawCaret(x, y, height Unit, s style.CellStyle)
@@ -287,11 +287,11 @@ type PixelRectFiller interface {
 	FillRectPx(xPx, yPx, wPx, hPx int, s style.CellStyle)
 }
 
-// FindSmoothPositioning walks up the widget tree for a
+// FindSmoothPositioning walks up the trinket tree for a
 // SmoothPositioningProvider. Default (no provider found): false -
 // snap to cells, the only always-safe answer.
-func FindSmoothPositioning(w Widget) bool {
-	for current := Widget(w); current != nil; {
+func FindSmoothPositioning(w Trinket) bool {
+	for current := Trinket(w); current != nil; {
 		if p, ok := current.(SmoothPositioningProvider); ok {
 			return p.SmoothWindowPositioning()
 		}
@@ -405,7 +405,7 @@ type PasteEvent struct {
 func (PasteEvent) isEvent() {}
 
 // Painter provides drawing operations with automatic coordinate translation.
-// Widgets receive a Painter configured with their local coordinate system.
+// Trinkets receive a Painter configured with their local coordinate system.
 type Painter struct {
 	backend   RenderBackend
 	transform Transform
@@ -626,7 +626,7 @@ func (p *Painter) DeviceScale() int {
 }
 
 // Graphical reports whether the target paints pixels rather than
-// character cells (the D1 mode query). Widgets use it to select
+// character cells (the D1 mode query). Trinkets use it to select
 // their graphical rendering material - cell targets get the cell
 // idiom, always.
 func (p *Painter) Graphical() bool {

@@ -9,26 +9,26 @@ import (
 	"github.com/phroun/tuitk/layout"
 	"github.com/phroun/tuitk/protocol"
 	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 	"github.com/phroun/tuitk/window"
 )
 
 // The TUI Toolkit Demo window is built from protocol text: the script
 // below IS the window. Only the MDI Demo tab stays imperative (the
 // MDIPane still has G1 boundary residuals and embeds PurfecTerm),
-// attached through the surfaced TabWidget - the supported hybrid.
+// attached through the surfaced TabTrinket - the supported hybrid.
 //
-// The demo also registers its own wire type (fixedbox): widget-owned
+// The demo also registers its own wire type (fixedbox): trinket-owned
 // registration is a public API, so apps can extend the vocabulary
-// with their local widgets.
+// with their local trinkets.
 
 func init() {
 	// fixedbox: a bordered panel with pinned width (word wrap only
 	// happens under real width constraint). Demo-local type over the
-	// demo-local fixedWidthBox widget.
+	// demo-local fixedWidthBox trinket.
 	protocol.RegisterType("fixedbox", &protocol.TypeSpec{
 		New: func() any {
-			f := &fixedWidthBox{Panel: widgets.NewPanel()}
+			f := &fixedWidthBox{Panel: trinkets.NewPanel()}
 			f.SetBorder(true)
 			f.SetLayoutManager(layout.NewBoxLayout(core.Vertical))
 			return f
@@ -47,9 +47,9 @@ func init() {
 			},
 		},
 		Append: func(parent, child any) error {
-			w, ok := child.(core.Widget)
+			w, ok := child.(core.Trinket)
 			if !ok {
-				return fmt.Errorf("fixedbox: children must be widgets, got %T", child)
+				return fmt.Errorf("fixedbox: children must be trinkets, got %T", child)
 			}
 			parent.(*fixedWidthBox).AddChild(w)
 			return nil
@@ -122,9 +122,9 @@ func mainWindowScript() string {
 w=new window title="TUI Toolkit Demo" width=480 height=288 children={
 t=new tabs children={
 
-b=new tab caption="Basic Widgets" children={
+b=new tab caption="Basic Trinkets" children={
 	bw=new panel layout=vbox spacing=0 children={
-		new label caption="This is a demo of basic widgets:"
+		new label caption="This is a demo of basic trinkets:"
 		input=new textinput placeholder="Enter text here..."
 		new spacer
 		new panel layout=hbox spacing=8 children={
@@ -293,7 +293,7 @@ new tab caption="Bottom Tabs" children={
 	new tabs position=bottom children={
 		new tab caption="First" children={
 			new panel layout=vbox children={
-				new label caption="This TabWidget has tabs at the bottom."
+				new label caption="This TabTrinket has tabs at the bottom."
 				new label caption="Notice how the tab connectors are inverted:"
 				new label caption="  Top tabs use: _/ and \\_"
 				new label caption="  Bottom tabs use: \\_ and _/"
@@ -416,7 +416,7 @@ func indent(s, prefix string) string {
 // the protocol script, then wires app-side behavior: commands into
 // the registry, event handlers by surfaced ObjectID, and the one
 // imperative tab (MDI).
-func createMainWindow(desktop *widgets.Desktop, application *app.Application) *window.Window {
+func createMainWindow(desktop *trinkets.Desktop, application *app.Application) *window.Window {
 	dispatcher := protocol.NewEventDispatcher()
 	ctx := &protocol.BindContext{
 		Dispatch: func(id string) { application.Commands().Dispatch(id) },
@@ -438,9 +438,9 @@ func createMainWindow(desktop *widgets.Desktop, application *app.Application) *w
 
 	mainWindow := factory.byID[reply.IDs["w"]].(*window.Window)
 	mainWindow.SetTearable(true) // main window shows the %/# tear handle
-	tabWidget := factory.byID[reply.IDs["tabs"]].(*widgets.TabWidget)
+	tabTrinket := factory.byID[reply.IDs["tabs"]].(*trinkets.TabTrinket)
 
-	// Basic Widgets: buttons dispatch commands (slice-1 seam); the
+	// Basic Trinkets: buttons dispatch commands (slice-1 seam); the
 	// text input's change events narrate to the status bar.
 	setStatus := func(text string) {
 		if sb := desktop.StatusBar(); sb != nil {
@@ -487,8 +487,8 @@ func createMainWindow(desktop *widgets.Desktop, application *app.Application) *w
 	// Tab background color radios (Selection and Scroll Selection
 	// carry the same three options).
 	setTabBG := func(c *style.Color) {
-		tabWidget.SetBackgroundColor(c)
-		tabWidget.Update()
+		tabTrinket.SetBackgroundColor(c)
+		tabTrinket.Update()
 	}
 	bgHandler := func(c func() *style.Color) func(bool) {
 		return func(checked bool) {
@@ -508,8 +508,8 @@ func createMainWindow(desktop *widgets.Desktop, application *app.Application) *w
 	onToggle("sbggray", grayBG)
 
 	// The one imperative tab: MDIPane (G1 residuals; embeds
-	// PurfecTerm). Hybrid by design - the surfaced TabWidget is real.
-	tabWidget.AddTab("MDI Demo", createMDIDemo(desktop, application, mainWindow))
+	// PurfecTerm). Hybrid by design - the surfaced TabTrinket is real.
+	tabTrinket.AddTab("MDI Demo", createMDIDemo(desktop, application, mainWindow))
 
 	return mainWindow
 }

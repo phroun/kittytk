@@ -6,7 +6,7 @@ import (
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
 	"github.com/phroun/tuitk/raster"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 	"github.com/phroun/tuitk/window"
 )
 
@@ -18,7 +18,7 @@ func TestGridToggleRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := widgets.NewDesktop()
+	d := trinkets.NewDesktop()
 	d.SetBackend(px)
 
 	ctx := &protocol.BindContext{Dispatch: func(string) {}}
@@ -44,9 +44,9 @@ func TestGridToggleRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sp := factory.byID[spReply.IDs["spx"]].(*widgets.Splitter)
+	sp := factory.byID[spReply.IDs["spx"]].(*trinkets.Splitter)
 
-	tabs := factory.byID[reply.IDs["tabs"]].(*widgets.TabWidget)
+	tabs := factory.byID[reply.IDs["tabs"]].(*trinkets.TabTrinket)
 	for i := 0; i < tabs.Count(); i++ {
 		if tabs.TabText(i) == "Selection" {
 			tabs.SetCurrentIndex(i)

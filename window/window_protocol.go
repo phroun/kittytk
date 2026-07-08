@@ -151,12 +151,12 @@ func init() {
 			if !ok {
 				return fmt.Errorf("window: wrong parent type %T", parent)
 			}
-			cw, ok := child.(core.Widget)
+			cw, ok := child.(core.Trinket)
 			if !ok {
-				return fmt.Errorf("window: content must be a widget, got %T", child)
+				return fmt.Errorf("window: content must be a trinket, got %T", child)
 			}
 			if w.Content() != nil {
-				return fmt.Errorf("window: only one content widget (wrap several in a panel)")
+				return fmt.Errorf("window: only one content trinket (wrap several in a panel)")
 			}
 			w.SetContent(cw)
 			return nil

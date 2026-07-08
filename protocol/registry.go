@@ -8,8 +8,8 @@ import (
 )
 
 // This file is the type/property registry behind the wire vocabulary.
-// Per the owner's architecture: each widget's own codebase registers
-// its type and property mappings (widgets import protocol; protocol
+// Per the owner's architecture: each trinket's own codebase registers
+// its type and property mappings (trinkets import protocol; protocol
 // imports nothing of tuitk). The registry is write-at-init,
 // read-at-execute.
 
@@ -24,19 +24,19 @@ type BindContext struct {
 	Dispatch func(commandID string)
 
 	// Emit delivers event records to the app side. Nil when the
-	// connection does not consume events. Widgets' Bind wiring calls
+	// connection does not consume events. Trinkets' Bind wiring calls
 	// EmitEvent, which is nil-safe.
 	Emit func(*Event)
 
 	mu       sync.Mutex
 	actions  map[uint64]string
-	subs     map[uint64]map[string]bool // widgetID -> event types ("" = all; ID 0 = all widgets)
+	subs     map[uint64]map[string]bool // trinketID -> event types ("" = all; ID 0 = all trinkets)
 	suppress int
 	stash    map[string]any
 }
 
 // Stash returns the connection-scoped value under key, creating it
-// with create on first use. Widget registrations use this for shared
+// with create on first use. Trinket registrations use this for shared
 // per-connection state (e.g. named radio groups) without the protocol
 // package knowing the types involved.
 func (c *BindContext) Stash(key string, create func() any) any {
@@ -77,7 +77,7 @@ func (c *BindContext) subscribedLocked(ev *Event) bool {
 	if c.subs == nil {
 		return false
 	}
-	id, _ := ev.Widget() // 0 when the event names no widget
+	id, _ := ev.Trinket() // 0 when the event names no trinket
 	for _, wid := range [2]uint64{id, 0} {
 		if types, ok := c.subs[wid]; ok {
 			if types[""] || types[ev.Type] {
@@ -91,41 +91,41 @@ func (c *BindContext) subscribedLocked(ev *Event) bool {
 	return false
 }
 
-// Subscribe opens event flow for (widgetID, eventType). widgetID 0
-// means all widgets; eventType "" means all types.
-func (c *BindContext) Subscribe(widgetID uint64, eventType string) {
+// Subscribe opens event flow for (trinketID, eventType). trinketID 0
+// means all trinkets; eventType "" means all types.
+func (c *BindContext) Subscribe(trinketID uint64, eventType string) {
 	c.mu.Lock()
 	if c.subs == nil {
 		c.subs = make(map[uint64]map[string]bool)
 	}
-	if c.subs[widgetID] == nil {
-		c.subs[widgetID] = make(map[string]bool)
+	if c.subs[trinketID] == nil {
+		c.subs[trinketID] = make(map[string]bool)
 	}
-	c.subs[widgetID][eventType] = true
+	c.subs[trinketID][eventType] = true
 	c.mu.Unlock()
 }
 
 // Unsubscribe removes subscriptions. eventType "" removes all of the
-// widget's subscriptions; widgetID 0 with eventType "" clears the
+// trinket's subscriptions; trinketID 0 with eventType "" clears the
 // whole table.
-func (c *BindContext) Unsubscribe(widgetID uint64, eventType string) {
+func (c *BindContext) Unsubscribe(trinketID uint64, eventType string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.subs == nil {
 		return
 	}
-	if widgetID == 0 && eventType == "" {
+	if trinketID == 0 && eventType == "" {
 		c.subs = nil
 		return
 	}
 	if eventType == "" {
-		delete(c.subs, widgetID)
+		delete(c.subs, trinketID)
 		return
 	}
-	if types, ok := c.subs[widgetID]; ok {
+	if types, ok := c.subs[trinketID]; ok {
 		delete(types, eventType)
 		if len(types) == 0 {
-			delete(c.subs, widgetID)
+			delete(c.subs, trinketID)
 		}
 	}
 }
@@ -146,38 +146,38 @@ func (c *BindContext) Suppressed(f func()) {
 	f()
 }
 
-// SetAction records the command bound to a widget (action=). The
-// widget's activation wiring (set once at Bind time) consults this,
+// SetAction records the command bound to a trinket (action=). The
+// trinket's activation wiring (set once at Bind time) consults this,
 // so action can be assigned or replaced without re-wiring callbacks.
-func (c *BindContext) SetAction(widgetID uint64, commandID string) {
+func (c *BindContext) SetAction(trinketID uint64, commandID string) {
 	c.mu.Lock()
 	if c.actions == nil {
 		c.actions = make(map[uint64]string)
 	}
-	c.actions[widgetID] = commandID
+	c.actions[trinketID] = commandID
 	c.mu.Unlock()
 }
 
-// Action returns the command bound to a widget, or "".
-func (c *BindContext) Action(widgetID uint64) string {
+// Action returns the command bound to a trinket, or "".
+func (c *BindContext) Action(trinketID uint64) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.actions[widgetID]
+	return c.actions[trinketID]
 }
 
-// FireAction dispatches a widget's bound command (if any) and emits
-// the corresponding command event. Called from widget activation
+// FireAction dispatches a trinket's bound command (if any) and emits
+// the corresponding command event. Called from trinket activation
 // wiring. Inert while emissions are suppressed: a wire-initiated
 // state change (set checked, construction defaults) must not fire
 // app command handlers (D20).
-func (c *BindContext) FireAction(widgetID uint64) {
+func (c *BindContext) FireAction(trinketID uint64) {
 	c.mu.Lock()
 	suppressed := c.suppress > 0
 	c.mu.Unlock()
 	if suppressed {
 		return
 	}
-	id := c.Action(widgetID)
+	id := c.Action(trinketID)
 	if id == "" {
 		return
 	}
@@ -193,7 +193,7 @@ type PropertyApplier func(ctx *BindContext, target any, v *Value, flag FlagState
 
 // TypeSpec describes a registered builtin type.
 type TypeSpec struct {
-	// New constructs the target (a widget, or a virtual item's record).
+	// New constructs the target (a trinket, or a virtual item's record).
 	New func() any
 
 	// Props maps property names to appliers. Type-specific properties
@@ -205,7 +205,7 @@ type TypeSpec struct {
 	Append func(parent, child any) error
 
 	// Bind wires the target's event emission into the connection
-	// (called once, immediately after New). Widget codebases own this
+	// (called once, immediately after New). Trinket codebases own this
 	// wiring, same as their property registration. Optional.
 	Bind func(ctx *BindContext, target any)
 
@@ -219,7 +219,7 @@ type TypeSpec struct {
 	Destroy func(target any) error
 
 	// Virtual marks pseudo-object types (e.g. combobox items): they
-	// skip common properties and widget identity.
+	// skip common properties and trinket identity.
 	Virtual bool
 }
 
@@ -283,7 +283,7 @@ var virtualIDCounter atomic.Uint64
 var virtualIDSource = func() uint64 { return virtualIDCounter.Add(1) }
 
 // SetVirtualIDSource installs the allocator used for Virtual objects'
-// IDs. Call once at init, before any factory runs; the widget package
+// IDs. Call once at init, before any factory runs; the trinket package
 // points this at the same counter that issues real object IDs.
 func SetVirtualIDSource(fn func() uint64) {
 	if fn != nil {
@@ -311,7 +311,7 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 	spec := regTypes[typeName]
 	regMu.RUnlock()
 	if spec == nil {
-		return nil, fmt.Errorf("unknown widget type %q", typeName)
+		return nil, fmt.Errorf("unknown trinket type %q", typeName)
 	}
 	o := &registryObject{ctx: f.ctx, spec: spec, target: spec.New()}
 	if spec.Virtual {
@@ -335,7 +335,7 @@ type registryObject struct {
 	virtualID uint64
 }
 
-// Target exposes the constructed object (the widget) so the embedding
+// Target exposes the constructed object (the trinket) so the embedding
 // application can, e.g., set a built tree as window content.
 func (o *registryObject) Target() any { return o.target }
 
@@ -385,12 +385,12 @@ func (o *registryObject) Destroy() error {
 
 // EventControl is implemented by RegistryFactory so the session's
 // sub/unsub verbs and echo suppression reach the connection's
-// BindContext without the session knowing about widgets.
-func (f *RegistryFactory) Subscribe(widgetID uint64, eventType string) {
-	f.ctx.Subscribe(widgetID, eventType)
+// BindContext without the session knowing about trinkets.
+func (f *RegistryFactory) Subscribe(trinketID uint64, eventType string) {
+	f.ctx.Subscribe(trinketID, eventType)
 }
-func (f *RegistryFactory) Unsubscribe(widgetID uint64, eventType string) {
-	f.ctx.Unsubscribe(widgetID, eventType)
+func (f *RegistryFactory) Unsubscribe(trinketID uint64, eventType string) {
+	f.ctx.Unsubscribe(trinketID, eventType)
 }
 func (f *RegistryFactory) Suppressed(fn func()) { f.ctx.Suppressed(fn) }
 

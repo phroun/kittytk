@@ -594,7 +594,7 @@ func DefaultShortcuts() *ShortcutMap {
 	m.Set(StandardActions.Replace, "^H")
 
 	// Note: Tab, S-Tab, Escape, Enter are handled by Window's FocusManager
-	// and dialog widgets directly, not through the global shortcut system.
+	// and dialog trinkets directly, not through the global shortcut system.
 
 	return m
 }

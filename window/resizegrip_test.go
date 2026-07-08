@@ -7,7 +7,7 @@ import (
 )
 
 // Graphical frames narrow the resize grip to the outer edge sliver
-// so widgets at the window edge stay clickable; cell frames keep the
+// so trinkets at the window edge stay clickable; cell frames keep the
 // classic full-cell zones.
 func TestResizeGripNarrowsEdgeZones(t *testing.T) {
 	m, win := newPositioningManager(true)

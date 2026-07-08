@@ -6,7 +6,7 @@ import (
 	"github.com/phroun/tuitk/core"
 )
 
-// The registered fallback chain must cover the glyphs widget chrome
+// The registered fallback chain must cover the glyphs trinket chrome
 // draws (tree/list markers, scrollbar runes) and the scripts the
 // bundled faces promise (Hebrew) - a rune nothing covers renders as
 // .notdef tofu.

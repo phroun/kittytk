@@ -4,7 +4,7 @@
 
 Added mouse event forwarding from tuitk to embedded PurfecTerm CLI instances.
 
-**Initial Commit:** `a7b29ed` - "Add mouse event forwarding to PurfecTerm widget"
+**Initial Commit:** `a7b29ed` - "Add mouse event forwarding to PurfecTerm trinket"
 **Drag Fix Commit:** (pending) - "Fix mouse drag events by tracking held button state"
 **Date:** 2026-03-10
 **Branch:** `claude/document-menu-colors-Dd2pR`
@@ -22,7 +22,7 @@ of relying on the event's `Buttons` field.
 
 ## Changes Made
 
-### File: `widgets/purfecterm.go`
+### File: `trinkets/purfecterm.go`
 
 #### Added import
 ```go
@@ -180,7 +180,7 @@ git revert a7b29ed
 
 ### Option 2: Manual revert
 
-1. Remove `"fmt"` from imports in `widgets/purfecterm.go`
+1. Remove `"fmt"` from imports in `trinkets/purfecterm.go`
 
 2. Replace the entire `HandleMousePress` function with:
 ```go

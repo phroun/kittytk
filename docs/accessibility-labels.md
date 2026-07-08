@@ -2,7 +2,7 @@
 
 ## Current State
 
-Some widgets already have built-in labels:
+Some trinkets already have built-in labels:
 - Checkbox: text beside the checkbox
 - RadioButton: text beside the radio button
 - Button: button text
@@ -53,10 +53,10 @@ Some widgets already have built-in labels:
 | Pattern | Example | Association |
 |---------|---------|-------------|
 | **Preceding** | `[Name:] [____]` | Label -> next focusable |
-| **Above** | `Items:` newline `[ListView]` | Label -> widget below |
-| **Suffix** | `[___] years old` | Label -> preceding widget |
+| **Above** | `Items:` newline `[ListView]` | Label -> trinket below |
+| **Suffix** | `[___] years old` | Label -> preceding trinket |
 | **Group header** | `Address:` newline `Street, City, Zip` | Label -> all in group |
-| **Descriptive** | `[input]` newline `Must be 8+ chars` | Widget -> description below |
+| **Descriptive** | `[input]` newline `Must be 8+ chars` | Trinket -> description below |
 
 ## Label Types to Distinguish
 
@@ -67,9 +67,9 @@ Some widgets already have built-in labels:
 
 ## Implementation Options
 
-1. **Explicit association**: `label.SetLabelFor(widget)` or `widget.SetAccessibleLabel(label)`
-2. **Layout-based**: BoxLayout knows preceding Label should label next focusable widget
-3. **Name-based**: Widget's accessible name is set directly without Label widget
+1. **Explicit association**: `label.SetLabelFor(trinket)` or `trinket.SetAccessibleLabel(label)`
+2. **Layout-based**: BoxLayout knows preceding Label should label next focusable trinket
+3. **Name-based**: Trinket's accessible name is set directly without Label trinket
 4. **Proximity-based**: Automatic detection based on layout position
 
 ## Decision Needed

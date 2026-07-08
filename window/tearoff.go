@@ -51,7 +51,7 @@ type TearOffHost struct {
 	// resizeGrip is the edge thickness (units) that starts a resize.
 	// Defaults to tearResizeGrip; the desktop overrides it to match its
 	// own in-surface grip so torn edges are the same width as docked
-	// ones (and don't overlap edge widgets like scrollbars).
+	// ones (and don't overlap edge trinkets like scrollbars).
 	resizeGrip core.Unit
 	startGX    int // global pointer at resize start, px
 	startGY    int
@@ -76,10 +76,10 @@ type TearOffHost struct {
 	lastClickY  core.Unit
 
 	// Popup overlays (combobox dropdowns, context menus) opened by
-	// widgets inside the torn window: they belong to THIS surface.
+	// trinkets inside the torn window: they belong to THIS surface.
 	popups []*PopupOverlay
 
-	// Clipboard bridge for widgets that have no desktop in their
+	// Clipboard bridge for trinkets that have no desktop in their
 	// ancestry while torn (the desktop wires the platform clipboard).
 	clipGet func() string
 	clipSet func(string)
@@ -131,7 +131,7 @@ func NewTearOffHost(win *Window, surf platform.Surface, scale int,
 		h.scale = 1
 	}
 
-	// Popups from the torn window's widgets open on this surface.
+	// Popups from the torn window's trinkets open on this surface.
 	win.SetPopupController(h)
 	if content := win.Content(); content != nil {
 		stampPopupController(content, h)
@@ -308,14 +308,14 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	h.applyCursor(h.win.CursorShapeAt(x, y))
 }
 
-// SetClipboardAccess bridges the platform clipboard to widgets in the
+// SetClipboardAccess bridges the platform clipboard to trinkets in the
 // torn window (their ancestry has no desktop to ask).
 func (h *TearOffHost) SetClipboardAccess(get func() string, set func(string)) {
 	h.clipGet = get
 	h.clipSet = set
 }
 
-// Clipboard exposes the bridge (widgets discover it through their
+// Clipboard exposes the bridge (trinkets discover it through their
 // popup controller).
 func (h *TearOffHost) Clipboard() string {
 	if h.clipGet == nil {
@@ -362,8 +362,8 @@ func (h *TearOffHost) UnregisterPopup(id string) {
 // MapToScreen implements core.PopupController: the torn window fills
 // its surface at the origin, so ancestry coordinates ARE surface
 // coordinates.
-func (h *TearOffHost) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
-	return MapWidgetToScreen(widget, local)
+func (h *TearOffHost) MapToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoint {
+	return MapTrinketToScreen(trinket, local)
 }
 
 // ScreenBounds implements core.PopupController.
@@ -596,7 +596,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		}
 		handled = true
 	}
-	// Parity contract: repaint after input until widgets migrate to
+	// Parity contract: repaint after input until trinkets migrate to
 	// precise invalidation.
 	h.surf.Invalidate(core.UnitRect{})
 	return handled

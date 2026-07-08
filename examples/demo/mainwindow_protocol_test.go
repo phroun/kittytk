@@ -6,13 +6,13 @@ import (
 
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 	"github.com/phroun/tuitk/window"
 )
 
 // The main demo window is protocol text; this guards that the script
 // executes, surfaces every key the handlers depend on, and resolves
-// them to the right widget types.
+// them to the right trinket types.
 func TestMainWindowScriptBuilds(t *testing.T) {
 	ctx := &protocol.BindContext{Dispatch: func(string) {}}
 	factory := &idCaptureFactory{
@@ -31,9 +31,9 @@ func TestMainWindowScriptBuilds(t *testing.T) {
 	if _, ok := factory.byID[reply.IDs["w"]].(*window.Window); !ok {
 		t.Errorf("w is %T, want *window.Window", factory.byID[reply.IDs["w"]])
 	}
-	tw, ok := factory.byID[reply.IDs["tabs"]].(*widgets.TabWidget)
+	tw, ok := factory.byID[reply.IDs["tabs"]].(*trinkets.TabTrinket)
 	if !ok {
-		t.Fatalf("tabs is %T, want *widgets.TabWidget", factory.byID[reply.IDs["tabs"]])
+		t.Fatalf("tabs is %T, want *trinkets.TabTrinket", factory.byID[reply.IDs["tabs"]])
 	}
 	// Eight protocol tabs; MDI joins imperatively at runtime.
 	if tw.Count() != 8 {
@@ -41,16 +41,16 @@ func TestMainWindowScriptBuilds(t *testing.T) {
 	}
 
 	for key, want := range map[string]string{
-		"binput":   "*widgets.TextInput",
-		"wfont":    "*widgets.Checkbox",
-		"dfont":    "*widgets.Checkbox",
-		"grid":     "*widgets.Checkbox",
-		"bgdef":    "*widgets.RadioButton",
-		"bggreen":  "*widgets.RadioButton",
-		"bggray":   "*widgets.RadioButton",
-		"sbgdef":   "*widgets.RadioButton",
-		"sbggreen": "*widgets.RadioButton",
-		"sbggray":  "*widgets.RadioButton",
+		"binput":   "*trinkets.TextInput",
+		"wfont":    "*trinkets.Checkbox",
+		"dfont":    "*trinkets.Checkbox",
+		"grid":     "*trinkets.Checkbox",
+		"bgdef":    "*trinkets.RadioButton",
+		"bggreen":  "*trinkets.RadioButton",
+		"bggray":   "*trinkets.RadioButton",
+		"sbgdef":   "*trinkets.RadioButton",
+		"sbggreen": "*trinkets.RadioButton",
+		"sbggray":  "*trinkets.RadioButton",
 	} {
 		id, ok := reply.IDs[key]
 		if !ok {
@@ -65,12 +65,12 @@ func TestMainWindowScriptBuilds(t *testing.T) {
 
 func typeName(v any) string {
 	switch v.(type) {
-	case *widgets.TextInput:
-		return "*widgets.TextInput"
-	case *widgets.Checkbox:
-		return "*widgets.Checkbox"
-	case *widgets.RadioButton:
-		return "*widgets.RadioButton"
+	case *trinkets.TextInput:
+		return "*trinkets.TextInput"
+	case *trinkets.Checkbox:
+		return "*trinkets.Checkbox"
+	case *trinkets.RadioButton:
+		return "*trinkets.RadioButton"
 	default:
 		return "other"
 	}
@@ -101,15 +101,15 @@ func TestMainWindowPaint(t *testing.T) {
 	w.Layout()
 	w.Paint(core.NewPainter(g))
 	out := g.dump()
-	t.Logf("main window (Basic Widgets tab):\n%s", out)
+	t.Logf("main window (Basic Trinkets tab):\n%s", out)
 
 	// (The text input is the window's first focusable, so it paints
 	// focused - fill, no placeholder text - same as the imperative
 	// version did.)
 	for _, want := range []string{
 		"TUI Toolkit Demo",
-		"Basic Widgets",
-		"This is a demo of basic widgets:",
+		"Basic Trinkets",
+		"This is a demo of basic trinkets:",
 		"OK",
 		"Cancel",
 		"Apply",

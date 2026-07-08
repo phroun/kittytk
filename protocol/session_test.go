@@ -60,7 +60,7 @@ func newMockFactory(types ...string) *mockFactory {
 
 func (f *mockFactory) New(typeName string) (Object, error) {
 	if !f.known[typeName] {
-		return nil, fmt.Errorf("unknown widget type %q", typeName)
+		return nil, fmt.Errorf("unknown trinket type %q", typeName)
 	}
 	f.nextID++
 	obj := &mockObject{id: f.nextID, typeName: typeName}

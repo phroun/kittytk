@@ -54,8 +54,8 @@ type WindowManager struct {
 	// Modal window stack
 	modalStack []*Window
 
-	// Desktop/root widget (what's behind all windows)
-	desktop core.Widget
+	// Desktop/root trinket (what's behind all windows)
+	desktop core.Trinket
 
 	// Screen bounds
 	screenBounds core.UnitRect
@@ -127,7 +127,7 @@ type WindowManager struct {
 
 	// resizeGrip narrows the resize-handle zones on graphical frames
 	// to the outer sliver of each edge (units; 0 = classic cell-wide
-	// zones), so widgets at a window's edge remain clickable.
+	// zones), so trinkets at a window's edge remain clickable.
 	resizeGrip core.Unit
 }
 
@@ -241,7 +241,7 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	bottomBand := metrics.CellHeight
 
 	// Graphical frames: only the outer sliver of an edge is the grip,
-	// so edge widgets stay clickable (the frame is a hairline, not a
+	// so edge trinkets stay clickable (the frame is a hairline, not a
 	// cell band).
 	m.mu.RLock()
 	grip := m.resizeGrip
@@ -390,7 +390,7 @@ func resizeCursorForEdge(edge int) core.CursorShape {
 
 // CursorAt resolves the mouse cursor for a desktop-coordinate point: a
 // resize cursor when over a window's size-sensitive edge, otherwise the
-// cursor requested by the widget under the pointer (e.g. a text I-beam),
+// cursor requested by the trinket under the pointer (e.g. a text I-beam),
 // or the default arrow.
 func (m *WindowManager) CursorAt(x, y core.Unit) core.CursorShape {
 	win := m.topWindowAt(x, y)
@@ -422,8 +422,8 @@ func (m *WindowManager) ClearResizeHover() {
 	}
 }
 
-// SetDesktop sets the desktop widget (background behind windows).
-func (m *WindowManager) SetDesktop(desktop core.Widget) {
+// SetDesktop sets the desktop trinket (background behind windows).
+func (m *WindowManager) SetDesktop(desktop core.Trinket) {
 	m.mu.Lock()
 	m.desktop = desktop
 	bounds := m.screenBounds
@@ -435,8 +435,8 @@ func (m *WindowManager) SetDesktop(desktop core.Widget) {
 	}
 }
 
-// Desktop returns the desktop widget.
-func (m *WindowManager) Desktop() core.Widget {
+// Desktop returns the desktop trinket.
+func (m *WindowManager) Desktop() core.Trinket {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.desktop
@@ -527,7 +527,7 @@ func (m *WindowManager) AddWindow(win *Window) {
 
 	win.SetSmoothPositioning(smooth)
 
-	// Set window's parent to desktop so widgets can traverse up to find timer provider
+	// Set window's parent to desktop so trinkets can traverse up to find timer provider
 	if desktop != nil {
 		if container, ok := desktop.(core.Container); ok {
 			win.SetParent(container)
@@ -557,7 +557,7 @@ func (m *WindowManager) AddWindow(win *Window) {
 		return m.ClientArea()
 	})
 
-	// Set popup controller on window and its content so widgets can use overlays
+	// Set popup controller on window and its content so trinkets can use overlays
 	win.SetPopupController(m)
 	if content := win.Content(); content != nil {
 		m.setPopupControllerRecursive(content)
@@ -578,30 +578,30 @@ func (m *WindowManager) AddWindow(win *Window) {
 }
 
 // setPopupControllerRecursive sets this WindowManager as the popup controller
-// for a widget and all its descendants.
-func (m *WindowManager) setPopupControllerRecursive(widget core.Widget) {
-	stampPopupController(widget, m)
+// for a trinket and all its descendants.
+func (m *WindowManager) setPopupControllerRecursive(trinket core.Trinket) {
+	stampPopupController(trinket, m)
 }
 
-// stampPopupController assigns the popup controller to a widget and
+// stampPopupController assigns the popup controller to a trinket and
 // its whole subtree. The WindowManager stamps windows it manages; a
 // TearOffHost stamps its torn window so popups (combobox dropdowns,
 // context menus) open on the torn surface instead of the desktop's.
-func stampPopupController(widget core.Widget, pc core.PopupController) {
-	if setter, ok := widget.(interface{ SetPopupController(core.PopupController) }); ok {
+func stampPopupController(trinket core.Trinket, pc core.PopupController) {
+	if setter, ok := trinket.(interface{ SetPopupController(core.PopupController) }); ok {
 		setter.SetPopupController(pc)
 	}
-	// Prefer AllChildren over Children: a TabWidget's Children() is only the
+	// Prefer AllChildren over Children: a TabTrinket's Children() is only the
 	// active tab, so a combobox on an inactive tab would keep a stale
 	// controller (e.g. the desktop's, from when its tab was last active) and
 	// open its popup on the wrong surface after the window is torn off.
-	if ac, ok := widget.(interface{ AllChildren() []core.Widget }); ok {
+	if ac, ok := trinket.(interface{ AllChildren() []core.Trinket }); ok {
 		for _, child := range ac.AllChildren() {
 			stampPopupController(child, pc)
 		}
 		return
 	}
-	if container, ok := widget.(core.Container); ok {
+	if container, ok := trinket.(core.Container); ok {
 		for _, child := range container.Children() {
 			stampPopupController(child, pc)
 		}
@@ -657,9 +657,9 @@ func (m *WindowManager) RemoveWindow(win *Window) {
 	// Activate the new active window
 	if newActive != nil {
 		newActive.SetActive(true)
-		// Focus the window's first widget if no widget is focused
+		// Focus the window's first trinket if no trinket is focused
 		if fm := newActive.FocusManager(); fm != nil {
-			if fm.FocusedWidget() == nil {
+			if fm.FocusedTrinket() == nil {
 				fm.FocusFirst()
 			}
 		}
@@ -742,9 +742,9 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 	}
 	if win != nil {
 		win.SetActive(true)
-		// Focus the window's first widget if no widget is focused
+		// Focus the window's first trinket if no trinket is focused
 		if fm := win.FocusManager(); fm != nil {
-			if fm.FocusedWidget() == nil {
+			if fm.FocusedTrinket() == nil {
 				fm.FocusFirst()
 			}
 		}
@@ -823,9 +823,9 @@ func (m *WindowManager) FocusWindow(win *Window) {
 	}
 	if win != nil {
 		win.SetActive(true)
-		// Focus the window's first widget if no widget is focused
+		// Focus the window's first trinket if no trinket is focused
 		if fm := win.FocusManager(); fm != nil {
-			if fm.FocusedWidget() == nil {
+			if fm.FocusedTrinket() == nil {
 				fm.FocusFirst()
 			}
 		}
@@ -1010,22 +1010,22 @@ func (m *WindowManager) HasPopups() bool {
 }
 
 // MapToScreen implements core.PopupController.
-func (m *WindowManager) MapToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
-	return MapWidgetToScreen(widget, local)
+func (m *WindowManager) MapToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoint {
+	return MapTrinketToScreen(trinket, local)
 }
 
-// MapWidgetToScreen converts local widget coordinates to surface
+// MapTrinketToScreen converts local trinket coordinates to surface
 // coordinates by walking the ancestry, exchanging denominations at
 // each re-denominating container boundary. Pure ancestry - both the
 // WindowManager and a TearOffHost use it.
-func MapWidgetToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint {
-	// Traverse up the widget hierarchy to accumulate offsets.
-	// Each widget's Bounds().X/Y is its position within its parent,
+func MapTrinketToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoint {
+	// Traverse up the trinket hierarchy to accumulate offsets.
+	// Each trinket's Bounds().X/Y is its position within its parent,
 	// denominated in the parent's currency. The accumulated point is
 	// kept in the currency of the space it currently describes.
 	result := local
 
-	current := widget
+	current := trinket
 	for current != nil {
 		parent := current.Parent()
 
@@ -1062,7 +1062,7 @@ func MapWidgetToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint 
 			result.Y -= oy
 		} else if scroller, ok := parent.(core.ScrollOffsetProvider); ok {
 			pm := core.DefaultCellMetrics()
-			if pw, ok := parent.(core.Widget); ok {
+			if pw, ok := parent.(core.Trinket); ok {
 				pm = core.FindEffectiveCellMetrics(pw)
 			}
 			scrollX, scrollY := scroller.ScrollOffset()
@@ -1082,7 +1082,7 @@ func MapWidgetToScreen(widget core.Widget, local core.UnitPoint) core.UnitPoint 
 			result.Y += offset.Y
 		}
 
-		if pw, ok := parent.(core.Widget); ok {
+		if pw, ok := parent.(core.Trinket); ok {
 			current = pw
 		} else {
 			break
@@ -1098,15 +1098,15 @@ func (m *WindowManager) ScreenCellMetrics() core.CellMetrics {
 	m.mu.RLock()
 	desktop := m.desktop
 	m.mu.RUnlock()
-	if dw, ok := desktop.(core.Widget); ok && dw != nil {
+	if dw, ok := desktop.(core.Trinket); ok && dw != nil {
 		return core.FindEffectiveCellMetrics(dw)
 	}
 	return core.DefaultCellMetrics()
 }
 
-// widgetIsInWindow checks if a widget is contained within a window.
-func (m *WindowManager) widgetIsInWindow(widget core.Widget, win *Window) bool {
-	current := widget
+// trinketIsInWindow checks if a trinket is contained within a window.
+func (m *WindowManager) trinketIsInWindow(trinket core.Trinket, win *Window) bool {
+	current := trinket
 	for current != nil {
 		if current == win.Content() {
 			return true
@@ -1115,7 +1115,7 @@ func (m *WindowManager) widgetIsInWindow(widget core.Widget, win *Window) bool {
 		if parent == nil {
 			break
 		}
-		if pw, ok := parent.(core.Widget); ok {
+		if pw, ok := parent.(core.Trinket); ok {
 			current = pw
 		} else {
 			break
@@ -1747,14 +1747,14 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		}
 	}
 
-	// Forward to active window (for splitter/widget dragging, but not if minimized)
+	// Forward to active window (for splitter/trinket dragging, but not if minimized)
 	if active != nil && !active.IsMinimized() {
 		bounds := m.displayBounds(active)
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
 		if active.HandleMouseMove(localEvent) {
-			// Request repaint since widget state may have changed
+			// Request repaint since trinket state may have changed
 			m.RequestRepaint()
 			return true
 		}
@@ -1845,14 +1845,14 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		}
 	}
 
-	// Forward to active window (for splitter/widget release, but not if minimized)
+	// Forward to active window (for splitter/trinket release, but not if minimized)
 	if active != nil && !active.IsMinimized() {
 		bounds := m.displayBounds(active)
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
 		if active.HandleMouseRelease(localEvent) {
-			// Request repaint since widget state may have changed
+			// Request repaint since trinket state may have changed
 			m.RequestRepaint()
 			return true
 		}

@@ -12,7 +12,7 @@ import (
 func TestContentClickClearsTitleFocus(t *testing.T) {
 	win := NewWindow("focustest")
 	win.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 200, Height: 120})
-	content := newClickWidget()
+	content := newClickTrinket()
 	win.SetContent(content)
 	win.Layout()
 
@@ -38,7 +38,7 @@ func TestContentClickClearsTitleFocus(t *testing.T) {
 func TestTitleBarClickKeepsTitleContext(t *testing.T) {
 	win := NewWindow("focustest")
 	win.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 200, Height: 120})
-	win.SetContent(newClickWidget())
+	win.SetContent(newClickTrinket())
 	win.Layout()
 	win.SetTitleFocus(TitleFocusMaximize)
 

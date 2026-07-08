@@ -7,7 +7,7 @@ import (
 	"os"
 
 	sdlplat "github.com/phroun/tuitk/sdl"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 )
 
 // The graphical demo: the SAME demo application, rendered as pixels
@@ -25,7 +25,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	desktop := widgets.NewDesktop()
+	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(pixelBackend)
 
 	buildDemo(desktop)

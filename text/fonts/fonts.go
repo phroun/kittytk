@@ -26,7 +26,7 @@ var MonoBold []byte
 
 // Fallback-only faces: never selected by name in the UI, but they
 // extend per-rune coverage (geometric shapes and other symbols used
-// by widget chrome; Hebrew).
+// by trinket chrome; Hebrew).
 
 //go:embed NotoSansSymbols2-Regular.ttf
 var Symbols2Regular []byte

@@ -6,9 +6,9 @@ import (
 	"github.com/phroun/tuitk/core"
 )
 
-// ibeamContent is a minimal content widget that requests the text cursor.
+// ibeamContent is a minimal content trinket that requests the text cursor.
 type ibeamContent struct {
-	core.WidgetBase
+	core.TrinketBase
 }
 
 func (c *ibeamContent) CursorShape() core.CursorShape { return core.CursorText }
@@ -36,7 +36,7 @@ func TestCursorAtResolvesEdgeAndContent(t *testing.T) {
 	m := NewWindowManager()
 	w := NewWindow("w")
 	content := &ibeamContent{}
-	content.WidgetBase = *core.NewWidgetBase()
+	content.TrinketBase = *core.NewTrinketBase()
 	w.SetContent(content)
 	w.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 120})
 	m.AddWindow(w)
@@ -46,7 +46,7 @@ func TestCursorAtResolvesEdgeAndContent(t *testing.T) {
 	if got := m.CursorAt(299, 160); got != core.CursorResizeH {
 		t.Errorf("right edge cursor = %v, want CursorResizeH", got)
 	}
-	// Over the content interior -> the text I-beam from the content widget.
+	// Over the content interior -> the text I-beam from the content trinket.
 	if got := m.CursorAt(200, 160); got != core.CursorText {
 		t.Errorf("content cursor = %v, want CursorText", got)
 	}
@@ -59,7 +59,7 @@ func TestCursorAtResolvesEdgeAndContent(t *testing.T) {
 func TestWindowCursorShapeAtTitleBarIsDefault(t *testing.T) {
 	w := NewWindow("w")
 	content := &ibeamContent{}
-	content.WidgetBase = *core.NewWidgetBase()
+	content.TrinketBase = *core.NewTrinketBase()
 	w.SetContent(content)
 	w.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 200, Height: 120})
 	w.Layout()
@@ -115,7 +115,7 @@ func TestDetachedWindowClientAreaBounded(t *testing.T) {
 	w := NewWindow("w")
 	w.SetDetached(true)
 	mb := &ibeamContent{}
-	mb.WidgetBase = *core.NewWidgetBase()
+	mb.TrinketBase = *core.NewTrinketBase()
 	w.SetWindowMenuBar(mb)
 	w.SetBounds(core.UnitRect{Width: 400, Height: 300})
 	w.Layout()

@@ -8,7 +8,7 @@ import (
 
 // A window with no chrome of its own (a torn-off child) services its
 // app's shortcuts through the resolver the desktop installs, checked
-// before the focused widget sees the key.
+// before the focused trinket sees the key.
 func TestShortcutResolverHandlesKey(t *testing.T) {
 	win := NewWindow("child")
 
@@ -43,7 +43,7 @@ func TestShortcutResolverHandlesKey(t *testing.T) {
 }
 
 // Raw key input makes the window pass its next key straight to the
-// focused widget, bypassing its own shortcut handling, then fires the
+// focused trinket, bypassing its own shortcut handling, then fires the
 // done callback and reverts to normal (one-shot) handling.
 func TestBeginRawKeyInputBypassesShortcuts(t *testing.T) {
 	win := NewWindow("term")

@@ -134,15 +134,15 @@ func paintScript(t *testing.T, script string) string {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	rootWidget, _ := factory.byID[reply.IDs["root"]].(core.Widget)
-	if rootWidget == nil {
-		t.Fatal("no root widget")
+	rootTrinket, _ := factory.byID[reply.IDs["root"]].(core.Trinket)
+	if rootTrinket == nil {
+		t.Fatal("no root trinket")
 	}
 
 	g := newGridBackend(50, 14)
 	w := window.NewWindow("T")
 	w.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 8 * 50, Height: 16 * 14})
-	w.SetContent(rootWidget)
+	w.SetContent(rootTrinket)
 	w.Layout()
 	w.Paint(core.NewPainter(g))
 	return g.dump()

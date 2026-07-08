@@ -3,7 +3,7 @@ package core
 
 // The following types use int for cell-based coordinates.
 // These are used internally by backends for actual rendering.
-// Widgets should use the Unit-based types from units.go for
+// Trinkets should use the Unit-based types from units.go for
 // resolution-independent layout.
 
 // Point represents a 2D coordinate in cells/pixels.
@@ -121,7 +121,7 @@ const (
 	Vertical
 )
 
-// SizePolicy controls how a widget resizes.
+// SizePolicy controls how a trinket resizes.
 type SizePolicy int
 
 const (
@@ -144,7 +144,7 @@ func NewSizePolicy(h, v SizePolicy) SizePolicyPair {
 	return SizePolicyPair{Horizontal: h, Vertical: v}
 }
 
-// FocusPolicy controls how a widget receives focus.
+// FocusPolicy controls how a trinket receives focus.
 type FocusPolicy int
 
 const (

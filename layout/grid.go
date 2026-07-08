@@ -1,13 +1,13 @@
-// Package layout provides layout managers for arranging widgets.
+// Package layout provides layout managers for arranging trinkets.
 package layout
 
 import (
 	"github.com/phroun/tuitk/core"
 )
 
-// GridItem represents a widget placed in a grid.
+// GridItem represents a trinket placed in a grid.
 type GridItem struct {
-	Widget     core.Widget
+	Trinket    core.Trinket
 	Row        int
 	Column     int
 	RowSpan    int
@@ -15,7 +15,7 @@ type GridItem struct {
 	Align      core.Alignment
 }
 
-// GridLayout arranges widgets in a grid of rows and columns.
+// GridLayout arranges trinkets in a grid of rows and columns.
 // This is similar to Qt's QGridLayout.
 type GridLayout struct {
 	BaseLayout
@@ -36,13 +36,13 @@ func NewGridLayout() *GridLayout {
 	}
 }
 
-// AddWidget adds a widget at the specified position.
-func (l *GridLayout) AddWidget(widget core.Widget, row, column int) {
-	l.AddWidgetWithSpan(widget, row, column, 1, 1)
+// AddTrinket adds a trinket at the specified position.
+func (l *GridLayout) AddTrinket(trinket core.Trinket, row, column int) {
+	l.AddTrinketWithSpan(trinket, row, column, 1, 1)
 }
 
-// AddWidgetWithSpan adds a widget that spans multiple cells.
-func (l *GridLayout) AddWidgetWithSpan(widget core.Widget, row, column, rowSpan, columnSpan int) {
+// AddTrinketWithSpan adds a trinket that spans multiple cells.
+func (l *GridLayout) AddTrinketWithSpan(trinket core.Trinket, row, column, rowSpan, columnSpan int) {
 	if rowSpan < 1 {
 		rowSpan = 1
 	}
@@ -50,7 +50,7 @@ func (l *GridLayout) AddWidgetWithSpan(widget core.Widget, row, column, rowSpan,
 		columnSpan = 1
 	}
 	l.items = append(l.items, &GridItem{
-		Widget:     widget,
+		Trinket:    trinket,
 		Row:        row,
 		Column:     column,
 		RowSpan:    rowSpan,
@@ -163,7 +163,7 @@ func (l *GridLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 		// Apply alignment
 		itemBounds = l.alignItem(item, itemBounds)
-		item.Widget.SetBounds(itemBounds)
+		item.Trinket.SetBounds(itemBounds)
 	}
 }
 
@@ -176,10 +176,10 @@ func (l *GridLayout) calculateColumnWidths(available core.Unit, cols int) []core
 		// Start with configured minimum
 		minWidth := l.columnMinWidth[c]
 
-		// Check widgets in this column
+		// Check trinkets in this column
 		for _, item := range l.items {
 			if item.Column == c && item.ColumnSpan == 1 {
-				hint := item.Widget.SizeHint()
+				hint := item.Trinket.SizeHint()
 				if hint.Width > minWidth {
 					minWidth = hint.Width
 				}
@@ -208,10 +208,10 @@ func (l *GridLayout) calculateRowHeights(available core.Unit, rows int) []core.U
 		// Start with configured minimum
 		minHeight := l.rowMinHeight[r]
 
-		// Check widgets in this row
+		// Check trinkets in this row
 		for _, item := range l.items {
 			if item.Row == r && item.RowSpan == 1 {
-				hint := item.Widget.SizeHint()
+				hint := item.Trinket.SizeHint()
 				if hint.Height > minHeight {
 					minHeight = hint.Height
 				}
@@ -233,7 +233,7 @@ func (l *GridLayout) calculateRowHeights(available core.Unit, rows int) []core.U
 
 // alignItem adjusts item bounds based on alignment.
 func (l *GridLayout) alignItem(item *GridItem, bounds core.UnitRect) core.UnitRect {
-	hint := item.Widget.SizeHint()
+	hint := item.Trinket.SizeHint()
 
 	// Horizontal alignment
 	switch item.Align {
@@ -289,7 +289,7 @@ func (l *GridLayout) SizeHint(container core.Container) core.UnitSize {
 		colWidths[c] = l.columnMinWidth[c]
 		for _, item := range l.items {
 			if item.Column == c && item.ColumnSpan == 1 {
-				hint := item.Widget.SizeHint()
+				hint := item.Trinket.SizeHint()
 				if hint.Width > colWidths[c] {
 					colWidths[c] = hint.Width
 				}
@@ -303,7 +303,7 @@ func (l *GridLayout) SizeHint(container core.Container) core.UnitSize {
 		rowHeights[r] = l.rowMinHeight[r]
 		for _, item := range l.items {
 			if item.Row == r && item.RowSpan == 1 {
-				hint := item.Widget.SizeHint()
+				hint := item.Trinket.SizeHint()
 				if hint.Height > rowHeights[r] {
 					rowHeights[r] = hint.Height
 				}
@@ -346,7 +346,7 @@ func (l *GridLayout) MinimumSize(container core.Container) core.UnitSize {
 		colWidths[c] = l.columnMinWidth[c]
 		for _, item := range l.items {
 			if item.Column == c && item.ColumnSpan == 1 {
-				minSize := item.Widget.MinimumSize()
+				minSize := item.Trinket.MinimumSize()
 				if minSize.Width > colWidths[c] {
 					colWidths[c] = minSize.Width
 				}
@@ -360,7 +360,7 @@ func (l *GridLayout) MinimumSize(container core.Container) core.UnitSize {
 		rowHeights[r] = l.rowMinHeight[r]
 		for _, item := range l.items {
 			if item.Row == r && item.RowSpan == 1 {
-				minSize := item.Widget.MinimumSize()
+				minSize := item.Trinket.MinimumSize()
 				if minSize.Height > rowHeights[r] {
 					rowHeights[r] = minSize.Height
 				}

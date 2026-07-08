@@ -8,10 +8,10 @@ Complete API for building tuitk applications.
 tuitk/
   app/       - Application lifecycle
   backend/   - Terminal rendering
-  core/      - Fundamental types, widget interface, events
+  core/      - Fundamental types, trinket interface, events
   layout/    - Layout managers
   style/     - Colors, themes, schemes
-  widgets/   - UI components
+  trinkets/   - UI components
   window/    - Window management
 ```
 
@@ -23,12 +23,12 @@ package main
 import (
     "github.com/phroun/tuitk/app"
     "github.com/phroun/tuitk/backend"
-    "github.com/phroun/tuitk/widgets"
+    "github.com/phroun/tuitk/trinkets"
     "github.com/phroun/tuitk/window"
 )
 
 func main() {
-    desktop := widgets.NewDesktop()
+    desktop := trinkets.NewDesktop()
     desktop.SetBackend(backend.NewTUIBackend(backend.DefaultTUIOptions()))
 
     application := app.New(nil)
@@ -37,7 +37,7 @@ func main() {
 
     desktop.SetOnStartup(func() {
         w := window.NewWindow("Hello")
-        w.SetContent(widgets.NewLabel("Hello, World!"))
+        w.SetContent(trinkets.NewLabel("Hello, World!"))
         application.AddWindow(w)
     })
 
@@ -100,19 +100,19 @@ NoButton, LeftButton, MiddleButton, RightButton, ScrollUp, ScrollDown
 
 ---
 
-## Widget Interface
+## Trinket Interface
 
-### core.Widget
+### core.Trinket
 
 Base interface for all UI elements.
 
 ```go
-type Widget interface {
+type Trinket interface {
     // Identity
     Name() string
     SetName(string)
-    Parent() Widget
-    SetParent(Widget)
+    Parent() Trinket
+    SetParent(Trinket)
 
     // Geometry
     Bounds() UnitRect
@@ -166,39 +166,39 @@ type Widget interface {
 
 ### core.Container
 
-Extends Widget to hold children.
+Extends Trinket to hold children.
 
 ```go
 type Container interface {
-    Widget
-    Children() []Widget
-    AddChild(Widget)
-    RemoveChild(Widget)
-    ChildAt(UnitPoint) Widget
+    Trinket
+    Children() []Trinket
+    AddChild(Trinket)
+    RemoveChild(Trinket)
+    ChildAt(UnitPoint) Trinket
     LayoutManager() LayoutManager
     SetLayoutManager(LayoutManager)
 }
 ```
 
-### WidgetBase
+### TrinketBase
 
-Embed in custom widgets:
+Embed in custom trinkets:
 
 ```go
-type MyWidget struct {
-    core.WidgetBase
+type MyTrinket struct {
+    core.TrinketBase
     // custom fields
 }
 
-func NewMyWidget() *MyWidget {
-    w := &MyWidget{}
-    w.WidgetBase = *core.NewWidgetBase()
+func NewMyTrinket() *MyTrinket {
+    w := &MyTrinket{}
+    w.TrinketBase = *core.NewTrinketBase()
     w.Init(w)  // Pass outer reference
     return w
 }
 ```
 
-Key WidgetBase methods:
+Key TrinketBase methods:
 ```go
 BackgroundColor() *style.Color
 SetBackgroundColor(*style.Color)
@@ -292,8 +292,8 @@ theme := style.DefaultTheme()  // or DarkTheme(), ClassicTheme()
 Color variants within a theme (default, modal, etc.)
 
 ```go
-widget.SetScheme(style.SchemeDefault)
-widget.SetScheme(style.SchemeModal)
+trinket.SetScheme(style.SchemeDefault)
+trinket.SetScheme(style.SchemeModal)
 ```
 
 ---
@@ -313,17 +313,17 @@ type Font struct {
 core.FontMonday12   // Standard fixed-width (8 units/char)
 core.FontTuesday12  // Double-width (16 units/char)
 
-widget.SetFont(core.FontTuesday12)
+trinket.SetFont(core.FontTuesday12)
 ```
 
 ---
 
-## Widgets
+## Trinkets
 
 ### Label
 
 ```go
-label := widgets.NewLabel("Hello")
+label := trinkets.NewLabel("Hello")
 label.SetText("Updated")
 label.SetAlignment(core.AlignCenter)
 label.SetWordWrap(true)
@@ -332,11 +332,11 @@ label.SetWordWrap(true)
 ### Button
 
 ```go
-btn := widgets.NewButton("Click Me")
+btn := trinkets.NewButton("Click Me")
 btn.SetOnClick(func() { /* handler */ })
 
 // Icon button
-iconBtn := widgets.NewIconButton(&style.Icon{...})
+iconBtn := trinkets.NewIconButton(&style.Icon{...})
 
 // Checkable button
 btn.SetCheckable(true)
@@ -346,21 +346,21 @@ btn.SetOnToggled(func(checked bool) { })
 ### Checkbox
 
 ```go
-cb := widgets.NewCheckbox("Enable feature")
+cb := trinkets.NewCheckbox("Enable feature")
 cb.SetChecked(true)
 cb.SetOnToggled(func(checked bool) { })
 
 // Tri-state
 cb.SetTriState(true)
-cb.SetCheckState(widgets.StatePartial)
+cb.SetCheckState(trinkets.StatePartial)
 ```
 
 ### RadioButton
 
 ```go
-group := widgets.NewRadioGroup()
-r1 := widgets.NewRadioButton("Option A")
-r2 := widgets.NewRadioButton("Option B")
+group := trinkets.NewRadioGroup()
+r1 := trinkets.NewRadioButton("Option A")
+r2 := trinkets.NewRadioButton("Option B")
 group.AddButton(r1)
 group.AddButton(r2)
 r1.SetOnToggled(func(checked bool) { })
@@ -369,11 +369,11 @@ r1.SetOnToggled(func(checked bool) { })
 ### TextInput
 
 ```go
-input := widgets.NewTextInput()
+input := trinkets.NewTextInput()
 input.SetPlaceholder("Enter name...")
 input.SetText("default")
 input.SetMaxLength(50)
-input.SetEchoMode(widgets.EchoPassword)
+input.SetEchoMode(trinkets.EchoPassword)
 input.SetReadOnly(true)
 input.SetOnTextChanged(func(text string) { })
 input.SetOnReturnPressed(func() { })
@@ -382,7 +382,7 @@ input.SetOnReturnPressed(func() { })
 ### ComboBox
 
 ```go
-combo := widgets.NewComboBox()
+combo := trinkets.NewComboBox()
 combo.AddItem("First")
 combo.AddItem("Second")
 combo.SetCurrentIndex(0)
@@ -393,10 +393,10 @@ combo.SetOnCurrentChanged(func(index int) { })
 ### ListView
 
 ```go
-list := widgets.NewListView()
-list.AddItem(widgets.NewListItem("Item 1"))
+list := trinkets.NewListView()
+list.AddItem(trinkets.NewListItem("Item 1"))
 list.AddTextItem("Item 2")
-list.SetSelectionMode(widgets.MultiSelection)
+list.SetSelectionMode(trinkets.MultiSelection)
 list.SetOnItemActivated(func(index int) { })
 list.SetOnSelectionChanged(func() { })
 
@@ -408,10 +408,10 @@ selected := list.SelectedIndices()
 ### TreeView
 
 ```go
-tree := widgets.NewTreeView()
+tree := trinkets.NewTreeView()
 
-root := widgets.NewTreeItem("Documents")
-child := widgets.NewTreeItem("File.txt")
+root := trinkets.NewTreeItem("Documents")
+child := trinkets.NewTreeItem("File.txt")
 root.AddChild(child)
 root.Expanded = true
 
@@ -419,30 +419,30 @@ tree.AddRootItem(root)
 tree.SetOnItemActivated(func(item *TreeItem) { })
 ```
 
-### TabWidget
+### TabTrinket
 
 ```go
-tabs := widgets.NewTabWidget()
+tabs := trinkets.NewTabTrinket()
 tabs.AddTab("General", generalPanel)
 tabs.AddTab("Advanced", advancedPanel)
 tabs.SetCurrentIndex(0)
-tabs.SetTabPosition(widgets.TabsTop)  // TabsBottom, TabsLeft, TabsRight
+tabs.SetTabPosition(trinkets.TabsTop)  // TabsBottom, TabsLeft, TabsRight
 tabs.SetOnCurrentChanged(func(index int) { })
 ```
 
 ### ScrollArea
 
 ```go
-scroll := widgets.NewScrollArea()
+scroll := trinkets.NewScrollArea()
 scroll.SetContent(largePanel)
-scroll.SetVerticalScrollBarPolicy(widgets.ScrollBarAsNeeded)
-scroll.SetHorizontalScrollBarPolicy(widgets.ScrollBarAlwaysOff)
+scroll.SetVerticalScrollBarPolicy(trinkets.ScrollBarAsNeeded)
+scroll.SetHorizontalScrollBarPolicy(trinkets.ScrollBarAlwaysOff)
 ```
 
 ### Panel
 
 ```go
-panel := widgets.NewPanel()
+panel := trinkets.NewPanel()
 panel.AddChild(label)
 panel.AddChild(button)
 panel.SetLayoutManager(layout.NewBoxLayout(core.Vertical))
@@ -453,7 +453,7 @@ panel.SetBorder(style.BorderSingle)
 ### ProgressBar
 
 ```go
-progress := widgets.NewProgressBar()
+progress := trinkets.NewProgressBar()
 progress.SetMaximum(100)
 progress.SetValue(50)
 progress.SetIndeterminate(true)  // Animated unknown progress
@@ -463,13 +463,13 @@ progress.SetIndeterminate(true)  // Animated unknown progress
 
 ```go
 // Vertical splitter (top/bottom)
-vsplit := widgets.NewVSplitter()
+vsplit := trinkets.NewVSplitter()
 vsplit.SetFirst(topPanel)
 vsplit.SetSecond(bottomPanel)
 vsplit.SetPosition(0.3)  // 30% top
 
 // Horizontal splitter (left/right)
-hsplit := widgets.NewHSplitter()
+hsplit := trinkets.NewHSplitter()
 hsplit.SetFirst(leftPanel)
 hsplit.SetSecond(rightPanel)
 ```
@@ -477,27 +477,27 @@ hsplit.SetSecond(rightPanel)
 ### Separator
 
 ```go
-sep := widgets.NewLineSeparator(core.Horizontal)
+sep := trinkets.NewLineSeparator(core.Horizontal)
 sep.SetTitle("Section")  // Optional divider title
 ```
 
 ### Spacer
 
 ```go
-spacer := widgets.NewSpacer()         // Expanding
-fixed := widgets.NewFixedSpacer(16)   // Fixed size
+spacer := trinkets.NewSpacer()         // Expanding
+fixed := trinkets.NewFixedSpacer(16)   // Fixed size
 ```
 
 ### Menu System
 
 ```go
-menu := widgets.NewMenu("&File")  // & marks accelerator
+menu := trinkets.NewMenu("&File")  // & marks accelerator
 
-item := widgets.NewMenuItem("&Open...")
+item := trinkets.NewMenuItem("&Open...")
 item.SetShortcut(core.NewShortcut("^O"))
 item.SetOnTriggered(func() { })
 
-checkItem := widgets.NewMenuItem("Show Toolbar")
+checkItem := trinkets.NewMenuItem("Show Toolbar")
 checkItem.SetCheckable(true)
 checkItem.SetChecked(true)
 
@@ -509,31 +509,31 @@ menu.AddItem(checkItem)
 ### Dialog / MessageBox
 
 ```go
-dialog := widgets.NewMessageBox(
+dialog := trinkets.NewMessageBox(
     "Confirm",
     "Are you sure?",
-    widgets.ButtonYes | widgets.ButtonNo,
+    trinkets.ButtonYes | trinkets.ButtonNo,
 )
-dialog.SetIcon(widgets.IconQuestion)
-dialog.SetOnFinished(func(result widgets.DialogResult) {
-    if result == widgets.ResultYes { /* ... */ }
+dialog.SetIcon(trinkets.IconQuestion)
+dialog.SetOnFinished(func(result trinkets.DialogResult) {
+    if result == trinkets.ResultYes { /* ... */ }
 })
 application.AddWindow(&dialog.Window)
 ```
 
 ### PurfecTerm
 
-Terminal emulator widget.
+Terminal emulator trinket.
 
 ```go
-term := widgets.NewPurfecTerm()
+term := trinkets.NewPurfecTerm()
 term.Start()  // Run default shell
 
 // Or run specific command
 term.StartCommand("vim", "file.txt")
 
 // Debug callback
-term.SetOnCellClicked(func(info widgets.CellDebugInfo) {
+term.SetOnCellClicked(func(info trinkets.CellDebugInfo) {
     // info.Col, info.Row, info.Char
     // info.FgType, info.BgType ("RGB", "256", "Std", "Def")
     // info.Bold, info.Underline, info.Reverse
@@ -641,10 +641,10 @@ wm.SetOnActiveWindowChanged(func(w *window.Window) { })
 
 ### MDIPane
 
-Multi-document interface container (embeddable widget).
+Multi-document interface container (embeddable trinket).
 
 ```go
-mdi := widgets.NewMDIPane()
+mdi := trinkets.NewMDIPane()
 mdi.AddWindow(childWindow)
 mdi.SetActiveWindow(childWindow)
 mdi.TileWindows()
@@ -661,10 +661,10 @@ mdi.SetOnWindowRestored(func(w *window.Window) { })
 
 ## Desktop
 
-Root widget managing windows, menus, and status bar.
+Root trinket managing windows, menus, and status bar.
 
 ```go
-desktop := widgets.NewDesktop()
+desktop := trinkets.NewDesktop()
 desktop.SetBackend(backend.NewTUIBackend(backend.DefaultTUIOptions()))
 
 // Applications
@@ -691,13 +691,13 @@ statusBar := desktop.StatusBar()
 statusBar.SetText("Ready")
 
 // Styled sections
-statusBar.SetSections([]widgets.StatusSection{
+statusBar.SetSections([]trinkets.StatusSection{
     {Text: "Mode: Normal", Width: 120},
     {Text: "Line 42", Width: -1},  // -1 = stretch
 })
 
 // Styled text
-statusBar.SetStyledText([]widgets.StatusTextSpan{
+statusBar.SetStyledText([]trinkets.StatusTextSpan{
     {Text: "Ready - Press "},
     {Text: "F10", Style: &highlightStyle},
     {Text: " for menu"},
@@ -710,7 +710,7 @@ Minimized window dock.
 
 ```go
 dock := desktop.DockRow()
-dock.AddEntry(&widgets.DockEntry{
+dock.AddEntry(&trinkets.DockEntry{
     Title: "Document 1",
     OnClick: func() { mdi.RestoreWindow(win) },
 })
@@ -731,8 +731,8 @@ application.AddWindow(w)
 windows := application.Windows()
 
 // Menu/Status content (for multi-app desktops)
-application.SetMenuBarContent([]*widgets.Menu{fileMenu, editMenu})
-application.SetStatusBarContent([]widgets.StatusSection{{Text: "Ready"}})
+application.SetMenuBarContent([]*trinkets.Menu{fileMenu, editMenu})
+application.SetStatusBarContent([]trinkets.StatusSection{{Text: "Ready"}})
 
 // Lifecycle callbacks
 application.SetOnActivate(func() { /* app gained focus */ })
@@ -755,19 +755,19 @@ desktop.AddApplication(secondary)
 ## Focus Management
 
 ```go
-// Widget focus
-widget.SetFocusPolicy(core.StrongFocus)
-widget.SetFocus()
-widget.ClearFocus()
+// Trinket focus
+trinket.SetFocusPolicy(core.StrongFocus)
+trinket.SetFocus()
+trinket.ClearFocus()
 
 // Focus manager
 fm := window.FocusManager()
-fm.NextWidget()      // Tab forward
-fm.PreviousWidget()  // Tab backward
+fm.NextTrinket()      // Tab forward
+fm.PreviousTrinket()  // Tab backward
 fm.SetWrapAround(true)
 
 // Callback
-fm.SetOnFocusChanged(func(old, new Widget) { })
+fm.SetOnFocusChanged(func(old, new Trinket) { })
 ```
 
 ---
@@ -775,10 +775,10 @@ fm.SetOnFocusChanged(func(old, new Widget) { })
 ## Accessibility
 
 ```go
-// On widgets
-widget.SetAccessibleRole(core.RoleButton)
-widget.SetAccessibleName("Submit Form")
-widget.SetAccessibleDescription("Click to submit the form")
+// On trinkets
+trinket.SetAccessibleRole(core.RoleButton)
+trinket.SetAccessibleName("Submit Form")
+trinket.SetAccessibleDescription("Click to submit the form")
 
 // Announcements
 am := desktop.AccessibilityManager()
@@ -857,7 +857,7 @@ type RenderBackend interface {
 High-level drawing API used in Paint() methods.
 
 ```go
-func (w *MyWidget) Paint(p *core.Painter) {
+func (w *MyTrinket) Paint(p *core.Painter) {
     bounds := w.Bounds()
     s := style.DefaultStyle().WithFg(style.ColorWhite)
 
@@ -887,32 +887,32 @@ PopTransform()
 
 ## Common Patterns
 
-### Creating Custom Widgets
+### Creating Custom Trinkets
 
 ```go
-type MyWidget struct {
-    core.WidgetBase
+type MyTrinket struct {
+    core.TrinketBase
     value int
     onChange func(int)
 }
 
-func NewMyWidget() *MyWidget {
-    w := &MyWidget{}
-    w.WidgetBase = *core.NewWidgetBase()
+func NewMyTrinket() *MyTrinket {
+    w := &MyTrinket{}
+    w.TrinketBase = *core.NewTrinketBase()
     w.Init(w)
     w.SetFocusPolicy(core.StrongFocus)
     return w
 }
 
-func (w *MyWidget) SizeHint() core.UnitSize {
+func (w *MyTrinket) SizeHint() core.UnitSize {
     return core.UnitSize{Width: 80, Height: 16}
 }
 
-func (w *MyWidget) Paint(p *core.Painter) {
+func (w *MyTrinket) Paint(p *core.Painter) {
     // Custom rendering
 }
 
-func (w *MyWidget) HandleKeyPress(e core.KeyPressEvent) bool {
+func (w *MyTrinket) HandleKeyPress(e core.KeyPressEvent) bool {
     if e.Key == "Enter" {
         w.value++
         if w.onChange != nil {
@@ -927,7 +927,7 @@ func (w *MyWidget) HandleKeyPress(e core.KeyPressEvent) bool {
 
 ### Event Filters
 
-Process events before widgets:
+Process events before trinkets:
 
 ```go
 desktop.AddEventFilter(func(event core.Event) bool {

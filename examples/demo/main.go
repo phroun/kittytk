@@ -11,7 +11,7 @@ import (
 	"github.com/phroun/tuitk/layout"
 	"github.com/phroun/tuitk/protocol"
 	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 	"github.com/phroun/tuitk/window"
 )
 
@@ -22,12 +22,12 @@ import (
 // Height is NOT pinned: it flows from the content via height-for-width,
 // so wrapping onto more lines makes the box taller.
 type fixedWidthBox struct {
-	*widgets.Panel
+	*trinkets.Panel
 	width core.Unit
 }
 
-func newFixedWidthBox(width core.Unit, content core.Widget) *fixedWidthBox {
-	f := &fixedWidthBox{Panel: widgets.NewPanel(), width: width}
+func newFixedWidthBox(width core.Unit, content core.Trinket) *fixedWidthBox {
+	f := &fixedWidthBox{Panel: trinkets.NewPanel(), width: width}
 	f.SetBorder(true)
 	f.SetBorderStyle(style.BorderSingle) // zero-value BorderStyle renders invisibly
 
@@ -43,7 +43,7 @@ func (f *fixedWidthBox) SizeHint() core.UnitSize {
 }
 
 // idCaptureFactory records built targets by object ID so the app can
-// reach the real widgets behind surfaced reply names.
+// reach the real trinkets behind surfaced reply names.
 type idCaptureFactory struct {
 	inner protocol.Factory
 	byID  map[uint64]any
@@ -108,7 +108,7 @@ wcombo=root.combo
 // client veneer: typed handles over the wire objects, replica-backed
 // reads, write-through setters. No raw dispatcher, no sub statements
 // in the script - handles subscribe what they mirror.
-func createProtocolWindow(application *app.Application, desktop *widgets.Desktop) *window.Window {
+func createProtocolWindow(application *app.Application, desktop *trinkets.Desktop) *window.Window {
 	conn := client.NewInProcess(func(id string) { application.Commands().Dispatch(id) })
 	ui, err := conn.Build(protocolWindowScript)
 	if err != nil {
@@ -144,13 +144,13 @@ func createProtocolWindow(application *app.Application, desktop *widgets.Desktop
 		}
 	})
 
-	rootWidget, ok := ui.Object("root").Target().(core.Widget)
+	rootTrinket, ok := ui.Object("root").Target().(core.Trinket)
 	if !ok {
 		return nil
 	}
 	w := window.NewWindow("Protocol Demo")
 	w.SetBounds(core.UnitRect{X: 8 * 8, Y: 16 * 4, Width: 8 * 56, Height: 16 * 16})
-	w.SetContent(rootWidget)
+	w.SetContent(rootTrinket)
 	return w
 }
 
@@ -158,7 +158,7 @@ func createProtocolWindow(application *app.Application, desktop *widgets.Desktop
 // whose backend is already set. The same construction runs on the
 // text backend and on the SDL pixel backend (selection by binary,
 // D23/O3): see main_tui.go and main_sdl.go.
-func buildDemo(desktop *widgets.Desktop) {
+func buildDemo(desktop *trinkets.Desktop) {
 	// Create the application - owns windows, provides menu/status content
 	application := app.New(nil) // nil backend - Desktop owns it now
 	application.SetName("TUI Demo")
@@ -194,7 +194,7 @@ sb=new statusbar children={
 					fm := activeWin.FocusManager()
 					if fm != nil {
 						chain := fm.FocusChain()
-						focused := fm.FocusedWidget()
+						focused := fm.FocusedTrinket()
 
 						focusable := 0
 						for _, w := range chain {
@@ -283,7 +283,7 @@ sub closer click
 
 // createDemoWindow builds a child window with an embedded terminal
 // from protocol text.
-func createDemoWindow(desktop *widgets.Desktop, application *app.Application) *window.Window {
+func createDemoWindow(desktop *trinkets.Desktop, application *app.Application) *window.Window {
 	dispatcher := protocol.NewEventDispatcher()
 	ctx := &protocol.BindContext{
 		Emit: func(ev *protocol.Event) { dispatcher.Dispatch(ev) },
@@ -317,7 +317,7 @@ func createDemoWindow(desktop *widgets.Desktop, application *app.Application) *w
 var secondaryAppCount int
 
 // createSecondaryApplication creates a new application with its own menus and status bar.
-func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
+func createSecondaryApplication(desktop *trinkets.Desktop) *app.Application {
 	secondaryAppCount++
 	appNum := secondaryAppCount
 
@@ -345,26 +345,26 @@ sb=new statusbar children={new section children={new span text="Secondary Applic
 	})
 
 	// Create a vertical splitter to divide the window
-	splitter := widgets.NewVSplitter()
+	splitter := trinkets.NewVSplitter()
 	splitter.SetTitle("Terminal")
 	splitter.SetPosition(0.3) // Top panel gets 30% of space
 
 	// Top panel with controls
-	topPanel := widgets.NewPanel()
+	topPanel := trinkets.NewPanel()
 	boxLayout := layout.NewBoxLayout(core.Vertical)
 	boxLayout.SetSpacing(8)
 
-	label := widgets.NewLabel(fmt.Sprintf("This window belongs to Application #%d", appNum))
+	label := trinkets.NewLabel(fmt.Sprintf("This window belongs to Application #%d", appNum))
 	topPanel.AddChild(label)
 
-	infoLabel := widgets.NewLabel("Notice the menu bar and status bar change\nwhen this window is focused.")
+	infoLabel := trinkets.NewLabel("Notice the menu bar and status bar change\nwhen this window is focused.")
 	topPanel.AddChild(infoLabel)
 
-	textInput := widgets.NewTextInput()
+	textInput := trinkets.NewTextInput()
 	textInput.SetPlaceholder("Enter text here...")
 	topPanel.AddChild(textInput)
 
-	closeButton := widgets.NewButton("Close Window")
+	closeButton := trinkets.NewButton("Close Window")
 	closeButton.SetOnClick(func() {
 		w.Close()
 	})
@@ -374,10 +374,10 @@ sb=new statusbar children={new section children={new span text="Secondary Applic
 	splitter.SetFirst(topPanel)
 
 	// Bottom panel with PurfecTerm terminal
-	terminal := widgets.NewPurfecTerm()
+	terminal := trinkets.NewPurfecTerm()
 
 	// Debug callback - show clicked cell info in status bar
-	terminal.SetOnCellClicked(func(info widgets.CellDebugInfo) {
+	terminal.SetOnCellClicked(func(info trinkets.CellDebugInfo) {
 		// Format attributes (B=bold, U=underline, R=reverse)
 		attrs := ""
 		if info.Bold {
@@ -450,7 +450,7 @@ sb=new statusbar children={new section children={new span text="Secondary Applic
 // showAboutDialog shows the about dialog.
 // buildStatusSections executes a statusbar script and returns the
 // section list for SetStatusBarContent.
-func buildStatusSections(script string) []widgets.StatusSection {
+func buildStatusSections(script string) []trinkets.StatusSection {
 	factory := &idCaptureFactory{
 		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
 		byID:  make(map[uint64]any),
@@ -463,7 +463,7 @@ func buildStatusSections(script string) []widgets.StatusSection {
 	if err != nil {
 		panic(fmt.Sprintf("statusbar script: %v", err))
 	}
-	bar := factory.byID[reply.IDs["sb"]].(interface{ Sections() []widgets.StatusSection })
+	bar := factory.byID[reply.IDs["sb"]].(interface{ Sections() []trinkets.StatusSection })
 	return bar.Sections()
 }
 
@@ -484,11 +484,11 @@ func protocolMessageBox(application *app.Application, script string) {
 	if err != nil {
 		panic(fmt.Sprintf("messagebox script: %v", err))
 	}
-	dialog := factory.byID[reply.IDs["dlg"]].(*widgets.MessageBox)
+	dialog := factory.byID[reply.IDs["dlg"]].(*trinkets.MessageBox)
 	application.AddWindow(&dialog.Window)
 }
 
-func showAboutDialog(desktop *widgets.Desktop, application *app.Application) {
+func showAboutDialog(desktop *trinkets.Desktop, application *app.Application) {
 	protocolMessageBox(application, `
 dlg=new messagebox title="About TUI Toolkit" icon=information ok text="TUI Toolkit Demo\n\nA comprehensive terminal UI framework.\n\nVersion 0.1.0"
 `)

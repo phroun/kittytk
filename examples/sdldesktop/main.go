@@ -16,7 +16,7 @@ import (
 	"github.com/phroun/tuitk/client"
 	"github.com/phroun/tuitk/display"
 	sdlplat "github.com/phroun/tuitk/sdl"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 )
 
 func main() {
@@ -28,7 +28,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	desktop := widgets.NewDesktop()
+	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font
 
 	// The desktop's own (windowless) application owns the base menu bar

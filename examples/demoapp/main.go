@@ -1,7 +1,7 @@
 // Command demoapp is the full TUI Toolkit demo as a display-protocol
 // APPLICATION: it links only client + protocol (no rendering backend),
 // dials a running tuitk display service, and drives its entire UI - the
-// nine-tab widget gallery, menu bars, status bar, the protocol-built
+// nine-tab trinket gallery, menu bars, status bar, the protocol-built
 // window, terminal child windows, dialogs and MDI - over the socket.
 //
 //	terminal 1:  go run -tags sdl ./examples/sdldesktop

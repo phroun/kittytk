@@ -3,12 +3,12 @@ package main
 // A headless integration test: it stands up a real display service over
 // a unix socket (the same one sdldesktop serves) and drives the demo's
 // shell-free scripts through it, proving the deep surfacing paths, the
-// widget properties across the gallery, and the desktop-action app verbs
+// trinket properties across the gallery, and the desktop-action app verbs
 // are all accepted by the live session - things parsing alone can't
 // catch. Terminal-bearing scripts (which would spawn a shell) are left
 // to the parse test.
 //
-// This test imports the display service and widgets; the production
+// This test imports the display service and trinkets; the production
 // demoapp binary does not (see the backendless go-list check).
 
 import (
@@ -23,7 +23,7 @@ import (
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/display"
 	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 )
 
 // nullBackend is a headless RenderBackend.
@@ -66,7 +66,7 @@ func startService(t *testing.T) (sock string, stop func()) {
 	t.Helper()
 	sock = filepath.Join(t.TempDir(), "display.sock")
 
-	desktop := widgets.NewDesktop()
+	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(&nullBackend{})
 	// The desktop's own windowless application (as in sdldesktop).
 	desktop.SetOnStartup(func() {

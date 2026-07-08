@@ -113,12 +113,12 @@ func (e *Event) Flag(name string) FlagState {
 	return a.Flag
 }
 
-// Widget reads the conventional widget-identity field.
-func (e *Event) Widget() (uint64, bool) {
-	if id, ok := e.Uint("widget"); ok {
+// Trinket reads the conventional trinket-identity field.
+func (e *Event) Trinket() (uint64, bool) {
+	if id, ok := e.Uint("trinket"); ok {
 		return id, ok
 	}
-	// Window events name their source window= rather than widget=;
+	// Window events name their source window= rather than trinket=;
 	// both are ObjectIDs, and subscriptions key on the source.
 	return e.Uint("window")
 }
@@ -215,28 +215,28 @@ func ParseEvent(src string) (*Event, error) {
 	return &Event{Type: st.Args[0].Name, Fields: st.Args[1:]}, nil
 }
 
-// EventDispatcher routes events to app-side handlers keyed by widget
+// EventDispatcher routes events to app-side handlers keyed by trinket
 // ObjectID and event type (the app half of the event seam). It is
 // instance-scoped: one dispatcher per connection.
 type EventDispatcher struct {
-	byWidget map[uint64]map[string][]func(*Event)
-	byType   map[string][]func(*Event)
+	byTrinket map[uint64]map[string][]func(*Event)
+	byType    map[string][]func(*Event)
 }
 
 // NewEventDispatcher creates an empty dispatcher.
 func NewEventDispatcher() *EventDispatcher {
 	return &EventDispatcher{
-		byWidget: make(map[uint64]map[string][]func(*Event)),
-		byType:   make(map[string][]func(*Event)),
+		byTrinket: make(map[uint64]map[string][]func(*Event)),
+		byType:    make(map[string][]func(*Event)),
 	}
 }
 
-// On subscribes to an event type from a specific widget.
-func (d *EventDispatcher) On(widgetID uint64, eventType string, fn func(*Event)) {
-	m := d.byWidget[widgetID]
+// On subscribes to an event type from a specific trinket.
+func (d *EventDispatcher) On(trinketID uint64, eventType string, fn func(*Event)) {
+	m := d.byTrinket[trinketID]
 	if m == nil {
 		m = make(map[string][]func(*Event))
-		d.byWidget[widgetID] = m
+		d.byTrinket[trinketID] = m
 	}
 	m[eventType] = append(m[eventType], fn)
 }
@@ -250,8 +250,8 @@ func (d *EventDispatcher) OnType(eventType string, fn func(*Event)) {
 // Dispatch routes one event; returns true if any handler ran.
 func (d *EventDispatcher) Dispatch(ev *Event) bool {
 	handled := false
-	if id, ok := ev.Widget(); ok {
-		if m := d.byWidget[id]; m != nil {
+	if id, ok := ev.Trinket(); ok {
+		if m := d.byTrinket[id]; m != nil {
 			for _, fn := range m[ev.Type] {
 				fn(ev)
 				handled = true

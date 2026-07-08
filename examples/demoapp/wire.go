@@ -7,15 +7,15 @@ import (
 	"github.com/phroun/tuitk/protocol"
 )
 
-// wireMainWindow subscribes the demo window's interactive widgets:
-// the basic-widget narration, the font/denomination toggles (window
+// wireMainWindow subscribes the demo window's interactive trinkets:
+// the basic-trinket narration, the font/denomination toggles (window
 // and desktop properties), and the tab background-color radios.
 func (a *app) wireMainWindow() {
 	ui := a.ui
 	win := ui.Object("w")
 	tabs := ui.Object("tabs")
 
-	// Basic Widgets: the text input narrates changes to the status bar.
+	// Basic Trinkets: the text input narrates changes to the status bar.
 	ui.TextInput("binput").OnChange(func(s string) { a.setStatus("Text: " + s) })
 
 	// Selection: font / denomination toggles are window and desktop
@@ -71,7 +71,7 @@ func (a *app) wireMenus() {
 	// Demo menu.
 	c.OnCommand("demo.file.new", func() { a.openTerminalWindow() })
 
-	// Edit menu: the display performs these on the focused widget.
+	// Edit menu: the display performs these on the focused trinket.
 	c.OnCommand("demo.edit.cut", func() { _, _ = c.Exec("cut") })
 	c.OnCommand("demo.edit.copy", func() { _, _ = c.Exec("copy") })
 	c.OnCommand("demo.edit.paste", func() { _, _ = c.Exec("paste") })
@@ -88,7 +88,7 @@ func (a *app) wireMenus() {
 	c.OnCommand("demo.window.tile", func() { _, _ = c.Exec("tile") })
 	c.OnCommand("demo.window.cascade", func() { _, _ = c.Exec("cascade") })
 
-	// Basic Widgets buttons narrate to the status bar.
+	// Basic Trinkets buttons narrate to the status bar.
 	c.OnCommand("demo.basic.ok", func() { a.setStatus("OK button clicked!") })
 	c.OnCommand("demo.basic.cancel", func() { a.setStatus("Cancel button clicked!") })
 	c.OnCommand("demo.basic.apply", func() { a.setStatus("Apply button clicked!") })

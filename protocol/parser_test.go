@@ -187,7 +187,7 @@ func TestParseByteEscapes(t *testing.T) {
 }
 
 func TestEventEncodesControlBytes(t *testing.T) {
-	ev := NewEvent("data").WithUint("widget", 5).WithString("text", "\x1b[2Jok\x07")
+	ev := NewEvent("data").WithUint("trinket", 5).WithString("text", "\x1b[2Jok\x07")
 	back, err := ParseEvent(ev.Encode())
 	if err != nil {
 		t.Fatalf("ParseEvent(%q): %v", ev.Encode(), err)

@@ -82,9 +82,9 @@ func mainBuildScript() string {
 w=new window title="TUI Toolkit Demo" width=480 height=288 tearable main children={
 t=new tabs children={
 
-b=new tab caption="Basic Widgets" children={
+b=new tab caption="Basic Trinkets" children={
 	bw=new panel layout=vbox spacing=0 children={
-		new label caption="This is a demo of basic widgets:"
+		new label caption="This is a demo of basic trinkets:"
 		input=new textinput placeholder="Enter text here..."
 		new spacer
 		new panel layout=hbox spacing=8 children={
@@ -253,7 +253,7 @@ new tab caption="Bottom Tabs" children={
 	new tabs position=bottom children={
 		new tab caption="First" children={
 			new panel layout=vbox children={
-				new label caption="This TabWidget has tabs at the bottom."
+				new label caption="This TabTrinket has tabs at the bottom."
 				new label caption="Notice how the tab connectors are inverted:"
 				new label caption="  Top tabs use: _/ and \\_"
 				new label caption="  Bottom tabs use: \\_ and _/"
@@ -340,8 +340,8 @@ mtab=new tab caption="MDI Demo" children={
 		mdisa=new scrollarea children={
 			mdi=new mdipane fill="░" min_width=640 min_height=400 max_width=640 max_height=400 children={
 				mdicp=new panel layout=vbox spacing=8 children={
-					new label caption="MDIPane Widget Demo"
-					new label caption="This MDIPane widget manages floating windows.\nClick [_] to minimize windows to the dock below."
+					new label caption="MDIPane Trinket Demo"
+					new label caption="This MDIPane trinket manages floating windows.\nClick [_] to minimize windows to the dock below."
 					new button caption="Spawn Window in MDIPane" action=demo.mdi.spawn
 					new panel layout=hbox spacing=8 children={
 						new button caption="Tile" action=demo.mdi.tile

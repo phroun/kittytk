@@ -47,7 +47,7 @@ The `Painter` with transforms and clipping works for any rendering target.
 
 ## Key Architectural Decisions
 
-### Decision 1: Where Does Widget Rendering Live?
+### Decision 1: Where Does Trinket Rendering Live?
 
 **Current (TUI-embedded):**
 ```go
@@ -59,7 +59,7 @@ func (b *Button) Paint(p *core.Painter) {
 }
 ```
 
-**Native GUI Approach - Option A: Backend Provides Widget Renderers**
+**Native GUI Approach - Option A: Backend Provides Trinket Renderers**
 ```go
 func (b *Button) Paint(p *core.Painter) {
     // Button describes WHAT it is, backend draws it
@@ -77,11 +77,11 @@ func (m *MacBackend) DrawButton(bounds, text, state) {
 }
 ```
 
-**Native GUI Approach - Option B: Widgets Are Backend-Specific**
+**Native GUI Approach - Option B: Trinkets Are Backend-Specific**
 ```go
 // Core defines interface
 type Button interface {
-    Widget
+    Trinket
     SetText(string)
     OnClick(func())
 }
@@ -95,7 +95,7 @@ type macButton struct {
 }
 ```
 
-**Recommendation:** Option A is more practical - keep widget logic unified, delegate rendering.
+**Recommendation:** Option A is more practical - keep trinket logic unified, delegate rendering.
 
 ---
 
@@ -103,7 +103,7 @@ type macButton struct {
 
 **The Problem:**
 ```go
-// Current: Widget sizes in "units" that map to cells
+// Current: Trinket sizes in "units" that map to cells
 button.SetSize(core.UnitSize{Width: 80, Height: 16})  // 10 chars × 1 row
 ```
 
@@ -123,11 +123,11 @@ const (
     SizeExpanding                      // Take available space
 )
 
-type Widget interface {
+type Trinket interface {
     // Returns preferred size - backend interprets units differently
     SizeHint() UnitSize
 
-    // How should this widget grow/shrink?
+    // How should this trinket grow/shrink?
     SizePolicy() (horizontal, vertical SizePolicy)
 
     // Minimum usable size
@@ -146,11 +146,11 @@ GUI backend: Units = pixels (or DIPs for HiDPI)
 
 **Current:**
 ```go
-// Your Window is a widget that draws a frame
+// Your Window is a trinket that draws a frame
 type Window struct {
-    core.WidgetBase
+    core.TrinketBase
     title string
-    content Widget
+    content Trinket
     // ... draws title bar, borders, handles resize
 }
 ```
@@ -170,13 +170,13 @@ type PlatformWindow interface {
     Hide()
     Close()
 
-    // Content area where widgets render
+    // Content area where trinkets render
     ContentBounds() UnitRect
 }
 
 // Your current Window becomes "InternalWindow" for MDI
 type InternalWindow struct {
-    core.WidgetBase
+    core.TrinketBase
     // For TUI: draws frame, title bar, etc.
     // For GUI MDI: could be a panel with decorations
 }
@@ -192,9 +192,9 @@ type InternalWindow struct {
 
 **Current:**
 ```go
-// Desktop receives all events, routes to windows/widgets
+// Desktop receives all events, routes to windows/trinkets
 func (d *Desktop) HandleEvent(e core.Event) {
-    // Route to active window, then to focused widget
+    // Route to active window, then to focused trinket
 }
 ```
 
@@ -206,7 +206,7 @@ Each native window receives its own events from the OS.
 ```go
 type EventBridge interface {
     // Called by backend when events arrive
-    DeliverEvent(target Widget, event Event)
+    DeliverEvent(target Trinket, event Event)
 }
 
 // TUI: Single event stream, Desktop routes
@@ -238,7 +238,7 @@ type Painter interface {
     // High-level (backends render appropriately)
     DrawBorder(r UnitRect, style BorderStyle, color Color)
 
-    // Widget-specific (backends provide native look)
+    // Trinket-specific (backends provide native look)
     DrawButtonFrame(r UnitRect, state ButtonState)
     DrawCheckMark(r UnitRect, checked bool)
     DrawScrollbarTrack(r UnitRect, orientation Orientation)
@@ -277,7 +277,7 @@ type TextMeasurer interface {
     MeasureRune(r rune, style TextStyle) Unit
 }
 
-// Widgets MUST use this, not assume widths
+// Trinkets MUST use this, not assume widths
 func (label *Label) SizeHint() UnitSize {
     measurer := label.GetTextMeasurer()  // From backend
     return measurer.MeasureText(label.text, label.style)
@@ -288,7 +288,7 @@ func (label *Label) SizeHint() UnitSize {
 
 ### 🔴 Challenge: Focus & Keyboard Navigation
 
-**TUI:** Tab moves between widgets. Clear focus ring (highlighting).
+**TUI:** Tab moves between trinkets. Clear focus ring (highlighting).
 
 **GUI:**
 - Native focus behavior varies by platform
@@ -309,11 +309,11 @@ func (label *Label) SizeHint() UnitSize {
    - Consistent cross-platform look
    - Lose native feel
 
-2. **Native Control Wrapping** (like wxWidgets)
-   - Map each widget to native control
+2. **Native Control Wrapping** (like wxTrinkets)
+   - Map each trinket to native control
    - True native look
    - Behavioral differences between platforms
-   - Some widgets have no native equivalent
+   - Some trinkets have no native equivalent
 
 3. **Hybrid** (like Qt)
    - Custom drawing styled to match native
@@ -326,7 +326,7 @@ func (label *Label) SizeHint() UnitSize {
 
 ### 🟡 Challenge: Menus
 
-**TUI:** Menu is a widget you draw.
+**TUI:** Menu is a trinket you draw.
 
 **macOS:** Menu bar belongs to the system. `NSMenu` API required.
 
@@ -335,7 +335,7 @@ func (label *Label) SizeHint() UnitSize {
 **Solution:**
 ```go
 // Menu definition stays the same
-menu := widgets.NewMenu("&File")
+menu := trinkets.NewMenu("&File")
 menu.AddItem(...)
 
 // Backend decides HOW to render
@@ -344,7 +344,7 @@ type MenuBackend interface {
     ShowContextMenu(menu *Menu, x, y int)
 }
 
-// TUI: Renders as popup widget
+// TUI: Renders as popup trinket
 // macOS: Creates NSMenu, attaches to NSApplication
 // Windows: Creates HMENU, attaches to HWND
 ```
@@ -365,7 +365,7 @@ type DialogBackend interface {
     ShowFileSaveDialog(filters []FileFilter, defaultName string) (string, error)
 }
 
-// Fallback for TUI: Use your current dialog widgets
+// Fallback for TUI: Use your current dialog trinkets
 // GUI: Call native APIs
 ```
 
@@ -376,15 +376,15 @@ type DialogBackend interface {
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │                        Application                              │
-│  - Creates widgets (Button, Label, etc.)                       │
+│  - Creates trinkets (Button, Label, etc.)                       │
 │  - Defines layout                                               │
 │  - Handles business logic                                       │
 └────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌────────────────────────────────────────────────────────────────┐
-│                     Widget Layer (shared)                       │
-│  - Widget interfaces and base implementations                   │
+│                     Trinket Layer (shared)                       │
+│  - Trinket interfaces and base implementations                   │
 │  - Layout managers                                              │
 │  - Focus management                                             │
 │  - Event handling logic                                         │
@@ -409,12 +409,12 @@ type DialogBackend interface {
 
 | Component | Current State | Needs For GUI |
 |-----------|--------------|---------------|
-| `Widget.Paint()` | Draws directly | Delegate to renderer |
-| `Painter` | Cell operations | Abstract + widget ops |
+| `Trinket.Paint()` | Draws directly | Delegate to renderer |
+| `Painter` | Cell operations | Abstract + trinket ops |
 | Size calculation | Assumes cells | Query text measurer |
 | `Window` | Draws chrome | Split platform/internal |
 | `Desktop` | Single surface | Platform window manager |
-| `Menu` | Widget-based | Platform menu support |
+| `Menu` | Trinket-based | Platform menu support |
 | Event loop | Poll terminal | Platform event bridge |
 | Colors | ANSI codes | RGB extraction |
 
@@ -422,8 +422,8 @@ type DialogBackend interface {
 
 ## Incremental Path Forward
 
-1. **Phase 1:** Extract rendering from widgets into `WidgetRenderer` interface
-2. **Phase 2:** Add `TextMeasurer` abstraction, widgets use it
+1. **Phase 1:** Extract rendering from trinkets into `TrinketRenderer` interface
+2. **Phase 2:** Add `TextMeasurer` abstraction, trinkets use it
 3. **Phase 3:** Split `Window` into `PlatformWindow` + `InternalWindow`
 4. **Phase 4:** Create SDL/OpenGL backend (custom drawing, cross-platform)
 5. **Phase 5:** Create native macOS backend (Cocoa)
@@ -444,7 +444,7 @@ type DialogBackend interface {
 | Clipping/transforms | 🟢 Easy | Already abstracted |
 | Text rendering | 🟡 Medium | Need font metrics |
 | Box drawing | 🟡 Medium | Need vector alternative |
-| Widget visuals | 🟡 Medium | Need paint delegates |
+| Trinket visuals | 🟡 Medium | Need paint delegates |
 | Native integration | 🔴 Hard | Platform-specific work |
 
 ---
@@ -453,4 +453,4 @@ type DialogBackend interface {
 
 The tuitk architecture is well-designed for multi-backend support. A basic GUI backend (custom drawing with consistent style) could be built with **moderate effort**. Full native look-and-feel would require significant additional work but is achievable.
 
-The key insight is that the cell-based renderer is a TUI-only aspect. The GUI version would transform the same layout information and widgets into appropriate native OS windows with native content rendering.
+The key insight is that the cell-based renderer is a TUI-only aspect. The GUI version would transform the same layout information and trinkets into appropriate native OS windows with native content rendering.

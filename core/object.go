@@ -3,7 +3,7 @@ package core
 
 import "sync/atomic"
 
-// ObjectID is the stable identity of a UI object (widget, window).
+// ObjectID is the stable identity of a UI object (trinket, window).
 // Under the display protocol (D2), objects are addressed by ID across
 // the wire; pointer identity remains an in-process convenience only.
 //

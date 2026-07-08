@@ -24,27 +24,27 @@ func (s *fakeSurface) Invalidate(core.UnitRect)               { s.invalidated++ 
 func (s *fakeSurface) SetCursorVisible(bool)                  {}
 func (s *fakeSurface) SetCursorPosition(core.Unit, core.Unit) {}
 
-// clickWidget counts presses and records its laid-out bounds.
-type clickWidget struct {
-	core.WidgetBase
+// clickTrinket counts presses and records its laid-out bounds.
+type clickTrinket struct {
+	core.TrinketBase
 	clicks int
 	paints int
 }
 
-func newClickWidget() *clickWidget {
-	w := &clickWidget{}
-	w.WidgetBase = *core.NewWidgetBase()
+func newClickTrinket() *clickTrinket {
+	w := &clickTrinket{}
+	w.TrinketBase = *core.NewTrinketBase()
 	w.Init(w)
 	w.SetFocusPolicy(core.StrongFocus)
 	return w
 }
 
-func (w *clickWidget) Paint(*core.Painter) { w.paints++ }
-func (w *clickWidget) HandleMousePress(core.MousePressEvent) bool {
+func (w *clickTrinket) Paint(*core.Painter) { w.paints++ }
+func (w *clickTrinket) HandleMousePress(core.MousePressEvent) bool {
 	w.clicks++
 	return true
 }
-func (w *clickWidget) SizeHint() core.UnitSize {
+func (w *clickTrinket) SizeHint() core.UnitSize {
 	return core.UnitSize{Width: 80, Height: 32}
 }
 
@@ -86,7 +86,7 @@ func (nullPaintBackend) Beep()                                                  
 
 func TestSurfaceHostRunsWindowAsNativeSurface(t *testing.T) {
 	win := NewWindow("Hosted")
-	content := newClickWidget()
+	content := newClickTrinket()
 	win.SetContent(content)
 
 	surface := &fakeSurface{size: core.UnitSize{Width: 8 * 50, Height: 16 * 12}}

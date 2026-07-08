@@ -5,7 +5,7 @@ import (
 )
 
 // Object is a UI object under construction, provided by a Factory.
-// The widget binder implements this against real widgets; tests use
+// The trinket binder implements this against real trinkets; tests use
 // mocks. Set receives either a value (flag == FlagNone) or a flag
 // assertion (value == nil); typed conversion and property validation
 // are the binder's job.
@@ -25,8 +25,8 @@ type Factory interface {
 // wraps wire-initiated property application so mutations never echo
 // back as events (D20). RegistryFactory implements it.
 type EventControl interface {
-	Subscribe(widgetID uint64, eventType string)
-	Unsubscribe(widgetID uint64, eventType string)
+	Subscribe(trinketID uint64, eventType string)
+	Unsubscribe(trinketID uint64, eventType string)
 	Suppressed(f func())
 }
 
@@ -240,7 +240,7 @@ func (s *Session) subscribe(verb string, args []*Arg, f Factory) error {
 		return fmt.Errorf("%s: expected a target (key path, object id, or all)", verb)
 	}
 
-	var id uint64 // 0 = all widgets
+	var id uint64 // 0 = all trinkets
 	head := args[0]
 	switch {
 	case head.Name == "all" && head.Value == nil && head.Flag == FlagTrue:

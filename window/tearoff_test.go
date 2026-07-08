@@ -341,7 +341,7 @@ func TestTearOffHostFocusAndCmdM(t *testing.T) {
 	}
 }
 
-// Popups from a torn window's widgets register on the host surface,
+// Popups from a torn window's trinkets register on the host surface,
 // paint there, and route their mouse events there - not on the
 // desktop.
 func TestTearOffHostOwnsPopups(t *testing.T) {

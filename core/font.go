@@ -307,21 +307,21 @@ func isWideChar(ch rune) bool {
 	return false
 }
 
-// FontProvider is implemented by widgets that can provide a font.
+// FontProvider is implemented by trinkets that can provide a font.
 type FontProvider interface {
 	// Font returns the font set on this provider, or nil if not set.
 	Font() *Font
 }
 
-// FindEffectiveFont walks up the widget tree to find the effective font.
-// It checks the widget, then its parent window, then the desktop/MDI pane.
+// FindEffectiveFont walks up the trinket tree to find the effective font.
+// It checks the trinket, then its parent window, then the desktop/MDI pane.
 // Returns DefaultFont() if no font is set anywhere in the chain.
-func FindEffectiveFont(w Widget) *Font {
+func FindEffectiveFont(w Trinket) *Font {
 	if w == nil {
 		return DefaultFont()
 	}
 
-	// Check if the widget itself has a font
+	// Check if the trinket itself has a font
 	if fp, ok := w.(FontProvider); ok {
 		if f := fp.Font(); f != nil {
 			return f
@@ -336,8 +336,8 @@ func FindEffectiveFont(w Widget) *Font {
 				return f
 			}
 		}
-		if widget, ok := current.(Widget); ok {
-			current = widget.Parent()
+		if trinket, ok := current.(Trinket); ok {
+			current = trinket.Parent()
 		} else {
 			break
 		}

@@ -31,8 +31,8 @@ mode and under non-uniform fonts (Tuesday already demonstrates this).
   route to text measurement (font.MeasureText now; TextMeasurer later).
 - **D** — plausibly intentional canonical default → human-reviewed;
   resolution below.
-- **E** — cell-grid content (the widget IS a grid) → metrics from the
-  widget's own font/container.
+- **E** — cell-grid content (the trinket IS a grid) → metrics from the
+  trinket's own font/container.
 
 ## Totals
 
@@ -56,8 +56,8 @@ mode and under non-uniform fonts (Tuesday already demonstrates this).
    builds the metrics analogue: a `CellMetricsProvider` (name TBD) +
    `FindEffectiveCellMetrics` walk, rooted at the Desktop's stored
    default. The 102 B-sites then rewrite mechanically onto it.
-2. **One true dead-end:** `widgets/spacer.go:19 NewSpacer()` bakes a
-   cell-based size in the constructor, before the widget has a parent.
+2. **One true dead-end:** `trinkets/spacer.go:19 NewSpacer()` bakes a
+   cell-based size in the constructor, before the trinket has a parent.
    Needs lazy sizing at first layout rather than a parent walk.
 3. **Paint paths are already clean.** Paint methods use `p.Metrics()`
    (desktop.go:1621, window.go:794, mdipane.go:1083); only one paint
@@ -73,7 +73,7 @@ mode and under non-uniform fonts (Tuesday already demonstrates this).
 - `backend/tui.go:97` (`DefaultTUIOptions`), `:113` (`NewTUIBackend`
   zero-value fallback) — **keep**: the backend is the legitimate source
   of its own default.
-- `widgets/desktop.go:1228, 1428, 1491, 1522, 1530, 1539, 1567, 1736`
+- `trinkets/desktop.go:1228, 1428, 1491, 1522, 1530, 1539, 1567, 1736`
   (`ChildAt`, `layoutChildren`, `ClientArea`, `MenuBarHeight`,
   `StatusBarHeight`, `StatusBarBounds`, `DockBounds`,
   `HandleMousePress`) — Desktop is the root container, so "which
@@ -99,8 +99,8 @@ Tuesday today):
 | button.go:199 | `SizeHint` | text via font + cell chrome |
 | checkbox.go:138 | `SizeHint` | text via font + 3-cell indicator |
 | radiobutton.go:84 | `SizeHint` | text via font + 3-cell indicator |
-| tabwidget.go:511 ★ | `calculateTabBarWidth` | `(len(text)+4) × CellWidth`, no font |
-| tabwidget.go:526 | `calculateTotalTabsWidth` | text via font + separator chrome |
+| tabtrinket.go:511 ★ | `calculateTabBarWidth` | `(len(text)+4) × CellWidth`, no font |
+| tabtrinket.go:526 | `calculateTotalTabsWidth` | text via font + separator chrome |
 | dialog.go:179 | `MessageBox.calculateSize` | width from `len(line)` |
 | menu.go:569 | `Menu.calculateSize` | item text via font + gutter/arrow |
 | menu.go:1357 ★ | `MenuBar.dateTimeWidth` | `18 × CellWidth` clock width, no font |
@@ -111,13 +111,13 @@ Related (not a DefaultCellMetrics site): `label.go wrapText` counted
 every rune as width 1 — reproduced live via the word-wrap test row on
 the demo's Selection tab. **Fixed 2026-07-05**: wrapText now measures
 via the effective font and breaks at word boundaries (character
-fallback for overlong words), covered by `widgets/label_test.go` —
+fallback for overlong words), covered by `trinkets/label_test.go` —
 the repo's first unit tests.
 
 ## Category E — PurfecTerm (6)
 
 purfecterm.go: 115 (`SizeHint`), 134 (`updateTerminalSize`), 308, 393,
-424, 451 (mouse handlers). The widget is genuinely a cell grid; its
+424, 451 (mouse handlers). The trinket is genuinely a cell grid; its
 cell size should come from its own font/container metrics rather than
 the global default.
 
@@ -131,48 +131,48 @@ By file (line: enclosing method):
 
 - **layout/box.go** — 132: `BoxLayout.Layout` (spacing rounding;
   receives `container` directly — easiest B-fix, no walk needed).
-- **widgets/mdipane.go** — 608 `TileWindows`, 654 `CascadeWindows`,
+- **trinkets/mdipane.go** — 608 `TileWindows`, 654 `CascadeWindows`,
   804 `positionWindow`, 869 `detectResizeEdge`, 1195
   `HandleMousePress`, 1323/1387 `HandleMouseMove`.
-- **widgets/panel.go** — 100 `Layout` (border inset), 154 `SizeHint`
+- **trinkets/panel.go** — 100 `Layout` (border inset), 154 `SizeHint`
   (20×10 placeholder).
-- **widgets/textinput.go** — 342 `SizeHint` (fixed 20-char default).
-- **widgets/combobox.go** — 515 `registerPopupOverlay`, 923
+- **trinkets/textinput.go** — 342 `SizeHint` (fixed 20-char default).
+- **trinkets/combobox.go** — 515 `registerPopupOverlay`, 923
   `scrollbarGeometry`, 999/1086/1275 popup mouse handlers,
   1526/1596/1696 mouse handlers.
-- **widgets/progress.go** — 173 `SizeHint` (cell block-bar sizing).
-- **widgets/button.go** — 458 `HandleMouseMove`.
-- **widgets/splitter.go** — 211 `dividerBounds`, 458 `HandleMouseMove`,
+- **trinkets/progress.go** — 173 `SizeHint` (cell block-bar sizing).
+- **trinkets/button.go** — 458 `HandleMouseMove`.
+- **trinkets/splitter.go** — 211 `dividerBounds`, 458 `HandleMouseMove`,
   573 `HandleKeyPress`.
-- **widgets/dock.go** — 118 `entriesPerRow`, 133 `RowCount`, 152
+- **trinkets/dock.go** — 118 `entriesPerRow`, 133 `RowCount`, 152
   `RequiredHeight`, 353 `HandleMousePress`.
-- **widgets/scrollarea.go** — 149 `ScrollBar.SizeHint`, 261/329
+- **trinkets/scrollarea.go** — 149 `ScrollBar.SizeHint`, 261/329
   ScrollBar mouse handlers, 585 `EnsureRectVisible`, 726
   `viewportBounds`, 748 `calculateScrollBarNeeds`, 803
   `updateScrollBars`, 829 `ScrollArea.SizeHint`, 994/1029/1065 mouse
   handlers.
-- **widgets/tabwidget.go** — 455 `tabBarHeight`, 463 `contentBounds`,
+- **trinkets/tabtrinket.go** — 455 `tabBarHeight`, 463 `contentBounds`,
   563 `scrollButtonWidth`, 606 `isLastTabFullyVisible`, 708
   `vertVisibleCount`, 756 `vertScrollbarGeometry`, 867 `SizeHint`,
   2390 `HandleMousePress`, 2468 `handleTabBarClick`, 2702
   `ensureTabFullyVisible`, 2831/2867/2896 `HandleMouseMove`.
-- **widgets/listview.go** — 205 `SetCurrentIndex`, 362 `ensureVisible`,
+- **trinkets/listview.go** — 205 `SetCurrentIndex`, 362 `ensureVisible`,
   374 `SizeHint`, 469 `scrollbarGeometry`, 604/615 `HandleKeyPress`,
   641 `visibleCount`, 663 `HandleMousePress`, 733 `HandleMouseMove`.
-- **widgets/treeview.go** — 187 `SetCurrentIndex`, 416
+- **trinkets/treeview.go** — 187 `SetCurrentIndex`, 416
   `clampScrollOffset`, 447 `ensureVisible`, 459 `SizeHint`, 556
   `visibleCount`, 564 `scrollbarGeometry`, 721/732 `HandleKeyPress`,
   792 `HandleMousePress`, 897 `HandleMouseMove`.
-- **widgets/menu.go** — 234 `SetAvailableHeight`, 1033 `openSubMenu`,
+- **trinkets/menu.go** — 234 `SetAvailableHeight`, 1033 `openSubMenu`,
   1106 `HandleMousePress`, 1178 `HandleMouseMove`, 1364
   `scrollButtonWidth`, 1390 `isLastMenuFullyVisible`, 1428
   `ensureMenuVisible`, 1488 `clampScrollOffset`, 1661 `OpenMenu`, 1756
   `calculateMenuX` (ellipsis part), 2225/2367/2444 mouse handlers.
-- **widgets/dialog.go** — 451 `FileDialog.setupUI`, 841
+- **trinkets/dialog.go** — 451 `FileDialog.setupUI`, 841
   `NewInputDialog`.
-- **widgets/desktop.go** — 1919 `StatusBar.SizeHint` (StatusBar is a
-  child widget, not the Desktop root).
-- **widgets/spacer.go** — 19 `NewSpacer` (the dead-end; lazy sizing).
+- **trinkets/desktop.go** — 1919 `StatusBar.SizeHint` (StatusBar is a
+  child trinket, not the Desktop root).
+- **trinkets/spacer.go** — 19 `NewSpacer` (the dead-end; lazy sizing).
 - **window/window.go** — 640 `contentBounds`, 1216 `buttonAtPosition`,
   1340 `handleTitleBarKey`, 1659 `constrainBoundsForMovement`, 1862
   `HandleMousePress`, 2029 `SizeHint`.
@@ -200,7 +200,7 @@ numbers *mean*, never how big things *look*:
   addressing resolution — that is the feature.
 
 The double spacing observed via the demo toggle is therefore a
-**denomination leak**: widgets produce values in the window's currency
+**denomination leak**: trinkets produce values in the window's currency
 while the render path converts to screen cells at the backend's rate,
 with no exchange at the border. Work required to close it:
 
@@ -226,7 +226,7 @@ with no exchange at the border. Work required to close it:
   transform; `Painter.WithTransform` composition order fixed (new
   transform applies first — immaterial for translations, essential for
   scales). `core.ExchangeX/Y/Size` convert values between
-  denominations; `core.ParentCellMetrics` resolves a widget's outer
+  denominations; `core.ParentCellMetrics` resolves a trinket's outer
   currency.
 - Boundaries live where overrides can: **Window** content (layout,
   paint, ChildAt, mouse press/move/release, SizeHint) and **Panel**
@@ -282,7 +282,7 @@ rely on hand-tuning around these:
 1. **`NewLayoutItem` defaults `Align` to `AlignLeft`** (layout.go:20)
    while the `Alignment` type documents `AlignFill` as the default
    (types.go:107). In a vertical box, AlignLeft silently forces item
-   width to hint width — a zero-hint widget becomes invisible while
+   width to hint width — a zero-hint trinket becomes invisible while
    still consuming stretch space.
 2. **`calculateStretch` never shrank an item below its hint** — extra
    space was distributed, but an oversized hint pushed siblings
@@ -301,47 +301,47 @@ rely on hand-tuning around these:
    implemented by Label and opt-in wrapped Checkbox/RadioButton,
    consulted by BoxLayout, propagated by Panel. DockRow deliberately
    not migrated (D9); MessageBox pending. Tests in
-   `widgets/label_test.go`. Note the new HFW code paths add a few
+   `trinkets/label_test.go`. Note the new HFW code paths add a few
    `DefaultCellMetrics()` call sites (checkbox/radiobutton
    HeightForWidth, Panel border inset, BoxLayout.HeightForWidth) —
    deliberate parity with their existing siblings; the G1 sweep
    collects them all together.
 5. **Font-dependent SizeHints reshape the whole layout on font change**
    — sometimes wanted (buttons fitting text), sometimes not (a fixed
-   design grid); there is currently no way for a widget to declare
+   design grid); there is currently no way for a trinket to declare
    whether its size derives from text metrics or grid metrics. This is
    the D8 two-concept distinction surfacing at the API level.
 6. **`wrapText` was character wrap, not word wrap** — no word-boundary
    logic, and it counted runes instead of measuring. **Fixed
    2026-07-05**: breaks at word boundaries and measures candidate lines
    via the font (character fallback for overlong words); tests in
-   `widgets/label_test.go`. Will re-route from `font.MeasureText` to
+   `trinkets/label_test.go`. Will re-route from `font.MeasureText` to
    the TextMeasurer when G1 lands.
 7. **`Panel.SetBorder(true)` with the zero-value `BorderStyle` drew an
    invisible border** (NUL runes). **Fixed 2026-07-05** (during the
-   protocol widget-binding work): enabling the border defaults the
+   protocol trinket-binding work): enabling the border defaults the
    style to single lines when none was set.
 
 ## Suggested G1 execution order
 
 1. ✅ **Done 2026-07-05** — inheritance mechanism built, mirroring the
    font machinery: `core.CellMetricsProvider` +
-   `core.FindEffectiveCellMetrics` parent walk; `WidgetBase` stores an
+   `core.FindEffectiveCellMetrics` parent walk; `TrinketBase` stores an
    optional override with `SetCellMetrics` / `CellMetricsOverride` /
    `EffectiveCellMetrics` (so Desktop, Window, MDIPane, and every
-   widget get override capability by embedding); Desktop seeds its
+   trinket get override capability by embedding); Desktop seeds its
    override from `backend.Metrics()` in `SetBackend`, rooting the
-   chain. Layouts are not widgets: BoxLayout resolves metrics from its
-   container (or a `SetMetricsSource` widget wired by Panel).
+   chain. Layouts are not trinkets: BoxLayout resolves metrics from its
+   container (or a `SetMetricsSource` trinket wired by Panel).
    Inheritance/override/clear covered by
    `TestEffectiveCellMetricsInheritance`.
    **Pilot conversions:** layout/box.go (Layout + HeightForWidth),
-   widgets/panel.go (all 3 sites), label.go, checkbox.go,
+   trinkets/panel.go (all 3 sites), label.go, checkbox.go,
    radiobutton.go — all now use `EffectiveCellMetrics()`.
 2. ✅ **Done 2026-07-05** — desktop.go's chrome sites (including
    StatusBar) read effective metrics rooted at the stored override;
    tui.go keeps its 2 as the root source.
-3. ✅ **Done 2026-07-05** — widgets/ B-sites swept onto
+3. ✅ **Done 2026-07-05** — trinkets/ B-sites swept onto
    `EffectiveCellMetrics()` (including paint-time `p.Metrics()`
    layout math, which is interior-currency). Deliberately NOT
    converted: window/window.go and window/manager.go sites (window
@@ -352,7 +352,7 @@ rely on hand-tuning around these:
 4. ✅ **Resolved 2026-07-05** — C-sites closed out after live
    verification under Tuesday (user-tested):
    - `label.go wrapText` — fixed earlier (font-measured word wrap).
-   - `tabwidget.go calculateTabBarWidth` (★ withdrawn) — the vertical
+   - `tabtrinket.go calculateTabBarWidth` (★ withdrawn) — the vertical
      tab bar's width is a grid-design choice (N columns from longest
      label's rune count); tab text paints with the font and truncates
      gracefully. Verified correct-looking under Tuesday; reclassified

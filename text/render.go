@@ -16,7 +16,7 @@ import (
 // size - scaling sharpens, it never upsamples.
 //
 // This is the only path from shaped output to pixels: backends and
-// widgets never touch the shaping library's types, so the
+// trinkets never touch the shaping library's types, so the
 // implementation stays swappable (D6).
 func Render(dst draw.Image, sp *ShapedParagraph, x, y core.Unit, pxPerUnit int, col color.Color) {
 	if pxPerUnit < 1 {

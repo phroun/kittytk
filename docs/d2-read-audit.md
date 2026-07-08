@@ -1,7 +1,7 @@
 # D2 Slice 4 — Replicated-Read Discipline Audit
 
 Date: 2026-07-05. Scope: every public getter on the wire-registered
-types (and the widget-base surface behind them), classified by where
+types (and the trinket-base surface behind them), classified by where
 its answer can come from once a transport separates app from display
 service. The constraint (D2/D4): reads must look synchronous to app
 code, which means they are served from an **app-side replica** — the
@@ -97,7 +97,7 @@ mirror event or must move to class A
    items.
 2. **Window geometry & state after user interaction** (`Bounds` after
    drag, `IsMaximized`, `IsMinimized`). Vocabulary already reserves
-   `window_moved`/`window_resized`/`window_state`; the Window widget
+   `window_moved`/`window_resized`/`window_state`; the Window trinket
    has no callbacks to emit them from yet. Tracked: add callbacks +
    Bind emission with the window-events slice.
 3. **Text cursor / selection** (`CursorPosition`, `SelectedText`,
@@ -109,7 +109,7 @@ mirror event or must move to class A
    selection-set events yet — deferred WITH the `multi_select`
    feature itself; single selection is fully mirrored.
 5. **Focus** (`HasFocus`). `focus_in`/`focus_out` are in the event
-   vocabulary but nothing emits them (widgets have Handle methods,
+   vocabulary but nothing emits them (trinkets have Handle methods,
    not callbacks). Tracked with the raw-key/input slice, which needs
    focus routing anyway.
 6. **Scroll offsets** (`ScrollArea` X/Y after user scrolling).
@@ -133,7 +133,7 @@ mirror event or must move to class A
    holds handles to, and folds them into the replica before invoking
    app handlers.
 3. Class C1 getters do not exist on the client-side handle types.
-   (In-process widgets keep them — display-side code needs them; the
+   (In-process trinkets keep them — display-side code needs them; the
    veneer simply doesn't mirror them.)
 4. Each C2 item graduates to B by adding its event; none blocks the
    transport phase.

@@ -5,7 +5,7 @@
 //
 // Threading (D21): socket readers parse batches off the wire and
 // Post them onto the desktop's platform thread; everything that
-// touches widgets runs there. Event emission enqueues onto a
+// touches trinkets runs there. Event emission enqueues onto a
 // per-connection writer goroutine, so the UI thread never blocks on
 // a slow client.
 package display
@@ -24,13 +24,13 @@ import (
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
 	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 	"github.com/phroun/tuitk/window"
 )
 
 // Server accepts display-protocol connections for one desktop.
 type Server struct {
-	desktop  *widgets.Desktop
+	desktop  *trinkets.Desktop
 	listener net.Listener
 	sessions atomic.Uint64
 	closed   atomic.Bool
@@ -39,7 +39,7 @@ type Server struct {
 // Serve listens on the unix socket at path (creating its directory,
 // 0700) and serves connections until Close. Call from desktop wiring
 // (e.g. SetOnStartup).
-func Serve(desktop *widgets.Desktop, path string) (*Server, error) {
+func Serve(desktop *trinkets.Desktop, path string) (*Server, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (c *conn) execute(batch []*protocol.Statement) {
 	for _, target := range c.factory.take() {
 		switch t := target.(type) {
 		case *window.Window:
-			// A window built as a child of an existing widget (e.g. an
+			// A window built as a child of an existing trinket (e.g. an
 			// MDI document appended into an mdipane) already has a home;
 			// only genuinely top-level windows join the application.
 			if t.Parent() == nil {
@@ -226,14 +226,14 @@ func (c *conn) execute(batch []*protocol.Statement) {
 					}
 				}
 			}
-		case *widgets.MessageBox:
+		case *trinkets.MessageBox:
 			if t.Window.Parent() == nil {
 				c.app.AddWindow(&t.Window)
 			}
-		case interface{ Menus() []*widgets.Menu }:
+		case interface{ Menus() []*trinkets.Menu }:
 			c.app.SetMenuBarContent(t.Menus())
 		case interface {
-			Sections() []widgets.StatusSection
+			Sections() []trinkets.StatusSection
 		}:
 			c.app.SetStatusBarContent(t.Sections())
 		}
@@ -250,10 +250,10 @@ func (c *conn) execute(batch []*protocol.Statement) {
 // implements directly (the protocol session has a closed verb set), and
 // returns the remaining statements for the session to run. These are the
 // desktop-reaching actions a remote app can't perform through its own
-// widget handles - the display does them on the app's behalf:
+// trinket handles - the display does them on the app's behalf:
 //
-//	rawkey            - pass the next key straight to the focused widget
-//	cut/copy/paste/   - the standard edit actions on the focused widget
+//	rawkey            - pass the next key straight to the focused trinket
+//	cut/copy/paste/   - the standard edit actions on the focused trinket
 //	  selectall
 //	tile/cascade      - arrange the desktop's windows
 //	spawndesktop      - leave solo mode: reveal a desktop, solo window
@@ -273,13 +273,13 @@ func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement
 		}
 		switch stmt.Verb {
 		case "rawkey":
-			d.ActivatePassNextKeyToWidget()
+			d.ActivatePassNextKeyToTrinket()
 		case "status":
 			if sb := d.StatusBar(); sb != nil {
 				sb.SetText(argString(stmt, "text"))
 			}
 		case "cut", "copy", "paste", "selectall":
-			editAction(d.FocusedWidget(), stmt.Verb)
+			editAction(d.FocusedTrinket(), stmt.Verb)
 		case "tile":
 			if wm := d.WindowManager(); wm != nil {
 				wm.TileWindows()
@@ -344,10 +344,10 @@ func namedDesktopFont(name string) *core.Font {
 	return nil
 }
 
-// editAction invokes one of the standard edit operations on a widget
+// editAction invokes one of the standard edit operations on a trinket
 // that supports them (text inputs, edit boxes); a nil or non-editing
-// widget is a no-op.
-func editAction(w core.Widget, verb string) {
+// trinket is a no-op.
+func editAction(w core.Trinket, verb string) {
 	ea, ok := w.(interface {
 		Cut()
 		Copy()
@@ -371,7 +371,7 @@ func editAction(w core.Widget, verb string) {
 
 // toggleTerminalTheme flips the active dark/light terminal theme and
 // repaints; embedded terminals follow via their own palette.
-func toggleTerminalTheme(d *widgets.Desktop) {
+func toggleTerminalTheme(d *trinkets.Desktop) {
 	dark := style.ActiveTermTheme() == style.TermThemeLight
 	if dark {
 		style.SetActiveTermTheme(style.TermThemeDark)
@@ -386,13 +386,13 @@ func toggleTerminalTheme(d *widgets.Desktop) {
 	d.RequestUpdate()
 }
 
-// applyTerminalTheme walks a widget subtree and puts every PurfecTerm
+// applyTerminalTheme walks a trinket subtree and puts every PurfecTerm
 // into the given dark/light mode.
-func applyTerminalTheme(w core.Widget, dark bool) {
+func applyTerminalTheme(w core.Trinket, dark bool) {
 	if w == nil {
 		return
 	}
-	if term, ok := w.(*widgets.PurfecTerm); ok {
+	if term, ok := w.(*trinkets.PurfecTerm); ok {
 		term.SetDarkTheme(dark)
 	}
 	if cont, ok := w.(core.Container); ok {

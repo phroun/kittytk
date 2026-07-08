@@ -230,7 +230,7 @@ func (m CellMetrics) AlignRect(r UnitRect) UnitRect {
 	}
 }
 
-// CellMetricsProvider is implemented by widgets that can provide a
+// CellMetricsProvider is implemented by trinkets that can provide a
 // grid-metrics override. Grid metrics are a per-container layout
 // vocabulary: each container may define how many units a virtual
 // row/column occupies, inherited through the container chain like
@@ -241,11 +241,11 @@ type CellMetricsProvider interface {
 	CellMetricsOverride() *CellMetrics
 }
 
-// FindEffectiveCellMetrics walks up the widget tree to find the
+// FindEffectiveCellMetrics walks up the trinket tree to find the
 // effective grid metrics, mirroring FindEffectiveFont. It checks the
-// widget, then its ancestors (window, MDI pane, desktop). Returns
+// trinket, then its ancestors (window, MDI pane, desktop). Returns
 // DefaultCellMetrics() if no override is set anywhere in the chain.
-func FindEffectiveCellMetrics(w Widget) CellMetrics {
+func FindEffectiveCellMetrics(w Trinket) CellMetrics {
 	if w == nil {
 		return DefaultCellMetrics()
 	}
@@ -263,8 +263,8 @@ func FindEffectiveCellMetrics(w Widget) CellMetrics {
 				return *m
 			}
 		}
-		if widget, ok := current.(Widget); ok {
-			current = widget.Parent()
+		if trinket, ok := current.(Trinket); ok {
+			current = trinket.Parent()
 		} else {
 			break
 		}
@@ -301,14 +301,14 @@ func ExchangeSize(s UnitSize, from, to CellMetrics) UnitSize {
 }
 
 // ParentCellMetrics returns the effective metrics of w's parent context
-// — the denomination in which w's bounds are expressed. A widget with a
+// — the denomination in which w's bounds are expressed. A trinket with a
 // metrics override denominates its interior; its own bounds live in the
 // parent's currency.
-func ParentCellMetrics(w Widget) CellMetrics {
+func ParentCellMetrics(w Trinket) CellMetrics {
 	if w == nil {
 		return DefaultCellMetrics()
 	}
-	if pw, ok := w.Parent().(Widget); ok && pw != nil {
+	if pw, ok := w.Parent().(Trinket); ok && pw != nil {
 		return FindEffectiveCellMetrics(pw)
 	}
 	return DefaultCellMetrics()

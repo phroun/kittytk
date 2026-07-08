@@ -4,7 +4,7 @@ package main
 
 import (
 	"github.com/phroun/tuitk/backend"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 )
 
 // The text-mode demo: the classic TUI desktop in your terminal.
@@ -14,7 +14,7 @@ func main() {
 	opts := backend.DefaultTUIOptions()
 	tuiBackend := backend.NewTUIBackend(opts)
 
-	desktop := widgets.NewDesktop()
+	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(tuiBackend)
 
 	buildDemo(desktop)

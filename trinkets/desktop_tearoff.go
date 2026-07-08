@@ -1,0 +1,676 @@
+package trinkets
+
+import (
+	"time"
+
+	"github.com/phroun/tuitk/core"
+	"github.com/phroun/tuitk/platform"
+	"github.com/phroun/tuitk/window"
+)
+
+// Tear-off choreography (G4 granting, desktop side). On multi-surface
+// platforms a desktop window dragged past the surface edge undocks
+// into its own borderless OS window - chrome intact, so it looks the
+// same torn or docked - and re-docks when the pointer crosses back
+// over the desktop mid-drag.
+//
+// Two drags exist. While the tearing gesture is live the DESKTOP
+// window still owns the pointer capture, so the desktop keeps
+// receiving motion and drives the torn surface itself (tornDrag). A
+// later drag started on the torn window's own title bar is driven by
+// its TearOffHost, which asks the desktop via the redock callback
+// whether the pointer has come home.
+
+// tornDrag is the desktop-driven phase of a tear-off: the gesture
+// that tore the window is still holding the button.
+type tornDrag struct {
+	host *window.TearOffHost
+	surf platform.Surface
+	offX core.Unit // grab offset within the window, units
+	offY core.Unit
+}
+
+// setupTearOff arms the window manager's tear-off policy when the
+// platform can host more than one surface.
+func (d *Desktop) setupTearOff(p platform.Platform, surf platform.Surface) {
+	ms, ok := p.(platform.MultiSurfacePlatform)
+	if !ok || !ms.SupportsMultipleSurfaces() {
+		return
+	}
+	if _, ok := surf.(platform.NativeSurface); !ok {
+		return
+	}
+	if _, ok := p.(platform.GlobalPointerPlatform); !ok {
+		return
+	}
+	d.windowManager.SetTearOffHandler(d.tearOffWindow)
+}
+
+// deviceScale is the desktop surface's pixels-per-unit.
+func (d *Desktop) deviceScale() int {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+	if ds, ok := backend.(core.DeviceScaler); ok {
+		if s := ds.Scale(); s > 0 {
+			return s
+		}
+	}
+	return 1
+}
+
+// tearOffWindow implements the WindowManager tear-off policy: lift
+// the window out into its own OS surface positioned so the grab
+// point stays under the pointer, and keep driving the drag from the
+// desktop (which still owns the capture).
+func (d *Desktop) tearOffWindow(win *window.Window, e core.MouseMoveEvent, offX, offY core.Unit) bool {
+	// Only tearable windows detach - dialogs and other plain windows
+	// stay put.
+	if !win.IsTearable() {
+		return false
+	}
+	host := d.createTornHost(win, e.X-offX, e.Y-offY)
+	if host == nil {
+		return false
+	}
+	// Drag path: keep driving the gesture from the desktop's captured
+	// pointer stream until release.
+	host.BeginDrag(offX, offY)
+	d.mu.Lock()
+	d.tornDrag = &tornDrag{host: host, surf: host.Surface(), offX: offX, offY: offY}
+	d.mu.Unlock()
+	return true
+}
+
+// tearOffInPlace detaches a docked tearable window into its own
+// surface at its current desktop position and size, without a drag -
+// the tear-handle click/keyboard activation path.
+func (d *Desktop) tearOffInPlace(win *window.Window) {
+	if !win.IsTearable() || win.IsDetached() {
+		return
+	}
+	// A maximized window restores to its unmaximized size as part of the
+	// tear-off, so it lands on its own surface at its normal bounds rather
+	// than filling one the size of the desktop's client area.
+	if win.IsMaximized() {
+		win.Restore()
+	}
+	b := win.Bounds()
+	d.createTornHost(win, b.X, b.Y)
+}
+
+// createTornHost lifts win out of the window manager into a new
+// borderless OS surface whose top-left is at the given desktop-unit
+// position. Returns nil when the platform can't host it. Shared by
+// the drag and click detach paths.
+func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.Unit) *window.TearOffHost {
+	d.mu.RLock()
+	plat := d.platform
+	surf := d.surface
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if plat == nil || surf == nil {
+		return nil
+	}
+	native, ok := surf.(platform.NativeSurface)
+	if !ok {
+		return nil
+	}
+	gp, ok := plat.(platform.GlobalPointerPlatform)
+	if !ok {
+		return nil
+	}
+
+	scale := d.deviceScale()
+	deskX, deskY := native.ScreenPositionPx()
+	b := win.Bounds()
+	newSurf, err := plat.CreateSurface(platform.SurfaceOptions{
+		Title:          win.Title(),
+		Borderless:     true,
+		CornerRadiusPx: int(window.FrameCornerRadius()) * scale,
+		XPx:            deskX + int(deskUnitX)*scale,
+		YPx:            deskY + int(deskUnitY)*scale,
+		WidthPx:        int(b.Width) * scale,
+		HeightPx:       int(b.Height) * scale,
+	})
+	if err != nil {
+		return nil
+	}
+
+	wm.RemoveWindow(win)
+
+	// The window is leaving the desktop for its own surface, so it must
+	// not linger in the desktop dock. A minimized window (e.g. a follower
+	// that was docked when its main window tore off) also un-minimizes,
+	// so it actually shows on its torn surface instead of staying hidden.
+	if win.IsMinimized() {
+		win.Restore()
+	}
+	if d.dockRow != nil {
+		d.dockRow.RemoveEntryByID(win.ObjectID())
+	}
+
+	var host *window.TearOffHost
+	// A detached window re-docks by dragging its '#' handle back over
+	// the desktop, or by clicking it. The host only calls this during
+	// a HANDLE drag - a plain title drag just moves the OS window.
+	host = window.NewTearOffHost(win, newSurf, scale, gp.GlobalPointerPx,
+		func(gx, gy int, grabX, grabY core.Unit) bool {
+			return d.redockAt(host, gx, gy, grabX, grabY)
+		})
+	host.SetGhostRelay(
+		func(gx, gy int) {
+			ux, uy := d.globalToDesktopUnits(gx, gy)
+			d.dispatchEvent(core.MouseMoveEvent{X: ux, Y: uy, Buttons: core.LeftButton})
+			d.invalidateSurface()
+		},
+		func() {
+			gx, gy := gp.GlobalPointerPx()
+			ux, uy := d.globalToDesktopUnits(gx, gy)
+			d.dispatchEvent(core.MouseReleaseEvent{X: ux, Y: uy, Button: core.LeftButton})
+			if native, ok := newSurf.(platform.NativeSurface); ok {
+				native.Close()
+			}
+			d.invalidateSurface()
+		})
+	host.SetOnClosed(func() { d.dropTornHost(host) })
+	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)
+
+	// The torn surface drives the same system-cursor control as the
+	// desktop, so resize/edge and text cursors work over it too.
+	if cc, ok := plat.(platform.CursorController); ok {
+		host.SetCursorSetter(cc.SetCursor)
+	}
+
+	// Match the desktop's in-surface resize-edge thickness so torn edges
+	// are the same width as docked ones (and don't overlap edge trinkets
+	// such as scrollbars).
+	host.SetResizeGrip(d.resizeGrip)
+
+	// A torn window still borrows the desktop's menu bar line: when its
+	// surface gains focus, point the menu bar at this window's app so the
+	// app's menus are actually reachable (they showed nowhere before).
+	host.SetOnFocus(func(focused bool) {
+		if focused {
+			d.windowFocusChanged(win)
+			d.invalidateSurface()
+		}
+	})
+
+	// The window now reads as detached (handle shows '#'); clicking
+	// the handle (or Cmd-style activation) re-docks it to the desktop.
+	win.SetDetached(true)
+	// A detached main window carries the app's own menu bar + status bar.
+	d.attachMainWindowChrome(win)
+	// The detached menu bar's parent is the window, which can't provide the
+	// desktop timer system its dropdowns need for hover auto-scroll. Wire
+	// the bar to the desktop's timers and this surface's repaint directly.
+	if mb, ok := win.WindowMenuBar().(*MenuBar); ok {
+		mb.SetScrollTimerStarter(func(interval time.Duration, cb func()) interface{ Stop() } {
+			return d.StartRepeatingTimer(interval, cb)
+		})
+		mb.SetRequestUpdate(host.Invalidate)
+	}
+	win.SetOnTearRequest(func() { d.redockInPlace(host) })
+
+	d.mu.Lock()
+	d.tornHosts = append(d.tornHosts, host)
+	d.mu.Unlock()
+
+	// A main window drags its non-tearable children off the desktop with
+	// it: dialogs and other windows that can't be torn off by hand live on
+	// their own surfaces while the main window is detached, and re-dock
+	// with it. Only fires for a genuine main window (a follower being torn
+	// here is not any app's main window, so it does not recurse). The main
+	// window then rises above those children and takes focus, so the tear
+	// ends with it on top rather than buried under a large child surface.
+	if app := d.applicationForMainWindow(win); app != nil {
+		// b was captured before NewTearOffHost zeroed the window's origin,
+		// so it still holds the main window's docked bounds - the reference
+		// for keeping each child at the same relative position.
+		d.tearOffFollowers(app, win, b)
+		if n, ok := host.Surface().(platform.NativeSurface); ok {
+			n.Raise()
+		}
+		d.windowFocusChanged(win)
+	}
+	return host
+}
+
+// tearOffFollowers tears every non-tearable child of app (other than the
+// main window itself) onto its own surface. Children are torn in the
+// window manager's z-order (back to front) so their new surfaces stack in
+// the same order they had on the desktop, and each keeps the position it
+// held relative to the main window (mainDocked, the main window's bounds
+// before it was torn) - the tear preserves the layout as it was. Called
+// when the app's main window is torn off.
+func (d *Desktop) tearOffFollowers(app ApplicationProvider, main *window.Window, mainDocked core.UnitRect) {
+	d.mu.RLock()
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if wm == nil {
+		return
+	}
+	for _, w := range wm.Windows() {
+		if w == main || w.IsTearable() || w.IsDetached() || !appOwnsWindow(app, w) {
+			continue
+		}
+		x, y := d.positionRelativeToMain(main, mainDocked, w)
+		d.createTornHost(w, x, y)
+		d.setChildShortcutResolver(w, main)
+	}
+}
+
+// mainTornUnitOrigin returns the top-left of the main window's torn-off
+// surface in desktop units, and whether it could be located.
+func (d *Desktop) mainTornUnitOrigin(main *window.Window) (core.Unit, core.Unit, bool) {
+	d.mu.RLock()
+	surf := d.surface
+	hosts := make([]*window.TearOffHost, len(d.tornHosts))
+	copy(hosts, d.tornHosts)
+	d.mu.RUnlock()
+
+	deskNative, ok := surf.(platform.NativeSurface)
+	if !ok {
+		return 0, 0, false
+	}
+	var mainNative platform.NativeSurface
+	for _, h := range hosts {
+		if h.Window() == main {
+			if n, ok := h.Surface().(platform.NativeSurface); ok {
+				mainNative = n
+			}
+			break
+		}
+	}
+	if mainNative == nil {
+		return 0, 0, false
+	}
+	scale := d.deviceScale()
+	deskX, deskY := deskNative.ScreenPositionPx()
+	mx, my := mainNative.ScreenPositionPx()
+	return core.Unit((mx - deskX) / scale), core.Unit((my - deskY) / scale), true
+}
+
+// positionRelativeToMain returns the desktop-unit top-left that keeps
+// child at the same offset from the main window it had while docked.
+// mainDocked is the main window's bounds captured before it was torn (its
+// live bounds now read as origin-zero on its own surface). Falls back to
+// the child's own bounds when the main surface is unknown.
+func (d *Desktop) positionRelativeToMain(main *window.Window, mainDocked core.UnitRect, child *window.Window) (core.Unit, core.Unit) {
+	cb := child.Bounds()
+	ox, oy, ok := d.mainTornUnitOrigin(main)
+	if !ok {
+		return cb.X, cb.Y
+	}
+	return ox + (cb.X - mainDocked.X), oy + (cb.Y - mainDocked.Y)
+}
+
+// centerOverMain returns the desktop-unit top-left at which a child of
+// size childW x childH is centered over the app's torn-off main window.
+// Used only for freshly created child windows. Falls back to the supplied
+// rectangle's origin when the main window's torn surface can't be located.
+func (d *Desktop) centerOverMain(main *window.Window, childW, childH core.Unit, fallback core.UnitRect) (core.Unit, core.Unit) {
+	ox, oy, ok := d.mainTornUnitOrigin(main)
+	if !ok {
+		return fallback.X, fallback.Y
+	}
+	mb := main.Bounds()
+	return ox + (mb.Width-childW)/2, oy + (mb.Height-childH)/2
+}
+
+// redockFollowers re-docks every torn non-tearable child of app back onto
+// the desktop at its current on-screen position. Called when the app's
+// main window re-docks.
+func (d *Desktop) redockFollowers(app ApplicationProvider, main *window.Window) {
+	d.mu.RLock()
+	hosts := make([]*window.TearOffHost, len(d.tornHosts))
+	copy(hosts, d.tornHosts)
+	d.mu.RUnlock()
+	for _, h := range hosts {
+		w := h.Window()
+		if w == main || w.IsTearable() || !appOwnsWindow(app, w) {
+			continue
+		}
+		d.redockInPlace(h)
+	}
+}
+
+// appOwnsWindow reports whether win is one of app's windows.
+func appOwnsWindow(app ApplicationProvider, win *window.Window) bool {
+	for _, w := range app.Windows() {
+		if w == win {
+			return true
+		}
+	}
+	return false
+}
+
+// SyncAddedWindowDetachState tears a freshly added window off immediately
+// when its app's main window is already detached and the new window is a
+// non-tearable child - so a dialog spawned by a torn-off main window
+// appears torn off too, rather than docked back on the desktop. Called by
+// Application.AddWindow after the window joins the window manager.
+func (d *Desktop) SyncAddedWindowDetachState(win *window.Window) {
+	if win == nil || win.IsTearable() || win.IsDetached() {
+		return
+	}
+	app := d.applicationForWindow(win)
+	if app == nil {
+		return
+	}
+	main := app.MainWindow()
+	if main == nil || main == win || !main.IsDetached() {
+		return
+	}
+	b := win.Bounds()
+	x, y := d.centerOverMain(main, b.Width, b.Height, b)
+	d.createTornHost(win, x, y)
+	d.setChildShortcutResolver(win, main)
+}
+
+// setChildShortcutResolver lets a torn-off child window service its app's
+// keyboard shortcuts through the same menu bar its detached main window
+// hosts, so Cut/Copy/Paste (etc.) work when the child has focus even
+// though the child carries no chrome of its own. Read lazily at event
+// time, so a later chrome change (or re-dock) is reflected.
+func (d *Desktop) setChildShortcutResolver(child, main *window.Window) {
+	child.SetShortcutResolver(func(ev core.KeyPressEvent) bool {
+		mb := main.WindowMenuBar()
+		if mb == nil {
+			return false
+		}
+		if sc, ok := mb.(interface {
+			HandleShortcut(core.KeyPressEvent) bool
+		}); ok {
+			return sc.HandleShortcut(ev)
+		}
+		return false
+	})
+}
+
+// applicationForWindow returns the application that owns win, or nil.
+func (d *Desktop) applicationForWindow(win *window.Window) ApplicationProvider {
+	d.mu.RLock()
+	apps := make([]ApplicationProvider, len(d.applications))
+	copy(apps, d.applications)
+	d.mu.RUnlock()
+	for _, app := range apps {
+		if appOwnsWindow(app, win) {
+			return app
+		}
+	}
+	return nil
+}
+
+// redockInPlace re-docks a torn window to the desktop at its current
+// on-screen position, retaining its size - the '#' handle click path.
+func (d *Desktop) redockInPlace(host *window.TearOffHost) {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	deskNative, ok := surf.(platform.NativeSurface)
+	if !ok {
+		return
+	}
+	tornNative, ok := host.Surface().(platform.NativeSurface)
+	if !ok {
+		return
+	}
+	scale := d.deviceScale()
+	deskX, deskY := deskNative.ScreenPositionPx()
+	tx, ty := tornNative.ScreenPositionPx()
+	ux := core.Unit((tx - deskX) / scale)
+	uy := core.Unit((ty - deskY) / scale)
+	d.adoptTornWindow(host, ux, uy, false)
+}
+
+// handleTornDrag continues a live tear gesture from the desktop's
+// event stream (the desktop window still owns the capture). Returns
+// false when no tear drag is active so normal dispatch proceeds.
+func (d *Desktop) handleTornDrag(event core.Event) bool {
+	d.mu.RLock()
+	td := d.tornDrag
+	surf := d.surface
+	d.mu.RUnlock()
+	if td == nil {
+		return false
+	}
+
+	switch e := event.(type) {
+	case core.MousePressEvent:
+		// A fresh press means the tearing gesture ended somewhere we
+		// couldn't see (the torn window took the release). Stale
+		// state: the window stays torn, the press proceeds normally.
+		d.clearTornDrag(td)
+		return false
+
+	case core.MouseMoveEvent:
+		if e.Buttons&core.LeftButton == 0 {
+			// Button no longer held: the release went to the torn
+			// window. The gesture is over; do NOT re-dock on a mere
+			// hover.
+			d.clearTornDrag(td)
+			return false
+		}
+		// Position from the GLOBAL pointer, not the event: when OS
+		// mouse capture is lost mid-gesture (window churn can drop
+		// it), SDL clamps window-relative motion to the window rect,
+		// which would fence the torn window into a small range around
+		// the desktop. The events remain the ticks; the global
+		// pointer is the truth.
+		ux, uy := e.X, e.Y
+		gx, gy := 0, 0
+		haveGlobal := false
+		d.mu.RLock()
+		plat := d.platform
+		d.mu.RUnlock()
+		if gp, ok := plat.(platform.GlobalPointerPlatform); ok {
+			gx, gy = gp.GlobalPointerPx()
+			ux, uy = d.globalToDesktopUnits(gx, gy)
+			haveGlobal = true
+		}
+		size := surf.Size()
+		if ux >= 0 && uy >= 0 && ux < size.Width && uy < size.Height {
+			// Pointer came home: re-dock and hand the drag straight
+			// back to the window manager.
+			d.clearTornDrag(td)
+			// The desktop owns this gesture's mouse session, so the
+			// torn surface can be destroyed immediately.
+			d.adoptTornWindow(td.host, ux-td.offX, uy-td.offY, false)
+			d.windowManager.BeginDrag(td.host.Window(), td.offX, td.offY)
+			return true
+		}
+		if native, ok := td.surf.(platform.NativeSurface); ok {
+			scale := d.deviceScale()
+			if haveGlobal {
+				native.SetScreenPositionPx(gx-int(td.offX)*scale, gy-int(td.offY)*scale)
+			} else if deskNative, ok := surf.(platform.NativeSurface); ok {
+				deskX, deskY := deskNative.ScreenPositionPx()
+				native.SetScreenPositionPx(
+					deskX+int(e.X-td.offX)*scale,
+					deskY+int(e.Y-td.offY)*scale)
+			}
+		}
+		return true
+
+	case core.MouseReleaseEvent:
+		// Dropped outside: the window stays torn off; its host owns
+		// any further drags.
+		_ = e
+		d.clearTornDrag(td)
+		return true
+	}
+	return false
+}
+
+// clearTornDrag ends the desktop-driven tear phase and disarms the
+// host's mirror of the same gesture.
+func (d *Desktop) clearTornDrag(td *tornDrag) {
+	d.mu.Lock()
+	if d.tornDrag == td {
+		d.tornDrag = nil
+	}
+	d.mu.Unlock()
+	td.host.EndDrag()
+}
+
+// redockAt serves a TearOffHost handle drag: when the global pointer
+// is over the desktop surface, reclaim the window there (retaining
+// size), enforcing the reachability bounds. The torn surface stays
+// alive as a ghost until its live mouse session finishes.
+func (d *Desktop) redockAt(host *window.TearOffHost, gx, gy int, grabX, grabY core.Unit) bool {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	native, ok := surf.(platform.NativeSurface)
+	if !ok || native.Minimized() {
+		return false
+	}
+	scale := d.deviceScale()
+	deskX, deskY := native.ScreenPositionPx()
+	size := surf.Size()
+	ux := core.Unit((gx - deskX) / scale)
+	uy := core.Unit((gy - deskY) / scale)
+	if ux < 0 || uy < 0 || ux >= size.Width || uy >= size.Height {
+		return false
+	}
+	d.adoptTornWindow(host, ux-grabX, uy-grabY, true)
+	d.windowManager.BeginDrag(host.Window(), grabX, grabY)
+	return true
+}
+
+// dropTornHost disposes of a torn window's surface and forgets the
+// host (the window closed itself while torn).
+func (d *Desktop) dropTornHost(host *window.TearOffHost) {
+	d.mu.Lock()
+	if d.tornDrag != nil && d.tornDrag.host == host {
+		d.tornDrag = nil
+	}
+	// A closing torn window can't keep owning focus/the menu bar line.
+	if d.tornFocusOwner == host.Window() {
+		d.tornFocusOwner = nil
+	}
+	for i, th := range d.tornHosts {
+		if th == host {
+			d.tornHosts = append(d.tornHosts[:i], d.tornHosts[i+1:]...)
+			break
+		}
+	}
+	wasPrimary := host == d.soloPrimaryHost
+	if wasPrimary {
+		d.soloPrimaryHost = nil
+	}
+	solo := d.solo
+	d.mu.Unlock()
+	if native, ok := host.Surface().(platform.NativeSurface); ok {
+		native.Close()
+	}
+	d.invalidateSurface()
+	// In solo mode: the primary surface can't be closed, so when its
+	// window closes a remaining window is promoted onto it; when no
+	// windows remain the host quits.
+	if solo {
+		d.Post(func() { d.soloRebalance(wasPrimary) })
+	}
+}
+
+// globalToDesktopUnits converts a global pixel position to desktop
+// surface units.
+func (d *Desktop) globalToDesktopUnits(gx, gy int) (core.Unit, core.Unit) {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	native, ok := surf.(platform.NativeSurface)
+	if !ok {
+		return 0, 0
+	}
+	scale := d.deviceScale()
+	deskX, deskY := native.ScreenPositionPx()
+	return core.Unit((gx - deskX) / scale), core.Unit((gy - deskY) / scale)
+}
+
+// invalidateSurface requests a desktop repaint.
+func (d *Desktop) invalidateSurface() {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	if surf != nil {
+		surf.Invalidate(core.UnitRect{})
+	}
+}
+
+// adoptTornWindow puts the window back under the window manager at
+// the given desktop-unit position. ghost keeps the torn surface
+// alive but invisible (its mouse session must finish before it can
+// be destroyed); otherwise it closes immediately.
+func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghost bool) {
+	d.mu.Lock()
+	if d.tornDrag != nil && d.tornDrag.host == host {
+		d.tornDrag = nil
+	}
+	for i, th := range d.tornHosts {
+		if th == host {
+			d.tornHosts = append(d.tornHosts[:i], d.tornHosts[i+1:]...)
+			break
+		}
+	}
+	d.mu.Unlock()
+	host.EndDrag()
+
+	win := host.Window()
+	b := win.Bounds()
+
+	if native, ok := hostSurface(host).(platform.NativeSurface); ok {
+		if ghost {
+			native.SetOpacity(0)
+		} else {
+			native.Close()
+		}
+	}
+
+	win.SetFlags(host.SavedFlags())
+	win.SetOnBoundsRequest(nil)
+	// Re-docked: the handle reads '%' again and its click re-tears.
+	win.SetDetached(false)
+	// Docked again: the app's menus return to the desktop bar, and a child
+	// no longer borrows its app's menu bar for shortcuts.
+	d.detachMainWindowChrome(win)
+	win.SetShortcutResolver(nil)
+	// Drop any torn-surface resize highlight; the desktop's own hover
+	// tracking takes over once docked.
+	win.SetResizeHoverRects(nil)
+	win.SetOnTearRequest(func() { d.tearOffInPlace(win) })
+	d.windowManager.AddWindow(win)
+	if win.IsMaximized() {
+		// A window that was maximized when torn off re-fills the client
+		// area of the desktop it docks into (which may differ in size from
+		// wherever it was torn), rather than keeping its torn surface size.
+		d.windowManager.MaximizeWindow(win)
+	} else {
+		// Keep the re-docked window reachable: title bar within the client
+		// area, a couple of columns visible horizontally.
+		win.SetBounds(d.windowManager.ClampToClientArea(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height}))
+	}
+	win.Layout()
+	d.windowManager.ActivateWindow(win)
+
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	if surf != nil {
+		surf.Invalidate(core.UnitRect{})
+	}
+
+	// A re-docking main window brings its non-tearable children home with
+	// it, preserving their arrangement and z-order; the main window is then
+	// re-activated so it re-docks last, on top of its children. A follower
+	// re-docking here is not any app's main window, so this does not recurse.
+	if app := d.applicationForMainWindow(win); app != nil {
+		d.redockFollowers(app, win)
+		d.windowManager.ActivateWindow(win)
+	}
+}
+
+// hostSurface exposes the host's surface for teardown.
+func hostSurface(h *window.TearOffHost) platform.Surface { return h.Surface() }

@@ -4,11 +4,11 @@ import "testing"
 
 func TestEventEncodeAndParseRoundTrip(t *testing.T) {
 	ev := NewEvent("toggle").
-		WithUint("widget", 17).
+		WithUint("trinket", 17).
 		WithFlag("checked", FlagIndeterminate)
 
 	encoded := ev.Encode()
-	if encoded != `event toggle widget=17 ?checked` {
+	if encoded != `event toggle trinket=17 ?checked` {
 		t.Fatalf("encoded = %q", encoded)
 	}
 
@@ -19,8 +19,8 @@ func TestEventEncodeAndParseRoundTrip(t *testing.T) {
 	if back.Type != "toggle" {
 		t.Errorf("type = %q", back.Type)
 	}
-	if id, ok := back.Widget(); !ok || id != 17 {
-		t.Errorf("widget = %d/%v", id, ok)
+	if id, ok := back.Trinket(); !ok || id != 17 {
+		t.Errorf("trinket = %d/%v", id, ok)
 	}
 	if back.Flag("checked") != FlagIndeterminate {
 		t.Errorf("checked = %v", back.Flag("checked"))
@@ -29,7 +29,7 @@ func TestEventEncodeAndParseRoundTrip(t *testing.T) {
 
 func TestEventStringEscaping(t *testing.T) {
 	ev := NewEvent("change").
-		WithUint("widget", 3).
+		WithUint("trinket", 3).
 		WithString("text", "a \"quoted\"\nline\\end")
 
 	back, err := ParseEvent(ev.Encode())
@@ -44,21 +44,21 @@ func TestEventStringEscaping(t *testing.T) {
 func TestEventDispatcherRouting(t *testing.T) {
 	d := NewEventDispatcher()
 
-	var byWidget, byType int
-	d.On(17, "toggle", func(*Event) { byWidget++ })
+	var byTrinket, byType int
+	d.On(17, "toggle", func(*Event) { byTrinket++ })
 	d.OnType("command", func(*Event) { byType++ })
 
-	if !d.Dispatch(NewEvent("toggle").WithUint("widget", 17).WithFlag("checked", FlagTrue)) {
-		t.Error("widget-scoped event should be handled")
+	if !d.Dispatch(NewEvent("toggle").WithUint("trinket", 17).WithFlag("checked", FlagTrue)) {
+		t.Error("trinket-scoped event should be handled")
 	}
-	// Different widget: not routed.
-	if d.Dispatch(NewEvent("toggle").WithUint("widget", 99).WithFlag("checked", FlagTrue)) {
-		t.Error("unsubscribed widget should not be handled")
+	// Different trinket: not routed.
+	if d.Dispatch(NewEvent("toggle").WithUint("trinket", 99).WithFlag("checked", FlagTrue)) {
+		t.Error("unsubscribed trinket should not be handled")
 	}
 	if !d.Dispatch(NewEvent("command").WithWord("action", "file.open")) {
 		t.Error("type-scoped event should be handled")
 	}
-	if byWidget != 1 || byType != 1 {
-		t.Errorf("byWidget=%d byType=%d", byWidget, byType)
+	if byTrinket != 1 || byType != 1 {
+		t.Errorf("byTrinket=%d byType=%d", byTrinket, byType)
 	}
 }

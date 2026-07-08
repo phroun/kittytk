@@ -802,7 +802,7 @@ func (t *TUIBackend) handleKey(key string) {
 
 	event := core.KeyPressEvent{
 		Key:       key,  // Full key string including modifier prefixes
-		Modifiers: mods, // Also provide parsed modifiers for widget convenience
+		Modifiers: mods, // Also provide parsed modifiers for trinket convenience
 		Text:      text,
 	}
 

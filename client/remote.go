@@ -32,7 +32,7 @@ func DefaultSocketPath() string {
 // handshake; dispatch receives action= command IDs (may be nil).
 //
 // Remote-connection caveats: event handlers run on the connection's
-// reader goroutine, and Handle.Target() is always nil (the widgets
+// reader goroutine, and Handle.Target() is always nil (the trinkets
 // live in the display service's process).
 func Dial(path, appName string, dispatch func(commandID string)) (*Conn, error) {
 	return dial(path, appName, dispatch, false)

@@ -9,8 +9,8 @@ connection, whether that connection is in-process (`client.NewInProcess`)
 or a socket to a display service (`client.Dial`). New capabilities are
 added as protocol vocabulary (properties, verbs, handshake options) plus
 the host-side handling that services them - never as an in-process-only
-widget API an app calls directly. When a feature needs the app to reach
-something only the host owns (the focused widget, window arrangement, the
+trinket API an app calls directly. When a feature needs the app to reach
+something only the host owns (the focused trinket, window arrangement, the
 desktop), it becomes a protocol verb/property, as the display app-verbs
 (`cut`, `tile`, `theme`, `rawkey`, ...) and window properties (`main`,
 `tearable`, `font`) already do.
@@ -63,7 +63,7 @@ Solo mode is that same picture made the root, with no desktop hosting it.
   an in-process-only mode. Per the standing rule, the same declaration works
   in-process and remote.
 - **Desktop may return later.** Nothing here forbids re-introducing a
-  desktop *inside* a solo app someday (a desktop is a widget); it is simply
+  desktop *inside* a solo app someday (a desktop is a trinket); it is simply
   not needed now.
 
 ## Protocol surface

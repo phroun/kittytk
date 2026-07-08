@@ -7,7 +7,7 @@ import (
 
 // Wheel gesture latching: trackpads emit a stream of small wheel
 // events, and the pointer may drift over other scrollables mid
-// gesture. The widget that first consumes a wheel event claims the
+// gesture. The trinket that first consumes a wheel event claims the
 // gesture; subsequent wheel events go straight to it. The claim
 // releases only after a clear stop (a pause in wheel events) AND a
 // pointer move - the next gesture then re-targets under the cursor.

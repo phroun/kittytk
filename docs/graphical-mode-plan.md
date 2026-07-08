@@ -22,27 +22,27 @@ architecture in `multi-app-desktop-plan.md`.
 
 ## Decisions
 
-### D1 — Widgets are mode-aware and own both renderings  *(decided 2026-07-05)*
+### D1 — Trinkets are mode-aware and own both renderings  *(decided 2026-07-05)*
 
-Every widget knows whether it is painting to a graphical or a text-mode
+Every trinket knows whether it is painting to a graphical or a text-mode
 target and behaves accordingly. The **programmer-facing interface of a
-widget is identical in both modes**; only its rendering activity differs.
+trinket is identical in both modes**; only its rendering activity differs.
 
-- All current cell-idiom visuals — TabWidget's trapezoid tabs built from
+- All current cell-idiom visuals — TabTrinket's trapezoid tabs built from
   `/ \ _ < >` runes, Button's `▄ ▀` half-block shadows, `░`/`█` rune
   scrollbars, per-cell selection restyling, the overline→underline
   attribute hack in the TUI backend's `EndFrame` — are **TUI-specific
   rendering material**. In graphical mode they dissolve into a different
-  implementation that the widget itself fosters (vector borders, real
+  implementation that the trinket itself fosters (vector borders, real
   shadows, pixel scrollbars, highlight rectangles, real overlines).
 - This supersedes both options sketched in `adding-true-gui-rendering.md`
   Decision 1: rendering is neither pushed down into the backend as
-  per-widget draw calls, nor split into backend-specific widget classes.
-  The widget hosts both paint paths and selects by target mode.
+  per-trinket draw calls, nor split into backend-specific trinket classes.
+  The trinket hosts both paint paths and selects by target mode.
 
 Implications:
 
-- The `Painter` (or backend) must expose the rendering mode so a widget's
+- The `Painter` (or backend) must expose the rendering mode so a trinket's
   `Paint` can branch (e.g. a `Mode()`/`IsGraphical()` query).
 - The `Painter`/backend needs graphical primitives alongside the cell
   primitives: color fills, lines/strokes, rectangles (incl. rounded),
@@ -51,9 +51,9 @@ Implications:
   containers inside graphical windows.
 - Layout and measurement logic must be shared between the two paths, so
   text measurement has to come from the backend (see groundwork G1) —
-  a widget cannot assume 1 char = 1 cell = 8×16 units in graphical mode.
+  a trinket cannot assume 1 char = 1 cell = 8×16 units in graphical mode.
 
-### D2 — Widget-level client/server protocol: apps compile independent of the renderer  *(decided 2026-07-05)*
+### D2 — Trinket-level client/server protocol: apps compile independent of the renderer  *(decided 2026-07-05)*
 
 Applications are compilable independent of the rendering environment
 and talk to a rendering/desktop process over a boundary (unix socket,
@@ -64,14 +64,14 @@ rendering needs. In-process operation remains supported: the same
 app-facing API is implemented either directly (current single-binary
 mode) or by a client library speaking the wire protocol.
 
-Chosen boundary: a **widget-level protocol**. The server (desktop
-process) owns widget instances, layout, rendering (mode-aware per D1),
-and hit-testing. Apps manipulate widgets through proxy objects exposing
+Chosen boundary: a **trinket-level protocol**. The server (desktop
+process) owns trinket instances, layout, rendering (mode-aware per D1),
+and hit-testing. Apps manipulate trinkets through proxy objects exposing
 the same programmer interface as today (satisfying D1's "identical
 API" guarantee), and receive **semantic events** (clicked, text
 changed, selection changed, window closed) rather than raw input.
 
-Why widget-level (supersedes the earlier primitive-level proposal):
+Why trinket-level (supersedes the earlier primitive-level proposal):
 
 - Best possible remote latency: hover, scrolling, text-edit echo,
   drag feedback, menu navigation all happen server-side with zero
@@ -79,22 +79,22 @@ Why widget-level (supersedes the earlier primitive-level proposal):
 - Apps are freed from layout and text measurement entirely — those
   live with the renderer, where the fonts are. G1's "mirrorable
   metrics" constraint dissolves for apps (it still applies *inside*
-  the server between widgets and render backends).
+  the server between trinkets and render backends).
 - Matches the vision: the desktop is an environment that serves apps,
   not a dumb framebuffer.
 
 Costs accepted, with mitigations:
 
-- **The widget API becomes wire contract.** Every widget's properties
+- **The trinket API becomes wire contract.** Every trinket's properties
   and events are protocol surface. Requires versioning + capability
   negotiation at connect, and API-design discipline (additive changes).
-- **Custom widgets need an escape hatch.** Apps that draw things the
-  server has no widget for get a client-rendered surface widget:
+- **Custom trinkets need an escape hatch.** Apps that draw things the
+  server has no trinket for get a client-rendered surface trinket:
   (a) a cell-grid surface (app streams cell diffs — also the natural
   transport for terminal content), and (b) later, a pixel surface for
-  graphical custom rendering. These are the "canvas" widgets of the
+  graphical custom rendering. These are the "canvas" trinkets of the
   protocol.
-- **State ownership must be explicit.** The server-side widget owns
+- **State ownership must be explicit.** The server-side trinket owns
   interactive state (text buffer contents, scroll position, selection,
   checked state) and emits change events; the client library keeps a
   replicated cache so app-side property *reads* stay synchronous-
@@ -105,7 +105,7 @@ Costs accepted, with mitigations:
 Design constraints this imposes on the groundwork (cheap to honor now,
 expensive to retrofit):
 
-- **IDs, not pointers; data + events, not closures.** Widgets, windows,
+- **IDs, not pointers; data + events, not closures.** Trinkets, windows,
   menus, popups, dock entries get stable IDs across the seam. Menu
   items dispatch as "item ID triggered" events (extends G6's command-ID
   requirement). Callbacks (`OnClick`, `OnTriggered`, `PopupOverlay`'s
@@ -113,7 +113,7 @@ expensive to retrofit):
 - **No synchronous app→server queries** in any hot path; reads come
   from the replicated client cache, updated by server events.
 - **Flow control and lifecycle:** back-pressure so a stalled client
-  cannot wedge the server; the server cleans up all widgets/windows of
+  cannot wedge the server; the server cleans up all trinkets/windows of
   a disconnected client (app crash safety — a side benefit no
   in-process design offers); reconnection semantics defined.
 
@@ -143,7 +143,7 @@ such revisit is a new decision, not an erosion of this one.
 
 Effect on G6: the "shortcut translation" snag listed there is scoped to
 a one-way mapping (key-string → native key equivalent) living in the
-native menu module; wire protocol (D2) and widget APIs carry key-strings
+native menu module; wire protocol (D2) and trinket APIs carry key-strings
 verbatim.
 
 ### D4 — X-direction rendezvous; sessions are separate from connections  *(decided 2026-07-05)*
@@ -158,8 +158,8 @@ secure with peer credentials, and ssh forwarding works like `ssh -X`.
 
 **Protocol invariant adopted:** a *session* (an app's entire UI state)
 is a first-class protocol object distinct from the *connection* that
-carries it. Under the widget-level protocol this is cheap — the app-side
-client library already replicates the widget tree — and it buys
+carries it. Under the trinket-level protocol this is cheap — the app-side
+client library already replicates the trinket tree — and it buys
 tmux-grade capabilities in the X-style topology: reattach after a
 display-service restart, attach to a different display service
 (replay the tree, resubscribe), and potentially multiple simultaneous
@@ -208,7 +208,7 @@ The substrate contract is correspondingly small:
 
 Threading rule: Gio runs an event loop per window (goroutine each); SDL
 has one main-thread global queue. The Platform delivers all events into
-a **single tuitk dispatch goroutine** (channel fan-in), keeping widget
+a **single tuitk dispatch goroutine** (channel fan-in), keeping trinket
 code single-threaded on both substrates (pins down G3's model).
 
 Sequencing rule: substrates are brought up serially — define the
@@ -222,7 +222,7 @@ Each substrate sits behind its own build tag (interacts with O3).
 ### D6 — Pango-class text is an available capability, at shaped-paragraph altitude  *(decided 2026-07-05, scope clarified same day)*
 
 The shared text engine (D5) must make the full modern text model
-**available to any widget that needs it** — full Unicode, OpenType
+**available to any trinket that needs it** — full Unicode, OpenType
 shaping (ligatures via GSUB, combining-mark positioning via GPOS — e.g.
 Hebrew niqqud), bidirectional text (UAX #9, e.g. mixed Hebrew/Latin),
 font fallback, and standard line/grapheme segmentation (UAX #14/#29).
@@ -234,7 +234,7 @@ We are building the architectural role Pango plays; a text model that
 - Not all UI text must go through the full pipeline. The engine exposes
   tiers behind one roof: a **fast simple path** (single-font,
   single-direction glyph runs — button labels, menu items, titles) and
-  the **full shaped-paragraph path**, chosen per widget need. Same
+  the **full shaped-paragraph path**, chosen per trinket need. Same
   engine, same fonts, same metrics source, so D5's substrate-
   independence and D2's layout determinism hold on both tiers.
 - **Terminal-style regions are a carve-out: PurfecTerm keeps its own
@@ -242,7 +242,7 @@ We are building the architectural role Pango plays; a text model that
   sophisticated, customized, and proven in its GTK/Qt frontends, and it
   is retained for all terminal-style regions tuitk incorporates. The
   shared engine has no jurisdiction inside those regions; the boundary
-  is the widget border. A terminal region's external layout contract
+  is the trinket border. A terminal region's external layout contract
   (columns × cell size) is trivially deterministic, satisfying D2/D5
   without touching the shared engine.
 
@@ -256,9 +256,9 @@ contract is the shaped paragraph, not the measured string:
   which is what makes caret movement, selection, and hit-testing
   correct in RTL text and inside ligatures.
 
-Widgets' graphical paint paths (D1) consume shaped runs and cluster
+Trinkets' graphical paint paths (D1) consume shaped runs and cluster
 maps — never per-rune arithmetic. With this contract the implementation
-is swappable without touching widgets, layout, or protocol.
+is swappable without touching trinkets, layout, or protocol.
 
 Implementation direction: **go-text/typesetting** as the reference
 implementation (a Go transliteration of HarfBuzz's shaper — real
@@ -279,19 +279,19 @@ Consequences recorded:
 - **Accepted asymmetry — TUI mode is constrained by the terminal.** A
   character grid cannot position niqqud or render ligatures; the TUI
   paint path does what terminals can (grapheme clusters, wide chars,
-  the terminal's own bidi behavior). Same widget, same stored text,
+  the terminal's own bidi behavior). Same trinket, same stored text,
   same API; full fidelity appears in the graphical path. This is D1
   working as intended, not a defect.
 
-### D7 — A Canvas widget is the pixel escape hatch; development deferred  *(decided 2026-07-05)*
+### D7 — A Canvas trinket is the pixel escape hatch; development deferred  *(decided 2026-07-05)*
 
-There will be a widget akin to HTML5's canvas: the escape hatch for
-apps with image and drawing needs the stock widget set cannot express.
+There will be a trinket akin to HTML5's canvas: the escape hatch for
+apps with image and drawing needs the stock trinket set cannot express.
 It follows the PurfecTerm pattern — app-owned content streaming into a
 server-composited region, with input events forwarded raw — but for
 pixels/drawing instead of character cells. **Development is deferred**
-to a future to-be-developed widget; the groundwork only needs to keep
-the slot open (it is one more widget type in the D2 protocol, so
+to a future to-be-developed trinket; the groundwork only needs to keep
+the slot open (it is one more trinket type in the D2 protocol, so
 nothing structural depends on its internals).
 
 Design questions to answer when it is built (noted now, not decided):
@@ -310,14 +310,14 @@ Design questions to answer when it is built (noted now, not decided):
 ### D9 — Height-for-width protocol; text-flow tiers; chrome vs text  *(decided 2026-07-05)*
 
 A `core.HeightForWidther` optional interface (HasHeightForWidth /
-HeightForWidth) lets widgets whose height depends on allocated width
+HeightForWidth) lets trinkets whose height depends on allocated width
 (wrapped text) report their real height during layout, when widths are
 known. `SizeHint` remains the width-independent preference. BoxLayout
 consults it; Panel propagates it upward; ScrollArea/Splitter/Window are
 absorbers where propagation stops. (A WidthForHeight transpose is
 acknowledged but not built — nothing needs it.)
 
-Text-flow tiers (which widgets flow text is a toolkit design decision,
+Text-flow tiers (which trinkets flow text is a toolkit design decision,
 and under D2 it is protocol surface):
 
 - **Label** — wrap is core purpose; wraps + height-for-width.
@@ -327,7 +327,7 @@ and under D2 it is protocol surface):
   under the text column, never under the indicator.
 - **Button, tabs, list rows, menu items** — deliberately single-line
   for now; overflow handled by other means (ellipsis, scrolling).
-- **DockRow** — already a hand-rolled height-for-width widget
+- **DockRow** — already a hand-rolled height-for-width trinket
   (RequiredHeight); deliberately NOT migrated to the interface —
   it is specific for other reasons and will be considered separately
   rather than replaced on confidence alone.
@@ -340,18 +340,18 @@ PurfecTerm predates tuitk as an independent project and already has
 **three working frontends in a single codebase: this TUI implementation,
 GTK, and Qt.** Consequences for this plan:
 
-- D1's mode-aware-widget pattern is already proven in production by
-  PurfecTerm; porting the widget into the new system is expected to be
+- D1's mode-aware-trinket pattern is already proven in production by
+  PurfecTerm; porting the trinket into the new system is expected to be
   easy.
 - Its GTK/Qt renderers are existing graphical cell-grid renderers —
   directly relevant to Goal 3 (terminal containers inside graphical
-  windows) and to the D2 cell-grid surface widget.
+  windows) and to the D2 cell-grid surface trinket.
 - Its GTK/Qt experience is an input to the substrate choice (O1).
 
 **Frontend audit + first graphical port (2026-07-06).** The published
 module's `gtk/` and `qt/` frontends were audited: each is a thin
-`Terminal` (PTY + process wiring) around a ~3,300-line `Widget`
-adapter owning the toolkit-agnostic `Buffer`+`Parser`. What a Widget
+`Terminal` (PTY + process wiring) around a ~3,300-line `Trinket`
+adapter owning the toolkit-agnostic `Buffer`+`Parser`. What a Trinket
 consumes from its host toolkit: a paint callback with rect fills,
 clip, scaling, and **glyph-image blitting** (each frontend keeps its
 own glyph LRU keyed by `purfecterm.GlyphCacheKey` and only needs
@@ -364,7 +364,7 @@ buffer is ~40 read methods, all in core. Our side now provides:
 `core.ImageDrawer` / `Painter.DrawImage` (device-pixel composite,
 alpha honored — the sprite/custom-glyph carrier); the text engine
 covers fonts, fallback, metrics, and cached glyph rendering.
-**Landed:** `widgets.PurfecTerm` gained its D1 graphical paint path —
+**Landed:** `trinkets.PurfecTerm` gained its D1 graphical paint path —
 terminal-font cell grid (`SetTerminalFont`: the terminal's own
 family/size, independent of toolkit cells; sizing measured through
 the render target so text mode is untouched), run-batched
@@ -529,7 +529,7 @@ exists, with per-OS native menu modules (Cocoa/Win32) added over time.
 
 What is 1 unit in a graphical window? Working proposal: 1 unit = 1
 device-independent pixel, with HiDPI scaling handled by the Surface.
-Note: today no widget generates sub-cell coordinates (everything is a
+Note: today no trinket generates sub-cell coordinates (everything is a
 multiple of 8/16 units), so graphical layouts will initially sit on a
 chunky grid until measurement (G1) and mode-aware painting (D1) land.
 
@@ -543,7 +543,7 @@ within a graphics-enabled build, mode/window kind is a runtime choice.
 
 Whether to use a whole-window glyph-grid presenter (existing cell
 rendering rastered through a monospace font into a pixel window) as an
-interim bring-up milestone before widgets' graphical paint paths exist.
+interim bring-up milestone before trinkets' graphical paint paths exist.
 The glyph-grid renderer is needed permanently either way — for PurfecTerm
 and for terminal-style containers inside graphical windows (Goal 3) — the
 open question is only whether it also serves as the first end-to-end
@@ -571,19 +571,19 @@ milestone for whole windows.
   length-prefixed bulk/binary escape within the text framing for
   cell-diff streams (PurfecTerm) — TBD. Remaining open: exact syntax,
   framing, quoting/escaping, the bulk escape, negotiation handshake.
-- **Protocol versioning discipline:** how widget properties/events are
-  declared and evolved (additive-only? feature flags per widget?), so
+- **Protocol versioning discipline:** how trinket properties/events are
+  declared and evolved (additive-only? feature flags per trinket?), so
   server and app binaries of different vintages interoperate.
 - **Transports for v1:** unix socket with peer credentials is the
   default. For remote use, lean on ssh forwarding (the X11 answer)
   rather than building TLS+auth immediately? Direct IP+TLS later.
 - **Where terminal emulation lives:** for a remote app hosting a PTY,
-  does the app stream raw bytes to a server-side PurfecTerm widget
+  does the app stream raw bytes to a server-side PurfecTerm trinket
   (thin client, server does emulation), or run the emulator app-side
-  and stream cell diffs to a cell-grid surface widget? Both are
+  and stream cell diffs to a cell-grid surface trinket? Both are
   possible with the existing purfecterm library; pick the v1 shape.
-- **Pixel escape-hatch timing:** resolved by D7 — a Canvas widget will
-  exist and is explicitly deferred; the cell-grid surface widget is
+- **Pixel escape-hatch timing:** resolved by D7 — a Canvas trinket will
+  exist and is explicitly deferred; the cell-grid surface trinket is
   still needed early.
 - **Reconnection semantics:** resolved in principle by D4 (sessions are
   first-class and separable from connections). Remaining detail: does
@@ -707,7 +707,7 @@ milestone for whole windows.
    face from that budget, so text always fits its chrome. `"ui-text"`
    is the internal UI font name: text mode maps it to Monday, the
    graphical engine maps it to "Go" (swappable later). Remaining in
-   this phase: D1 widget rollout onto shaped paragraphs (Label
+   this phase: D1 trinket rollout onto shaped paragraphs (Label
    bidi/wrap via ShapeParagraph, TextInput selection via cluster
    maps), height-for-width via shaping, optional system-font
    discovery.
@@ -726,34 +726,34 @@ milestone for whole windows.
    before the interface is declared stable.
 8. **G5 + G6** native popups and `PlatformIntegration` for menus/dialogs/
    clipboard with rendered fallback; native macOS menus first.
-9. **D1 rollout** widget-by-widget graphical paint paths with real fonts.
+9. **D1 rollout** trinket-by-trinket graphical paint paths with real fonts.
 
 ## Decision log
 
 | # | Date | Decision |
 |---|------|----------|
-| D1 | 2026-07-05 | Widgets are mode-aware; same API, per-mode rendering owned by the widget. TUI cell idioms are TUI-only rendering material. |
-| D2 | 2026-07-05 | Apps compile independent of the renderer and talk to a desktop/render server over a socket (X-style). Boundary = **widget-level protocol**: server owns widgets/layout/rendering/hit-testing, apps drive proxies with the same API and receive semantic events. In-process stays as a direct implementation. Cell-grid + (later) pixel surface widgets are the custom-rendering escape hatch. |
+| D1 | 2026-07-05 | Trinkets are mode-aware; same API, per-mode rendering owned by the trinket. TUI cell idioms are TUI-only rendering material. |
+| D2 | 2026-07-05 | Apps compile independent of the renderer and talk to a desktop/render server over a socket (X-style). Boundary = **trinket-level protocol**: server owns trinkets/layout/rendering/hit-testing, apps drive proxies with the same API and receive semantic events. In-process stays as a direct implementation. Cell-grid + (later) pixel surface trinkets are the custom-rendering escape hatch. |
 | — | 2026-07-05 | Context: PurfecTerm is an independent pre-existing project with TUI, GTK, and Qt frontends in one codebase — proof of the D1 pattern, source of graphical cell-grid rendering, input to O1. |
-| D7 | 2026-07-05 | A Canvas widget (HTML5-canvas-like: PurfecTerm pattern, but for images/drawing) is the pixel escape hatch. Committed to exist; development deferred to a future widget. Likely command-based + pixel-buffer modes, command-based first. |
+| D7 | 2026-07-05 | A Canvas trinket (HTML5-canvas-like: PurfecTerm pattern, but for images/drawing) is the pixel escape hatch. Committed to exist; development deferred to a future trinket. Likely command-based + pixel-buffer modes, command-based first. |
 | D8 | 2026-07-05 | Grid-metrics model: CellMetrics is a per-container layout vocabulary (app chooses units per virtual row/column for placement density), inherited through the container chain like fonts, overridable per window in all modes including TUI, rooted at the display service's default derived from its system default font size. Text measurement is a separate, per-render-target question. G1 implements this model; call-site audit in `g1-metrics-audit.md`. |
 | D9 | 2026-07-05 | Height-for-width: `core.HeightForWidther` optional interface, consulted by layouts at layout time, propagated by containers, absorbed by ScrollArea/Splitter/Window. Text-flow tiers: Label wraps; Checkbox/RadioButton wrap opt-in with the indicator as top-line-anchored chrome and lines hanging under the text; buttons/tabs/list rows/menu items stay single-line; DockRow deliberately not migrated (considered separately); MessageBox a future adopter. Implemented same day (slices 1+2). |
 | D10 | 2026-07-05 | Wire discipline: **nothing positional — every value travels under a property name**, with sender-declared, connection-scoped alias dictionaries for efficiency (HPACK-style, but explicit). Text-oriented spirit; exact syntax deliberately open. Consequence: property/event names formalized during the D2 API-shape phase ARE wire vocabulary — maintained deliberately from slice 3 onward (draft registry: `property-vocabulary.md`). |
 | D11 | 2026-07-05 | Creation IDs via **request-scoped correlation keys**: `key1=new button …` returns `key1=<server-assigned id>`. Keys are meaningful only within their request; creates batch freely and only the ones needing IDs carry keys — pipelined creation with server-side ID authority. Proposed extension pending review: later lines in a batch may reference earlier keys (forward references — whole UI trees in one burst). Button↔action linkage clarified as OPTIONAL, not required. |
 | D12 | 2026-07-05 | Boolean **flags**: presence = true (`wrap`), `!name` = false (`!enabled`), absence = unsaid — default at creation, unchanged on update. Long forms `name=true/false` accepted on input; flag form canonical. Applies only to pure booleans (tri-states are enums); no bitsets on the wire (window flags become individual flag properties). Composes with D10 aliases. |
 | D13 | 2026-07-05 | **Inline children blocks**: `new panel children={new button; new button}` builds subtrees structurally, complementing `parent=` (which remains for later additions/reparenting). Block order = layout/z order; correlation keys (D11) remain flat per request at any nesting depth. Unifies list encoding: combo items, tabs, tree nodes, and menu trees are all children blocks of typed items — one recursive construct, not four ad-hoc encodings. |
-| D14 | 2026-07-05 | **Templates are macros, not classes**: `template MyBtn=button align=right caption="Click Me"` then `new MyBtn caption="Other"`. Sender-declared, connection-scoped (like aliases); expanded at parse time; instances retain no template linkage — changing a template never restyles live widgets (live theming stays the schemes system's job). Template properties apply first, instance properties override (D12 flags can explicitly un-set: `!visible`). Transitive templates allowed with cycle guard. Templates MAY contain children (component definitions). Child addressing: resolved by D15. Convention: builtins lowercase, templates CamelCase. |
+| D14 | 2026-07-05 | **Templates are macros, not classes**: `template MyBtn=button align=right caption="Click Me"` then `new MyBtn caption="Other"`. Sender-declared, connection-scoped (like aliases); expanded at parse time; instances retain no template linkage — changing a template never restyles live trinkets (live theming stays the schemes system's job). Template properties apply first, instance properties override (D12 flags can explicitly un-set: `!visible`). Transitive templates allowed with cycle guard. Templates MAY contain children (component definitions). Child addressing: resolved by D15. Convention: builtins lowercase, templates CamelCase. |
 | D15 | 2026-07-05 | **Hierarchical key scoping with explicit surfacing** (supersedes D13's flat-key note): a key inside a `children={}` block is local to the block and externally addressable as a path through the enclosing key — `k1=new thing children={sk1=new subthing}` → `k1.sk1`. Surfacing is explicit (`mine=k1.sk1`); the reply reports surfaced names + top-level keys only, so reply size is app-controlled. Resolves template-child addressing: instance key namespaces template-body keys (`k1.input`, `k2.input` — collision-free). Unkeyed parents make child keys externally unreachable (intra-block use only) — intentional. Syntax-phase item parked in O6: distinguishing key paths from dotted string values in value position (type-directed vs sigil). |
 | D16 | 2026-07-05 | **`?name` = asserted indeterminate**, extending D12 flags to three-valued logic: `name` / `!name` / `?name`, with absence still meaning *unsaid*. Indeterminate is a VALUE (deliberately set); absence never is. Grammar admits `?` on any flag; each property declares whether indeterminate is meaningful (checkbox `checked` yes; `visible` no — rejected under the standard invalid-property policy). Checkbox `checked` returns to being a flag (the off/on/mixed enum is deleted); `tristate` governs UI cycling only. Long form `name=mixed` accepted on input. `?` reserved alongside `!`. |
 | D17 | 2026-07-05 | **The wire type system is six types**: `flag`, `enum`, `numeric` (int or float lexically; property declares domain), `identifier` (unquoted reference: object IDs, key paths, command IDs, template names), `{}` (collection, per D13), and `"string"` (**quotes required** — a bare token is never a string). Quoting alone separates references from text (`parent=k1.sk1` vs `caption="k1.sk1"`), closing the D15 parked sigil question. Tokenizer is schema-free; typing is per-property. Command IDs become unquoted (`action=file.open`); D3 key strings stay quoted (`shortcut="^N"`); color literal form TBD. Addendum: alias targets are strings (lexical macros — nothing to validate against); template targets are identifiers. |
-| D18 | 2026-07-05 | **Case namespaces**: system names (properties, widget types, verbs, enums) begin lowercase; **user-defined templates and aliases MUST begin uppercase** (upgrades D14's convention to a rule). The namespaces are disjoint by construction — the system vocabulary can grow without ever colliding with client definitions (HTML custom-elements precedent). `new X…` dispatch: uppercase → template table, lowercase → builtin. Correlation keys unconstrained (different syntactic positions). Enforced by the interpreter; parser stays schema-free. |
+| D18 | 2026-07-05 | **Case namespaces**: system names (properties, trinket types, verbs, enums) begin lowercase; **user-defined templates and aliases MUST begin uppercase** (upgrades D14's convention to a rule). The namespaces are disjoint by construction — the system vocabulary can grow without ever colliding with client definitions (HTML custom-elements precedent). `new X…` dispatch: uppercase → template table, lowercase → builtin. Correlation keys unconstrained (different syntactic positions). Enforced by the interpreter; parser stays schema-free. |
 | D19 | 2026-07-05 | **Verb inventory**: `new`, `set`, `destroy`, `sub`, `unsub` (plus declaration forms `alias`, `template`). Later verbs reference their target as a **key path or bare numeric ObjectID** (`set root.status caption="…"` / `set 1042 …`) — the one place a bare number is legal (D10 stays intact for properties). Consequence: **correlation keys become session-persistent** (D11 refined: replies still report only their own request's keys; re-registering shadows); surfacing (`wcb=root.cb`) also registers the short name as a key. `destroy` detaches the object and releases every key referencing it. `set` accepts everything `new` accepts, including `children={}` (append). |
 | D20 | 2026-07-05 | **Event flow is default-closed except `command`**: state events (`change`, `toggle`, …) are delivered only where a `sub` exists (`sub <target>\|all [events…]`; no events listed = all of that target; `unsub` symmetric, `unsub all` clears). `command` events and registry dispatch always flow — a button with `action=` works with zero subscriptions. **Wire-initiated mutations never echo**: property application during `new` and `set` is suppressed at the connection — no state events, no action firing — killing construction echo and set-feedback loops by construction. |
-| D23 | 2026-07-05 | **O1–O4 resolved.** (O1) **SDL first**, Gio second before the substrate interface is declared stable (D5). (O4) **There is no glyph-grid bring-up stage**: the graphical backend implements the SAME rendering primitives with pixels — `DrawText` rasterizes real font glyphs, `DrawRect` draws actual lines instead of box runes, fills are pixels — so the whole desktop renders graphically through the existing widget paint paths from day one. The cell-grid machinery's permanent home is terminal-style regions only (PurfecTerm, Goal 3). D1's widget-by-widget rollout is mode-aware REFINEMENT (real check glyphs, proportional text), not bring-up. (O2) **Dissolved by D8′**: units stay abstract; a graphical surface reports its size in units and root CellMetrics derived from the default font, exactly as the TUI reports 8×16; unit↔device-pixel is the surface's own scale (a DPI-like denomination, HiDPI included). Bring-up default: unit = pixel at scale 1; finer per-surface subdivision remains an open per-surface option the machinery already permits. (O3) **Dissolved by the display-protocol split**: apps never link renderers; selection is WHICH DISPLAY SERVICE BINARY RUNS (TUI desktop vs SDL desktop), dialed via `TUITK_DISPLAY` — the X11 model. Build tags are merely how service binaries compile (TUI stays cgo-free); nothing app-facing selects backends. |
+| D23 | 2026-07-05 | **O1–O4 resolved.** (O1) **SDL first**, Gio second before the substrate interface is declared stable (D5). (O4) **There is no glyph-grid bring-up stage**: the graphical backend implements the SAME rendering primitives with pixels — `DrawText` rasterizes real font glyphs, `DrawRect` draws actual lines instead of box runes, fills are pixels — so the whole desktop renders graphically through the existing trinket paint paths from day one. The cell-grid machinery's permanent home is terminal-style regions only (PurfecTerm, Goal 3). D1's trinket-by-trinket rollout is mode-aware REFINEMENT (real check glyphs, proportional text), not bring-up. (O2) **Dissolved by D8′**: units stay abstract; a graphical surface reports its size in units and root CellMetrics derived from the default font, exactly as the TUI reports 8×16; unit↔device-pixel is the surface's own scale (a DPI-like denomination, HiDPI included). Bring-up default: unit = pixel at scale 1; finer per-surface subdivision remains an open per-surface option the machinery already permits. (O3) **Dissolved by the display-protocol split**: apps never link renderers; selection is WHICH DISPLAY SERVICE BINARY RUNS (TUI desktop vs SDL desktop), dialed via `TUITK_DISPLAY` — the X11 model. Build tags are merely how service binaries compile (TUI stays cgo-free); nothing app-facing selects backends. |
 | D22 | 2026-07-05 | **Transport shape.** (1) **The wire IS the language**: the socket carries protocol text in both directions — commands/`sub`/`set` inbound, `event`/`reply`/`error` statements outbound; framing is the parser's own brace-awareness (no length prefixes; the O6 bulk frame arrives later as a statement announcing raw bytes). A display service is drivable by hand with socat. (2) **Batches end with an explicit `end` statement** — one reply per batch (D11); blank lines stay insignificant so scripts move to the wire verbatim. (3) **Disconnect = teardown now, reattach-ready**: v1 destroys the connection's UI, but the `hello` handshake carries app identity and a server-assigned session ID from day one, so D4 detach/reattach lands later without a protocol break. (4) **Every connection is a full Application**: its own ApplicationProvider — menu bar content, status bar, dock presence, command identity — peers of in-process apps via the desktop's existing multi-app machinery. Rendezvous: `TUITK_DISPLAY` env, default `$XDG_RUNTIME_DIR/tuitk/display-0.sock`. |
 | D21 | 2026-07-05 | **G2/G3 execution model — single-threaded UI on the platform main thread.** The platform loop invokes tuitk dispatch/layout/paint via callbacks on its (OS-locked) main thread; `Platform.Post(func())` is the ONLY cross-thread door (+ `PostAfter` for timers). Rationale: matches every substrate's real contract (SDL/AppKit/GTK/Qt main-thread rules; Gio adapts), keeps event→layout→paint synchronous with no tree-locking discipline, and the process running Platform/Surface is the display service — app logic lives in other processes after transport, so the classic "app blocks the UI thread" risk is architecturally evicted; the socket reader simply Posts decoded statements. Channel-pumped dispatch was rejected: paint marshaling forces whole-tree snapshots or deep locking, a permanent per-substrate bridge tax. Rendering is **damage-driven** (`Surface.Invalidate` → scheduled frame callback); the TUI platform v1 maps any invalidation to a full repaint (visual parity). `Desktop.Run()` stays as a wrapper over the inverted loop. PurfecTerm relationship clarified: tuitk becomes another HOST toolkit PurfecTerm is ported onto (like Qt/GTK) — the platform layers stay independent. |
 | D8′ | 2026-07-05 | **D8 clarified:** CellMetrics is a coordinate *denomination* (units per row/column, like DPI), not a spacing knob. Row/column-denominated sizes are visually invariant under re-denomination; only explicit numeric unit values reinterpret. Implies denomination scaling at container boundaries (paint + input; `Transform.ScaleX/Y` was built for this) and container-denominated text metrics (font.go's 8/16 are DefaultCellMetrics in disguise). Demo's grid toggle is the acceptance test: must become a visual no-op for row-denominated content. |
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
 | D4 | 2026-07-05 | X-direction rendezvous: the display service listens on a well-known endpoint, apps dial in. Sessions are first-class protocol objects separable from connections (enables reattach/multi-viewer without inverting topology). Reverse attachment is a possible later mode. Naming: "display service" and "apps". |
 | D5 | 2026-07-05 | Two graphical substrates, Gio and SDL, behind one neutral Platform interface (PurfecTerm-style discipline). Mandatory condition: one shared tuitk-owned text engine (shaping/measurement/rasterization) outside the substrates, so layout is substrate-independent; it doubles as the server-side TextMeasurer. Substrates land serially; second lands before the interface is declared stable. |
-| D6 | 2026-07-05 | Pango-class text (full Unicode, OpenType shaping incl. ligatures and niqqud mark positioning, bidi, fallback, UAX segmentation) is an **available capability**, not a universal mandate: the engine offers a fast simple-run tier and a full shaped-paragraph tier, chosen per widget need. Interface at shaped-paragraph altitude (attributed text in → shaped runs + cluster maps out); go-text/typesetting reference, cgo HarfBuzz/Pango swappable. Terminal-style regions are a carve-out: PurfecTerm keeps its own proven graphical text handling. TUI-mode fidelity limits remain an accepted asymmetry. |
+| D6 | 2026-07-05 | Pango-class text (full Unicode, OpenType shaping incl. ligatures and niqqud mark positioning, bidi, fallback, UAX segmentation) is an **available capability**, not a universal mandate: the engine offers a fast simple-run tier and a full shaped-paragraph tier, chosen per trinket need. Interface at shaped-paragraph altitude (attributed text in → shaped runs + cluster maps out); go-text/typesetting reference, cgo HarfBuzz/Pango swappable. Terminal-style regions are a carve-out: PurfecTerm keeps its own proven graphical text handling. TUI-mode fidelity limits remain an accepted asymmetry. |

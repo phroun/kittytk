@@ -14,7 +14,7 @@ const (
 
 	// ColorTransparent (background only, graphical targets only):
 	// draw no background - glyphs blend over whatever is already
-	// painted. Cell targets cannot express it, so widgets only pass
+	// painted. Cell targets cannot express it, so trinkets only pass
 	// it when the painter reports Graphical(); label-type text uses
 	// it so opaque line boxes never clip neighboring glyphs.
 	ColorTransparent Color = -2
@@ -325,7 +325,7 @@ type Theme struct {
 	// Application background
 	Background CellStyle
 
-	// Normal widget appearance
+	// Normal trinket appearance
 	Normal    CellStyle
 	Focused   CellStyle
 	Disabled  CellStyle

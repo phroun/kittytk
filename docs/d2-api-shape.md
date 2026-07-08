@@ -26,10 +26,10 @@ guardrail keeps the client library from undoing that.
 
 1. **Menu command identity & registry dispatch** — ✅ done 2026-07-05
    (below).
-2. **Stable IDs for windows and widgets** — ✅ done 2026-07-05 (below).
-3. **Event-subscription formalization** — widget callbacks
+2. **Stable IDs for windows and trinkets** — ✅ done 2026-07-05 (below).
+3. **Event-subscription formalization** — trinket callbacks
    (`OnClick`, `OnToggled`, `OnStateChanged`, …) become subscriptions
-   keyed by widget ID under the hood; the public setter API keeps its
+   keyed by trinket ID under the hood; the public setter API keeps its
    current feel.
 4. ✅ **Replicated-read discipline audit** — done 2026-07-05, full
    classification in `d2-read-audit.md`. Three classes: A
@@ -78,13 +78,13 @@ as real protocol records, no sockets yet. Steps:
      registration with explicit surfacing, D18 case enforcement,
      correlation replies (surfaced names + top-level keys only). Ten
      tests with a mock factory cover the D10–D18 semantics corpus.
-   - ✅ **2b. Widget-owned wire registration** (2026-07-05).
-     Architecture per owner directive: **each widget's own codebase
+   - ✅ **2b. Trinket-owned wire registration** (2026-07-05).
+     Architecture per owner directive: **each trinket's own codebase
      registers its type and property mappings** in a sibling
      `*_protocol.go` file — no central binding table. The registry
      machinery lives in `protocol` (`RegisterType` /
      `RegisterCommonProperty` / `RegistryFactory` / `BindContext` +
-     the D17 typed-conversion helpers); `widgets/protocol_reg.go`
+     the D17 typed-conversion helpers); `trinkets/protocol_reg.go`
      provides shared applier helpers and registers the common
      properties (enabled, visible, name, min/max sizes,
      column_units/row_units, font, acc_name). Registered v1 types:
@@ -95,7 +95,7 @@ as real protocol records, no sockets yet. Steps:
      command dispatcher via `BindContext` (instance-scoped per the
      multi-display guardrail). Also fixed audit finding #7 for real:
      `Panel.SetBorder(true)` now defaults to a visible single-line
-     style. Six end-to-end tests build real widget trees from
+     style. Six end-to-end tests build real trinket trees from
      protocol text (aliases, templates, tri-state, surfacing to real
      ObjectIDs, live command dispatch on click). Deferred: window/
      tabs/lists/trees/menus types; `set` verb and friends (verb
@@ -103,16 +103,16 @@ as real protocol records, no sockets yet. Steps:
      spelling reconciliation (v1 uses children per D13).
 3. ✅ **Event records + subscriptions** (absorbs slice 3; 2026-07-05).
    `protocol.Event` follows the same named-property discipline as
-   commands — `event toggle widget=17 ?checked` — and its encoded
+   commands — `event toggle trinket=17 ?checked` — and its encoded
    form is a parseable statement, so one tokenizer serves both wire
    directions (Encode/ParseEvent round-trip tested, incl. string
-   escaping). Emission is widget-owned like everything else: each
-   widget's `*_protocol.go` wires its callbacks in a `TypeSpec.Bind`
+   escaping). Emission is trinket-owned like everything else: each
+   trinket's `*_protocol.go` wires its callbacks in a `TypeSpec.Bind`
    hook called once at construction — button `click`, checkbox
    `toggle` with tri-state flags (D16 on the wire), radio `toggle`,
    textinput `change text=`, combobox `change selected=`. Events
    flow through `BindContext.Emit` (per-connection; nil-safe);
-   `action=` became per-widget *data* (`BindContext.SetAction` /
+   `action=` became per-trinket *data* (`BindContext.SetAction` /
    `FireAction`), so assigning or replacing an action never re-wires
    callbacks — activation dispatches the command registry AND emits
    a `command` event. App side: `protocol.EventDispatcher` routes by
@@ -122,7 +122,7 @@ as real protocol records, no sockets yet. Steps:
    construction-time property application emits state events
    (suppression policy joins the `sub` verb decision). Deferred:
    window events, key events (raw-key mode), the `sub` verb itself
-   (v1 emits for all bound widgets).
+   (v1 emits for all bound trinkets).
 4. ✅ **Demo on this basis** (2026-07-05). The demo app opens a
    "Protocol Demo" window at startup whose entire content — panel,
    wrapping label, status label, separator, tri-state checkbox,
@@ -131,7 +131,7 @@ as real protocol records, no sockets yet. Steps:
    `examples/demo/main.go`), exercising aliases, children blocks,
    flags, and hierarchical surfacing (`watch=root.status`). App-side
    handlers subscribe via `protocol.EventDispatcher` keyed by the
-   surfaced ObjectIDs; interacting with the widgets updates the
+   surfaced ObjectIDs; interacting with the trinkets updates the
    status label with the received event, and the button's
    `action=demo.hello` lands in `Application.Commands()` (slice-1
    seam) *and* arrives as a `command` event. A demo-package test
@@ -139,8 +139,8 @@ as real protocol records, no sockets yet. Steps:
    keys, since `createProtocolWindow` degrades to "no window" on
    error. Writing it caught a real bug: virtual items drew IDs from
    a protocol-private counter that collided with `core.ObjectID`s —
-   fixed with `protocol.SetVirtualIDSource`, which `widgets` points
-   at the same allocator as real widget IDs (`core.NextObjectID`).
+   fixed with `protocol.SetVirtualIDSource`, which `trinkets` points
+   at the same allocator as real trinket IDs (`core.NextObjectID`).
 
 **Milestone P0 complete (2026-07-05):** tuitk and its demo run on the
 D10–D18 protocol basis in-process — UI built from protocol text,
@@ -154,7 +154,7 @@ one slice:
 
 - **Verbs**: `set` (mutate by key path or numeric ID; accepts
   everything `new` does incl. `children={}` appends), `destroy`
-  (detaches via per-type Destroy hooks — a window closes, a widget
+  (detaches via per-type Destroy hooks — a window closes, a trinket
   leaves its parent — and releases keys), `sub`/`unsub`
   (`sub <target>|all [events…]`). Correlation keys became
   session-persistent; surfacing registers the surfaced name as a key.
@@ -172,15 +172,15 @@ one slice:
   the now-shared virtual `item`, which nests for trees; change/
   activate events), `scrollarea` (single content), `window` (title,
   bounds, D12 behavior flags, window_closed event, destroy=close; in
-  the window package per widget-owned registration), radiobutton
-  `group=` (connection-stash groups — no container widget), common
+  the window package per trinket-owned registration), radiobutton
+  `group=` (connection-stash groups — no container trinket), common
   `stretch`/`align` (layout hints on the child, consulted by
   BoxLayout at attach), common `fg`/`bg` colors (named words +
   quoted "#rrggbb").
 
 **Tree-item identity (2026-07-05):** items are addressable wire
 objects — the owner's ruling: identity is the ObjectID (items already
-drew from the widget ID space), and the "user-chosen unseen name" is
+drew from the trinket ID space), and the "user-chosen unseen name" is
 the existing correlation-key system, not a new mechanism. The wire
 item record becomes a live proxy when a treeview adopts it
 (`wireItem.bind` carries the ID onto the `TreeItem` and keeps
@@ -193,19 +193,19 @@ Go-side too. Factory hook: virtual targets implementing
 
 **Main demo window converted (2026-07-05):** the "TUI Toolkit Demo"
 window IS protocol text now (`examples/demo/mainwindow_protocol.go`).
-Eight tabs — Basic Widgets, Selection, Lists, Scroll Selection,
+Eight tabs — Basic Trinkets, Selection, Lists, Scroll Selection,
 Scroll Lists, Progress, Bottom Tabs, Vertical Tabs — build from one
 script (window + tabs + nested splitters/scrollareas/lists/trees;
 repetitive runs generated, still protocol text). The MDI Demo tab
 stays imperative by design (G1 residuals + PurfecTerm) and attaches
-through the surfaced TabWidget — the supported hybrid. App-side
+through the surfaced TabTrinket — the supported hybrid. App-side
 wiring is entirely protocol-shaped: buttons dispatch commands via
 `action=`, the text input and all font/denomination/background
 toggles arrive as subscribed events keyed by surfaced ObjectIDs, and
 ~800 lines of imperative construction are deleted. The demo also
 registers its own wire type (`fixedbox`), proving app-local
 vocabulary extension works through the public API. Paint tests
-render both the Basic Widgets and Selection tabs from the script —
+render both the Basic Trinkets and Selection tabs from the script —
 the tab flip in the test is done with `set tabs selected=1`.
 Found and fixed during conversion: label's `align` (text alignment)
 shadowed the common layout `align` hint — renamed `text_align`.
@@ -255,7 +255,7 @@ app-facing purity layer P0 deferred:
   auto-subscribe the events backing their replica getters; class-C1
   reads (geometry etc.) deliberately do not exist on handles.
 - **In-process escape hatch**: `Handle.Target()` exposes the real
-  widget for hybrid apps (window managers, AddWindow); documented as
+  trinket for hybrid apps (window managers, AddWindow); documented as
   nil under future remote transports.
 - The demo's Protocol Demo window is the showcase: no raw
   dispatcher, no sub statements in the script, handlers write back
@@ -335,14 +335,14 @@ Deferred within this slice (tracked, not forgotten):
 What exists now:
 
 - **`core.ObjectID`** (uint64) — the stable identity of a UI object.
-  Allocated from a process-wide counter at `NewWidgetBase()`, so every
-  widget, window, panel, and the desktop itself carries one from
+  Allocated from a process-wide counter at `NewTrinketBase()`, so every
+  trinket, window, panel, and the desktop itself carries one from
   birth: `w.ObjectID()`. Immutable after construction.
 - **Deliberately NO process-global ID→object registry.** The object
   table belongs to the display service's per-session connection state
   (created at attach, released at detach, per D4's session model).
   A global registry now would bake in the wrong lifecycle and leak
-  discarded widgets; the transport phase builds the real table.
+  discarded trinkets; the transport phase builds the real table.
 - **First consumers converted (both fixed latent identity bugs):**
   - Dock entries carry `WindowID`; minimize/restore wiring (Desktop
     and Application) adds/removes by ID. Previously keyed by window
@@ -354,6 +354,6 @@ What exists now:
   `Name()` is a human label; command IDs are semantic verbs.** Three
   different things, no longer substitutable.
 
-Next: slice 3 (event-subscription formalization) keys widget-event
-subscriptions by ObjectID — the "widget 17 was clicked" half of the
+Next: slice 3 (event-subscription formalization) keys trinket-event
+subscriptions by ObjectID — the "trinket 17 was clicked" half of the
 event stream, joining slice 1's "command file.open triggered" half.

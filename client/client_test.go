@@ -1,6 +1,6 @@
 package client_test
 
-// The veneer tested against the real in-process widget vocabulary:
+// The veneer tested against the real in-process trinket vocabulary:
 // replica reads, write-through without echo, event folding order.
 
 import (
@@ -9,7 +9,7 @@ import (
 	"github.com/phroun/tuitk/client"
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 )
 
 func build(t *testing.T, dispatch func(string), src string) (*client.Conn, *client.UI) {
@@ -43,8 +43,8 @@ wcombo=root.combo
 		t.Errorf("initial checkbox state = %v", cb.State())
 	}
 
-	// USER interactions on the real widgets update the replica.
-	realCb := cb.Target().(*widgets.Checkbox)
+	// USER interactions on the real trinkets update the replica.
+	realCb := cb.Target().(*trinkets.Checkbox)
 	realCb.Toggle() // -> checked
 	if cb.State() != protocol.FlagTrue || !cb.Checked() {
 		t.Errorf("after toggle: state = %v", cb.State())
@@ -54,13 +54,13 @@ wcombo=root.combo
 		t.Errorf("after 2nd toggle: state = %v", cb.State())
 	}
 
-	realInp := inp.Target().(*widgets.TextInput)
+	realInp := inp.Target().(*trinkets.TextInput)
 	realInp.SetText("typed by user")
 	if inp.Text() != "typed by user" {
 		t.Errorf("replica text = %q", inp.Text())
 	}
 
-	realCombo := combo.Target().(*widgets.ComboBox)
+	realCombo := combo.Target().(*trinkets.ComboBox)
 	realCombo.SetCurrentIndex(1)
 	if combo.Selected() != 1 {
 		t.Errorf("replica selected = %d", combo.Selected())
@@ -96,10 +96,10 @@ cb=new checkbox caption="x"
 		t.Errorf("replica checked = false")
 	}
 	// The display side really changed.
-	if got := inp.Target().(*widgets.TextInput).Text(); got != "programmatic" {
+	if got := inp.Target().(*trinkets.TextInput).Text(); got != "programmatic" {
 		t.Errorf("display text = %q", got)
 	}
-	if !cb.Target().(*widgets.Checkbox).IsChecked() {
+	if !cb.Target().(*trinkets.Checkbox).IsChecked() {
 		t.Errorf("display checkbox unchecked")
 	}
 	// And nothing echoed.
@@ -108,7 +108,7 @@ cb=new checkbox caption="x"
 	}
 
 	// A subsequent USER edit still flows.
-	inp.Target().(*widgets.TextInput).SetText("user")
+	inp.Target().(*trinkets.TextInput).SetText("user")
 	if changes != 1 || inp.Text() != "user" {
 		t.Errorf("user edit: changes=%d text=%q", changes, inp.Text())
 	}
@@ -122,7 +122,7 @@ func TestReplicaFoldsBeforeHandlers(t *testing.T) {
 	var observed protocol.FlagState
 	cb.OnToggle(func(protocol.FlagState) { observed = cb.State() })
 
-	cb.Target().(*widgets.Checkbox).Toggle()
+	cb.Target().(*trinkets.Checkbox).Toggle()
 	if observed != protocol.FlagTrue {
 		t.Errorf("replica inside handler = %v, want FlagTrue", observed)
 	}
@@ -142,7 +142,7 @@ btn=new button caption="Go" action=do.it
 	btn.OnClick(func() { clicks++ })
 	conn.OnCommand("do.it", func() { observed++ })
 
-	btn.Target().(*widgets.Button).Click()
+	btn.Target().(*trinkets.Button).Click()
 
 	if dispatched != 1 {
 		t.Errorf("registry dispatched = %d", dispatched)
@@ -167,12 +167,12 @@ wa=root.a
 	if err := a.SetCaption(`quoted "text" with \ back`); err != nil {
 		t.Fatal(err)
 	}
-	realA := a.Target().(*widgets.Label)
+	realA := a.Target().(*trinkets.Label)
 	if realA.Text() != `quoted "text" with \ back` {
 		t.Errorf("caption = %q", realA.Text())
 	}
 
-	panel := ui.Object("root").Target().(*widgets.Panel)
+	panel := ui.Object("root").Target().(*trinkets.Panel)
 	if len(panel.Children()) != 2 {
 		t.Fatalf("children = %d", len(panel.Children()))
 	}
@@ -196,7 +196,7 @@ func TestConnectionsAreIndependent(t *testing.T) {
 		t.Fatal("distinct objects share an ID")
 	}
 
-	cb1.Target().(*widgets.Checkbox).Toggle()
+	cb1.Target().(*trinkets.Checkbox).Toggle()
 	if !cb1.Checked() {
 		t.Error("conn1 replica missed its own toggle")
 	}

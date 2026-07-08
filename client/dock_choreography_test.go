@@ -14,7 +14,7 @@ import (
 
 	"github.com/phroun/tuitk/client"
 	"github.com/phroun/tuitk/protocol"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 	"github.com/phroun/tuitk/window"
 )
 
@@ -25,8 +25,8 @@ dock=new dockrow entry_width=20
 wwin=mdi.d1
 `)
 	mdiH := ui.Object("mdi")
-	pane := mdiH.Target().(*widgets.MDIPane)
-	dock := ui.Object("dock").Target().(*widgets.DockRow)
+	pane := mdiH.Target().(*trinkets.MDIPane)
+	dock := ui.Object("dock").Target().(*trinkets.DockRow)
 	win := ui.Object("wwin").Target().(*window.Window)
 
 	// The demo's choreography.

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/phroun/tuitk/client"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 )
 
 // The MDI tab script must build, surface its keys, and support the
@@ -21,7 +21,7 @@ func TestMDITabScriptBuilds(t *testing.T) {
 			t.Errorf("missing surfaced key %q", k)
 		}
 	}
-	pane, ok := ui.Object("mdi").Target().(*widgets.MDIPane)
+	pane, ok := ui.Object("mdi").Target().(*trinkets.MDIPane)
 	if !ok {
 		t.Fatal("mdi is not an MDIPane")
 	}

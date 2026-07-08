@@ -10,13 +10,13 @@ import (
 	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/raster"
 	"github.com/phroun/tuitk/style"
-	_ "github.com/phroun/tuitk/widgets" // wire vocabulary registrations
+	_ "github.com/phroun/tuitk/trinkets" // wire vocabulary registrations
 	"github.com/phroun/tuitk/window"
 )
 
 // The D23 proof: a protocol-built window rendered through the PIXEL
 // implementation of the same primitives the TUI uses - real glyphs,
-// real lines - with zero widget changes. Set RASTER_PNG=/path to
+// real lines - with zero trinket changes. Set RASTER_PNG=/path to
 // keep the image.
 func TestRenderProtocolWindowToPNG(t *testing.T) {
 	b, err := raster.New(640, 384)
@@ -30,8 +30,8 @@ func TestRenderProtocolWindowToPNG(t *testing.T) {
 w=new window title="Graphical tuitk" width=608 height=352 children={
 	p=new panel layout=vbox spacing=0 children={
 		new label caption="This window is rendered as PIXELS through the same"
-		new label caption="primitives the terminal uses - no widget changed."
-		new separator caption="Widgets"
+		new label caption="primitives the terminal uses - no trinket changed."
+		new separator caption="Trinkets"
 		new checkbox caption="A real checkbox (checked)" checked
 		new checkbox caption="Tri-state, indeterminate" tristate
 		new radiobutton caption="Radio option one" group=g checked

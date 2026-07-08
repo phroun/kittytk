@@ -17,7 +17,7 @@ import (
 	"github.com/phroun/tuitk/display"
 	"github.com/phroun/tuitk/protocol"
 	"github.com/phroun/tuitk/style"
-	"github.com/phroun/tuitk/widgets"
+	"github.com/phroun/tuitk/trinkets"
 )
 
 // nullBackend: headless RenderBackend (display-test copy).
@@ -57,7 +57,7 @@ func (n *nullBackend) SetClipboard(string)                                      
 func (n *nullBackend) Beep()                                                             {}
 
 // onUI runs fn on the desktop's UI thread and waits.
-func onUI(d *widgets.Desktop, fn func()) {
+func onUI(d *trinkets.Desktop, fn func()) {
 	done := make(chan struct{})
 	d.Post(func() { fn(); close(done) })
 	<-done
@@ -66,7 +66,7 @@ func onUI(d *widgets.Desktop, fn func()) {
 func TestRemoteAppOverUnixSocket(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "display.sock")
 
-	desktop := widgets.NewDesktop()
+	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(&nullBackend{})
 
 	ready := make(chan *display.Server, 1)
@@ -129,20 +129,20 @@ wbtn=w.p.btn
 	// The connection appears as a full Application with the window.
 	var appNames []string
 	var winCount int
-	var serverCb *widgets.Checkbox
-	var serverInp *widgets.TextInput
-	var serverBtn *widgets.Button
+	var serverCb *trinkets.Checkbox
+	var serverInp *trinkets.TextInput
+	var serverBtn *trinkets.Button
 	onUI(desktop, func() {
 		for _, a := range desktop.Applications() {
 			appNames = append(appNames, a.Name())
 			for _, w := range a.Windows() {
 				winCount++
-				if p, ok := w.Content().(*widgets.Panel); ok {
+				if p, ok := w.Content().(*trinkets.Panel); ok {
 					kids := p.Children()
 					if len(kids) == 3 {
-						serverCb, _ = kids[0].(*widgets.Checkbox)
-						serverInp, _ = kids[1].(*widgets.TextInput)
-						serverBtn, _ = kids[2].(*widgets.Button)
+						serverCb, _ = kids[0].(*trinkets.Checkbox)
+						serverInp, _ = kids[1].(*trinkets.TextInput)
+						serverBtn, _ = kids[2].(*trinkets.Button)
 					}
 				}
 			}
@@ -155,7 +155,7 @@ wbtn=w.p.btn
 		t.Fatalf("remote window content not found (windows=%d)", winCount)
 	}
 
-	// App -> display: write-through set lands in the real widget.
+	// App -> display: write-through set lands in the real trinket.
 	inp := ui.TextInput("winp")
 	if err := inp.SetText("over the wire"); err != nil {
 		t.Fatalf("SetText: %v", err)
@@ -215,11 +215,11 @@ wbtn=w.p.btn
 // A solo connection puts the desktop into solo mode, and the host quits
 // when the last window closes. (The visual tear-off - the main window on
 // its own borderless surface - needs a real platform and is covered by a
-// widgets msPlatform test; here there is no surface to tear onto.)
+// trinkets msPlatform test; here there is no surface to tear onto.)
 func TestSoloModeReplacesDesktop(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "display.sock")
 
-	desktop := widgets.NewDesktop()
+	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(&nullBackend{})
 
 	ready := make(chan *display.Server, 1)
@@ -284,12 +284,12 @@ mb=new menubar children={new menu caption="File" children={new menuitem caption=
 // The spawndesktop / gosolo app-verbs are consumed by the display (they
 // reach the desktop's solo toggle), not passed through to the protocol
 // session - which would reject them as unknown verbs. Their visual effect
-// needs a real platform (covered by widgets msPlatform tests); here we only
+// needs a real platform (covered by trinkets msPlatform tests); here we only
 // assert the wiring accepts them.
 func TestSpawnDesktopVerbsAccepted(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "display.sock")
 
-	desktop := widgets.NewDesktop()
+	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(&nullBackend{})
 
 	ready := make(chan *display.Server, 1)
@@ -332,7 +332,7 @@ func TestSpawnDesktopVerbsAccepted(t *testing.T) {
 func TestMDIChildNotAdoptedAsAppWindow(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "display.sock")
 
-	desktop := widgets.NewDesktop()
+	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(&nullBackend{})
 
 	ready := make(chan *display.Server, 1)
@@ -410,7 +410,7 @@ pane=w.pane
 func TestWindowTearableAndMainFlags(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "display.sock")
 
-	desktop := widgets.NewDesktop()
+	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(&nullBackend{})
 
 	ready := make(chan *display.Server, 1)

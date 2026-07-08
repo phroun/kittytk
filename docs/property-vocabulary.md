@@ -3,7 +3,7 @@
 Per D10, nothing on the wire is positional: every value travels under a
 property name, so the names below ARE protocol surface. This document
 is the deliberate registry of those names, grounded in the current
-widget APIs. **Status: draft for project-owner review** — nothing here
+trinket APIs. **Status: draft for project-owner review** — nothing here
 is frozen; naming questions are collected at the end.
 
 ## Conventions (proposed)
@@ -24,7 +24,7 @@ is frozen; naming questions are collected at the end.
   Flags/enums/identifiers are lexically similar bare tokens typed per
   property, so the tokenizer is schema-free; only interpretation
   consults the vocabulary.
-- **Case namespaces (D18):** system names (properties, widget types,
+- **Case namespaces (D18):** system names (properties, trinket types,
   verbs, enum values) begin lowercase; **user-defined templates and
   aliases MUST begin uppercase**. The two namespaces are disjoint by
   construction, so the system vocabulary can grow forever without
@@ -65,7 +65,7 @@ is frozen; naming questions are collected at the end.
   prefixes, plus `default`); RGB is a quoted string `bg="#3366ff"`
   (bare `#` starts a comment, and quoting-is-for-text loses nothing
   here since an RGB literal is data, not a reference). Implemented as
-  common `fg=`/`bg=` properties over the widget style override.
+  common `fg=`/`bg=` properties over the trinket style override.
 - **Verbs (D19, answered 2026-07-05):** `new`, `set`, `destroy`,
   `sub`, `unsub` (+ declarations `alias`, `template`). Targets are
   key paths or bare numeric ObjectIDs — `set root.status
@@ -105,7 +105,7 @@ is frozen; naming questions are collected at the end.
 | Scoped keys (D15) | `k1=new thing children={sk1=new subthing}` → path `k1.sk1` | Keys inside a block are block-local, addressable externally as paths through the enclosing key; unkeyed parents keep child keys internal |
 | Surfacing (D15) | `mine=k1.sk1` → reply `mine=<id>` | Reply reports surfaced names + top-level keys only — reply size is app-controlled. Template-instantiated children are addressed this way (`k1.input`) |
 
-## Common properties (all widgets)
+## Common properties (all trinkets)
 
 | Property | Type | Notes |
 |---|---|---|
@@ -125,7 +125,7 @@ is frozen; naming questions are collected at the end.
 | `background` | color | Explicit background; unset = inherit |
 | `acc_name`, `acc_role`, `acc_description` | string | Accessibility |
 
-## Per-widget properties
+## Per-trinket properties
 
 ### button
 | Property | Type | Notes |
@@ -188,7 +188,7 @@ is frozen; naming questions are collected at the end.
 | `multi_select` | flag | (future) |
 
 **Item identity (2026-07-05):** items are first-class wire objects —
-each carries an ObjectID from the same allocation space as widgets,
+each carries an ObjectID from the same allocation space as trinkets,
 and the ordinary correlation-key machinery names them (nothing
 item-specific was invented): `fruit=new item …` inside a keyed tree
 registers `tree.fruit`; `set tree.fruit caption="…" !expanded`,
@@ -212,7 +212,7 @@ needed).
 ### tabs *(registered 2026-07-05; type name `tabs`)*
 | Property | Type | Notes |
 |---|---|---|
-| children of `tab` | {} | Virtual `tab`: `caption` + exactly one content child widget |
+| children of `tab` | {} | Virtual `tab`: `caption` + exactly one content child trinket |
 | `selected` | numeric | Active tab (after the tabs exist) |
 | `position` | enum | `top`, `bottom`, `left`, `right` |
 | `movable`, `closable` | flag | |
@@ -229,7 +229,7 @@ Events: `change selected=`.
 ### scrollarea *(registered 2026-07-05)*
 | Property | Type | Notes |
 |---|---|---|
-| children | {} | Exactly one content widget (wrap several in a panel) |
+| children | {} | Exactly one content trinket (wrap several in a panel) |
 | `scroll_x`, `scroll_y` | numeric | Scroll offsets |
 | `resizable` | flag | Content tracks viewport width |
 | `h_bar`, `v_bar` | enum | `auto`, `always`, `never` (future) |
@@ -253,7 +253,7 @@ Events: `change selected=`.
 | Property | Type | Notes |
 |---|---|---|
 | `feed` | string (stream) | **Pseudo-property**: every application APPENDS bytes to the terminal **display** — parsed into the screen buffer as if program output (`Terminal.Feed`, NOT `Write`, which is keyboard input to the child PTY). A channel, not state; never read back. Arbitrary bytes travel via the `\xNN` string escape (+ `\e` for ESC), so `set term feed="\e[1mhi\r\n"` works today; the O6 bulk frame arrives with transport as a more efficient encoding of the same statement. |
-| `shell` | flag | In-process convenience: starts the widget's own local shell. Under the display-protocol split the PTY belongs to the APP, which pumps bytes through `feed=`. |
+| `shell` | flag | In-process convenience: starts the trinket's own local shell. Under the display-protocol split the PTY belongs to the APP, which pumps bytes through `feed=`. |
 | `columns`, `rows` | numeric | (future — currently bounds-driven) |
 
 Input direction (user keystrokes → app as `data` events) joins the
@@ -266,7 +266,7 @@ raw-key work.
 | `icon` | enum | `none`, `information`, `warning`, `error`, `question` |
 | `ok`, `cancel`, `yes`, `no`, `retry`, `ignore`, `abort`, `save`, `discard`, `apply`, `help` | flag | Button set as individual flags (D12) |
 
-Event: `finish widget=<id> result=<button-word>` when a button closes
+Event: `finish trinket=<id> result=<button-word>` when a button closes
 the dialog. `destroy` closes it programmatically.
 
 ### statusbar / section / span *(registered 2026-07-05)*
@@ -298,11 +298,11 @@ the close-complete hook).
 | Type | Property | Notes |
 |---|---|---|
 | `dockrow` | `entry_width`, children of `dockentry` | |
-| `dockentry` (virtual, live-proxy) | `caption`, `window` (id) | Add with `set dock children={e=new dockentry …}`, remove with `destroy dock.e`; clicks arrive as `click widget=<entry> window=<win>` |
+| `dockentry` (virtual, live-proxy) | `caption`, `window` (id) | Add with `set dock children={e=new dockentry …}`, remove with `destroy dock.e`; clicks arrive as `click trinket=<entry> window=<win>` |
 
 ### canvas *(deferred, D7)*
 Reserved: `mode` (`commands`/`pixels`), plus its command stream — designed
-when the widget is built.
+when the trinket is built.
 
 ## Window properties
 
@@ -314,7 +314,7 @@ when the widget is built.
 | `x`, `y`, `width`, `height` | numeric (units) | Desktop denomination |
 | `state` | enum | `normal`, `minimized`, `maximized` (future) |
 | `frameless`, `no_title`, `no_resize`, `no_move`, `no_close`, `no_minimize`, `no_maximize`, `modal`, `stays_on_top`, `tool` | flag | Individual flags per D12 — no bitsets on the wire (`new window frameless modal`) |
-| children | {} | Exactly one content widget (wrap several in a panel) |
+| children | {} | Exactly one content trinket (wrap several in a panel) |
 | `min_width`, `min_height` | numeric (units) | Via common properties |
 | `font`, `column_units`, `row_units` | | Per-window overrides (D8) |
 | `native` | flag | G4 dual-mode: REQUEST an OS window; honored when the platform creates surfaces (SurfaceHost, OS chrome, window fills the surface), ignored on single-surface platforms (in-surface under the WindowManager). Registered 2026-07-05. |
@@ -343,19 +343,19 @@ the bar; no closures cross the wire. Item properties:
 
 ## Events (display service → app)
 
-Envelope: `event <type>` plus named fields; `widget=<id>` names the
-source where applicable. Apps subscribe per widget/event (slice 3).
+Envelope: `event <type>` plus named fields; `trinket=<id>` names the
+source where applicable. Apps subscribe per trinket/event (slice 3).
 
 | Event | Fields | Notes |
 |---|---|---|
 | `command` | `action` | Menu/button/shortcut dispatch — the slice-1 seam |
-| `click` | `widget`, `x`, `y`, `button` | Positions in the widget's denomination |
-| `toggle` | `widget`, `checked` | Checkbox/radio state after the change |
-| `change` | `widget`, `text` \| `value` \| `selected` (+ `item` on trees) | Content/value/selection changed (textinput, combobox, progress-consumer, list, tree) |
-| `activate` | `widget`, `selected` (+ `item` on trees) | Item chosen (combobox selection committed, list/tree double-activation) |
-| `expand` | `widget`, `item`, `expanded` flag | Tree node expanded (`expanded`) or collapsed (`!expanded`) by the user |
-| `focus_in` / `focus_out` | `widget` | |
-| `key` | `widget`, `key` | D3 string; only when subscribed (raw-key mode) |
+| `click` | `trinket`, `x`, `y`, `button` | Positions in the trinket's denomination |
+| `toggle` | `trinket`, `checked` | Checkbox/radio state after the change |
+| `change` | `trinket`, `text` \| `value` \| `selected` (+ `item` on trees) | Content/value/selection changed (textinput, combobox, progress-consumer, list, tree) |
+| `activate` | `trinket`, `selected` (+ `item` on trees) | Item chosen (combobox selection committed, list/tree double-activation) |
+| `expand` | `trinket`, `item`, `expanded` flag | Tree node expanded (`expanded`) or collapsed (`!expanded`) by the user |
+| `focus_in` / `focus_out` | `trinket` | |
+| `key` | `trinket`, `key` | D3 string; only when subscribed (raw-key mode) |
 | `window_moved` / `window_resized` | `window`, `x`, `y`, `width`, `height` | |
 | `window_state` | `window`, `state` | minimized/maximized/normal |
 | `window_closed` | `window` | After close completes |
@@ -373,9 +373,9 @@ source where applicable. Apps subscribe per widget/event (slice 3).
 3. ✅ **Answered (2026-07-05):** layout-item properties (`stretch`,
    `align`) live **on the child** — `new spacer stretch=1`,
    `new button caption="OK" align=right`. The hints travel with the
-   widget (`WidgetBase.SetLayoutStretch`/`SetLayoutAlignment`) and
+   trinket (`TrinketBase.SetLayoutStretch`/`SetLayoutAlignment`) and
    the parent's layout manager consults them at attach time; also
-   fixed generally: a widget whose cross-axis policy is Expanding
+   fixed generally: a trinket whose cross-axis policy is Expanding
    fills its allocation regardless of default alignment.
 4. ✅ **Answered:** `column_units` / `row_units` — the names state the
    denomination relationship directly (`row_units=32` reads "a row is

@@ -9,14 +9,14 @@ import (
 // a11yParent is a minimal Container that also provides an
 // AccessibilityManager, so a hosted window's announcements are captured.
 type a11yParent struct {
-	core.WidgetBase
+	core.TrinketBase
 	am *core.AccessibilityManager
 }
 
-func (p *a11yParent) Children() []core.Widget          { return nil }
-func (p *a11yParent) AddChild(core.Widget)             {}
-func (p *a11yParent) RemoveChild(core.Widget)          {}
-func (p *a11yParent) ChildAt(core.UnitPoint) core.Widget { return nil }
+func (p *a11yParent) Children() []core.Trinket          { return nil }
+func (p *a11yParent) AddChild(core.Trinket)             {}
+func (p *a11yParent) RemoveChild(core.Trinket)          {}
+func (p *a11yParent) ChildAt(core.UnitPoint) core.Trinket { return nil }
 func (p *a11yParent) Layout()                          {}
 func (p *a11yParent) LayoutManager() core.LayoutManager { return nil }
 func (p *a11yParent) SetLayoutManager(core.LayoutManager) {}
@@ -30,7 +30,7 @@ func TestTearHandleAnnouncesAction(t *testing.T) {
 	am.OnAnnounce = func(a core.AccessibilityAnnouncement) { spoken = append(spoken, a.Message) }
 
 	parent := &a11yParent{am: am}
-	parent.WidgetBase = *core.NewWidgetBase()
+	parent.TrinketBase = *core.NewTrinketBase()
 
 	w := NewWindow("w")
 	w.SetTearable(true)

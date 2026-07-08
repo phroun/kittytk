@@ -3,7 +3,7 @@
 // speaks, drawn onto an RGBA framebuffer with real font glyphs and
 // real lines. There is no glyph-grid emulation stage - DrawRect
 // draws lines, not box runes; DrawText rasterizes a TTF; the whole
-// desktop renders graphically through the existing widget paint
+// desktop renders graphically through the existing trinket paint
 // paths.
 //
 // Substrates (SDL first, per D23) present this framebuffer in a
@@ -1019,7 +1019,7 @@ func mod(a, m int) int {
 // DrawCaret implements core.CaretDrawer: a one-unit-wide vertical bar
 // at the left edge of the glyph box - where the next character would
 // start. Drawn in the color a block cursor of style s would show
-// (its background), so widgets pass their block-cursor style
+// (its background), so trinkets pass their block-cursor style
 // unchanged.
 func (b *Backend) DrawCaret(x, y, height core.Unit, s style.CellStyle) {
 	_, bar := b.styleColors(s)

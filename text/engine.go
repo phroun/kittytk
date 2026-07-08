@@ -13,7 +13,7 @@
 //     fallback, and UAX #14 line breaking.
 //
 // The contract altitude is the shaped paragraph: attributed text in;
-// lines of positioned glyph runs plus cluster mapping out. Widgets'
+// lines of positioned glyph runs plus cluster mapping out. Trinkets'
 // graphical paint paths consume shaped lines and use the cluster-map
 // operations (CaretX, RuneForX) - never per-rune arithmetic - which
 // is what keeps caret movement, selection, and hit-testing correct in

@@ -66,7 +66,7 @@ func (h *SurfaceHost) Event(ev core.Event) bool {
 	case core.MouseWheelEvent:
 		handled = h.win.HandleMouseWheel(e)
 	}
-	// Parity contract: repaint after input until widgets migrate to
+	// Parity contract: repaint after input until trinkets migrate to
 	// precise invalidation.
 	h.surface.Invalidate(core.UnitRect{})
 	return handled

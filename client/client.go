@@ -8,7 +8,7 @@
 // one app may hold any number of connections. The package imports
 // ONLY the protocol package - it compiles with no knowledge of the
 // rendering side. In-process, the display side is the registered
-// widget vocabulary reached through protocol.RegistryFactory; under
+// trinket vocabulary reached through protocol.RegistryFactory; under
 // transport the same Conn speaks to a socket instead.
 package client
 
@@ -90,7 +90,7 @@ func (c *Conn) Closed() <-chan struct{} { return c.closed }
 func (c *Conn) markClosed() { c.closeOnce.Do(func() { close(c.closed) }) }
 
 // NewInProcess creates a connection whose display side is the
-// registered widget vocabulary in this process. dispatch receives
+// registered trinket vocabulary in this process. dispatch receives
 // action= command IDs (pass the application registry's Dispatch;
 // nil is allowed for connections that use no commands).
 func NewInProcess(dispatch func(commandID string)) *Conn {
@@ -194,7 +194,7 @@ func (c *Conn) Build(src string) (*UI, error) {
 // deliver folds an event into the replica, then invokes handlers.
 // (BindContext already filtered by subscription and suppression.)
 func (c *Conn) deliver(ev *protocol.Event) {
-	id, _ := ev.Widget()
+	id, _ := ev.Trinket()
 
 	c.mu.Lock()
 	st := c.state[id]

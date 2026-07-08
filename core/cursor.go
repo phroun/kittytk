@@ -19,7 +19,7 @@ const (
 	CursorResizeNESW
 )
 
-// CursorProvider is an optional widget capability: a widget that wants a
+// CursorProvider is an optional trinket capability: a trinket that wants a
 // particular mouse cursor while the pointer is over it (a text field
 // returns CursorText, for example). The desktop resolves it on mouse
 // move, after resize-edge cursors take precedence.

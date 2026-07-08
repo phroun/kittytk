@@ -26,7 +26,7 @@ func (h Handle) Valid() bool { return h.c != nil && h.id != 0 }
 // that keeps the full vocabulary reachable.
 func (h Handle) Set(args string) error { return h.c.set(h.id, args) }
 
-// Destroy removes the object (detaches widgets, closes windows).
+// Destroy removes the object (detaches trinkets, closes windows).
 func (h Handle) Destroy() error {
 	_, err := h.c.Exec(fmt.Sprintf("destroy %d", h.id))
 	return err
@@ -37,7 +37,7 @@ func (h Handle) On(event string, fn func(*protocol.Event)) {
 	h.c.on(h.id, event, fn)
 }
 
-// Target returns the in-process constructed object (the real widget).
+// Target returns the in-process constructed object (the real trinket).
 // IN-PROCESS ESCAPE HATCH ONLY: nil under a remote transport. Exists
 // so hybrid apps can hand a built tree to imperative code (window
 // managers, AddWindow) while both sides live in one process.
@@ -151,7 +151,7 @@ func (t TextInput) OnChange(fn func(string)) {
 	})
 }
 
-// Selector is the shared shape of index-selected widgets: combobox,
+// Selector is the shared shape of index-selected trinkets: combobox,
 // listview, treeview, tabs.
 type Selector struct{ Handle }
 

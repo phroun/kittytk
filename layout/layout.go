@@ -1,21 +1,21 @@
-// Package layout provides layout managers for arranging widgets.
+// Package layout provides layout managers for arranging trinkets.
 package layout
 
 import (
 	"github.com/phroun/tuitk/core"
 )
 
-// LayoutItem wraps a widget with additional layout properties.
+// LayoutItem wraps a trinket with additional layout properties.
 type LayoutItem struct {
-	Widget  core.Widget
+	Trinket  core.Trinket
 	Stretch int        // Stretch factor (0 = use preferred size)
 	Align   core.Alignment
 }
 
 // NewLayoutItem creates a layout item with default properties.
-func NewLayoutItem(widget core.Widget) *LayoutItem {
+func NewLayoutItem(trinket core.Trinket) *LayoutItem {
 	return &LayoutItem{
-		Widget:  widget,
+		Trinket:  trinket,
 		Stretch: 0,
 		Align:   core.AlignLeft,
 	}
@@ -35,7 +35,7 @@ func (i *LayoutItem) WithAlign(align core.Alignment) *LayoutItem {
 
 // Spacer represents fixed or stretching empty space in a layout.
 type Spacer struct {
-	core.WidgetBase
+	core.TrinketBase
 	fixedSize core.UnitSize
 	stretch   int
 }

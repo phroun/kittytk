@@ -11,7 +11,7 @@ This document captures design discussions and considerations for implementing co
 | Desktop composition | ✅ Done | MenuBar + WindowManager + DockRow + StatusBar |
 | Standard app menu items | ✅ Done | Auto-injected Hide/Show All/Quit |
 | Action type | ⚠️ Partial | Exists but no registry pattern |
-| MDIPane widget | 🔴 Planned | See below |
+| MDIPane trinket | 🔴 Planned | See below |
 | Responder chain | 🔴 Deferred | Current menu-swap approach sufficient |
 | Menu merging | 🔴 Deferred | Low priority |
 | Menu as model | 🔴 Deferred | Medium priority for future |
@@ -24,23 +24,23 @@ The goal is to support Mac-like context-sensitive menus where the menu bar conte
 
 ---
 
-## MDIPane Widget
+## MDIPane Trinket
 
 ### Status: 🔴 NOT YET IMPLEMENTED
 
 ### Motivation
 
-The Window class should remain focused on being a window (frame, title bar, buttons). Container semantics for managing floating child windows should live in a separate widget.
+The Window class should remain focused on being a window (frame, title bar, buttons). Container semantics for managing floating child windows should live in a separate trinket.
 
-Currently, window management is embedded in `Desktop` and `WindowManager`. There's no standalone MDI container that can be embedded in other widgets.
+Currently, window management is embedded in `Desktop` and `WindowManager`. There's no standalone MDI container that can be embedded in other trinkets.
 
 ### Proposed Design
 
-An `MDIPane` widget that:
+An `MDIPane` trinket that:
 
-1. **Is a regular widget** - can be placed anywhere (in a Window, TabWidget tab, Panel, Splitter, etc.)
+1. **Is a regular trinket** - can be placed anywhere (in a Window, TabTrinket tab, Panel, Splitter, etc.)
 
-2. **Has background content** - accepts child widgets with layout managers for the area behind floating windows
+2. **Has background content** - accepts child trinkets with layout managers for the area behind floating windows
 
 3. **Manages floating windows** - maintains a z-ordered list of Window children that float above the content
 
@@ -66,7 +66,7 @@ An `MDIPane` widget that:
 mainWindow.SetContent(mdiPane)
 
 // MDI in a tab
-tabWidget.AddTab("Documents", mdiPane)
+tabTrinket.AddTab("Documents", mdiPane)
 
 // Split view - MDI pane on left, tools on right
 splitter.SetFirst(mdiPane)
@@ -79,7 +79,7 @@ panel.AddChild(mdiPane) // fills remaining space
 
 ### Relationship to Desktop
 
-Desktop uses MDIPane-like functionality internally via WindowManager. The MDIPane widget would:
+Desktop uses MDIPane-like functionality internally via WindowManager. The MDIPane trinket would:
 - Share core logic with WindowManager where possible
 - Be usable independently of Desktop
 - Enable nested MDI scenarios
@@ -109,8 +109,8 @@ Rather than the responder chain pattern (Cocoa-style), we implemented explicit m
 ### Original Consideration: Responder Chain
 
 The document originally considered Cocoa-style responder chain where the *same* menu items route to *different handlers* based on focus. This remains a valid alternative if we need:
-- Standard commands (Save, Undo) handled by many different widgets
-- More dynamic enable/disable based on focused widget
+- Standard commands (Save, Undo) handled by many different trinkets
+- More dynamic enable/disable based on focused trinket
 - Less menu definition duplication
 
 For now, the menu-swapping approach serves our needs well.
@@ -183,11 +183,11 @@ action := app.Action("file.save")
 ### Qt
 - Separates `QMenuBar` (display) from `QAction` (commands)
 - Actions are abstract - same action appears in menu, toolbar, context menu, shortcut
-- `QMdiArea` is an explicit container widget for MDI children
+- `QMdiArea` is an explicit container trinket for MDI children
 - On macOS, can automatically move menu bar to system location
 
 ### GTK (3/4)
-- `GAction` + `GMenu` pattern - menus are declarative data, not widgets
+- `GAction` + `GMenu` pattern - menus are declarative data, not trinkets
 - `GMenu` is a model, `GtkMenuBar` renders it
 - Actions live on `GtkApplication` or `GtkApplicationWindow`
 
@@ -202,7 +202,7 @@ action := app.Action("file.save")
 
 ### Menu as Model (Deferred)
 
-Separating menu definition (model/data) from display (widget) would enable:
+Separating menu definition (model/data) from display (trinket) would enable:
 - Same menu data for menu bar and context menu
 - Declarative menu definitions
 - Easier serialization
@@ -234,7 +234,7 @@ Allowing providers to merge menus (base app menus + document-specific additions)
 
 ### Next Steps
 
-1. **MDIPane Widget** - Extract reusable MDI container from Desktop/WindowManager
+1. **MDIPane Trinket** - Extract reusable MDI container from Desktop/WindowManager
 2. **Dynamic Action.Enabled** - Convert to `func() bool` for context-sensitive enable/disable
 3. **Action Registry** - Add ID field and per-app lookup
 
