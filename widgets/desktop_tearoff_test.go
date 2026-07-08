@@ -468,6 +468,40 @@ func TestMainWindowTearOffCascadeArrangeRaise(t *testing.T) {
 	d.RunOn(plat)
 }
 
+// A torn-off window's resize-edge grip matches the desktop's in-surface
+// grip, not the built-in default - so torn edges are the same thickness
+// as docked ones and don't overlap edge widgets such as scrollbars.
+func TestTornWindowResizeGripMatchesDesktop(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	win := window.NewWindow("w")
+	win.SetTearable(true)
+	d.SetOnStartup(func() {
+		d.WindowManager().AddWindow(win)
+		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		win.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		if d.resizeGrip <= 0 {
+			t.Fatalf("desktop has no graphical resize grip (%d); test needs one", d.resizeGrip)
+		}
+		d.tearOffInPlace(win)
+		if len(d.tornHosts) == 0 {
+			t.Fatal("window did not tear off")
+		}
+		if got := d.tornHosts[0].ResizeGrip(); got != d.resizeGrip {
+			t.Errorf("torn window grip = %d, want the desktop grip %d", got, d.resizeGrip)
+		}
+		d.QuitWithCode(0)
+	}
+	d.RunOn(plat)
+}
+
 // A minimized follower (docked while its main window was on the desktop)
 // leaves the dock when the main window tears off: it comes along on its
 // own surface, so its dock entry must be removed and it un-minimized.

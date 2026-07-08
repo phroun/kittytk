@@ -94,7 +94,7 @@ func TestTornEdgeRects(t *testing.T) {
 	g := tearResizeGrip
 
 	// Bottom-right corner -> right band + bottom band.
-	got := tornEdgeRects(b, resizeRight|resizeBottom)
+	got := tornEdgeRects(b, resizeRight|resizeBottom, g)
 	if len(got) != 2 {
 		t.Fatalf("corner: want 2 rects, got %d", len(got))
 	}

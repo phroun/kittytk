@@ -47,12 +47,18 @@ type TearOffHost struct {
 	// Edge-resize drag: the OS window resizes with the pointer.
 	resizing    bool
 	resizeEdges int // resizeLeft | resizeRight | resizeBottom
-	startGX     int // global pointer at resize start, px
-	startGY     int
-	startX      int // OS window rect at resize start, px
-	startY      int
-	startW      int
-	startH      int
+
+	// resizeGrip is the edge thickness (units) that starts a resize.
+	// Defaults to tearResizeGrip; the desktop overrides it to match its
+	// own in-surface grip so torn edges are the same width as docked
+	// ones (and don't overlap edge widgets like scrollbars).
+	resizeGrip core.Unit
+	startGX    int // global pointer at resize start, px
+	startGY    int
+	startX     int // OS window rect at resize start, px
+	startY     int
+	startW     int
+	startH     int
 
 	// Zoom (the maximize button while torn): fill the display's work
 	// area, second press restores the saved rect.
@@ -119,7 +125,7 @@ const tearResizeGrip core.Unit = 6
 func NewTearOffHost(win *Window, surf platform.Surface, scale int,
 	global func() (int, int),
 	onRedock func(globalX, globalY int, grabX, grabY core.Unit) bool) *TearOffHost {
-	h := &TearOffHost{win: win, surf: surf, scale: scale, global: global, onRedock: onRedock}
+	h := &TearOffHost{win: win, surf: surf, scale: scale, global: global, onRedock: onRedock, resizeGrip: tearResizeGrip}
 	h.native, _ = surf.(platform.NativeSurface)
 	if h.scale < 1 {
 		h.scale = 1
@@ -207,6 +213,18 @@ func (h *TearOffHost) SetOnFocus(fn func(focused bool)) { h.onFocus = fn }
 // and controls, matching the desktop.
 func (h *TearOffHost) SetCursorSetter(fn func(core.CursorShape)) { h.setCursor = fn }
 
+// SetResizeGrip overrides the resize-edge thickness (units) so a torn
+// window's edges match the desktop's in-surface grip rather than the
+// built-in default. Values <= 0 are ignored.
+func (h *TearOffHost) SetResizeGrip(g core.Unit) {
+	if g > 0 {
+		h.resizeGrip = g
+	}
+}
+
+// ResizeGrip returns the resize-edge thickness (units) in effect.
+func (h *TearOffHost) ResizeGrip() core.Unit { return h.resizeGrip }
+
 // applyCursor sets the system cursor, skipping redundant applications.
 func (h *TearOffHost) applyCursor(shape core.CursorShape) {
 	if h.setCursor == nil || shape == h.lastCursor {
@@ -228,13 +246,13 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 	}
 	b := h.win.Bounds()
 	edges := 0
-	if x < tearResizeGrip {
+	if x < h.resizeGrip {
 		edges |= resizeLeft
 	}
-	if x >= b.Width-tearResizeGrip {
+	if x >= b.Width-h.resizeGrip {
 		edges |= resizeRight
 	}
-	if y >= b.Height-tearResizeGrip {
+	if y >= b.Height-h.resizeGrip {
 		edges |= resizeBottom
 	}
 	return edges
@@ -262,17 +280,17 @@ func tornCursorForEdge(edges int) core.CursorShape {
 
 // tornEdgeRects returns the window-local highlight bands for the given
 // resize edges (one per edge, two for a corner), each the width of the
-// torn-window resize grip.
-func tornEdgeRects(b core.UnitRect, edges int) []core.UnitRect {
+// resize grip.
+func tornEdgeRects(b core.UnitRect, edges int, grip core.Unit) []core.UnitRect {
 	var rects []core.UnitRect
 	if edges&resizeLeft != 0 {
-		rects = append(rects, core.UnitRect{Width: tearResizeGrip, Height: b.Height})
+		rects = append(rects, core.UnitRect{Width: grip, Height: b.Height})
 	}
 	if edges&resizeRight != 0 {
-		rects = append(rects, core.UnitRect{X: b.Width - tearResizeGrip, Width: tearResizeGrip, Height: b.Height})
+		rects = append(rects, core.UnitRect{X: b.Width - grip, Width: grip, Height: b.Height})
 	}
 	if edges&resizeBottom != 0 {
-		rects = append(rects, core.UnitRect{Y: b.Height - tearResizeGrip, Width: b.Width, Height: tearResizeGrip})
+		rects = append(rects, core.UnitRect{Y: b.Height - grip, Width: b.Width, Height: grip})
 	}
 	return rects
 }
@@ -282,7 +300,7 @@ func tornEdgeRects(b core.UnitRect, edges int) []core.UnitRect {
 func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	edges := h.edgeAt(x, y)
 	if edges != 0 {
-		h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), edges))
+		h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), edges, h.resizeGrip))
 		h.applyCursor(tornCursorForEdge(edges))
 		return
 	}
@@ -648,13 +666,13 @@ func (h *TearOffHost) beginResize(x, y core.Unit) bool {
 	}
 	b := h.win.Bounds()
 	edges := 0
-	if x < tearResizeGrip {
+	if x < h.resizeGrip {
 		edges |= resizeLeft
 	}
-	if x >= b.Width-tearResizeGrip {
+	if x >= b.Width-h.resizeGrip {
 		edges |= resizeRight
 	}
-	if y >= b.Height-tearResizeGrip {
+	if y >= b.Height-h.resizeGrip {
 		edges |= resizeBottom
 	}
 	if edges == 0 || y < core.DefaultCellMetrics().CellHeight {
@@ -709,7 +727,7 @@ func (h *TearOffHost) resizeMove() bool {
 	// Track the highlight on the edge being dragged (the OS resize reports
 	// back through Resized, updating the window bounds) and keep the resize
 	// cursor for the gesture.
-	h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), h.resizeEdges))
+	h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), h.resizeEdges, h.resizeGrip))
 	h.applyCursor(tornCursorForEdge(h.resizeEdges))
 	return true
 }
