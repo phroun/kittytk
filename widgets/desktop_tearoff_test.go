@@ -468,6 +468,70 @@ func TestMainWindowTearOffCascadeArrangeRaise(t *testing.T) {
 	d.RunOn(plat)
 }
 
+// A minimized follower (docked while its main window was on the desktop)
+// leaves the dock when the main window tears off: it comes along on its
+// own surface, so its dock entry must be removed and it un-minimized.
+func TestTearOffRemovesMinimizedFollowerFromDock(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("main")
+	main.SetTearable(true)
+	child := window.NewWindow("child") // non-tearable follower
+
+	app := &mockApp{name: "App", main: main, windows: []*window.Window{main, child}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+		wm.AddWindow(child)
+		child.SetBounds(core.UnitRect{X: 20, Y: 20, Width: 100, Height: 80})
+		child.Layout()
+		wm.ActivateWindow(main)
+		wm.ActivateWindow(child)
+		// Minimize the follower - it drops into the desktop dock.
+		wm.MinimizeWindow(child)
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		if !dockHasEntry(d.DockRow(), child.ObjectID()) {
+			t.Fatal("follower was not added to the dock on minimize")
+		}
+
+		d.tearOffInPlace(main)
+
+		if dockHasEntry(d.DockRow(), child.ObjectID()) {
+			t.Error("torn-off follower still has a lingering dock entry")
+		}
+		if child.IsMinimized() {
+			t.Error("torn-off follower is still minimized (invisible on its surface)")
+		}
+		if !child.IsDetached() {
+			t.Error("follower did not tear off with the main window")
+		}
+		d.QuitWithCode(0)
+	}
+	d.RunOn(plat)
+}
+
+func dockHasEntry(dock *DockRow, id core.ObjectID) bool {
+	if dock == nil {
+		return false
+	}
+	for _, e := range dock.Entries() {
+		if e.WindowID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // A window that was maximized when torn off re-fills the client area of
 // the desktop it docks back into, rather than keeping its torn size.
 func TestMaximizedWindowRedockRefillsClientArea(t *testing.T) {

@@ -139,6 +139,17 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 
 	wm.RemoveWindow(win)
 
+	// The window is leaving the desktop for its own surface, so it must
+	// not linger in the desktop dock. A minimized window (e.g. a follower
+	// that was docked when its main window tore off) also un-minimizes,
+	// so it actually shows on its torn surface instead of staying hidden.
+	if win.IsMinimized() {
+		win.Restore()
+	}
+	if d.dockRow != nil {
+		d.dockRow.RemoveEntryByID(win.ObjectID())
+	}
+
 	var host *window.TearOffHost
 	// A detached window re-docks by dragging its '#' handle back over
 	// the desktop, or by clicking it. The host only calls this during
