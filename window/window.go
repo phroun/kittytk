@@ -153,6 +153,13 @@ type Window struct {
 	// despite carrying no chrome of its own.
 	shortcutResolver func(core.KeyPressEvent) bool
 
+	// passNextKeyRaw makes HandleKeyPress route the very next key straight
+	// to the focused widget, bypassing this window's own menu-bar shortcut
+	// handling - the detached-window half of the app's "raw key input"
+	// feature. onRawKeyDone fires once that key is consumed.
+	passNextKeyRaw bool
+	onRawKeyDone   func()
+
 	// Request callbacks (for WindowManager integration)
 	onMinimizeRequest     func()                   // Called when user clicks minimize button
 	onMaximizeRequest     func()                   // Called when user clicks maximize button
@@ -655,6 +662,25 @@ func (w *Window) WindowMenuBar() core.Widget {
 func (w *Window) SetShortcutResolver(fn func(core.KeyPressEvent) bool) {
 	w.mu.Lock()
 	w.shortcutResolver = fn
+	w.mu.Unlock()
+}
+
+// WindowStatusBar returns the window's own status bar chrome, or nil.
+func (w *Window) WindowStatusBar() core.Widget {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.statusBar
+}
+
+// BeginRawKeyInput arms the window to pass its next key straight to the
+// focused widget, bypassing this window's menu-bar shortcut handling.
+// onDone runs after that key is consumed, so the caller can restore any
+// prompt it showed. This is the detached-window path for the app's "raw
+// key input" feature; on a docked window the desktop handles it instead.
+func (w *Window) BeginRawKeyInput(onDone func()) {
+	w.mu.Lock()
+	w.passNextKeyRaw = true
+	w.onRawKeyDone = onDone
 	w.mu.Unlock()
 }
 
@@ -2386,7 +2412,26 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	titleFocus := w.titleFocus
 	mb := w.menuBar
 	shortcutResolver := w.shortcutResolver
+	rawNext := w.passNextKeyRaw
+	rawDone := w.onRawKeyDone
 	w.mu.RUnlock()
+
+	// Raw key input: this key goes straight to the focused widget,
+	// bypassing the window's own menu-bar shortcut handling, then the mode
+	// clears and the caller restores its prompt.
+	if rawNext {
+		w.mu.Lock()
+		w.passNextKeyRaw = false
+		w.onRawKeyDone = nil
+		w.mu.Unlock()
+		if fm != nil {
+			fm.HandleKeyPress(event)
+		}
+		if rawDone != nil {
+			rawDone()
+		}
+		return true
+	}
 
 	// While the detached window's own menu bar has a dropdown open, it
 	// owns keyboard navigation.

@@ -41,3 +41,43 @@ func TestShortcutResolverHandlesKey(t *testing.T) {
 		t.Error("cleared resolver still fired")
 	}
 }
+
+// Raw key input makes the window pass its next key straight to the
+// focused widget, bypassing its own shortcut handling, then fires the
+// done callback and reverts to normal (one-shot) handling.
+func TestBeginRawKeyInputBypassesShortcuts(t *testing.T) {
+	win := NewWindow("term")
+
+	shortcutHits := 0
+	win.SetShortcutResolver(func(ev core.KeyPressEvent) bool {
+		shortcutHits++
+		return true // pretend every key is an app shortcut
+	})
+
+	// Normally the resolver eats the key.
+	win.HandleKeyPress(core.KeyPressEvent{Key: "C-c"})
+	if shortcutHits != 1 {
+		t.Fatalf("resolver hits = %d, want 1 before raw mode", shortcutHits)
+	}
+
+	done := 0
+	win.BeginRawKeyInput(func() { done++ })
+
+	// In raw mode the next key bypasses the resolver and the done
+	// callback fires.
+	if !win.HandleKeyPress(core.KeyPressEvent{Key: "C-c"}) {
+		t.Error("raw key was not consumed")
+	}
+	if shortcutHits != 1 {
+		t.Errorf("resolver fired during raw mode: hits = %d", shortcutHits)
+	}
+	if done != 1 {
+		t.Errorf("raw-key done callback fired %d times, want 1", done)
+	}
+
+	// Mode is one-shot: the following key hits the resolver again.
+	win.HandleKeyPress(core.KeyPressEvent{Key: "C-c"})
+	if shortcutHits != 2 {
+		t.Errorf("resolver hits = %d after raw mode, want 2", shortcutHits)
+	}
+}

@@ -1077,9 +1077,39 @@ func (d *Desktop) ActivatePassNextKeyToWidget() {
 	d.mu.RLock()
 	activeApp := d.activeApp
 	d.mu.RUnlock()
-	if activeApp != nil {
-		activeApp.ActivatePassNextKeyToWidget()
+	if activeApp == nil {
+		return
 	}
+	// When the app's main window is detached, the key stream and the
+	// status bar both live on that window, not the desktop. Arm raw-key
+	// mode there so the next key reaches the detached window's focused
+	// widget and the prompt shows on its own status bar.
+	if main := activeApp.MainWindow(); main != nil && main.IsDetached() {
+		d.activateRawKeyOnDetached(main)
+		return
+	}
+	activeApp.ActivatePassNextKeyToWidget()
+}
+
+// activateRawKeyOnDetached shows the raw-key prompt on the detached main
+// window's own status bar and arms the window to pass its next key
+// straight to the focused widget, restoring the status bar afterwards.
+func (d *Desktop) activateRawKeyOnDetached(main *window.Window) {
+	sb, _ := main.WindowStatusBar().(*StatusBar)
+	var saved []StatusSection
+	if sb != nil {
+		saved = sb.Sections()
+		sb.SetSections([]StatusSection{
+			{Text: "Raw Key Input: The next key pressed will be passed directly to the focused widget."},
+		})
+		main.Update()
+	}
+	main.BeginRawKeyInput(func() {
+		if sb != nil {
+			sb.SetSections(saved)
+			main.Update()
+		}
+	})
 }
 
 // AddEventFilter adds an event filter.
