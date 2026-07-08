@@ -694,6 +694,9 @@ func TestExitSoloModeRevealsDesktop(t *testing.T) {
 		if primary.closed {
 			t.Fatal("primary surface was destroyed instead of reclaimed")
 		}
+		if !primary.raised {
+			t.Error("revealed desktop surface was not brought to the front")
+		}
 		if len(plat.surfaces) != 2 {
 			t.Fatalf("want 2 surfaces (desktop + torn app window), got %d", len(plat.surfaces))
 		}

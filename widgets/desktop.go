@@ -758,6 +758,15 @@ func (d *Desktop) ExitSoloMode() {
 	d.updateMenuBarContent()
 	d.updateStatusBarContent()
 
+	// Bring the revealed desktop to the front - otherwise its surface keeps
+	// the z-order it had while hidden behind the solo window, so it can
+	// surface behind unrelated app windows and the change goes unnoticed.
+	// The re-homed window is raised above it next (createTornHost raises a
+	// main window), so the desktop and its app come forward together.
+	if ns, ok := surf.(platform.NativeSurface); ok {
+		ns.Raise()
+	}
+
 	// Re-home the app window as a tearable torn-off window at the same
 	// screen rectangle it occupied while solo (the primary surface's rect).
 	// The desktop origin is now that surface, so tearing at desktop unit
