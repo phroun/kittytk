@@ -97,3 +97,30 @@ func TestTearIndicatorActive(t *testing.T) {
 		t.Error("non-tearable window reported indicator active")
 	}
 }
+
+// While the title is focused (showing < >), the tear handle is omitted, so
+// it isn't hittable anywhere in the title bar; it returns on focus change.
+func TestTearHandleHiddenWhileTitleFocused(t *testing.T) {
+	w := NewWindow("Some Title")
+	w.SetTearable(true)
+	w.SetBounds(core.UnitRect{Width: 400, Height: 100})
+
+	hittable := func() bool {
+		for x := core.Unit(0); x < 400; x += 2 {
+			if w.buttonAtPosition(x, 4) == TitleButtonTear {
+				return true
+			}
+		}
+		return false
+	}
+
+	w.SetTitleFocus(TitleFocusNone)
+	if !hittable() {
+		t.Fatal("tear handle should be hittable when the title is not focused")
+	}
+
+	w.SetTitleFocus(TitleFocusTitle)
+	if hittable() {
+		t.Error("tear handle should not be hittable while the title is focused")
+	}
+}

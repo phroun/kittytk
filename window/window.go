@@ -1520,12 +1520,14 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		controlX += buttonWidth
 	}
 
-	// Tear-off handle floats immediately left of the (centered) title.
-	tearTitleW := font.MeasureText(title)
-	if titleFocus == TitleFocusTitle {
-		tearTitleW += metrics.CellWidth * 4 // account for "< " / " >" brackets
+	// Tear-off handle floats immediately left of the (centered) title, but
+	// is omitted while the title itself is focused - the '< >' brackets
+	// stand in for it - so it isn't shoved aside; it returns on the next
+	// Tab / Shift+Tab focus change.
+	if titleFocus != TitleFocusTitle {
+		tearTitleW := font.MeasureText(title)
+		controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, bounds.Width, tearTitleW, focused, titleFocus)
 	}
-	controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, bounds.Width, tearTitleW, focused, titleFocus)
 
 	// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 	if titleFocus == TitleFocusTitle {
@@ -1733,12 +1735,14 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			Height: metrics.CellHeight,
 		}
 
-		// Tear-off handle floats immediately left of the (centered) title.
-		tearTitleW := font.MeasureText(title)
-		if titleFocus == TitleFocusTitle {
-			tearTitleW += metrics.CellWidth * 4 // account for "< " / " >" brackets
+		// Tear-off handle floats immediately left of the (centered) title,
+		// but is omitted while the title itself is focused - the '< >'
+		// brackets stand in for it - so it isn't shoved aside; it returns on
+		// the next Tab / Shift+Tab focus change.
+		if titleFocus != TitleFocusTitle {
+			tearTitleW := font.MeasureText(title)
+			controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, bounds.Width, tearTitleW, focused, titleFocus)
 		}
-		controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, bounds.Width, tearTitleW, focused, titleFocus)
 
 		// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 		if titleFocus == TitleFocusTitle {
@@ -1958,12 +1962,10 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	}
 
 	// Check tear-off handle [%]/[#]. It floats immediately left of the
-	// centered title, so hit-test the same slot paintTearHandle draws.
-	if flags&WindowFlagTearable != 0 && flags&WindowFlagNoTitle == 0 {
+	// centered title, so hit-test the same slot paintTearHandle draws. The
+	// handle is hidden while the title is focused, so it isn't hittable then.
+	if flags&WindowFlagTearable != 0 && flags&WindowFlagNoTitle == 0 && titleFocus != TitleFocusTitle {
 		titleW := w.EffectiveFont().MeasureText(title)
-		if titleFocus == TitleFocusTitle {
-			titleW += metrics.CellWidth * 4
-		}
 		handleX := tearHandleSlotX(w.Bounds().Width, controlX, titleW, buttonWidth)
 		if x >= handleX && x < handleX+buttonWidth {
 			return TitleButtonTear
