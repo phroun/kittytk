@@ -14,11 +14,16 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"sync/atomic"
 
 	"github.com/phroun/tuitk/app"
+	"github.com/phroun/tuitk/core"
 	"github.com/phroun/tuitk/protocol"
+	"github.com/phroun/tuitk/style"
 	"github.com/phroun/tuitk/widgets"
 	"github.com/phroun/tuitk/window"
 )
@@ -76,6 +81,15 @@ type conn struct {
 	session *protocol.Session
 	factory *hostFactory
 	app     *app.Application
+
+	// Accessibility routing state (the "Show/Speak Announcements"
+	// toggles): the connection owns the intent, and installs a desktop
+	// OnAnnounce handler reflecting it. Speech serializes through
+	// speechMu so a new utterance cancels the previous one.
+	announceVisual bool
+	announceSpeak  bool
+	speechMu       sync.Mutex
+	speechCmd      *exec.Cmd
 
 	// outbound statements; the writer goroutine owns the socket's
 	// write side.
@@ -202,20 +216,194 @@ func (c *conn) execute(batch []*protocol.Statement) {
 
 // handleAppVerbs consumes the session-level application verbs the display
 // implements directly (the protocol session has a closed verb set), and
-// returns the remaining statements for the session to run.
+// returns the remaining statements for the session to run. These are the
+// desktop-reaching actions a remote app can't perform through its own
+// widget handles - the display does them on the app's behalf:
 //
-//	rawkey    - pass the next key straight to the focused widget (the
-//	            "raw key input" action), targeting the active app/window.
+//	rawkey            - pass the next key straight to the focused widget
+//	cut/copy/paste/   - the standard edit actions on the focused widget
+//	  selectall
+//	tile/cascade      - arrange the desktop's windows
+//	theme             - toggle the dark/light terminal theme (+ retheme)
+//	desktopfont NAME  - set the desktop font (tuesday | default)
+//	announce_visual   - toggle showing announcements in the status bar
+//	announce_speak    - toggle speaking announcements (macOS `say`)
 func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement {
+	d := c.server.desktop
 	rest := batch[:0:0]
 	for _, stmt := range batch {
-		if stmt.Key == "" && stmt.Verb == "rawkey" {
-			c.server.desktop.ActivatePassNextKeyToWidget()
+		if stmt.Key != "" {
+			rest = append(rest, stmt)
 			continue
 		}
-		rest = append(rest, stmt)
+		switch stmt.Verb {
+		case "rawkey":
+			d.ActivatePassNextKeyToWidget()
+		case "status":
+			if sb := d.StatusBar(); sb != nil {
+				sb.SetText(argString(stmt, "text"))
+			}
+		case "cut", "copy", "paste", "selectall":
+			editAction(d.FocusedWidget(), stmt.Verb)
+		case "tile":
+			if wm := d.WindowManager(); wm != nil {
+				wm.TileWindows()
+			}
+		case "cascade":
+			if wm := d.WindowManager(); wm != nil {
+				wm.CascadeWindows()
+			}
+		case "theme":
+			toggleTerminalTheme(d)
+		case "desktopfont":
+			d.SetFont(namedDesktopFont(firstWord(stmt)))
+		case "announce_visual":
+			c.announceVisual = !c.announceVisual
+			c.updateAnnounce()
+		case "announce_speak":
+			c.announceSpeak = !c.announceSpeak
+			c.updateAnnounce()
+		default:
+			rest = append(rest, stmt)
+		}
 	}
 	return rest
+}
+
+// firstWord returns the first bare-word argument of a statement (the
+// "tuesday" in `desktopfont tuesday`), or "" if there is none.
+func firstWord(stmt *protocol.Statement) string {
+	for _, a := range stmt.Args {
+		if a.Flag == protocol.FlagTrue && a.Value == nil {
+			return a.Name
+		}
+	}
+	return ""
+}
+
+// argString returns the named string argument of a statement (the
+// text= in `status text="..."`), or "" if absent.
+func argString(stmt *protocol.Statement, name string) string {
+	for _, a := range stmt.Args {
+		if a.Name == name && a.Value != nil && a.Value.Kind == protocol.StringValue {
+			return a.Value.Str
+		}
+	}
+	return ""
+}
+
+// namedDesktopFont maps a desktopfont argument to a font (nil = the
+// desktop default, Monday).
+func namedDesktopFont(name string) *core.Font {
+	if name == "tuesday" || name == "tuesday12" {
+		return core.FontTuesday12
+	}
+	return nil
+}
+
+// editAction invokes one of the standard edit operations on a widget
+// that supports them (text inputs, edit boxes); a nil or non-editing
+// widget is a no-op.
+func editAction(w core.Widget, verb string) {
+	ea, ok := w.(interface {
+		Cut()
+		Copy()
+		Paste()
+		SelectAll()
+	})
+	if !ok {
+		return
+	}
+	switch verb {
+	case "cut":
+		ea.Cut()
+	case "copy":
+		ea.Copy()
+	case "paste":
+		ea.Paste()
+	case "selectall":
+		ea.SelectAll()
+	}
+}
+
+// toggleTerminalTheme flips the active dark/light terminal theme and
+// repaints; embedded terminals follow via their own palette.
+func toggleTerminalTheme(d *widgets.Desktop) {
+	dark := style.ActiveTermTheme() == style.TermThemeLight
+	if dark {
+		style.SetActiveTermTheme(style.TermThemeDark)
+	} else {
+		style.SetActiveTermTheme(style.TermThemeLight)
+	}
+	if wm := d.WindowManager(); wm != nil {
+		for _, w := range wm.Windows() {
+			applyTerminalTheme(w, dark)
+		}
+	}
+	d.RequestUpdate()
+}
+
+// applyTerminalTheme walks a widget subtree and puts every PurfecTerm
+// into the given dark/light mode.
+func applyTerminalTheme(w core.Widget, dark bool) {
+	if w == nil {
+		return
+	}
+	if term, ok := w.(*widgets.PurfecTerm); ok {
+		term.SetDarkTheme(dark)
+	}
+	if cont, ok := w.(core.Container); ok {
+		for _, child := range cont.Children() {
+			applyTerminalTheme(child, dark)
+		}
+	}
+}
+
+// updateAnnounce installs or clears the desktop's OnAnnounce handler to
+// reflect this connection's visual/speech toggles.
+func (c *conn) updateAnnounce() {
+	am := c.server.desktop.AccessibilityManager()
+	if am == nil {
+		return
+	}
+	if !c.announceVisual && !c.announceSpeak {
+		am.OnAnnounce = nil
+		return
+	}
+	am.OnAnnounce = func(a core.AccessibilityAnnouncement) {
+		if c.announceVisual {
+			if sb := c.server.desktop.StatusBar(); sb != nil {
+				prefix := "\U0001F4E2"
+				if a.Priority == "assertive" {
+					prefix = "⚠️"
+				}
+				sb.SetText(fmt.Sprintf("%s [%s] %s", prefix, a.Priority, a.Message))
+			}
+		}
+		if c.announceSpeak && a.Vocal && runtime.GOOS == "darwin" {
+			c.speak(a.Message)
+		}
+	}
+	// Announce the toggle itself so the change is perceptible.
+	am.AnnouncePolite("Announcements updated")
+}
+
+// speak voices a message via macOS `say`, cancelling any in-flight
+// utterance first (navigation throttling already thinned the stream).
+func (c *conn) speak(msg string) {
+	go func() {
+		c.speechMu.Lock()
+		if c.speechCmd != nil && c.speechCmd.Process != nil {
+			_ = c.speechCmd.Process.Kill()
+			_ = c.speechCmd.Wait()
+		}
+		c.speechCmd = exec.Command("say", "-r", "250", msg)
+		c.speechMu.Unlock()
+		_ = c.speechCmd.Run()
+		c.speechMu.Lock()
+		c.speechCmd = nil
+		c.speechMu.Unlock()
+	}()
 }
 
 // teardown runs on the UI thread at disconnect: the app and its

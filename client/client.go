@@ -49,6 +49,11 @@ type Conn struct {
 
 	// Command sink for action= dispatch (the app's registry).
 	dispatch func(commandID string)
+
+	// closed fires once when the transport disconnects (remote) or
+	// Close is called, so callers can block on the connection's life.
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 type subKey struct {
@@ -73,8 +78,16 @@ func newConn(dispatch func(commandID string)) *Conn {
 		typeHandlers: make(map[string][]func(*protocol.Event)),
 		subs:         make(map[subKey]bool),
 		dispatch:     dispatch,
+		closed:       make(chan struct{}),
 	}
 }
+
+// Closed returns a channel that is closed when the connection ends,
+// whether by the app calling Close or the display service disconnecting.
+func (c *Conn) Closed() <-chan struct{} { return c.closed }
+
+// markClosed fires the Closed channel exactly once.
+func (c *Conn) markClosed() { c.closeOnce.Do(func() { close(c.closed) }) }
 
 // NewInProcess creates a connection whose display side is the
 // registered widget vocabulary in this process. dispatch receives
@@ -162,7 +175,11 @@ func (c *Conn) Exec(src string) (*protocol.Reply, error) {
 
 // Close releases the connection (closes the socket for remote
 // connections; no-op in-process).
-func (c *Conn) Close() error { return c.transport.close() }
+func (c *Conn) Close() error {
+	err := c.transport.close()
+	c.markClosed()
+	return err
+}
 
 // Build executes a construction script and returns handle access to
 // its surfaced names.

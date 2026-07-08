@@ -122,6 +122,7 @@ func (t *remoteTransport) readLoop() {
 		t.close()
 		close(t.replies)
 		close(t.events)
+		t.conn.markClosed()
 	}()
 	for {
 		text, err := t.scanner.Next()

@@ -68,6 +68,23 @@ func init() {
 			"selected": intProp("selected", (*TabWidget).SetCurrentIndex),
 			"movable":  boolProp("movable", (*TabWidget).SetMovable),
 			"closable": boolProp("closable", (*TabWidget).SetClosable),
+			// background paints the tab body; unlike the common `bg`
+			// style override, this drives the color the TabWidget reports
+			// to its children. The word "default" clears it (inherit).
+			"background": wprop("background", func(_ *protocol.BindContext, tw *TabWidget, v *protocol.Value, f protocol.FlagState) error {
+				if v != nil && v.Kind == protocol.WordValue && v.Word == "default" {
+					tw.SetBackgroundColor(nil)
+					tw.Update()
+					return nil
+				}
+				c, err := parseColor("background", v, f)
+				if err != nil {
+					return err
+				}
+				tw.SetBackgroundColor(&c)
+				tw.Update()
+				return nil
+			}),
 			"position": wprop("position", func(_ *protocol.BindContext, tw *TabWidget, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("position", v, f)
 				if err != nil {
