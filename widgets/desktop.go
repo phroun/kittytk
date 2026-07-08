@@ -708,6 +708,103 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 	}
 }
 
+// ExitSoloMode is the inverse of EnterSoloMode: it gives the primary
+// surface back to the desktop (re-bordered, wallpaper/dock/menu drawn
+// again) and re-homes the window that filled it as an ordinary tearable
+// torn-off window at the same screen rectangle - so it floats over the
+// freshly revealed desktop with its redock handle and can be dragged in to
+// dock. Any client can request this over the protocol (the `spawndesktop`
+// verb); it is a no-op when not in solo mode or when the platform can't
+// host surfaces. Runs on the platform thread.
+func (d *Desktop) ExitSoloMode() {
+	d.mu.RLock()
+	solo := d.solo
+	host := d.soloPrimaryHost
+	surf := d.surface
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if !solo || host == nil || surf == nil || wm == nil {
+		return
+	}
+	win := host.Window()
+	if win == nil {
+		return
+	}
+
+	// Give the primary surface back to the desktop: re-border it and point
+	// its handler at the desktop again so it paints its own chrome.
+	if bt, ok := surf.(platform.BorderToggler); ok {
+		bt.SetBordered(true)
+	}
+	surf.SetHandler(&desktopSurfaceHandler{d: d})
+
+	// Retire the solo host without closing the primary surface (it lives on
+	// as the desktop's surface).
+	host.SetOnClosed(nil)
+	d.mu.Lock()
+	d.solo = false
+	d.soloPrimaryHost = nil
+	for i, th := range d.tornHosts {
+		if th == host {
+			d.tornHosts = append(d.tornHosts[:i], d.tornHosts[i+1:]...)
+			break
+		}
+	}
+	d.mu.Unlock()
+
+	// The desktop reclaims its bounds and rebuilds its bar content.
+	size := surf.Size()
+	wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+	d.updateMenuBarContent()
+	d.updateStatusBarContent()
+
+	// Re-home the app window as a tearable torn-off window at the same
+	// screen rectangle it occupied while solo (the primary surface's rect).
+	// The desktop origin is now that surface, so tearing at desktop unit
+	// (0,0) with the surface's size lands it exactly where it was.
+	win.SetDetached(false) // createTornHost re-detaches and re-wires it
+	win.SetTearable(true)  // its redock handle returns; it can dock now
+	win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+	d.createTornHost(win, 0, 0)
+
+	d.invalidateSurface()
+}
+
+// EnterSoloFromDesktop makes a detached window solo again: it picks a
+// torn-off window (preferring an app's main window) and hosts it filling
+// the primary surface borderless, dismissing the desktop. This is the
+// inverse of ExitSoloMode - "promote a detached app" - so any client can
+// toggle the root back to solo over the protocol (the `gosolo` verb). A
+// no-op when already solo or when no detached window exists. Unlike a
+// primary-close promotion the primary keeps its own geometry (the app
+// fills the display), rather than shrinking to the promoted window's rect.
+// Runs on the platform thread.
+func (d *Desktop) EnterSoloFromDesktop() {
+	d.mu.RLock()
+	solo := d.solo
+	wm := d.windowManager
+	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
+	d.mu.RUnlock()
+	if solo || wm == nil {
+		return
+	}
+	h := pickPromotable(hosts)
+	if h == nil {
+		return
+	}
+	// Same quit-on-last wiring as a fresh solo entry (idempotent if it was
+	// installed before): the removed-hook drives the docked-window case.
+	wm.SetOnWindowRemoved(func(*window.Window) {
+		d.Post(func() { d.soloRebalance(false) })
+	})
+	d.mu.Lock()
+	d.solo = true
+	d.mu.Unlock()
+	// Discard the window's own surface and host it on the primary, keeping
+	// the primary's geometry (reposition=false).
+	d.promoteToPrimary(h, false)
+}
+
 // screenRect is a surface's OS-window geometry in screen pixels.
 type screenRect struct{ x, y, w, h int }
 
@@ -866,7 +963,7 @@ func (d *Desktop) soloRebalance(primaryClosed bool) {
 	}
 	if primaryClosed && !havePrimary {
 		if h := pickPromotable(hosts); h != nil {
-			d.promoteToPrimary(h)
+			d.promoteToPrimary(h, true)
 		}
 	}
 }
@@ -887,8 +984,12 @@ func pickPromotable(hosts []*window.TearOffHost) *window.TearOffHost {
 
 // promoteToPrimary moves peer's window off its own surface onto the
 // desktop's primary surface, so that (un-closeable) surface always hosts
-// a live window while any window remains.
-func (d *Desktop) promoteToPrimary(peer *window.TearOffHost) {
+// a live window while any window remains. When reposition is true the
+// primary surface adopts the peer's screen placement (used when the
+// primary's own window closed and a replacement takes over its spot);
+// when false the primary keeps its current geometry (used when a detached
+// window is promoted to fill the display anew).
+func (d *Desktop) promoteToPrimary(peer *window.TearOffHost, reposition bool) {
 	win := peer.Window()
 	if win == nil {
 		return
@@ -901,24 +1002,25 @@ func (d *Desktop) promoteToPrimary(peer *window.TearOffHost) {
 		}
 	}
 	d.mu.Unlock()
-	// Capture the peer's screen placement so the primary surface can adopt
-	// it, then discard the peer's own surface without closing the window.
+	// Capture the peer's screen placement (if adopting it) then discard the
+	// peer's own surface without closing the window.
 	var target *screenRect
 	peer.SetOnClosed(nil)
 	psurf := peer.Surface()
 	if s, ok := psurf.(platform.NativeSurface); ok {
-		x, y := s.ScreenPositionPx()
-		scale := d.deviceScale()
-		sz := psurf.Size() // units; screen pixels = units * scale
-		target = &screenRect{
-			x: x, y: y,
-			w: int(sz.Width) * scale,
-			h: int(sz.Height) * scale,
+		if reposition {
+			x, y := s.ScreenPositionPx()
+			scale := d.deviceScale()
+			sz := psurf.Size() // units; screen pixels = units * scale
+			target = &screenRect{
+				x: x, y: y,
+				w: int(sz.Width) * scale,
+				h: int(sz.Height) * scale,
+			}
 		}
 		s.Close()
 	}
-	// Re-host the window on the primary surface (sets soloPrimaryHost),
-	// repositioning it to where the promoted peer was.
+	// Re-host the window on the primary surface (sets soloPrimaryHost).
 	d.soloHostOnPrimaryAt(win, target)
 }
 

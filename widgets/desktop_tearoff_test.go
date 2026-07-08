@@ -21,8 +21,12 @@ type msSurface struct {
 	minimized   bool
 	raised      bool
 	primary     bool // the loop-owning surface; like SDL, refuses Close
+	bordered    bool // OS title bar present (solo strips it, ExitSolo restores)
 	opts        platform.SurfaceOptions
 }
+
+// SetBordered implements platform.BorderToggler.
+func (s *msSurface) SetBordered(b bool) { s.bordered = b }
 
 func (s *msSurface) Size() core.UnitSize                  { return s.size }
 func (s *msSurface) Metrics() core.CellMetrics            { return core.DefaultCellMetrics() }
@@ -82,13 +86,14 @@ func (p *msPlatform) Beep()                                {}
 func (p *msPlatform) SupportsMultipleSurfaces() bool       { return true }
 func (p *msPlatform) GlobalPointerPx() (int, int)          { return p.gx, p.gy }
 func (p *msPlatform) CreateSurface(o platform.SurfaceOptions) (platform.Surface, error) {
-	s := &msSurface{opts: o, x: o.XPx, y: o.YPx, opacity: 1}
+	s := &msSurface{opts: o, x: o.XPx, y: o.YPx, opacity: 1, bordered: !o.Borderless}
 	if len(p.surfaces) == 0 {
 		// The desktop window: 800x480 units at 50,60 px, scale 1. It owns
 		// the event loop, so like SDL's main window it refuses to close.
 		s.size = core.UnitSize{Width: 800, Height: 480}
 		s.x, s.y = 50, 60
 		s.primary = true
+		s.bordered = true
 	} else {
 		s.size = core.UnitSize{Width: core.Unit(o.WidthPx), Height: core.Unit(o.HeightPx)}
 	}
@@ -642,6 +647,126 @@ func TestSoloModePrimaryCloserPromotesPeer(t *testing.T) {
 		peer.Close()
 		if !plat.quitCalled {
 			t.Error("host did not quit after the last window closed")
+		}
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
+// ExitSoloMode reveals a desktop from a running solo app: the primary
+// surface is re-bordered and reclaimed by the desktop, and the solo window
+// becomes an ordinary tearable torn-off window on its own surface at the
+// same screen rectangle (so it can be dragged in to dock).
+func TestExitSoloModeRevealsDesktop(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Solo")
+	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.EnterSoloMode(main)
+		primary := plat.surfaces[0]
+		if primary.bordered {
+			t.Fatal("primary surface still bordered in solo mode")
+		}
+
+		d.ExitSoloMode()
+
+		if d.IsSolo() {
+			t.Error("still in solo mode after ExitSoloMode")
+		}
+		if !primary.bordered {
+			t.Error("primary surface was not re-bordered for the desktop")
+		}
+		if primary.closed {
+			t.Fatal("primary surface was destroyed instead of reclaimed")
+		}
+		if len(plat.surfaces) != 2 {
+			t.Fatalf("want 2 surfaces (desktop + torn app window), got %d", len(plat.surfaces))
+		}
+		if !main.IsDetached() {
+			t.Error("app window is not a torn-off window after exit")
+		}
+		if !main.IsTearable() {
+			t.Error("app window did not regain its tearable/redock handle")
+		}
+		// The torn window lands at the primary's rectangle (same location).
+		torn := plat.surfaces[1]
+		if torn.x != primary.x || torn.y != primary.y {
+			t.Errorf("torn window at (%d,%d), want the primary's (%d,%d)",
+				torn.x, torn.y, primary.x, primary.y)
+		}
+		if torn.size != primary.size {
+			t.Errorf("torn window size %v, want the primary's %v", torn.size, primary.size)
+		}
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
+// EnterSoloFromDesktop is the inverse: after a desktop has been revealed,
+// promoting the detached app makes it solo again - its surface is discarded,
+// it fills the (re-borderless) primary surface, and the primary keeps its
+// own display geometry rather than shrinking to the window's torn rect.
+func TestReSoloFromDesktop(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Solo")
+	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.EnterSoloMode(main)
+		d.ExitSoloMode() // now a desktop with main as a torn window
+		primary := plat.surfaces[0]
+		tornSurf := plat.surfaces[1]
+
+		d.EnterSoloFromDesktop()
+
+		if !d.IsSolo() {
+			t.Error("not back in solo mode after EnterSoloFromDesktop")
+		}
+		if !tornSurf.closed {
+			t.Error("the promoted window's own surface was not discarded")
+		}
+		if primary.bordered {
+			t.Error("primary surface was not re-stripped of its border for solo")
+		}
+		if !main.IsDetached() {
+			t.Error("solo window is not hosted (detached)")
+		}
+		// The primary keeps its display geometry (not shrunk to the torn rect).
+		if primary.size.Width != 800 || primary.size.Height != 480 {
+			t.Errorf("primary resized to %v; solo should keep the display size 800x480", primary.size)
+		}
+		if b := main.Bounds(); b.Width != primary.size.Width || b.Height != primary.size.Height {
+			t.Errorf("solo window %dx%d does not fill the primary %dx%d",
+				b.Width, b.Height, primary.size.Width, primary.size.Height)
 		}
 		d.QuitWithCode(0)
 	}

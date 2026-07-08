@@ -281,6 +281,51 @@ mb=new menubar children={new menu caption="File" children={new menuitem caption=
 	}
 }
 
+// The spawndesktop / gosolo app-verbs are consumed by the display (they
+// reach the desktop's solo toggle), not passed through to the protocol
+// session - which would reject them as unknown verbs. Their visual effect
+// needs a real platform (covered by widgets msPlatform tests); here we only
+// assert the wiring accepts them.
+func TestSpawnDesktopVerbsAccepted(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "display.sock")
+
+	desktop := widgets.NewDesktop()
+	desktop.SetBackend(&nullBackend{})
+
+	ready := make(chan *display.Server, 1)
+	desktop.SetOnStartup(func() {
+		srv, err := display.Serve(desktop, sock)
+		if err != nil {
+			t.Errorf("serve: %v", err)
+			desktop.Quit()
+			return
+		}
+		ready <- srv
+	})
+
+	go func() { desktop.Run() }()
+	defer desktop.Quit()
+	var srv *display.Server
+	select {
+	case srv = <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop did not start")
+	}
+	defer srv.Close()
+
+	conn, err := client.Dial(sock, "Toggler", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	for _, verb := range []string{"spawndesktop", "gosolo"} {
+		if _, err := conn.Exec(verb); err != nil {
+			t.Errorf("%s verb rejected: %v", verb, err)
+		}
+	}
+}
+
 // A window built as a child of an MDI pane must NOT also be adopted as a
 // top-level application window - otherwise the same window object lives
 // both on the desktop and in the pane (a linked "clone").

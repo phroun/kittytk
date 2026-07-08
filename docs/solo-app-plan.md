@@ -143,7 +143,27 @@ hello version=1 app="My App" solo
    for the last close. Tested with the msPlatform harness (primary refuses
    Close like SDL's main window; closing it promotes a peer with
    reposition/resize; closing the last quits).
-4. **Shell extraction (later).** Formalize the windowless coordinator into a
+4. **Solo <-> desktop toggle (done).** The root can flip between solo and a
+   real desktop at runtime, requested by *any* client over the protocol (per
+   the standing rule) - including a throwaway external tool, so the solo app
+   need not cooperate:
+   - `spawndesktop` verb -> `Desktop.ExitSoloMode()`: the primary surface is
+     re-bordered and reclaimed by the desktop (wallpaper/dock/menu paint
+     again), and the window that filled it becomes an ordinary tearable
+     torn-off window on its own surface at the *same screen rectangle*, so it
+     floats over the revealed desktop and can be dragged in to dock.
+   - `gosolo` verb -> `Desktop.EnterSoloFromDesktop()`: the inverse - promote
+     a detached app (preferring an app's `main` window) back to solo. Its
+     surface is discarded and it fills the re-borderless primary; the primary
+     keeps its own display geometry rather than shrinking to the window's
+     torn rect (`promoteToPrimary(..., reposition=false)`).
+   - `examples/spawndesktop` is the external tool: it dials, sends the verb
+     (`-solo` sends `gosolo`), and exits.
+   Tested with the msPlatform harness (primary re-borders and a torn window
+   appears at the prior rect on exit; the torn surface is discarded and the
+   primary keeps the display size on re-solo) and a display test asserting
+   both verbs are accepted (not rejected as unknown session verbs).
+5. **Shell extraction (later).** Formalize the windowless coordinator into a
    `Shell` so torn / solo / desktop share one host abstraction, and refine
    peer positioning (peers created after the primary closes still lose the
    desktop-relative origin between promotions).

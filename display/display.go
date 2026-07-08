@@ -256,6 +256,9 @@ func (c *conn) execute(batch []*protocol.Statement) {
 //	cut/copy/paste/   - the standard edit actions on the focused widget
 //	  selectall
 //	tile/cascade      - arrange the desktop's windows
+//	spawndesktop      - leave solo mode: reveal a desktop, solo window
+//	                    becomes a torn-off dockable window
+//	gosolo            - the inverse: promote a detached app back to solo
 //	theme             - toggle the dark/light terminal theme (+ retheme)
 //	desktopfont NAME  - set the desktop font (tuesday | default)
 //	announce_visual   - toggle showing announcements in the status bar
@@ -285,6 +288,14 @@ func (c *conn) handleAppVerbs(batch []*protocol.Statement) []*protocol.Statement
 			if wm := d.WindowManager(); wm != nil {
 				wm.CascadeWindows()
 			}
+		case "spawndesktop":
+			// Leave solo mode: reveal a desktop and turn the solo window
+			// into a torn-off, dockable window. Any client may request it.
+			d.ExitSoloMode()
+		case "gosolo":
+			// The inverse: promote a detached app back to solo (fill the
+			// display, dismiss the desktop).
+			d.EnterSoloFromDesktop()
 		case "theme":
 			toggleTerminalTheme(d)
 		case "desktopfont":
