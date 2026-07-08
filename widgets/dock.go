@@ -239,22 +239,37 @@ func (d *DockRow) Paint(p *core.Painter) {
 		}
 		p.FillRect(entryRect, ' ', entryStyle)
 
-		// Draw border characters
+		// Draw border characters. The brackets and the slot width stay
+		// monospaced (one cell each edge); only the interior title uses the
+		// proportional font.
 		p.DrawCell(x, y, '[', entryStyle)
 		p.DrawCell(x+entryWidthUnits-metrics.CellWidth, y, ']', entryStyle)
 
-		// Draw title (truncated if needed)
-		title := entry.Title
-		maxWidth := d.entryWidth - 2 // Account for brackets
-		if len(title) > maxWidth {
-			title = title[:maxWidth-1] + "…"
-		}
+		// Draw the title proportionally within the interior (between the
+		// brackets), truncating with an ellipsis to fit the interior width.
+		font := d.EffectiveFont()
+		interiorX := x + metrics.CellWidth
+		interiorWidth := entryWidthUnits - 2*metrics.CellWidth
 
-		textX := x + metrics.CellWidth
-		for _, ch := range title {
-			p.DrawCell(textX, y, ch, entryStyle)
-			textX += metrics.CellWidth
+		title := entry.Title
+		if font.MeasureText(title) > interiorWidth {
+			ellipsis := "…"
+			ellipsisW := font.MeasureText(ellipsis)
+			runes := []rune(title)
+			for len(runes) > 0 && font.MeasureText(string(runes))+ellipsisW > interiorWidth {
+				runes = runes[:len(runes)-1]
+			}
+			title = string(runes) + ellipsis
 		}
+		// Clip to the interior so proportional text can never spill onto the
+		// closing bracket.
+		titlePainter := p.WithClip(core.UnitRect{
+			X:      interiorX,
+			Y:      y,
+			Width:  interiorWidth,
+			Height: metrics.CellHeight,
+		})
+		titlePainter.DrawText(interiorX, y, title, entryStyle, font)
 	}
 }
 
