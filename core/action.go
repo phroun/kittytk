@@ -234,6 +234,45 @@ func (s Shortcut) DisplayString() string {
 	return string(s)
 }
 
+// spokenKeyNames maps punctuation and whitespace keys to words a speech
+// engine can pronounce, so shortcuts like ^\ announce as "Control
+// Backslash" rather than a silent or literal glyph.
+var spokenKeyNames = map[string]string{
+	"\\": "Backslash",
+	"/":  "Slash",
+	"`":  "Backtick",
+	"~":  "Tilde",
+	"!":  "Exclamation",
+	"@":  "At Sign",
+	"#":  "Number Sign",
+	"$":  "Dollar Sign",
+	"%":  "Percent",
+	"^":  "Caret",
+	"&":  "Ampersand",
+	"*":  "Asterisk",
+	"(":  "Left Paren",
+	")":  "Right Paren",
+	"-":  "Minus",
+	"_":  "Underscore",
+	"=":  "Equals",
+	"+":  "Plus",
+	"[":  "Left Bracket",
+	"]":  "Right Bracket",
+	"{":  "Left Brace",
+	"}":  "Right Brace",
+	";":  "Semicolon",
+	":":  "Colon",
+	"'":  "Apostrophe",
+	"\"": "Quote",
+	",":  "Comma",
+	".":  "Period",
+	"<":  "Less Than",
+	">":  "Greater Than",
+	"?":  "Question Mark",
+	"|":  "Pipe",
+	" ":  "Space",
+}
+
 // AccessibilityString returns a fully spelled-out representation of the shortcut
 // for screen reader announcements.
 // Translates: M- → Meta, A- → Alt, C- → Control, ^ → Control, S- → Shift, s- → Super, H- → Hyper
@@ -298,6 +337,13 @@ func (s Shortcut) AccessibilityString() string {
 	// Only applies to hyphenated modifiers, NOT to ^ notation
 	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' && !hasExplicitShift && !usedCaretNotation {
 		modifiers = append(modifiers, "Shift")
+	}
+
+	// Spell out punctuation keys as words a speech engine can pronounce;
+	// a bare "\" or "/" would otherwise be announced as nothing (or a
+	// literal glyph), so the whole item failed to speak.
+	if spoken, ok := spokenKeyNames[key]; ok {
+		key = spoken
 	}
 
 	// Build the result with spaces (for natural speech)
