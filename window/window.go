@@ -2372,6 +2372,18 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
+	// The detached window's own menu bar services its app shortcuts
+	// (Cut/Copy/Paste, Close Window, Quit, ...) globally - checked before
+	// the focused widget sees the key, matching the desktop bar while
+	// docked. Only a detached window has chrome, so mb != nil implies it.
+	if mb != nil {
+		if sc, ok := mb.(interface {
+			HandleShortcut(core.KeyPressEvent) bool
+		}); ok && sc.HandleShortcut(event) {
+			return true
+		}
+	}
+
 	// If title bar has focus, handle title bar keys
 	if titleFocus != TitleFocusNone {
 		if w.handleTitleBarKey(event) {
@@ -2726,7 +2738,31 @@ var _ core.Container = (*Window)(nil)
 func (w *Window) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	w.mu.RLock()
 	content := w.content
+	mb := w.menuBar
 	w.mu.RUnlock()
+
+	// A detached window's own menu bar claims wheel/pan over its row (to
+	// scroll an overflowing bar), and an open dropdown claims it wherever
+	// the pointer is - mirroring the desktop bar's behaviour.
+	if mb != nil {
+		if wh, ok := mb.(interface {
+			HandleMouseWheel(core.MouseWheelEvent) bool
+		}); ok {
+			open := false
+			if o, isOpen := mb.(interface{ IsMenuOpen() bool }); isOpen {
+				open = o.IsMenuOpen()
+			}
+			if r := w.menuBarRect(); open || (!r.IsEmpty() && r.Contains(core.UnitPoint{X: event.X, Y: event.Y})) {
+				le := event
+				le.X -= r.X
+				le.Y -= r.Y
+				if wh.HandleMouseWheel(le) {
+					return true
+				}
+			}
+		}
+	}
+
 	if content == nil {
 		return false
 	}

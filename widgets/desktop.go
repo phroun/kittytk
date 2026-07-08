@@ -20,6 +20,11 @@ type ApplicationProvider interface {
 	// Name returns the application name.
 	Name() string
 
+	// MenuName returns the title of the app's own menu as shown on its
+	// detached main window's menu bar (defaulting to "≡"). It is not used
+	// on the desktop bar, where the app menu carries the app name.
+	MenuName() string
+
 	// Windows returns all windows owned by this application.
 	Windows() []*window.Window
 
@@ -656,11 +661,15 @@ func (d *Desktop) updateMenuBarContent() {
 
 	// Reduced bar: while the active app's main window is detached it
 	// carries the app's own menus on its own surface, so the desktop
-	// shows only the Psi menu (merged Hide section), a Tile/Cascade
-	// Window menu, and the calendar (drawn by the bar itself).
+	// shows only the real system Psi menu, an app-named menu with just
+	// the merged Hide section, a Tile/Cascade Window menu, and the
+	// calendar (drawn by the bar itself).
 	if activeApp != nil {
 		if main := activeApp.MainWindow(); main != nil && main.IsDetached() {
-			d.menuBar.AddMenu(d.buildPsiHideMenu(activeApp.Name()))
+			if d.systemMenu != nil {
+				d.menuBar.AddMenu(d.systemMenu)
+			}
+			d.menuBar.AddMenu(d.buildAppHideMenu(activeApp.Name()))
 			d.menuBar.AddMenu(d.buildWindowTileCascadeMenu())
 			return
 		}
@@ -775,11 +784,13 @@ func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
 	menu.AddItem(quitItem)
 }
 
-// createAppMenuWithQuitOnly copies a menu and appends only the Quit
-// section (no Hide section, no offset separator) - the first-menu form
-// for a detached main window's own menu bar.
-func (d *Desktop) createAppMenuWithQuitOnly(original *Menu, appName string) *Menu {
-	merged := NewMenu(original.Title())
+// createAppMenuWithQuitOnly copies a menu under the given title and
+// appends only the Quit section (no Hide section, no offset separator) -
+// the first-menu form for a detached main window's own menu bar. The
+// title comes from the app's menu name so it reads "≡" (or a developer
+// override) rather than the app-named desktop menu.
+func (d *Desktop) createAppMenuWithQuitOnly(original *Menu, title, appName string) *Menu {
+	merged := NewMenu(title)
 	for _, item := range original.Items() {
 		merged.AddItem(item)
 	}
@@ -787,11 +798,12 @@ func (d *Desktop) createAppMenuWithQuitOnly(original *Menu, appName string) *Men
 	return merged
 }
 
-// buildPsiHideMenu builds the reduced Psi menu shown on the desktop bar
-// while the active app's main window is detached: the Psi glyph carrying
-// only the merged Hide section.
-func (d *Desktop) buildPsiHideMenu(appName string) *Menu {
-	menu := NewMenu("Ψ")
+// buildAppHideMenu builds the app-named menu shown on the desktop bar
+// while the active app's main window is detached: it carries only the
+// merged Hide section (Hide App, Hide Others, Show All). The real system
+// Psi menu is shown separately, unchanged.
+func (d *Desktop) buildAppHideMenu(appName string) *Menu {
+	menu := NewMenu("&" + appName)
 	d.appendHideSection(menu, appName, false)
 	return menu
 }
@@ -810,21 +822,23 @@ func (d *Desktop) applicationForMainWindow(win *window.Window) ApplicationProvid
 }
 
 // buildDetachedMenuBar builds the menu bar a detached main window hosts
-// itself: the app's menus (the first carrying only the Quit section, no
-// Hide section, no Psi menu), and no calendar.
+// itself: the app's menus (the first titled with the app's menu name -
+// "≡" by default - and carrying only the Quit section, no Hide section,
+// no Psi menu), and no calendar.
 func (d *Desktop) buildDetachedMenuBar(app ApplicationProvider) *MenuBar {
 	mb := NewMenuBar()
 	mb.SetHideCalendar(true)
 
 	appMenus := app.MenuBarContent()
 	appName := app.Name()
+	menuName := app.MenuName()
 	if len(appMenus) > 0 {
-		mb.AddMenu(d.createAppMenuWithQuitOnly(appMenus[0], appName))
+		mb.AddMenu(d.createAppMenuWithQuitOnly(appMenus[0], menuName, appName))
 		for i := 1; i < len(appMenus); i++ {
 			mb.AddMenu(appMenus[i])
 		}
 	} else {
-		m := NewMenu("&" + appName)
+		m := NewMenu(menuName)
 		d.appendQuitSection(m, appName)
 		mb.AddMenu(m)
 	}

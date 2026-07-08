@@ -1886,6 +1886,41 @@ func (m *MenuBar) IsMenuOpen() bool {
 	return m.activeMenu != nil
 }
 
+// HandleShortcut checks the bar's menus (recursively) for an item whose
+// accelerator matches the event and triggers it, returning true on a
+// match. This lets a detached window's own menu bar service its app
+// shortcuts (Cut/Copy/Paste, etc.) the same way the desktop bar does
+// while docked, even when no dropdown is open.
+func (m *MenuBar) HandleShortcut(event core.KeyPressEvent) bool {
+	for _, menu := range m.menus {
+		if menuShortcutMatch(menu, event) {
+			return true
+		}
+	}
+	return false
+}
+
+// menuShortcutMatch recursively looks for an enabled item in menu whose
+// shortcut matches event, triggering the first hit.
+func menuShortcutMatch(menu *Menu, event core.KeyPressEvent) bool {
+	if menu == nil {
+		return false
+	}
+	for _, item := range menu.Items() {
+		if item == nil || item.Separator || !item.Enabled {
+			continue
+		}
+		if item.Shortcut != "" && item.Shortcut.Matches(event) {
+			item.Trigger()
+			return true
+		}
+		if item.SubMenu != nil && menuShortcutMatch(item.SubMenu, event) {
+			return true
+		}
+	}
+	return false
+}
+
 // OpenMenu opens a menu by index.
 func (m *MenuBar) OpenMenu(index int) {
 	if index < 0 || index >= len(m.menus) {
@@ -2086,11 +2121,13 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// Calculate if we need scroll buttons
 	needsScrolling := m.menusNeedScrolling()
 
-	// Draw date/time on the far right edge first (to know where menus must stop)
+	// Draw date/time on the far right edge first (to know where menus must
+	// stop). When the calendar is hidden it reserves no width, so menus and
+	// the overflow ellipsis run to the full right edge.
 	now := time.Now()
 	dateTimeStr := now.Format(" Mon Jan 02 15:04 ")
 	dateTimeStyle := scheme.GetMenuBarInfo()
-	dateTimeWidth := core.Unit(len(dateTimeStr)) * metrics.CellWidth
+	dateTimeWidth := m.dateTimeWidth()
 	dateTimeX := bounds.Width - dateTimeWidth
 
 	// Draw scroll buttons just left of date/time if needed

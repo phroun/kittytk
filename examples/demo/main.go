@@ -323,7 +323,7 @@ func createSecondaryApplication(desktop *widgets.Desktop) *app.Application {
 
 	// Create new application (nil backend - Desktop owns it)
 	newApp := app.New(nil)
-	newApp.SetName(fmt.Sprintf("Secondary App %d", appNum))
+	newApp.SetName(fmt.Sprintf("App %d", appNum))
 
 	// Create simple menu bar for this application
 	menus := createSecondaryMenus(desktop, newApp, appNum)

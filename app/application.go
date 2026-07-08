@@ -66,6 +66,12 @@ type Application struct {
 	// Application name
 	name string
 
+	// menuName is the title of the application's own menu on its
+	// detached main window's menu bar. It is only used when the main
+	// window is torn off an SDL desktop; on the desktop bar the app menu
+	// carries the app name. Defaults to "≡".
+	menuName string
+
 	// Exit code
 	exitCode int
 
@@ -163,6 +169,26 @@ func (app *Application) Name() string {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	return app.name
+}
+
+// SetMenuName sets the title of the application's own menu as it appears
+// on the detached main window's menu bar (e.g. "&File" or "&Menu"). It is
+// ignored while the app is docked in an SDL desktop. An empty value falls
+// back to the default "≡".
+func (app *Application) SetMenuName(name string) {
+	app.mu.Lock()
+	app.menuName = name
+	app.mu.Unlock()
+}
+
+// MenuName returns the detached-menu title, defaulting to "≡" when unset.
+func (app *Application) MenuName() string {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	if app.menuName == "" {
+		return "≡"
+	}
+	return app.menuName
 }
 
 // Backend returns the render backend.

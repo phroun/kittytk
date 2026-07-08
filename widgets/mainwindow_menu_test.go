@@ -11,12 +11,19 @@ import (
 // mockApp is a minimal ApplicationProvider for exercising the desktop's
 // menu-bar composition.
 type mockApp struct {
-	name  string
-	main  *window.Window
-	menus []*Menu
+	name     string
+	menuName string
+	main     *window.Window
+	menus    []*Menu
 }
 
-func (a *mockApp) Name() string                      { return a.name }
+func (a *mockApp) Name() string { return a.name }
+func (a *mockApp) MenuName() string {
+	if a.menuName == "" {
+		return "≡"
+	}
+	return a.menuName
+}
 func (a *mockApp) Windows() []*window.Window         { return nil }
 func (a *mockApp) MainWindow() *window.Window        { return a.main }
 func (a *mockApp) AddWindow(*window.Window)          {}
@@ -65,24 +72,32 @@ func TestDesktopMenuBarFullVsReduced(t *testing.T) {
 		t.Errorf("full app menu missing Hide/Quit: %v", itemTexts(appMenu))
 	}
 
-	// Reduced bar (main window detached): Psi (Hide only) + Window
-	// (Tile/Cascade). No Quit on the desktop; the app's file menu is
-	// gone (it moves to the detached window's own bar in stage 2).
+	// Reduced bar (main window detached): the real system Psi menu, an
+	// app-named menu carrying only the Hide section, and a Window menu
+	// (Tile/Cascade). The real Psi keeps its own items (Exit Desktop);
+	// the app's file menu moves to the detached window's own bar.
 	main := window.NewWindow("main")
 	main.SetDetached(true)
 	app.main = main
 	d.updateMenuBarContent()
-	if got := menuTitles(d.menuBar); len(got) != 2 || got[0] != "Ψ" || got[1] != "Window" {
-		t.Fatalf("reduced bar titles = %v, want [Ψ Window]", got)
+	if got := menuTitles(d.menuBar); len(got) != 3 || got[0] != "Ψ" || got[1] != "Demo" || got[2] != "Window" {
+		t.Fatalf("reduced bar titles = %v, want [Ψ Demo Window]", got)
 	}
 	psi := d.menuBar.Menus()[0]
-	if !menuHasItem(psi, "Hide Demo") || !menuHasItem(psi, "Hide Others") || !menuHasItem(psi, "Show All") {
-		t.Errorf("reduced Psi menu missing hide section: %v", itemTexts(psi))
+	if psi != d.systemMenu {
+		t.Errorf("reduced bar first menu should be the real system menu")
 	}
-	if menuHasItem(psi, "Quit") {
-		t.Errorf("reduced Psi menu should not carry Quit: %v", itemTexts(psi))
+	if !menuHasItem(psi, "Exit Desktop") {
+		t.Errorf("reduced system menu lost its own items: %v", itemTexts(psi))
 	}
-	win := d.menuBar.Menus()[1]
+	appHide := d.menuBar.Menus()[1]
+	if !menuHasItem(appHide, "Hide Demo") || !menuHasItem(appHide, "Hide Others") || !menuHasItem(appHide, "Show All") {
+		t.Errorf("reduced app menu missing hide section: %v", itemTexts(appHide))
+	}
+	if menuHasItem(appHide, "Quit") {
+		t.Errorf("reduced app menu should not carry Quit: %v", itemTexts(appHide))
+	}
+	win := d.menuBar.Menus()[2]
 	if !menuHasItem(win, "Tile") || !menuHasItem(win, "Cascade") {
 		t.Errorf("reduced Window menu missing Tile/Cascade: %v", itemTexts(win))
 	}
@@ -94,7 +109,10 @@ func TestDetachedWindowFirstMenuQuitOnly(t *testing.T) {
 	d := NewDesktop()
 	edit := NewMenu("&Edit")
 	edit.AddItem(NewMenuItem("Copy"))
-	m := d.createAppMenuWithQuitOnly(edit, "Demo")
+	m := d.createAppMenuWithQuitOnly(edit, "≡", "Demo")
+	if m.Title() != "≡" {
+		t.Errorf("quit-only menu title = %q, want ≡", m.Title())
+	}
 	if !menuHasItem(m, "Copy") {
 		t.Error("quit-only menu dropped the original items")
 	}
