@@ -1,6 +1,6 @@
 // Package platform defines the inverted execution model (G2/G3, plan
 // decision D21): a Platform owns the main loop and calls back into
-// KittyTk on its OS-locked main thread; a Surface is one render target
+// KittyTK on its OS-locked main thread; a Surface is one render target
 // with damage-driven repaints and its own input stream.
 //
 // Threading contract (D21): every callback - events, frames, posted

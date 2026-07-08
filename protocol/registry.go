@@ -10,7 +10,7 @@ import (
 // This file is the type/property registry behind the wire vocabulary.
 // Per the owner's architecture: each trinket's own codebase registers
 // its type and property mappings (trinkets import protocol; protocol
-// imports nothing of KittyTk). The registry is write-at-init,
+// imports nothing of KittyTK). The registry is write-at-init,
 // read-at-execute.
 
 // BindContext carries per-connection services into property appliers
@@ -278,7 +278,7 @@ var virtualIDCounter atomic.Uint64
 // virtualIDSource allocates IDs for Virtual objects. The default is a
 // package-private counter, which is fine only when virtual IDs never
 // meet real object IDs. Hosts whose real IDs share the uint64 space
-// (KittyTk's core.ObjectID does) must install their own allocator so the
+// (KittyTK's core.ObjectID does) must install their own allocator so the
 // two can never collide — see SetVirtualIDSource.
 var virtualIDSource = func() uint64 { return virtualIDCounter.Add(1) }
 

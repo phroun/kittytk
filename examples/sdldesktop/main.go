@@ -1,7 +1,7 @@
 //go:build sdl
 
 // Command sdldesktop is the GRAPHICAL display service (D23): a blank
-// KittyTk desktop rendered as pixels in an SDL window, serving the
+// KittyTK desktop rendered as pixels in an SDL window, serving the
 // protocol socket. Applications are separate processes that dial in:
 //
 //	terminal 1:  go run -tags sdl ./examples/sdldesktop
@@ -20,7 +20,7 @@ import (
 )
 
 func main() {
-	plat := sdlplat.New("KittyTk", 1024, 768)
+	plat := sdlplat.New("KittyTK", 1024, 768)
 	plat.SetScale(2) // 2x font/cell size for now (per owner request)
 	backend, err := plat.EnsureBackend()
 	if err != nil {

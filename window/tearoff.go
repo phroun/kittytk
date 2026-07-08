@@ -8,7 +8,7 @@ import (
 )
 
 // TearOffHost runs one desktop window as the entire content of its
-// own OS surface with the KittyTk chrome intact - the torn-off half of
+// own OS surface with the KittyTK chrome intact - the torn-off half of
 // G4's granting. The surface is borderless: the window's own title
 // bar stays the drag handle, but here a title drag moves the OS
 // window itself (via the platform's global pointer), and the host's
@@ -778,7 +778,7 @@ func (h *TearOffHost) zoomToWorkArea() {
 // (arrow move, Shift-arrow resize, Escape revert) onto the OS
 // window: position deltas move it across the real desktop, size
 // deltas resize it, exactly as the same keys move an in-surface
-// window around the KittyTk desktop.
+// window around the KittyTK desktop.
 func (h *TearOffHost) applyKeyboardBounds(b core.UnitRect) bool {
 	if h.native == nil || h.zoomed {
 		return h.zoomed // zoomed: swallow, geometry is the work area's

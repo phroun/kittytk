@@ -1,14 +1,14 @@
 package trinkets
 
 // The graphical paint path for PurfecTerm (D1): a faithful port of
-// the reference gtk/qt widget renderers onto KittyTk's Painter and the
+// the reference gtk/qt widget renderers onto KittyTK's Painter and the
 // shared text engine. It drives purfecterm.Buffer directly - screen
 // splits, sprites, custom glyphs, screen scale/crop, selection,
 // blink animation, cursor shapes with the unfocused hollow-box form,
 // scrollbars, autoscroll, and the right-click context menu.
 //
 // Porting notes (deliberate deltas from the gtk reference):
-//   - terminalLeftPadding is 0: KittyTk trinkets own their full bounds.
+//   - terminalLeftPadding is 0: KittyTK trinkets own their full bounds.
 //   - Rect fills round to whole units edge-to-edge (no seams);
 //     glyphs, sprites, and cursor overlays keep device-pixel
 //     precision through Painter.DrawImageOffset.

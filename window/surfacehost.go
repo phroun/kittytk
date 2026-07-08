@@ -22,7 +22,7 @@ type SurfaceHost struct {
 func NewSurfaceHost(win *Window, surface platform.Surface) *SurfaceHost {
 	h := &SurfaceHost{win: win, surface: surface}
 
-	// Native chrome lives outside: no KittyTk frame, no title bar,
+	// Native chrome lives outside: no KittyTK frame, no title bar,
 	// geometry belongs to the platform.
 	win.SetFlags(win.Flags() | WindowFlagFrameless | WindowFlagNoTitle | WindowFlagNoResize | WindowFlagNoMove)
 

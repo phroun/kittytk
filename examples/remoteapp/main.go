@@ -1,6 +1,6 @@
 // Command remoteapp is a display-protocol APPLICATION: it contains
 // no rendering code at all - it links only client and protocol,
-// dials a running KittyTk display service (start examples/demo in
+// dials a running KittyTK display service (start examples/demo in
 // another terminal), and drives its UI over the socket.
 //
 //	terminal 1:  go run ./examples/demo

@@ -133,7 +133,7 @@ func TestTearOffHostZoom(t *testing.T) {
 
 // Title-focus keyboard geometry (arrow moves, Shift-arrow resizes)
 // maps onto the OS window while torn: the same keys that walk an
-// in-surface window around the KittyTk desktop walk the torn window
+// in-surface window around the KittyTK desktop walk the torn window
 // around the real one.
 func TestTearOffHostKeyboardGeometry(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}

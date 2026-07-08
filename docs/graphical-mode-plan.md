@@ -2,7 +2,7 @@
 
 Status: **planning — no implementation yet.**
 This document records the decisions made for adding true graphical (GUI)
-rendering to KittyTk, alongside the open questions still to be settled. It
+rendering to KittyTK, alongside the open questions still to be settled. It
 builds on the analysis in `adding-true-gui-rendering.md` and the
 architecture in `multi-app-desktop-plan.md`.
 
@@ -191,7 +191,7 @@ boundary honest and fossil-free, and it insures against substrate risk
 
 **Condition that makes this sound — the shared text engine:** text
 shaping, measurement, and rasterization are pulled *out* of the
-substrates into one KittyTk-owned font module (go-text/typesetting is the
+substrates into one KittyTK-owned font module (go-text/typesetting is the
 leading candidate), used identically by all graphical backends. Gio's
 built-in text stack goes deliberately unused. This is mandatory, not
 stylistic: under D2, layout is server-side and must be deterministic —
@@ -208,7 +208,7 @@ The substrate contract is correspondingly small:
 
 Threading rule: Gio runs an event loop per window (goroutine each); SDL
 has one main-thread global queue. The Platform delivers all events into
-a **single KittyTk dispatch goroutine** (channel fan-in), keeping trinket
+a **single KittyTK dispatch goroutine** (channel fan-in), keeping trinket
 code single-threaded on both substrates (pins down G3's model).
 
 Sequencing rule: substrates are brought up serially — define the
@@ -240,7 +240,7 @@ We are building the architectural role Pango plays; a text model that
 - **Terminal-style regions are a carve-out: PurfecTerm keeps its own
   text handling.** PurfecTerm's graphical text rendering is already
   sophisticated, customized, and proven in its GTK/Qt frontends, and it
-  is retained for all terminal-style regions KittyTk incorporates. The
+  is retained for all terminal-style regions KittyTK incorporates. The
   shared engine has no jurisdiction inside those regions; the boundary
   is the trinket border. A terminal region's external layout contract
   (columns × cell size) is trivially deterministic, satisfying D2/D5
@@ -336,7 +336,7 @@ and under D2 it is protocol surface):
 
 ### Context: PurfecTerm is already multi-frontend  *(noted 2026-07-05)*
 
-PurfecTerm predates KittyTk as an independent project and already has
+PurfecTerm predates KittyTK as an independent project and already has
 **three working frontends in a single codebase: this TUI implementation,
 GTK, and Qt.** Consequences for this plan:
 
@@ -459,7 +459,7 @@ terminal). Multi-monitor awareness lives at the Platform level.
 `Desktop.Run()`'s poll → dispatch → full-frame-render loop cannot drive
 native toolkits, which own their main loop, require main-thread affinity
 (`runtime.LockOSThread`), and deliver events per-window via callbacks.
-Control inverts to `platform.Run(app)` calling back into KittyTk dispatch.
+Control inverts to `platform.Run(app)` calling back into KittyTK dispatch.
 Rendering becomes per-window and damage-driven rather than every-iteration
 full-frame. The TUI backend adapts easily (its input is already a
 goroutine feeding a channel).
@@ -648,7 +648,7 @@ milestone for whole windows.
    `platform.MultiSurfacePlatform`, `platform.GlobalPointerPlatform`,
    `platform.NativeSurface` (screen-px position + Close), and
    `SurfaceOptions` pixel geometry + Borderless. `window.TearOffHost`
-   hosts one window per surface with KittyTk chrome KEPT (borderless OS
+   hosts one window per surface with KittyTK chrome KEPT (borderless OS
    window - torn windows look identical to docked ones); its title
    drag moves the OS window via the global pointer. Desktop
    choreography: a WindowManager title drag crossing the surface edge
@@ -670,7 +670,7 @@ milestone for whole windows.
    on disconnect. `client.Dial` gives apps the same Conn surface as
    in-process (events on a dedicated goroutine; Target() nil);
    command dispatch unified as command events on both transports.
-   The demo desktop serves `$XDG_RUNTIME_DIR/KittyTk/display-0.sock`;
+   The demo desktop serves `$XDG_RUNTIME_DIR/KittyTK/display-0.sock`;
    `examples/remoteapp` is a rendering-free app binary that dials
    in. End-to-end socket test (build, set, events both ways, command
    dispatch, disconnect teardown), race-detector clean. Remaining:
@@ -750,10 +750,10 @@ milestone for whole windows.
 | D19 | 2026-07-05 | **Verb inventory**: `new`, `set`, `destroy`, `sub`, `unsub` (plus declaration forms `alias`, `template`). Later verbs reference their target as a **key path or bare numeric ObjectID** (`set root.status caption="…"` / `set 1042 …`) — the one place a bare number is legal (D10 stays intact for properties). Consequence: **correlation keys become session-persistent** (D11 refined: replies still report only their own request's keys; re-registering shadows); surfacing (`wcb=root.cb`) also registers the short name as a key. `destroy` detaches the object and releases every key referencing it. `set` accepts everything `new` accepts, including `children={}` (append). |
 | D20 | 2026-07-05 | **Event flow is default-closed except `command`**: state events (`change`, `toggle`, …) are delivered only where a `sub` exists (`sub <target>\|all [events…]`; no events listed = all of that target; `unsub` symmetric, `unsub all` clears). `command` events and registry dispatch always flow — a button with `action=` works with zero subscriptions. **Wire-initiated mutations never echo**: property application during `new` and `set` is suppressed at the connection — no state events, no action firing — killing construction echo and set-feedback loops by construction. |
 | D23 | 2026-07-05 | **O1–O4 resolved.** (O1) **SDL first**, Gio second before the substrate interface is declared stable (D5). (O4) **There is no glyph-grid bring-up stage**: the graphical backend implements the SAME rendering primitives with pixels — `DrawText` rasterizes real font glyphs, `DrawRect` draws actual lines instead of box runes, fills are pixels — so the whole desktop renders graphically through the existing trinket paint paths from day one. The cell-grid machinery's permanent home is terminal-style regions only (PurfecTerm, Goal 3). D1's trinket-by-trinket rollout is mode-aware REFINEMENT (real check glyphs, proportional text), not bring-up. (O2) **Dissolved by D8′**: units stay abstract; a graphical surface reports its size in units and root CellMetrics derived from the default font, exactly as the TUI reports 8×16; unit↔device-pixel is the surface's own scale (a DPI-like denomination, HiDPI included). Bring-up default: unit = pixel at scale 1; finer per-surface subdivision remains an open per-surface option the machinery already permits. (O3) **Dissolved by the display-protocol split**: apps never link renderers; selection is WHICH DISPLAY SERVICE BINARY RUNS (TUI desktop vs SDL desktop), dialed via `KITTYTK_DISPLAY` — the X11 model. Build tags are merely how service binaries compile (TUI stays cgo-free); nothing app-facing selects backends. |
-| D22 | 2026-07-05 | **Transport shape.** (1) **The wire IS the language**: the socket carries protocol text in both directions — commands/`sub`/`set` inbound, `event`/`reply`/`error` statements outbound; framing is the parser's own brace-awareness (no length prefixes; the O6 bulk frame arrives later as a statement announcing raw bytes). A display service is drivable by hand with socat. (2) **Batches end with an explicit `end` statement** — one reply per batch (D11); blank lines stay insignificant so scripts move to the wire verbatim. (3) **Disconnect = teardown now, reattach-ready**: v1 destroys the connection's UI, but the `hello` handshake carries app identity and a server-assigned session ID from day one, so D4 detach/reattach lands later without a protocol break. (4) **Every connection is a full Application**: its own ApplicationProvider — menu bar content, status bar, dock presence, command identity — peers of in-process apps via the desktop's existing multi-app machinery. Rendezvous: `KITTYTK_DISPLAY` env, default `$XDG_RUNTIME_DIR/KittyTk/display-0.sock`. |
-| D21 | 2026-07-05 | **G2/G3 execution model — single-threaded UI on the platform main thread.** The platform loop invokes KittyTk dispatch/layout/paint via callbacks on its (OS-locked) main thread; `Platform.Post(func())` is the ONLY cross-thread door (+ `PostAfter` for timers). Rationale: matches every substrate's real contract (SDL/AppKit/GTK/Qt main-thread rules; Gio adapts), keeps event→layout→paint synchronous with no tree-locking discipline, and the process running Platform/Surface is the display service — app logic lives in other processes after transport, so the classic "app blocks the UI thread" risk is architecturally evicted; the socket reader simply Posts decoded statements. Channel-pumped dispatch was rejected: paint marshaling forces whole-tree snapshots or deep locking, a permanent per-substrate bridge tax. Rendering is **damage-driven** (`Surface.Invalidate` → scheduled frame callback); the TUI platform v1 maps any invalidation to a full repaint (visual parity). `Desktop.Run()` stays as a wrapper over the inverted loop. PurfecTerm relationship clarified: KittyTk becomes another HOST toolkit PurfecTerm is ported onto (like Qt/GTK) — the platform layers stay independent. |
+| D22 | 2026-07-05 | **Transport shape.** (1) **The wire IS the language**: the socket carries protocol text in both directions — commands/`sub`/`set` inbound, `event`/`reply`/`error` statements outbound; framing is the parser's own brace-awareness (no length prefixes; the O6 bulk frame arrives later as a statement announcing raw bytes). A display service is drivable by hand with socat. (2) **Batches end with an explicit `end` statement** — one reply per batch (D11); blank lines stay insignificant so scripts move to the wire verbatim. (3) **Disconnect = teardown now, reattach-ready**: v1 destroys the connection's UI, but the `hello` handshake carries app identity and a server-assigned session ID from day one, so D4 detach/reattach lands later without a protocol break. (4) **Every connection is a full Application**: its own ApplicationProvider — menu bar content, status bar, dock presence, command identity — peers of in-process apps via the desktop's existing multi-app machinery. Rendezvous: `KITTYTK_DISPLAY` env, default `$XDG_RUNTIME_DIR/KittyTK/display-0.sock`. |
+| D21 | 2026-07-05 | **G2/G3 execution model — single-threaded UI on the platform main thread.** The platform loop invokes KittyTK dispatch/layout/paint via callbacks on its (OS-locked) main thread; `Platform.Post(func())` is the ONLY cross-thread door (+ `PostAfter` for timers). Rationale: matches every substrate's real contract (SDL/AppKit/GTK/Qt main-thread rules; Gio adapts), keeps event→layout→paint synchronous with no tree-locking discipline, and the process running Platform/Surface is the display service — app logic lives in other processes after transport, so the classic "app blocks the UI thread" risk is architecturally evicted; the socket reader simply Posts decoded statements. Channel-pumped dispatch was rejected: paint marshaling forces whole-tree snapshots or deep locking, a permanent per-substrate bridge tax. Rendering is **damage-driven** (`Surface.Invalidate` → scheduled frame callback); the TUI platform v1 maps any invalidation to a full repaint (visual parity). `Desktop.Run()` stays as a wrapper over the inverted loop. PurfecTerm relationship clarified: KittyTK becomes another HOST toolkit PurfecTerm is ported onto (like Qt/GTK) — the platform layers stay independent. |
 | D8′ | 2026-07-05 | **D8 clarified:** CellMetrics is a coordinate *denomination* (units per row/column, like DPI), not a spacing knob. Row/column-denominated sizes are visually invariant under re-denomination; only explicit numeric unit values reinterpret. Implies denomination scaling at container boundaries (paint + input; `Transform.ScaleX/Y` was built for this) and container-denominated text metrics (font.go's 8/16 are DefaultCellMetrics in disguise). Demo's grid toggle is the acceptance test: must become a visual no-op for row-denominated content. |
 | D3 | 2026-07-05 | The direct-key-handler key nomenclature (`^N`, `M-x`, `S-Tab`, …) stays the unified internal, app-facing, and (as far as practical) user-facing key representation on all platforms and in the wire protocol. Native-menu key equivalents, if required, are a one-way mapping at the platform-integration boundary only. Revisitable later as a new decision. |
 | D4 | 2026-07-05 | X-direction rendezvous: the display service listens on a well-known endpoint, apps dial in. Sessions are first-class protocol objects separable from connections (enables reattach/multi-viewer without inverting topology). Reverse attachment is a possible later mode. Naming: "display service" and "apps". |
-| D5 | 2026-07-05 | Two graphical substrates, Gio and SDL, behind one neutral Platform interface (PurfecTerm-style discipline). Mandatory condition: one shared KittyTk-owned text engine (shaping/measurement/rasterization) outside the substrates, so layout is substrate-independent; it doubles as the server-side TextMeasurer. Substrates land serially; second lands before the interface is declared stable. |
+| D5 | 2026-07-05 | Two graphical substrates, Gio and SDL, behind one neutral Platform interface (PurfecTerm-style discipline). Mandatory condition: one shared KittyTK-owned text engine (shaping/measurement/rasterization) outside the substrates, so layout is substrate-independent; it doubles as the server-side TextMeasurer. Substrates land serially; second lands before the interface is declared stable. |
 | D6 | 2026-07-05 | Pango-class text (full Unicode, OpenType shaping incl. ligatures and niqqud mark positioning, bidi, fallback, UAX segmentation) is an **available capability**, not a universal mandate: the engine offers a fast simple-run tier and a full shaped-paragraph tier, chosen per trinket need. Interface at shaped-paragraph altitude (attributed text in → shaped runs + cluster maps out); go-text/typesetting reference, cgo HarfBuzz/Pango swappable. Terminal-style regions are a carve-out: PurfecTerm keeps its own proven graphical text handling. TUI-mode fidelity limits remain an accepted asymmetry. |

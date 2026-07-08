@@ -1,5 +1,5 @@
-// Package text is KittyTk's shared text engine (plan decisions D5/D6):
-// one KittyTk-owned module for text shaping, measurement, and
+// Package text is KittyTK's shared text engine (plan decisions D5/D6):
+// one KittyTK-owned module for text shaping, measurement, and
 // rasterization, used identically by every graphical backend, so
 // server-side layout is deterministic and measurement can never
 // disagree with painting.

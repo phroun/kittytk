@@ -27,7 +27,7 @@ func TestRenderProtocolWindowToPNG(t *testing.T) {
 
 	conn := client.NewInProcess(nil)
 	ui, err := conn.Build(`
-w=new window title="Graphical KittyTk" width=608 height=352 children={
+w=new window title="Graphical KittyTK" width=608 height=352 children={
 	p=new panel layout=vbox spacing=0 children={
 		new label caption="This window is rendered as PIXELS through the same"
 		new label caption="primitives the terminal uses - no trinket changed."

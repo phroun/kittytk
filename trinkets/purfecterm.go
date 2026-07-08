@@ -246,7 +246,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 				break
 			}
 
-			// Convert purfecterm cell to KittyTk style
+			// Convert purfecterm cell to KittyTK style
 			cellStyle := t.cellToStyle(cell)
 
 			// Get the character (use space if empty)
@@ -284,7 +284,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 	}
 }
 
-// cellToStyle converts a purfecterm RenderedCell to a KittyTk CellStyle.
+// cellToStyle converts a purfecterm RenderedCell to a KittyTK CellStyle.
 func (t *PurfecTerm) cellToStyle(cell cli.RenderedCell) style.CellStyle {
 	s := style.DefaultStyle()
 
@@ -306,7 +306,7 @@ func (t *PurfecTerm) cellToStyle(cell cli.RenderedCell) style.CellStyle {
 	return s
 }
 
-// convertColor converts a purfecterm color to a KittyTk color.
+// convertColor converts a purfecterm color to a KittyTK color.
 func (t *PurfecTerm) convertColor(c purfecterm.Color) style.Color {
 	// Check color type
 	switch c.Type {

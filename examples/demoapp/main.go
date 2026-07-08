@@ -1,6 +1,6 @@
 // Command demoapp is the full TUI Toolkit demo as a display-protocol
 // APPLICATION: it links only client + protocol (no rendering backend),
-// dials a running KittyTk display service, and drives its entire UI - the
+// dials a running KittyTK display service, and drives its entire UI - the
 // nine-tab trinket gallery, menu bars, status bar, the protocol-built
 // window, terminal child windows, dialogs and MDI - over the socket.
 //

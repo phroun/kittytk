@@ -17,7 +17,7 @@ import (
 	"github.com/phroun/kittytk/raster"
 )
 
-// Platform runs KittyTk over SDL2 windows: each surface is an OS
+// Platform runs KittyTK over SDL2 windows: each surface is an OS
 // window with its own raster backend, SDL presents and feeds input.
 // All callbacks on the OS-locked main thread per D21.
 type Platform struct {
