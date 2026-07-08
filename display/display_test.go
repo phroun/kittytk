@@ -270,16 +270,10 @@ mb=new menubar children={new menu caption="File" children={new menuitem caption=
 	}
 
 	onUI(desktop, func() {
-		// No Psi menu: the app's own menu is first.
-		menus := desktop.MenuBar().Menus()
-		if len(menus) == 0 || menus[0].Title() != "File" {
-			var titles []string
-			for _, m := range menus {
-				titles = append(titles, m.Title())
-			}
-			t.Errorf("solo menu bar = %v, want app menus only (no Psi)", titles)
+		// The desktop draws no chrome of its own - the window carries it.
+		if got := len(desktop.MenuBar().Menus()); got != 0 {
+			t.Errorf("desktop menu bar has %d menus in solo, want 0 (chrome is on the window)", got)
 		}
-		// The main window fills the surface and can't be torn off.
 		for _, a := range desktop.Applications() {
 			if a.Name() != "Solo App" {
 				continue
@@ -288,11 +282,29 @@ mb=new menubar children={new menu caption="File" children={new menuitem caption=
 			if mw == nil {
 				t.Fatal("solo app has no main window")
 			}
+			// Rendered like a torn-off window filling the surface: detached
+			// (paints its own title+menu+status chrome), maximized, not
+			// tearable, with the app's menu/status bars as its chrome.
+			if !mw.IsDetached() {
+				t.Error("solo main window is not detached (won't paint its own chrome)")
+			}
 			if !mw.IsMaximized() {
 				t.Error("solo main window is not maximized")
 			}
 			if mw.IsTearable() {
 				t.Error("solo main window is still tearable")
+			}
+			if mw.WindowMenuBar() == nil {
+				t.Error("solo main window has no chrome menu bar")
+			}
+			if mw.WindowStatusBar() == nil {
+				t.Error("solo main window has no chrome status bar")
+			}
+			// It fills the whole surface (client area = full in solo).
+			ca := desktop.ClientArea()
+			if b := mw.Bounds(); b.Width != ca.Width || b.Height != ca.Height {
+				t.Errorf("solo window %dx%d does not fill the surface %dx%d",
+					b.Width, b.Height, ca.Width, ca.Height)
 			}
 		}
 	})

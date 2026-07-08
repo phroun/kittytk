@@ -677,12 +677,27 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 	}
 
 	if win != nil {
+		// The window carries the app's own menu/status bars and renders
+		// them itself (like a torn-off window): mark it detached so it
+		// paints that chrome, drop the tear handle (nothing to dock back
+		// to), and maximize it to fill the whole surface.
+		d.attachMainWindowChrome(win)
+		win.SetDetached(true)
 		win.SetTearable(false)
-		if wm != nil && !win.IsMaximized() {
+		// The window's own menu bar has no desktop in its ancestry, so
+		// wire its dropdown timers and repaint to the desktop directly
+		// (as a torn-off host would).
+		if mb, ok := win.WindowMenuBar().(*MenuBar); ok {
+			mb.SetScrollTimerStarter(func(interval time.Duration, cb func()) interface{ Stop() } {
+				return d.StartRepeatingTimer(interval, cb)
+			})
+			mb.SetRequestUpdate(func() { d.RequestUpdate() })
+		}
+		if wm != nil {
 			wm.MaximizeWindow(win)
 		}
 	}
-	d.updateMenuBarContent() // drop the Psi menu
+	d.updateMenuBarContent() // desktop bar goes empty
 	d.layoutChildren()       // dock disappears
 	d.RequestUpdate()
 }
@@ -723,6 +738,12 @@ func (d *Desktop) updateMenuBarContent() {
 
 	// Clear existing menus
 	d.menuBar.Clear()
+
+	// Solo mode: the desktop bar is never shown; the app's window carries
+	// its own menu bar, so the desktop bar stays empty.
+	if d.solo {
+		return
+	}
 
 	// Reduced bar: while the active app's main window is detached it
 	// carries the app's own menus on its own surface, so the desktop
@@ -2037,6 +2058,12 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	bounds := d.Bounds()
 	metrics := d.EffectiveCellMetrics()
 
+	// Solo mode: the app's window owns the entire surface (it carries its
+	// own chrome, like a torn-off window), so the desktop reserves nothing.
+	if d.solo {
+		return core.UnitRect{Width: bounds.Width, Height: bounds.Height}
+	}
+
 	top := core.Unit(0)
 	bottom := bounds.Height
 
@@ -2192,6 +2219,12 @@ func (d *Desktop) Paint(p *core.Painter) {
 		d.content.Paint(contentPainter)
 	}
 
+	// Solo mode draws no desktop chrome at all - the app's window owns
+	// the whole surface and carries its own menu/status bars.
+	if d.solo {
+		return
+	}
+
 	// Draw menu bar at top
 	if d.menuBar != nil {
 		// Set menu bar bounds
@@ -2237,8 +2270,10 @@ func (d *Desktop) Paint(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
-	// Check if menu bar wants to handle keys
-	if d.menuBar != nil {
+	// Check if menu bar wants to handle keys. In solo mode the desktop
+	// bar is hidden; the active window carries its own menu bar, so let
+	// menu-bar keys (F10, Alt+letter) fall through to it.
+	if d.menuBar != nil && !d.solo {
 		// F10 toggles menu bar focus
 		if event.Key == "F10" {
 			// Deactivate the active window when invoking menu bar
