@@ -2006,6 +2006,14 @@ func (w *Window) SetTitleFocus(focus TitleFocus) {
 				} else {
 					elementName = "maximize button"
 				}
+			case TitleFocusTear:
+				// The handle reads '#' while torn (re-docks) and '%' while
+				// docked (tears off); announce its current action.
+				if w.IsDetached() {
+					elementName = "dock torn window button"
+				} else {
+					elementName = "tear-away button"
+				}
 			case TitleFocusTitle:
 				elementName = title + ", title bar"
 			case TitleFocusBlur:
