@@ -163,6 +163,12 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	host.SetOnClosed(func() { d.dropTornHost(host) })
 	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)
 
+	// The torn surface drives the same system-cursor control as the
+	// desktop, so resize/edge and text cursors work over it too.
+	if cc, ok := plat.(platform.CursorController); ok {
+		host.SetCursorSetter(cc.SetCursor)
+	}
+
 	// A torn window still borrows the desktop's menu bar line: when its
 	// surface gains focus, point the menu bar at this window's app so the
 	// app's menus are actually reachable (they showed nowhere before).
@@ -593,6 +599,9 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghos
 	// no longer borrows its app's menu bar for shortcuts.
 	d.detachMainWindowChrome(win)
 	win.SetShortcutResolver(nil)
+	// Drop any torn-surface resize highlight; the desktop's own hover
+	// tracking takes over once docked.
+	win.SetResizeHoverRects(nil)
 	win.SetOnTearRequest(func() { d.tearOffInPlace(win) })
 	d.windowManager.AddWindow(win)
 	if win.IsMaximized() {

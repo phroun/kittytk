@@ -69,3 +69,41 @@ func TestWindowCursorShapeAtTitleBarIsDefault(t *testing.T) {
 		t.Errorf("title-bar cursor = %v, want CursorDefault", got)
 	}
 }
+
+func TestTornCursorForEdge(t *testing.T) {
+	cases := []struct {
+		edges int
+		want  core.CursorShape
+	}{
+		{0, core.CursorDefault},
+		{resizeLeft, core.CursorResizeH},
+		{resizeRight, core.CursorResizeH},
+		{resizeBottom, core.CursorResizeV},
+		{resizeLeft | resizeBottom, core.CursorResizeNESW},
+		{resizeRight | resizeBottom, core.CursorResizeNWSE},
+	}
+	for _, c := range cases {
+		if got := tornCursorForEdge(c.edges); got != c.want {
+			t.Errorf("edges %d: got %v, want %v", c.edges, got, c.want)
+		}
+	}
+}
+
+func TestTornEdgeRects(t *testing.T) {
+	b := core.UnitRect{Width: 200, Height: 120}
+	g := tearResizeGrip
+
+	// Bottom-right corner -> right band + bottom band.
+	got := tornEdgeRects(b, resizeRight|resizeBottom)
+	if len(got) != 2 {
+		t.Fatalf("corner: want 2 rects, got %d", len(got))
+	}
+	wantRight := core.UnitRect{X: 200 - g, Width: g, Height: 120}
+	wantBottom := core.UnitRect{Y: 120 - g, Width: 200, Height: g}
+	if got[0] != wantRight {
+		t.Errorf("right band = %v, want %v", got[0], wantRight)
+	}
+	if got[1] != wantBottom {
+		t.Errorf("bottom band = %v, want %v", got[1], wantBottom)
+	}
+}

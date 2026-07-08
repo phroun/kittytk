@@ -1556,6 +1556,9 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		}
 
 		resizing.SetBounds(newBounds)
+		// Keep the edge highlight on the edge being dragged, tracking the
+		// window's new size instead of leaving it stale at the start bounds.
+		resizing.SetResizeHoverRects(m.resizeEdgeRects(resizing, resizeEdge))
 		m.RequestRepaint()
 		return true
 	}

@@ -93,6 +93,12 @@ type TearOffHost struct {
 	ghost       bool
 	onGhostMove func(gx, gy int)
 	onGhostEnd  func()
+
+	// setCursor applies a system mouse cursor (wired by the desktop from
+	// the platform's CursorController). nil when the platform can't set
+	// cursors. lastCursor avoids redundant applications.
+	setCursor  func(core.CursorShape)
+	lastCursor core.CursorShape
 }
 
 // Resize edge bits. The top edge is the title bar (drag handle), so
@@ -195,6 +201,94 @@ func (h *TearOffHost) SetOnClosed(fn func()) { h.onClosed = fn }
 // loses OS focus, letting the desktop point its menu bar at this
 // window's app when it becomes focused.
 func (h *TearOffHost) SetOnFocus(fn func(focused bool)) { h.onFocus = fn }
+
+// SetCursorSetter wires the platform's system-cursor control so the torn
+// surface can update the mouse cursor as the pointer moves over its edges
+// and controls, matching the desktop.
+func (h *TearOffHost) SetCursorSetter(fn func(core.CursorShape)) { h.setCursor = fn }
+
+// applyCursor sets the system cursor, skipping redundant applications.
+func (h *TearOffHost) applyCursor(shape core.CursorShape) {
+	if h.setCursor == nil || shape == h.lastCursor {
+		return
+	}
+	h.lastCursor = shape
+	h.setCursor(shape)
+}
+
+// edgeAt returns the resize-edge bitmask for a window-local point, or 0
+// when the point starts no resize - mirroring beginResize (no resize in
+// the title row, on a non-resizable or zoomed window).
+func (h *TearOffHost) edgeAt(x, y core.Unit) int {
+	if h.win.Flags()&WindowFlagNoResize != 0 || h.zoomed {
+		return 0
+	}
+	if y < core.DefaultCellMetrics().CellHeight {
+		return 0
+	}
+	b := h.win.Bounds()
+	edges := 0
+	if x < tearResizeGrip {
+		edges |= resizeLeft
+	}
+	if x >= b.Width-tearResizeGrip {
+		edges |= resizeRight
+	}
+	if y >= b.Height-tearResizeGrip {
+		edges |= resizeBottom
+	}
+	return edges
+}
+
+// tornCursorForEdge maps a torn-window resize-edge bitmask to its
+// directional cursor.
+func tornCursorForEdge(edges int) core.CursorShape {
+	left := edges&resizeLeft != 0
+	right := edges&resizeRight != 0
+	bottom := edges&resizeBottom != 0
+	switch {
+	case left && bottom:
+		return core.CursorResizeNESW
+	case right && bottom:
+		return core.CursorResizeNWSE
+	case left || right:
+		return core.CursorResizeH
+	case bottom:
+		return core.CursorResizeV
+	default:
+		return core.CursorDefault
+	}
+}
+
+// tornEdgeRects returns the window-local highlight bands for the given
+// resize edges (one per edge, two for a corner), each the width of the
+// torn-window resize grip.
+func tornEdgeRects(b core.UnitRect, edges int) []core.UnitRect {
+	var rects []core.UnitRect
+	if edges&resizeLeft != 0 {
+		rects = append(rects, core.UnitRect{Width: tearResizeGrip, Height: b.Height})
+	}
+	if edges&resizeRight != 0 {
+		rects = append(rects, core.UnitRect{X: b.Width - tearResizeGrip, Width: tearResizeGrip, Height: b.Height})
+	}
+	if edges&resizeBottom != 0 {
+		rects = append(rects, core.UnitRect{Y: b.Height - tearResizeGrip, Width: b.Width, Height: tearResizeGrip})
+	}
+	return rects
+}
+
+// updateHoverAndCursor refreshes the resize-edge highlight and the system
+// cursor for a plain (non-drag, non-resize) hover over the torn window.
+func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
+	edges := h.edgeAt(x, y)
+	if edges != 0 {
+		h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), edges))
+		h.applyCursor(tornCursorForEdge(edges))
+		return
+	}
+	h.win.SetResizeHoverRects(nil)
+	h.applyCursor(h.win.CursorShapeAt(x, y))
+}
 
 // SetClipboardAccess bridges the platform clipboard to widgets in the
 // torn window (their ancestry has no desktop to ask).
@@ -445,6 +539,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			handled = h.dragMove()
 		} else {
 			handled = h.win.HandleMouseMove(e)
+			h.updateHoverAndCursor(e.X, e.Y)
 		}
 	case core.MouseReleaseEvent:
 		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {
@@ -602,6 +697,11 @@ func (h *TearOffHost) resizeMove() bool {
 		h.native.SetScreenPositionPx(x, y)
 	}
 	h.native.SetScreenSizePx(w, ht)
+	// Track the highlight on the edge being dragged (the OS resize reports
+	// back through Resized, updating the window bounds) and keep the resize
+	// cursor for the gesture.
+	h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), h.resizeEdges))
+	h.applyCursor(tornCursorForEdge(h.resizeEdges))
 	return true
 }
 

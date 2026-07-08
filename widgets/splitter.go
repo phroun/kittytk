@@ -117,6 +117,18 @@ func (s *Splitter) Orientation() core.Orientation {
 	return s.orientation
 }
 
+// CursorShape implements core.CursorProvider: over the divider (where
+// ChildAt returns nil, so the cursor walk stops here) the pointer shows
+// the resize cursor for the drag axis - horizontal for a horizontal
+// splitter's vertical divider, vertical for a vertical splitter's
+// horizontal divider.
+func (s *Splitter) CursorShape() core.CursorShape {
+	if s.orientation == core.Horizontal {
+		return core.CursorResizeH
+	}
+	return core.CursorResizeV
+}
+
 // SetOrientation sets the splitter orientation.
 func (s *Splitter) SetOrientation(o core.Orientation) {
 	s.orientation = o
