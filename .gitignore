@@ -16,6 +16,10 @@
 # Test binary
 *.test
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # Output of go coverage
 *.out
 
