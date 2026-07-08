@@ -11,6 +11,7 @@
 package display
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"os"
@@ -28,32 +29,132 @@ import (
 	"github.com/phroun/kittytk/window"
 )
 
+// Config configures a display server's transport and authorization.
+// The zero value plus an Endpoint is the plain unix-socket server.
+type Config struct {
+	// Endpoint selects the transport: a bare path or unix:/path (unix
+	// socket), tcp://host:port (plaintext), or tls://host:port (TLS).
+	Endpoint string
+
+	// Token, if non-empty, admits any client presenting it in the
+	// handshake (an automation bypass for headless hosts). It never
+	// gates local (unix / loopback) connections.
+	Token string
+
+	// TLSConfig overrides the host certificate for tls:// endpoints. If
+	// nil, a persistent self-signed identity is loaded or generated.
+	TLSConfig *tls.Config
+
+	// Authorize decides non-local connections (tests and custom hosts
+	// supply this). If nil, Prompt is used; if both are nil, non-local
+	// connections without a stored allow are refused.
+	Authorize Authorizer
+
+	// Prompt is the interactive approval used when Authorize is nil and
+	// the persistent store has no rule (the desktop dialog).
+	Prompt Authorizer
+
+	// PromptLocal, when true, subjects local (unix / loopback)
+	// connections to the same authorization as remote ones instead of
+	// trusting them automatically (for shared machines).
+	PromptLocal bool
+}
+
 // Server accepts display-protocol connections for one desktop.
 type Server struct {
 	desktop  *trinkets.Desktop
 	listener net.Listener
 	sessions atomic.Uint64
 	closed   atomic.Bool
+
+	endpoint    endpoint
+	token       string
+	store       *authStore
+	authorize   Authorizer
+	prompt      Authorizer
+	promptLocal bool
+
+	// preTrustedOnly, when set, auto-rejects any connection without an
+	// existing stored allow instead of prompting (a lockdown mode the
+	// Psi menu's "Pre-Trusted Clients Only" toggles at runtime).
+	preTrustedOnly atomic.Bool
+
+	// TLSFingerprint is the host certificate's sha256:<hex> for tls://
+	// endpoints (what clients pin); empty otherwise.
+	TLSFingerprint string
 }
+
+// SetPreTrustedOnly toggles lockdown: while true, connections that are
+// not already in the trusted store are rejected without a prompt.
+func (s *Server) SetPreTrustedOnly(v bool) { s.preTrustedOnly.Store(v) }
+
+// PreTrustedOnly reports the lockdown state.
+func (s *Server) PreTrustedOnly() bool { return s.preTrustedOnly.Load() }
 
 // Serve listens on the unix socket at path (creating its directory,
 // 0700) and serves connections until Close. Call from desktop wiring
-// (e.g. SetOnStartup).
+// (e.g. SetOnStartup). This is ServeConfig with a unix Endpoint.
 func Serve(desktop *trinkets.Desktop, path string) (*Server, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
+	return ServeConfig(desktop, Config{Endpoint: path})
+}
+
+// ServeConfig is the general server: it selects the transport from
+// cfg.Endpoint, wires TLS + authorization, and serves until Close.
+func ServeConfig(desktop *trinkets.Desktop, cfg Config) (*Server, error) {
+	ep := parseEndpoint(cfg.Endpoint)
+	s := &Server{
+		desktop:     desktop,
+		endpoint:    ep,
+		token:       cfg.Token,
+		store:       newAuthStore(""),
+		authorize:   cfg.Authorize,
+		prompt:      cfg.Prompt,
+		promptLocal: cfg.PromptLocal,
 	}
-	_ = os.Remove(path) // stale socket from a previous run
-	ln, err := net.Listen("unix", path)
+
+	var ln net.Listener
+	var err error
+	switch {
+	case ep.network == "unix":
+		if err = os.MkdirAll(filepath.Dir(ep.address), 0o700); err != nil {
+			return nil, err
+		}
+		_ = os.Remove(ep.address) // stale socket from a previous run
+		ln, err = net.Listen("unix", ep.address)
+	case ep.useTLS:
+		tlsCfg := cfg.TLSConfig
+		fp := ""
+		if tlsCfg == nil {
+			tlsCfg, fp, err = loadOrCreateHostTLS()
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			if len(tlsCfg.Certificates) > 0 && len(tlsCfg.Certificates[0].Certificate) > 0 {
+				fp = fingerprintSHA256(tlsCfg.Certificates[0].Certificate[0])
+			}
+			if tlsCfg.ClientAuth == tls.NoClientCert {
+				tlsCfg.ClientAuth = tls.RequireAnyClientCert
+			}
+		}
+		s.TLSFingerprint = fp
+		var raw net.Listener
+		raw, err = net.Listen("tcp", ep.address)
+		if err == nil {
+			ln = tls.NewListener(raw, tlsCfg)
+		}
+	default: // plaintext tcp
+		ln, err = net.Listen("tcp", ep.address)
+	}
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{desktop: desktop, listener: ln}
+	s.listener = ln
 	go s.acceptLoop()
 	return s, nil
 }
 
-// Addr returns the listener address (the socket path).
+// Addr returns the listener address (the socket path or host:port).
 func (s *Server) Addr() string { return s.listener.Addr().String() }
 
 // Close stops accepting and closes the listener. Existing
@@ -102,6 +203,22 @@ type conn struct {
 
 func (s *Server) serveConn(nc net.Conn) {
 	defer nc.Close()
+
+	// A tls:// peer authenticates by certificate: complete the handshake
+	// up front so its fingerprint is known before we admit it.
+	req := AuthRequest{Transport: s.endpoint.transport(), Local: isLocalConn(nc)}
+	if ra := nc.RemoteAddr(); ra != nil {
+		req.RemoteAddr = ra.String()
+	}
+	if tc, ok := nc.(*tls.Conn); ok {
+		if err := tc.Handshake(); err != nil {
+			return
+		}
+		if certs := tc.ConnectionState().PeerCertificates; len(certs) > 0 {
+			req.Fingerprint = fingerprintSHA256(certs[0].Raw)
+		}
+	}
+
 	scanner := protocol.NewScanner(nc)
 
 	// Handshake: first batch must open with hello (D22
@@ -113,6 +230,7 @@ func (s *Server) serveConn(nc net.Conn) {
 	}
 	appName := "Remote App"
 	solo := false
+	token := ""
 	for _, a := range first[0].Args {
 		if a.Name == "app" && a.Value != nil && a.Value.Kind == protocol.StringValue {
 			appName = a.Value.Str
@@ -120,6 +238,16 @@ func (s *Server) serveConn(nc net.Conn) {
 		if a.Name == "solo" && a.Flag == protocol.FlagTrue {
 			solo = true
 		}
+		if a.Name == "token" && a.Value != nil && a.Value.Kind == protocol.StringValue {
+			token = a.Value.Str
+		}
+	}
+	req.AppName = appName
+
+	// Authorize before granting the connection an Application.
+	if !s.admit(req, token) {
+		fmt.Fprintf(nc, "%s\n", protocol.EncodeError("connection refused"))
+		return
 	}
 	sessionID := s.sessions.Add(1)
 
