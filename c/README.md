@@ -21,7 +21,8 @@ interop/                Go harness: a real headless host driving the C clients
 ## Build & run
 
 ```sh
-make                                          # builds ./demoapp
+make                                          # builds ./demoapp + ./counter
+make KT_TLS=1                                 # same, with tls:// support (OpenSSL)
 
 # terminal 1 — a desktop host (either renderer):
 go run ./examples/kittytk-tui                 # terminal
@@ -32,6 +33,13 @@ go run -tags sdl ./examples/kittytk-sdl       # graphical
 ./demoapp --solo                              # becomes the whole display
 ./counter                                     # the minimal example
 ```
+
+The app attaches over whatever `$KITTYTK_DISPLAY` names — a unix socket
+(default), `tcp://host:port`, or `tls://host:port`. The default build
+(unix + `tcp://`) needs only libc + pthreads; `tls://` is opt-in via
+`make KT_TLS=1` and links OpenSSL. `kittytk.c` also compiles natively on
+Windows (Winsock2 + Win32 threads). See
+[../docs/transports-and-security.md](../docs/transports-and-security.md).
 
 The minimal example, `counter.c`, is the whole KittyTK pattern in ~40 lines
 of C: dial, build a window with a label and a button, subscribe to the

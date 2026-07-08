@@ -27,6 +27,12 @@ go run -tags sdl ./examples/kittytk-sdl   # graphical (SDL) desktop
 go run ./examples/demoapp                 # an app that attaches to either
 ```
 
+The socket can be a unix socket (default), `tcp://host:port`, or
+`tls://host:port` — the same protocol over any transport, from Go, Python,
+or C, on Windows, Linux, or macOS. TLS is PKI-free (SSH-style fingerprint
+pinning) and the host approves each remote client interactively. See
+[docs/transports-and-security.md](docs/transports-and-security.md).
+
 ## Module
 
 ```

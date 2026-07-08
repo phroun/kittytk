@@ -9,6 +9,7 @@ over the identical wire.
 kittytk/          the client library
   protocol.py     wire format: scanner, parser, string quoting, events
   client.py       Conn, UI handles (Button/Label/Checkbox/TextInput/…), dial
+  endpoint.py     transport: unix/tcp/tls, TOFU pinning, client identity
 demoapp/          the demo, ported from examples/demoapp
   scripts.py      the protocol-text build scripts (mostly a verbatim copy)
   app.py          the wiring (menus, MDI, secondary apps, dialogs)
@@ -27,6 +28,11 @@ go run -tags sdl ./examples/kittytk-sdl       # graphical
 python3 -m demoapp                            # attaches to the host
 python3 -m demoapp --solo                     # becomes the whole display
 ```
+
+The app attaches over whatever `$KITTYTK_DISPLAY` names — a unix socket
+(default), `tcp://host:port`, or `tls://host:port`. `tls://` needs the
+`cryptography` package or the `openssl` CLI to mint the client identity.
+See [../docs/transports-and-security.md](../docs/transports-and-security.md).
 
 ## Verify
 
