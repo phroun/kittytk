@@ -5,9 +5,11 @@ package interop_c_test
 // OpenSSL, exercising mutual TLS + trust-on-first-use pinning end to end.
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,5 +97,40 @@ func TestCClientInteropTLS(t *testing.T) {
 
 	if b, err := os.ReadFile(filepath.Join(cdir, "known_hosts")); err != nil || len(b) == 0 {
 		t.Errorf("C client did not pin the host in known_hosts (err=%v)", err)
+	}
+}
+
+// TestCTwoTLSConnections reproduces the demoapp "New Window" stall: a
+// second TLS connection builds while its reader thread is mid-SSL_read.
+// Before the SSL-serialization fix this corrupted the outbound record
+// and build2 hung; the client must now complete and print OK.
+func TestCTwoTLSConnections(t *testing.T) {
+	bin := buildCTLS(t, "twoconn_smoke.c")
+
+	dir := t.TempDir()
+	t.Setenv(display.HostIdentityEnv, filepath.Join(dir, "host_identity.pem"))
+	t.Setenv(display.AuthStoreEnv, filepath.Join(dir, "authorizations"))
+
+	// Auto-admit both connections (no interactive prompt in the harness).
+	_, addr, stop := startServiceCfg(t, display.Config{
+		Endpoint:    "tls://127.0.0.1:0",
+		PromptLocal: true,
+		Authorize:   func(display.AuthRequest) display.AuthDecision { return display.AuthAllowOnce },
+	})
+	defer stop()
+
+	cdir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "tls://"+addr)
+	cmd.Env = append(os.Environ(),
+		"KITTYTK_IDENTITY="+filepath.Join(cdir, "identity.pem"),
+		"KITTYTK_KNOWN_HOSTS="+filepath.Join(cdir, "known_hosts"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("two-connection TLS smoke failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "OK") {
+		t.Fatalf("two-connection TLS smoke did not report OK:\n%s", out)
 	}
 }

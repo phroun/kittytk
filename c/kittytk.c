@@ -6,6 +6,7 @@
 #include "kittytk.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,7 +54,9 @@ static void kt_platform_init(void) {
 static int kt_mkdir(const char *p) { return _mkdir(p); }
 #endif
 #else
+#include <fcntl.h>
 #include <netdb.h>
+#include <poll.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -424,6 +427,7 @@ struct kt_conn {
 #ifdef KT_TLS
     SSL *ssl;
     SSL_CTX *ssl_ctx;
+    kt_mutex ssl_mu; /* serializes SSL_read/SSL_write (one SSL, two threads) */
 #endif
     unsigned char rbuf[4096];
     size_t rpos, rlen;
@@ -449,22 +453,82 @@ struct kt_conn {
     kt_thread rthread, ethread;
 };
 
-/* transport read/write: TLS when negotiated, else the raw socket. */
+/* transport read/write: TLS when negotiated, else the raw socket.
+ *
+ * A single SSL object is shared by the reader thread (SSL_read) and any
+ * do_exec caller (SSL_write); OpenSSL forbids concurrent use, so both go
+ * through ssl_mu. The socket is non-blocking under TLS so a blocked read
+ * never holds ssl_mu (which would deadlock the writer): on WANT_READ/
+ * WANT_WRITE we drop the lock and poll. Plaintext read/write need no
+ * lock - the kernel serializes concurrent recv/send on one fd. */
+
+#ifdef KT_TLS
+static void tls_wait(kt_socket fd, int for_write, int timeout_ms) {
+#ifdef _WIN32
+    WSAPOLLFD pfd;
+    pfd.fd = fd;
+    pfd.events = for_write ? POLLWRNORM : POLLRDNORM;
+    pfd.revents = 0;
+    WSAPoll(&pfd, 1, timeout_ms);
+#else
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = for_write ? POLLOUT : POLLIN;
+    pfd.revents = 0;
+    poll(&pfd, 1, timeout_ms);
+#endif
+}
+
+static void set_nonblocking(kt_socket fd) {
+#ifdef _WIN32
+    u_long nb = 1;
+    ioctlsocket(fd, FIONBIO, &nb);
+#else
+    int fl = fcntl(fd, F_GETFL, 0);
+    if (fl >= 0) fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+#endif
+}
+#endif /* KT_TLS */
+
 static long conn_read(kt_conn *c, void *buf, size_t n) {
 #ifdef KT_TLS
-    if (c->ssl) return SSL_read(c->ssl, buf, (int)n);
+    if (c->ssl) {
+        for (;;) {
+            kt_mutex_lock(&c->ssl_mu);
+            int r = SSL_read(c->ssl, buf, (int)n);
+            int err = r > 0 ? 0 : SSL_get_error(c->ssl, r);
+            kt_mutex_unlock(&c->ssl_mu);
+            if (r > 0) return r;
+            if (err == SSL_ERROR_WANT_READ) { tls_wait(c->fd, 0, 200); continue; }
+            if (err == SSL_ERROR_WANT_WRITE) { tls_wait(c->fd, 1, 200); continue; }
+            KTDBG("conn_read: SSL_read err=%d (errno=%d)", err, errno);
+            return -1; /* clean close or fatal error */
+        }
+    }
 #endif
     return recv(c->fd, buf, (int)n, 0);
 }
+
 static int conn_write_all(kt_conn *c, const void *buf, size_t n) {
     const char *p = buf;
-    while (n > 0) {
-        long w;
 #ifdef KT_TLS
-        if (c->ssl) w = SSL_write(c->ssl, p, (int)n);
-        else
+    if (c->ssl) {
+        while (n > 0) {
+            kt_mutex_lock(&c->ssl_mu);
+            int w = SSL_write(c->ssl, p, (int)n);
+            int err = w > 0 ? 0 : SSL_get_error(c->ssl, w);
+            kt_mutex_unlock(&c->ssl_mu);
+            if (w > 0) { p += w; n -= (size_t)w; continue; }
+            if (err == SSL_ERROR_WANT_WRITE) { tls_wait(c->fd, 1, 200); continue; }
+            if (err == SSL_ERROR_WANT_READ) { tls_wait(c->fd, 0, 200); continue; }
+            KTDBG("conn_write: SSL_write err=%d (errno=%d)", err, errno);
+            return -1;
+        }
+        return 0;
+    }
 #endif
-            w = send(c->fd, p, (int)n, 0);
+    while (n > 0) {
+        long w = send(c->fd, p, (int)n, 0);
         if (w <= 0) return -1;
         p += w; n -= (size_t)w;
     }
@@ -949,6 +1013,9 @@ static int tls_handshake(kt_conn *c, const kt_endpoint *e, int insecure, const c
     }
     c->ssl = ssl;
     c->ssl_ctx = ctx;
+    /* Non-blocking from here on so SSL_read never blocks while holding
+     * ssl_mu; conn_read/conn_write poll on WANT_READ/WANT_WRITE. */
+    set_nonblocking(c->fd);
     return 0;
 }
 #endif /* KT_TLS */
@@ -990,6 +1057,9 @@ static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_o
     kt_mutex_init(&c->rmu); kt_cond_init(&c->rcv);
     kt_mutex_init(&c->emu); kt_cond_init(&c->ecv);
     kt_mutex_init(&c->hmu);
+#ifdef KT_TLS
+    kt_mutex_init(&c->ssl_mu);
+#endif
 
     /* handshake: hello [solo] [token], then wait for welcome */
     const char *token = opts->token;
@@ -1056,7 +1126,8 @@ void kt_wait_closed(kt_conn *c) {
 void kt_close(kt_conn *c) {
     if (!c) return;
 #ifdef KT_TLS
-    if (c->ssl) SSL_shutdown(c->ssl);
+    /* close-notify under ssl_mu so it can't race the reader's SSL_read */
+    if (c->ssl) { kt_mutex_lock(&c->ssl_mu); SSL_shutdown(c->ssl); kt_mutex_unlock(&c->ssl_mu); }
 #endif
 #ifdef _WIN32
     shutdown(c->fd, SD_BOTH);
