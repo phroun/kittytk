@@ -23,6 +23,7 @@ interop/                Go harness: a real headless host driving the C clients
 ```sh
 make                                          # builds ./demoapp + ./counter
 make KT_TLS=1                                 # same, with tls:// support (OpenSSL)
+# macOS TLS: brew install openssl@3  (the Makefile finds Homebrew's copy)
 
 # terminal 1 — a desktop host (either renderer):
 go run ./examples/kittytk-tui                 # terminal

@@ -5,9 +5,26 @@ LDLIBS = -lpthread
 # The default build supports unix + plaintext tcp:// with zero deps
 # (libc + pthreads). TLS (tls:// endpoints) is opt-in and needs OpenSSL:
 #   make KT_TLS=1
+#
+# OpenSSL discovery: prefer pkg-config (Linux, and macOS once its
+# pkgconfig is on PKG_CONFIG_PATH); otherwise fall back to Homebrew's
+# keg-only openssl@3 prefix on macOS; otherwise assume it is on the
+# default search path.
 ifdef KT_TLS
 CFLAGS += -DKT_TLS
-LDLIBS += -lssl -lcrypto
+OPENSSL_CFLAGS := $(shell pkg-config --cflags openssl 2>/dev/null)
+OPENSSL_LIBS := $(shell pkg-config --libs openssl 2>/dev/null)
+ifeq ($(strip $(OPENSSL_LIBS)),)
+  OPENSSL_PREFIX := $(shell brew --prefix openssl@3 2>/dev/null)
+  ifneq ($(strip $(OPENSSL_PREFIX)),)
+    OPENSSL_CFLAGS := -I$(OPENSSL_PREFIX)/include
+    OPENSSL_LIBS := -L$(OPENSSL_PREFIX)/lib -lssl -lcrypto
+  else
+    OPENSSL_LIBS := -lssl -lcrypto
+  endif
+endif
+CFLAGS += $(OPENSSL_CFLAGS)
+LDLIBS += $(OPENSSL_LIBS)
 endif
 
 .PHONY: all clean test
