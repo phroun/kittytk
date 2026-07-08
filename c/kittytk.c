@@ -1,17 +1,92 @@
 /* kittytk.c - implementation of the KittyTK display-protocol client in C.
- * A faithful port of the wire format and the client's read/event loops. */
+ * A faithful port of the wire format and the client's read/event loops,
+ * with a thin platform shim (POSIX sockets+pthreads / Windows Winsock+
+ * Win32 threads) and optional TLS (compile with -DKT_TLS, needs OpenSSL). */
 #define _GNU_SOURCE
 #include "kittytk.h"
 
 #include <ctype.h>
-#include <errno.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* --- platform shim: sockets & threads -------------------------------- */
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <afunix.h> /* AF_UNIX on Windows 10+ */
+#include <process.h>
+#include <direct.h>
+typedef SOCKET kt_socket;
+#define KT_BAD_SOCKET INVALID_SOCKET
+#define kt_closesocket closesocket
+typedef CRITICAL_SECTION kt_mutex;
+typedef CONDITION_VARIABLE kt_cond;
+typedef HANDLE kt_thread;
+static void kt_mutex_init(kt_mutex *m) { InitializeCriticalSection(m); }
+static void kt_mutex_lock(kt_mutex *m) { EnterCriticalSection(m); }
+static void kt_mutex_unlock(kt_mutex *m) { LeaveCriticalSection(m); }
+static void kt_cond_init(kt_cond *c) { InitializeConditionVariable(c); }
+static void kt_cond_wait(kt_cond *c, kt_mutex *m) { SleepConditionVariableCS(c, m, INFINITE); }
+static void kt_cond_signal(kt_cond *c) { WakeConditionVariable(c); }
+static void kt_cond_broadcast(kt_cond *c) { WakeAllConditionVariable(c); }
+typedef struct { void *(*fn)(void *); void *arg; } kt_thunk;
+static unsigned __stdcall kt_trampoline(void *p) {
+    kt_thunk t = *(kt_thunk *)p;
+    free(p);
+    t.fn(t.arg);
+    return 0;
+}
+static int kt_thread_create(kt_thread *th, void *(*fn)(void *), void *arg) {
+    kt_thunk *t = malloc(sizeof *t);
+    t->fn = fn; t->arg = arg;
+    *th = (HANDLE)_beginthreadex(NULL, 0, kt_trampoline, t, 0, NULL);
+    return *th ? 0 : -1;
+}
+static void kt_thread_join(kt_thread th) { WaitForSingleObject(th, INFINITE); CloseHandle(th); }
+static void kt_platform_init(void) {
+    static int done = 0;
+    if (!done) { WSADATA w; WSAStartup(MAKEWORD(2, 2), &w); done = 1; }
+}
+#ifdef KT_TLS
+static int kt_mkdir(const char *p) { return _mkdir(p); }
+#endif
+#else
+#include <netdb.h>
+#include <pthread.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
+typedef int kt_socket;
+#define KT_BAD_SOCKET (-1)
+#define kt_closesocket close
+typedef pthread_mutex_t kt_mutex;
+typedef pthread_cond_t kt_cond;
+typedef pthread_t kt_thread;
+static void kt_mutex_init(kt_mutex *m) { pthread_mutex_init(m, NULL); }
+static void kt_mutex_lock(kt_mutex *m) { pthread_mutex_lock(m); }
+static void kt_mutex_unlock(kt_mutex *m) { pthread_mutex_unlock(m); }
+static void kt_cond_init(kt_cond *c) { pthread_cond_init(c, NULL); }
+static void kt_cond_wait(kt_cond *c, kt_mutex *m) { pthread_cond_wait(c, m); }
+static void kt_cond_signal(kt_cond *c) { pthread_cond_signal(c); }
+static void kt_cond_broadcast(kt_cond *c) { pthread_cond_broadcast(c); }
+static int kt_thread_create(kt_thread *th, void *(*fn)(void *), void *arg) { return pthread_create(th, NULL, fn, arg); }
+static void kt_thread_join(kt_thread th) { pthread_join(th, NULL); }
+static void kt_platform_init(void) {}
+#ifdef KT_TLS
+static int kt_mkdir(const char *p) { return mkdir(p, 0700); }
+#endif
+#endif
+
+#ifdef KT_TLS
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/sha.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#endif
 
 /* --- growable byte buffer ------------------------------------------- */
 
@@ -23,6 +98,7 @@ static void buf_put(kt_buf *b, char c) {
     }
     b->p[b->len++] = c;
 }
+static void buf_puts(kt_buf *b, const char *s) { for (; *s; s++) buf_put(b, *s); }
 static char *buf_dup(kt_buf *b) {
     char *s = malloc(b->len + 1);
     memcpy(s, b->p, b->len);
@@ -53,22 +129,80 @@ char *kt_quote(const char *s) {
     return buf_dup(&b);
 }
 
-char *kt_default_socket_path(void) {
+/* --- config paths (mirror the Go & Python clients) ------------------- */
+/* Only the TLS build (identity + known_hosts) needs these. */
+#ifdef KT_TLS
+
+/* config_dir: $XDG_CONFIG_HOME, else %APPDATA% on Windows, else
+ * ~/.config; with "/kittytk" appended. malloc'd. */
+static char *config_dir(void) {
+    const char *base = getenv("XDG_CONFIG_HOME");
+    char *home_cfg = NULL;
+    if (!base || !*base) {
+#ifdef _WIN32
+        base = getenv("APPDATA");
+#endif
+    }
+    if (!base || !*base) {
+        const char *home = getenv("HOME");
+#ifdef _WIN32
+        if (!home || !*home) home = getenv("USERPROFILE");
+#endif
+        if (!home || !*home) home = ".";
+        size_t n = strlen(home) + strlen("/.config") + 1;
+        home_cfg = malloc(n);
+        snprintf(home_cfg, n, "%s/.config", home);
+        base = home_cfg;
+    }
+    size_t n = strlen(base) + strlen("/kittytk") + 1;
+    char *out = malloc(n);
+    snprintf(out, n, "%s/kittytk", base);
+    free(home_cfg);
+    return out;
+}
+
+static char *path_in_config(const char *env, const char *leaf) {
+    const char *e = getenv(env);
+    if (e && *e) return strdup(e);
+    char *dir = config_dir();
+    size_t n = strlen(dir) + 1 + strlen(leaf) + 1;
+    char *out = malloc(n);
+    snprintf(out, n, "%s/%s", dir, leaf);
+    free(dir);
+    return out;
+}
+
+/* make_parent_dirs: mkdir -p on the directory holding path. */
+static void make_parent_dirs(const char *path) {
+    char *tmp = strdup(path);
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            kt_mkdir(tmp);
+            *p = '/';
+        }
+    }
+    free(tmp);
+}
+
+#endif /* KT_TLS (config paths) */
+
+char *kt_default_endpoint(void) {
     const char *env = getenv("KITTYTK_DISPLAY");
     if (env && *env) return strdup(env);
-    /* Match the Go host's DefaultSocketPath: XDG_RUNTIME_DIR, else Go's
-     * os.TempDir() (which is $TMPDIR, else /tmp - the macOS TMPDIR is
-     * /var/folders/.../T, NOT /tmp). */
+    /* Match the Go host's default: XDG_RUNTIME_DIR, else TMPDIR, else
+     * /tmp (macOS TMPDIR is /var/folders/.../T, NOT /tmp). */
     const char *rt = getenv("XDG_RUNTIME_DIR");
     if (!rt || !*rt) rt = getenv("TMPDIR");
     if (!rt || !*rt) rt = "/tmp";
     size_t rtlen = strlen(rt);
-    while (rtlen > 1 && rt[rtlen - 1] == '/') rtlen--;  /* macOS TMPDIR has one */
+    while (rtlen > 1 && rt[rtlen - 1] == '/') rtlen--;
     size_t n = rtlen + strlen("/kittytk/display-0.sock") + 1;
     char *out = malloc(n);
     snprintf(out, n, "%.*s/kittytk/display-0.sock", (int)rtlen, rt);
     return out;
 }
+char *kt_default_socket_path(void) { return kt_default_endpoint(); }
 
 /* --- parsed statement ------------------------------------------------ */
 
@@ -267,44 +401,69 @@ typedef struct {
 } kt_handler;
 
 struct kt_conn {
-    int fd;
+    kt_socket fd;
+#ifdef KT_TLS
+    SSL *ssl;
+    SSL_CTX *ssl_ctx;
+#endif
     unsigned char rbuf[4096];
     size_t rpos, rlen;
     int reof;
 
-    pthread_mutex_t write_mu;
+    kt_mutex write_mu;
 
-    pthread_mutex_t rmu; pthread_cond_t rcv;
+    kt_mutex rmu; kt_cond rcv;
     int reply_ready, reply_err;
     kt_ui reply_ids;
     char reply_errmsg[256];
 
-    pthread_mutex_t emu; pthread_cond_t ecv;
+    kt_mutex emu; kt_cond ecv;
     evnode *ehead, *etail;
     int estop;
 
-    pthread_mutex_t hmu;
+    kt_mutex hmu;
     kt_handler *handlers; int nh, caph;
-    kt_pair *subs; int nsubs, capsubs;  /* (id, hash-of-type) sent */
-    char **subtypes; /* parallel to subs: the type string */
+    kt_pair *subs; int nsubs, capsubs;
+    char **subtypes;
 
     int closed;
-    pthread_t rthread, ethread;
+    kt_thread rthread, ethread;
 };
 
-/* scanner: read one byte from the buffered fd, -1 at EOF/error. */
+/* transport read/write: TLS when negotiated, else the raw socket. */
+static long conn_read(kt_conn *c, void *buf, size_t n) {
+#ifdef KT_TLS
+    if (c->ssl) return SSL_read(c->ssl, buf, (int)n);
+#endif
+    return recv(c->fd, buf, (int)n, 0);
+}
+static int conn_write_all(kt_conn *c, const void *buf, size_t n) {
+    const char *p = buf;
+    while (n > 0) {
+        long w;
+#ifdef KT_TLS
+        if (c->ssl) w = SSL_write(c->ssl, p, (int)n);
+        else
+#endif
+            w = send(c->fd, p, (int)n, 0);
+        if (w <= 0) return -1;
+        p += w; n -= (size_t)w;
+    }
+    return 0;
+}
+
+/* scanner: read one byte from the buffered transport, -1 at EOF/error. */
 static int read_byte(kt_conn *c) {
     if (c->rpos >= c->rlen) {
         if (c->reof) return -1;
-        ssize_t n = read(c->fd, c->rbuf, sizeof c->rbuf);
+        long n = conn_read(c, c->rbuf, sizeof c->rbuf);
         if (n <= 0) { c->reof = 1; return -1; }
         c->rpos = 0; c->rlen = (size_t)n;
     }
     return c->rbuf[c->rpos++];
 }
 
-/* Frame the next statement (mirror of the Go Scanner). Returns malloc'd
- * text or NULL at EOF. */
+/* Frame the next statement (mirror of the Go Scanner). */
 static char *scan_next(kt_conn *c) {
     kt_buf b = {0};
     int depth = 0, in_string = 0, escaped = 0, saw = 0;
@@ -340,23 +499,21 @@ static void enqueue_event(kt_conn *c, const char *text) {
     evnode *n = malloc(sizeof *n);
     n->text = strdup(text);
     n->next = NULL;
-    pthread_mutex_lock(&c->emu);
+    kt_mutex_lock(&c->emu);
     if (c->etail) c->etail->next = n; else c->ehead = n;
     c->etail = n;
-    pthread_cond_signal(&c->ecv);
-    pthread_mutex_unlock(&c->emu);
+    kt_cond_signal(&c->ecv);
+    kt_mutex_unlock(&c->emu);
 }
 
 static void dispatch_event(kt_conn *c, kt_stmt *st) {
-    /* build a kt_event view: type = args[0].name, fields = args[1..] */
     if (st->n < 1) return;
     kt_event ev = { st->args[0].name, st->n > 1 ? &st->args[1] : NULL, st->n - 1 };
     int ok = 0;
     uint64_t tid = kt_event_trinket(&ev, &ok);
     const char *action = (strcmp(ev.type, "command") == 0) ? kt_event_word(&ev, "action") : NULL;
 
-    /* snapshot matching handlers under the lock, then call outside it */
-    pthread_mutex_lock(&c->hmu);
+    kt_mutex_lock(&c->hmu);
     kt_handler *snap = malloc(sizeof(kt_handler) * (c->nh ? c->nh : 1));
     int m = 0;
     for (int i = 0; i < c->nh; i++) {
@@ -367,7 +524,7 @@ static void dispatch_event(kt_conn *c, kt_stmt *st) {
             snap[m++] = *h;
         }
     }
-    pthread_mutex_unlock(&c->hmu);
+    kt_mutex_unlock(&c->hmu);
 
     for (int i = 0; i < m; i++) {
         if (snap[i].action) snap[i].ccb(snap[i].ud);
@@ -379,13 +536,13 @@ static void dispatch_event(kt_conn *c, kt_stmt *st) {
 static void *event_loop(void *arg) {
     kt_conn *c = arg;
     for (;;) {
-        pthread_mutex_lock(&c->emu);
-        while (!c->ehead && !c->estop) pthread_cond_wait(&c->ecv, &c->emu);
-        if (!c->ehead && c->estop) { pthread_mutex_unlock(&c->emu); return NULL; }
+        kt_mutex_lock(&c->emu);
+        while (!c->ehead && !c->estop) kt_cond_wait(&c->ecv, &c->emu);
+        if (!c->ehead && c->estop) { kt_mutex_unlock(&c->emu); return NULL; }
         evnode *n = c->ehead;
         c->ehead = n->next;
         if (!c->ehead) c->etail = NULL;
-        pthread_mutex_unlock(&c->emu);
+        kt_mutex_unlock(&c->emu);
 
         kt_stmt *st = parse_statement(n->text);
         if (st) { dispatch_event(c, st); stmt_free(st); }
@@ -395,18 +552,18 @@ static void *event_loop(void *arg) {
 }
 
 static void mark_closed(kt_conn *c) {
-    pthread_mutex_lock(&c->rmu);
+    kt_mutex_lock(&c->rmu);
     c->closed = 1;
-    c->reply_ready = 1;   /* unblock a waiting exec */
+    c->reply_ready = 1;
     c->reply_err = 1;
     snprintf(c->reply_errmsg, sizeof c->reply_errmsg, "connection closed");
-    pthread_cond_broadcast(&c->rcv);
-    pthread_mutex_unlock(&c->rmu);
+    kt_cond_broadcast(&c->rcv);
+    kt_mutex_unlock(&c->rmu);
 
-    pthread_mutex_lock(&c->emu);
+    kt_mutex_lock(&c->emu);
     c->estop = 1;
-    pthread_cond_signal(&c->ecv);
-    pthread_mutex_unlock(&c->emu);
+    kt_cond_signal(&c->ecv);
+    kt_mutex_unlock(&c->emu);
 }
 
 static void *read_loop(void *arg) {
@@ -417,7 +574,7 @@ static void *read_loop(void *arg) {
         kt_stmt *st = parse_statement(text);
         if (!st) { free(text); continue; }
         if (strcmp(st->verb, "reply") == 0) {
-            pthread_mutex_lock(&c->rmu);
+            kt_mutex_lock(&c->rmu);
             free(c->reply_ids.pairs); c->reply_ids.pairs = NULL; c->reply_ids.n = 0;
             for (int i = 0; i < st->n; i++) {
                 if (st->args[i].has_value && st->args[i].kind == 0) {
@@ -429,20 +586,20 @@ static void *read_loop(void *arg) {
             }
             c->reply_err = 0;
             c->reply_ready = 1;
-            pthread_cond_signal(&c->rcv);
-            pthread_mutex_unlock(&c->rmu);
+            kt_cond_signal(&c->rcv);
+            kt_mutex_unlock(&c->rmu);
         } else if (strcmp(st->verb, "error") == 0) {
             const char *msg = "display error";
             for (int i = 0; i < st->n; i++)
                 if (strcmp(st->args[i].name ? st->args[i].name : "", "text") == 0
                     && st->args[i].has_value && st->args[i].kind == 2)
                     msg = st->args[i].sval;
-            pthread_mutex_lock(&c->rmu);
+            kt_mutex_lock(&c->rmu);
             c->reply_err = 1;
             snprintf(c->reply_errmsg, sizeof c->reply_errmsg, "%s", msg);
             c->reply_ready = 1;
-            pthread_cond_signal(&c->rcv);
-            pthread_mutex_unlock(&c->rmu);
+            kt_cond_signal(&c->rcv);
+            kt_mutex_unlock(&c->rmu);
         } else if (strcmp(st->verb, "event") == 0) {
             enqueue_event(c, text);
         }
@@ -455,21 +612,19 @@ static void *read_loop(void *arg) {
 
 /* Write src + "\nend\n"; wait for the reply. ids may be NULL. */
 static int do_exec(kt_conn *c, const char *src, kt_ui *out_ids) {
-    pthread_mutex_lock(&c->write_mu);
-    pthread_mutex_lock(&c->rmu);
-    if (c->closed) { pthread_mutex_unlock(&c->rmu); pthread_mutex_unlock(&c->write_mu); return -1; }
+    kt_mutex_lock(&c->write_mu);
+    kt_mutex_lock(&c->rmu);
+    if (c->closed) { kt_mutex_unlock(&c->rmu); kt_mutex_unlock(&c->write_mu); return -1; }
     c->reply_ready = 0;
-    pthread_mutex_unlock(&c->rmu);
+    kt_mutex_unlock(&c->rmu);
 
-    size_t n = strlen(src);
-    /* write src, then the D22 end terminator */
-    if (write(c->fd, src, n) < 0 || write(c->fd, "\nend\n", 5) < 0) {
-        pthread_mutex_unlock(&c->write_mu);
+    if (conn_write_all(c, src, strlen(src)) < 0 || conn_write_all(c, "\nend\n", 5) < 0) {
+        kt_mutex_unlock(&c->write_mu);
         return -1;
     }
 
-    pthread_mutex_lock(&c->rmu);
-    while (!c->reply_ready) pthread_cond_wait(&c->rcv, &c->rmu);
+    kt_mutex_lock(&c->rmu);
+    while (!c->reply_ready) kt_cond_wait(&c->rcv, &c->rmu);
     int err = c->reply_err;
     if (!err && out_ids) {
         out_ids->n = c->reply_ids.n;
@@ -479,8 +634,8 @@ static int do_exec(kt_conn *c, const char *src, kt_ui *out_ids) {
             out_ids->pairs[i].id = c->reply_ids.pairs[i].id;
         }
     }
-    pthread_mutex_unlock(&c->rmu);
-    pthread_mutex_unlock(&c->write_mu);
+    kt_mutex_unlock(&c->rmu);
+    kt_mutex_unlock(&c->write_mu);
     return err ? -1 : 0;
 }
 
@@ -520,10 +675,10 @@ int kt_destroy(kt_conn *c, uint64_t id) {
 /* --- subscriptions & handlers --------------------------------------- */
 
 static void ensure_sub(kt_conn *c, uint64_t id, const char *event) {
-    pthread_mutex_lock(&c->hmu);
+    kt_mutex_lock(&c->hmu);
     for (int i = 0; i < c->nsubs; i++)
         if (c->subs[i].id == id && strcmp(c->subtypes[i], event) == 0) {
-            pthread_mutex_unlock(&c->hmu);
+            kt_mutex_unlock(&c->hmu);
             return;
         }
     if (c->nsubs + 1 > c->capsubs) {
@@ -534,7 +689,7 @@ static void ensure_sub(kt_conn *c, uint64_t id, const char *event) {
     c->subs[c->nsubs].id = id;
     c->subtypes[c->nsubs] = strdup(event);
     c->nsubs++;
-    pthread_mutex_unlock(&c->hmu);
+    kt_mutex_unlock(&c->hmu);
 
     char src[64];
     snprintf(src, sizeof src, "sub %llu %s", (unsigned long long)id, event);
@@ -542,13 +697,13 @@ static void ensure_sub(kt_conn *c, uint64_t id, const char *event) {
 }
 
 static void add_handler(kt_conn *c, kt_handler h) {
-    pthread_mutex_lock(&c->hmu);
+    kt_mutex_lock(&c->hmu);
     if (c->nh + 1 > c->caph) {
         c->caph = c->caph ? c->caph * 2 : 8;
         c->handlers = realloc(c->handlers, c->caph * sizeof(kt_handler));
     }
     c->handlers[c->nh++] = h;
-    pthread_mutex_unlock(&c->hmu);
+    kt_mutex_unlock(&c->hmu);
 }
 
 void kt_on(kt_conn *c, uint64_t id, const char *event_type, kt_event_cb cb, void *ud) {
@@ -563,67 +718,330 @@ void kt_on_command(kt_conn *c, const char *action, kt_command_cb cb, void *ud) {
     add_handler(c, h);
 }
 
-/* --- dial / close ---------------------------------------------------- */
+/* --- endpoint parsing ------------------------------------------------ */
 
-static kt_conn *dial(const char *path, const char *app_name, int solo) {
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) return NULL;
+typedef struct { int is_unix; int use_tls; char *address; char *host; } kt_endpoint;
+
+/* address gets a default :9797 when a tcp/tls endpoint omits the port. */
+static char *with_port(const char *addr) {
+    const char *colon = strrchr(addr, ':');
+    int has_port = 0;
+    if (colon && colon[1]) {
+        has_port = 1;
+        for (const char *d = colon + 1; *d; d++) if (!isdigit((unsigned char)*d)) { has_port = 0; break; }
+    }
+    if (has_port) return strdup(addr);
+    size_t n = strlen(addr) + strlen(":9797") + 1;
+    char *out = malloc(n);
+    snprintf(out, n, "%s:9797", addr);
+    return out;
+}
+
+static kt_endpoint parse_endpoint(const char *s) {
+    kt_endpoint e = {1, 0, NULL, NULL};
+    if (strncmp(s, "unix:", 5) == 0) {
+        e.is_unix = 1; e.address = strdup(s + 5);
+    } else if (strncmp(s, "tcp://", 6) == 0) {
+        e.is_unix = 0; e.address = with_port(s + 6);
+    } else if (strncmp(s, "tls://", 6) == 0) {
+        e.is_unix = 0; e.use_tls = 1; e.address = with_port(s + 6);
+        const char *colon = strrchr(e.address, ':');
+        e.host = colon ? strndup(e.address, (size_t)(colon - e.address)) : strdup(e.address);
+    } else {
+        e.is_unix = 1; e.address = strdup(s);
+    }
+    return e;
+}
+static void endpoint_free(kt_endpoint *e) { free(e->address); free(e->host); }
+
+/* --- TCP / unix connect ---------------------------------------------- */
+
+static kt_socket connect_unix(const char *path) {
+    kt_socket fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd == KT_BAD_SOCKET) return KT_BAD_SOCKET;
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof addr);
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, path, sizeof addr.sun_path - 1);
-    if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) { close(fd); return NULL; }
+    if (connect(fd, (struct sockaddr *)&addr, sizeof addr) != 0) { kt_closesocket(fd); return KT_BAD_SOCKET; }
+    return fd;
+}
+
+static kt_socket connect_tcp(const char *hostport) {
+    const char *colon = strrchr(hostport, ':');
+    if (!colon) return KT_BAD_SOCKET;
+    char *host = strndup(hostport, (size_t)(colon - hostport));
+    const char *port = colon + 1;
+
+    struct addrinfo hints, *res = NULL, *ai;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    kt_socket fd = KT_BAD_SOCKET;
+    if (getaddrinfo(host, port, &hints, &res) == 0) {
+        for (ai = res; ai; ai = ai->ai_next) {
+            fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+            if (fd == KT_BAD_SOCKET) continue;
+            if (connect(fd, ai->ai_addr, (int)ai->ai_addrlen) == 0) break;
+            kt_closesocket(fd);
+            fd = KT_BAD_SOCKET;
+        }
+        freeaddrinfo(res);
+    }
+    free(host);
+    return fd;
+}
+
+/* --- TLS (optional) -------------------------------------------------- */
+
+#ifdef KT_TLS
+
+/* fingerprint_hex: "sha256:" + lowercase hex of the DER SHA-256. */
+static char *fingerprint_of(X509 *cert) {
+    unsigned char *der = NULL;
+    int len = i2d_X509(cert, &der);
+    if (len <= 0) return NULL;
+    unsigned char md[SHA256_DIGEST_LENGTH];
+    SHA256(der, (size_t)len, md);
+    OPENSSL_free(der);
+    char *out = malloc(7 + 2 * SHA256_DIGEST_LENGTH + 1);
+    strcpy(out, "sha256:");
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+        sprintf(out + 7 + 2 * i, "%02x", md[i]);
+    return out;
+}
+
+/* ensure_identity: load or create the persistent client identity PEM. */
+static char *identity_path(void) { return path_in_config("KITTYTK_IDENTITY", "identity.pem"); }
+
+static int create_identity(const char *path) {
+    EVP_PKEY *pkey = EVP_EC_gen("P-256");
+    if (!pkey) return -1;
+    X509 *x = X509_new();
+    ASN1_INTEGER_set(X509_get_serialNumber(x), 1);
+    X509_gmtime_adj(X509_getm_notBefore(x), -3600);
+    X509_gmtime_adj(X509_getm_notAfter(x), (long)60 * 60 * 24 * 7300);
+    X509_set_pubkey(x, pkey);
+    X509_NAME *nm = X509_get_subject_name(x);
+    X509_NAME_add_entry_by_txt(nm, "CN", MBSTRING_ASC, (const unsigned char *)"kittytk-client", -1, -1, 0);
+    X509_set_issuer_name(x, nm);
+    X509_sign(x, pkey, EVP_sha256());
+
+    make_parent_dirs(path);
+    FILE *f = fopen(path, "wb");
+    int ok = 0;
+    if (f) {
+        ok = PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL) &&
+             PEM_write_X509(f, x);
+        fclose(f);
+    }
+    X509_free(x);
+    EVP_PKEY_free(pkey);
+    return ok ? 0 : -1;
+}
+
+static char *ensure_identity(void) {
+    char *path = identity_path();
+    FILE *f = fopen(path, "rb");
+    if (f) { fclose(f); return path; }
+    if (create_identity(path) != 0) { free(path); return NULL; }
+    return path;
+}
+
+/* known_hosts pinning (mirror of the Go/Python clients). */
+static char *known_hosts_path(const char *override) {
+    if (override && *override) return strdup(override);
+    return path_in_config("KITTYTK_KNOWN_HOSTS", "known_hosts");
+}
+
+static char *lookup_pin(const char *path, const char *hostport) {
+    FILE *f = fopen(path, "r");
+    if (!f) return NULL;
+    char line[512];
+    char *found = NULL;
+    while (fgets(line, sizeof line, f)) {
+        char host[256], fp[160];
+        if (line[0] == '#') continue;
+        if (sscanf(line, "%255s %159s", host, fp) == 2 && strcmp(host, hostport) == 0) {
+            found = strdup(fp);
+            break;
+        }
+    }
+    fclose(f);
+    return found;
+}
+
+static void add_pin(const char *path, const char *hostport, const char *fp) {
+    make_parent_dirs(path);
+    FILE *f = fopen(path, "a");
+    if (!f) return;
+    fprintf(f, "%s %s\n", hostport, fp);
+    fclose(f);
+}
+
+/* verify_pin: 0 ok (pinned or newly recorded), -1 mismatch. */
+static int verify_pin(const char *store, const char *hostport, const char *fp) {
+    char *path = known_hosts_path(store);
+    char *pinned = lookup_pin(path, hostport);
+    int rc = 0;
+    if (!pinned) {
+        add_pin(path, hostport, fp);
+        fprintf(stderr, "kittytk: pinned new host %s %s\n", hostport, fp);
+    } else if (strcmp(pinned, fp) != 0) {
+        fprintf(stderr,
+                "kittytk: host identity for %s changed!\n  pinned %s\n  got    %s\n"
+                "if this is expected, remove that line from %s\n",
+                hostport, pinned, fp, path);
+        rc = -1;
+    }
+    free(pinned);
+    free(path);
+    return rc;
+}
+
+/* tls_handshake: wrap fd in a mutual-TLS session, pin the host. Returns 0
+ * and fills c->ssl/ssl_ctx on success. */
+static int tls_handshake(kt_conn *c, const kt_endpoint *e, int insecure, const char *store) {
+    SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx) return -1;
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL); /* pinning, not CA */
+    char *ident = ensure_identity();
+    if (ident) {
+        SSL_CTX_use_certificate_file(ctx, ident, SSL_FILETYPE_PEM);
+        SSL_CTX_use_PrivateKey_file(ctx, ident, SSL_FILETYPE_PEM);
+        free(ident);
+    }
+    SSL *ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, (int)c->fd);
+    if (e->host) SSL_set_tlsext_host_name(ssl, e->host);
+    if (SSL_connect(ssl) != 1) { SSL_free(ssl); SSL_CTX_free(ctx); return -1; }
+
+    if (!insecure) {
+        X509 *cert = SSL_get_peer_certificate(ssl);
+        if (!cert) { SSL_free(ssl); SSL_CTX_free(ctx); return -1; }
+        char *fp = fingerprint_of(cert);
+        X509_free(cert);
+        int bad = !fp || verify_pin(store, e->address, fp) != 0;
+        free(fp);
+        if (bad) { SSL_shutdown(ssl); SSL_free(ssl); SSL_CTX_free(ctx); return -1; }
+    }
+    c->ssl = ssl;
+    c->ssl_ctx = ctx;
+    return 0;
+}
+#endif /* KT_TLS */
+
+/* --- dial / close ---------------------------------------------------- */
+
+static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_opts *opts) {
+    kt_dial_opts z = {0};
+    if (!opts) opts = &z;
+    kt_platform_init();
+
+    kt_endpoint e = parse_endpoint(endpoint);
+    kt_socket fd;
+    if (e.is_unix) {
+        fd = connect_unix(e.address);
+    } else {
+        fd = connect_tcp(e.address);
+    }
+    if (fd == KT_BAD_SOCKET) { endpoint_free(&e); return NULL; }
 
     kt_conn *c = calloc(1, sizeof *c);
     c->fd = fd;
-    pthread_mutex_init(&c->write_mu, NULL);
-    pthread_mutex_init(&c->rmu, NULL); pthread_cond_init(&c->rcv, NULL);
-    pthread_mutex_init(&c->emu, NULL); pthread_cond_init(&c->ecv, NULL);
-    pthread_mutex_init(&c->hmu, NULL);
 
-    char *q = kt_quote(app_name);
+    if (e.use_tls) {
+#ifdef KT_TLS
+        if (tls_handshake(c, &e, opts->insecure, opts->known_hosts) != 0) {
+            kt_closesocket(fd); free(c); endpoint_free(&e); return NULL;
+        }
+#else
+        fprintf(stderr, "kittytk: tls:// endpoints need a build with -DKT_TLS (OpenSSL)\n");
+        kt_closesocket(fd); free(c); endpoint_free(&e); return NULL;
+#endif
+    }
+    endpoint_free(&e);
+
+    kt_mutex_init(&c->write_mu);
+    kt_mutex_init(&c->rmu); kt_cond_init(&c->rcv);
+    kt_mutex_init(&c->emu); kt_cond_init(&c->ecv);
+    kt_mutex_init(&c->hmu);
+
+    /* handshake: hello [solo] [token], then wait for welcome */
+    const char *token = opts->token;
+    if (!token) token = getenv("KITTYTK_TOKEN");
+
     kt_buf hb = {0};
-    const char *pre = "hello version=1 app=";
-    for (const char *s = pre; *s; s++) buf_put(&hb, *s);
-    for (char *s = q; *s; s++) buf_put(&hb, *s);
-    free(q);
-    if (solo) for (const char *s = " solo"; *s; s++) buf_put(&hb, *s);
-    for (const char *s = "\nend\n"; *s; s++) buf_put(&hb, *s);
-    if (write(fd, hb.p, hb.len) < 0) { free(hb.p); close(fd); free(c); return NULL; }
+    buf_puts(&hb, "hello version=1 app=");
+    char *q = kt_quote(app_name);
+    buf_puts(&hb, q); free(q);
+    if (opts->solo) buf_puts(&hb, " solo");
+    if (token && *token) {
+        buf_puts(&hb, " token=");
+        char *tq = kt_quote(token);
+        buf_puts(&hb, tq); free(tq);
+    }
+    buf_puts(&hb, "\nend\n");
+    int wok = conn_write_all(c, hb.p, hb.len) == 0;
     free(hb.p);
+    if (!wok) { goto fail; }
 
     char *welcome = scan_next(c);
-    if (!welcome) { close(fd); free(c); return NULL; }
+    if (!welcome) goto fail;
     kt_stmt *st = parse_statement(welcome);
     int ok = st && strcmp(st->verb, "welcome") == 0;
     stmt_free(st);
     free(welcome);
-    if (!ok) { close(fd); free(c); return NULL; }
+    if (!ok) goto fail;
 
-    pthread_create(&c->rthread, NULL, read_loop, c);
-    pthread_create(&c->ethread, NULL, event_loop, c);
+    kt_thread_create(&c->rthread, read_loop, c);
+    kt_thread_create(&c->ethread, event_loop, c);
     return c;
+
+fail:
+#ifdef KT_TLS
+    if (c->ssl) { SSL_free(c->ssl); SSL_CTX_free(c->ssl_ctx); }
+#endif
+    kt_closesocket(fd);
+    free(c);
+    return NULL;
 }
 
-kt_conn *kt_dial(const char *path, const char *app_name) { return dial(path, app_name, 0); }
-kt_conn *kt_dial_solo(const char *path, const char *app_name) { return dial(path, app_name, 1); }
+kt_conn *kt_dial(const char *endpoint, const char *app_name) { return dial(endpoint, app_name, NULL); }
+kt_conn *kt_dial_solo(const char *endpoint, const char *app_name) {
+    kt_dial_opts o = {0};
+    o.solo = 1;
+    return dial(endpoint, app_name, &o);
+}
+kt_conn *kt_dial_ex(const char *endpoint, const char *app_name, const kt_dial_opts *opts) {
+    return dial(endpoint, app_name, opts);
+}
 
 int kt_is_closed(kt_conn *c) {
-    pthread_mutex_lock(&c->rmu);
+    kt_mutex_lock(&c->rmu);
     int r = c->closed;
-    pthread_mutex_unlock(&c->rmu);
+    kt_mutex_unlock(&c->rmu);
     return r;
 }
 void kt_wait_closed(kt_conn *c) {
-    pthread_join(c->rthread, NULL);
+    kt_thread_join(c->rthread);
 }
 void kt_close(kt_conn *c) {
     if (!c) return;
+#ifdef KT_TLS
+    if (c->ssl) SSL_shutdown(c->ssl);
+#endif
+#ifdef _WIN32
+    shutdown(c->fd, SD_BOTH);
+#else
     shutdown(c->fd, SHUT_RDWR);
-    close(c->fd);
-    pthread_join(c->rthread, NULL);
-    pthread_join(c->ethread, NULL);
-    /* (leak-free teardown of handler/sub tables omitted for brevity;
-     * process exit reclaims them in the demo/smoke usage.) */
+#endif
+    kt_closesocket(c->fd);
+    kt_thread_join(c->rthread);
+    kt_thread_join(c->ethread);
+#ifdef KT_TLS
+    if (c->ssl) { SSL_free(c->ssl); SSL_CTX_free(c->ssl_ctx); }
+#endif
+    /* (handler/sub tables reclaimed at process exit in demo/smoke usage.) */
     free(c);
 }

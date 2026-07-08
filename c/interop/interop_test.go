@@ -147,10 +147,19 @@ func TestCClientInterop(t *testing.T) {
 	bin := buildC(t, "interop_smoke.c")
 	desktop, sock, stop := startService(t)
 	defer stop()
+	driveCInterop(t, desktop, bin, sock, nil)
+}
 
+// driveCInterop runs the C interop smoke with endpoint as its last
+// argument (plus any extra env) and drives the full bidirectional
+// exchange against the running desktop.
+func driveCInterop(t *testing.T, desktop *trinkets.Desktop, bin, endpoint string, env []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, sock)
+	cmd := exec.CommandContext(ctx, bin, endpoint)
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)

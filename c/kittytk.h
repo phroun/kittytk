@@ -2,7 +2,13 @@
  *
  * A pure-protocol client (no rendering): it speaks the identical wire
  * language the Go and Python clients do, so a C program drives the same
- * display host (kittytk-tui / kittytk-sdl). Link with -lpthread.
+ * display host (kittytk-tui / kittytk-sdl).
+ *
+ * Transports: an endpoint is a bare path or unix:/path (unix socket,
+ * default), tcp://host:port (plaintext), or tls://host:port (TLS). TLS
+ * is compiled in only with -DKT_TLS (needs OpenSSL: -lssl -lcrypto);
+ * without it, a tls:// dial fails. On POSIX link -lpthread; on Windows
+ * link ws2_32.
  */
 #ifndef KITTYTK_H
 #define KITTYTK_H
@@ -35,12 +41,23 @@ char *kt_quote(const char *s);
 
 /* The conventional endpoint ($KITTYTK_DISPLAY, else
  * $XDG_RUNTIME_DIR/kittytk/display-0.sock). malloc'd; caller frees. */
-char *kt_default_socket_path(void);
+char *kt_default_endpoint(void);
+char *kt_default_socket_path(void); /* historical alias of the above */
 
-/* Connect to a display service. Returns NULL on failure. dial_solo asks to
- * be the whole display (its `main` window replaces the desktop). */
-kt_conn *kt_dial(const char *path, const char *app_name);
-kt_conn *kt_dial_solo(const char *path, const char *app_name);
+/* Connect to a display service at endpoint (a path or unix:/tcp://tls://
+ * URL). Returns NULL on failure. dial_solo asks to be the whole display
+ * (its `main` window replaces the desktop). */
+kt_conn *kt_dial(const char *endpoint, const char *app_name);
+kt_conn *kt_dial_solo(const char *endpoint, const char *app_name);
+
+/* Full-control dial. opts may be NULL (same as kt_dial). */
+typedef struct {
+    int solo;                /* be the whole display */
+    const char *token;       /* handshake token; NULL -> $KITTYTK_TOKEN */
+    int insecure;            /* tls://: skip fingerprint pinning */
+    const char *known_hosts; /* tls://: pin store; NULL -> default */
+} kt_dial_opts;
+kt_conn *kt_dial_ex(const char *endpoint, const char *app_name, const kt_dial_opts *opts);
 
 void kt_close(kt_conn *c);
 int  kt_is_closed(kt_conn *c);       /* 1 once disconnected */

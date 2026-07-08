@@ -2,6 +2,14 @@ CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -O2
 LDLIBS = -lpthread
 
+# The default build supports unix + plaintext tcp:// with zero deps
+# (libc + pthreads). TLS (tls:// endpoints) is opt-in and needs OpenSSL:
+#   make KT_TLS=1
+ifdef KT_TLS
+CFLAGS += -DKT_TLS
+LDLIBS += -lssl -lcrypto
+endif
+
 .PHONY: all clean test
 all: demoapp counter
 
