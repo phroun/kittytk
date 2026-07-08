@@ -38,10 +38,27 @@ Solo mode is that same picture made the root, with no desktop hosting it.
   is nothing to dock back to), so it shows no `%`/`#` handle.
 - **Additional windows.** A solo app may still open more windows. Each runs
   like another solo surface (its own OS surface) or lives in an MDI pane -
-  the app's choice. They are peers of the main window, not children on a
-  desktop.
-- **Lifecycle.** Additional windows/apps do not outlive the root: when the
-  first (root) solo app exits, everything it spawned dies with it.
+  the app's choice. They are genuine peers of the main window, not children
+  on a desktop.
+- **Lifecycle: genuine peers, quit on last close.** No app or window is
+  privileged. The host owns the lifetime and quits when the *last* app
+  window closes (or on explicit quit) - the ordinary multi-window
+  convention, not "the first window is special." The "everything dies when
+  the first app exits" behavior is **not** a design rule; it only appears in
+  the *bundled* deployment, where the host lives inside that first app's
+  process (a single-binary launch), so the process's death naturally takes
+  the host - and everything it hosts - with it. A standing host gives true
+  peers with no such coupling.
+- **No host window or host chrome.** The host is the surface/event-loop
+  owner; it is not itself a visible window and paints no chrome of its own.
+  Every OS surface in solo mode is an app window - there is never an extra
+  host window, wallpaper, or desktop furniture floating alongside the app.
+  The OS/SDL event loop is process-level, so it survives any single window
+  closing; the app windows are the only real surfaces. The only subtlety is
+  the *primary* surface (where the loop began): to avoid a lingering blank
+  surface when that window closes while peers remain, no surface renders host
+  chrome, so "primary" is purely internal - the Shell extraction (Path B)
+  makes this exact.
 - **Protocol-driven.** Solo is declared over the wire (see below); it is not
   an in-process-only mode. Per the standing rule, the same declaration works
   in-process and remote.
@@ -63,7 +80,9 @@ hello version=1 app="My App" solo
 - The display records it on the connection. When that connection adopts a
   top-level window marked `main` (the `main` window property), the display
   puts its desktop into solo mode bound to that window.
-- The root connection's disconnect quits the host (all spawned surfaces die).
+- Additional windows may come from the same connection or from new
+  connections; all are peers. The host quits when the *last* app window
+  closes - disconnecting one app never affects the others.
 
 ## Two implementation paths
 
@@ -72,26 +91,35 @@ hello version=1 app="My App" solo
   window is maximized to the full surface and non-tearable; its menu/status
   render as the (Psi-less) bar. Reuses the event loop, window manager,
   timers and cursor wiring already in place. A now-invisible Desktop still
-  sits underneath - hidden, not replaced - which is acceptable for now.
+  sits underneath - hidden, not replaced - which is acceptable for now. Its
+  one rough edge is the peer lifecycle: if the primary window closes while
+  peer windows remain, the stripped Desktop must not leave a blank primary
+  surface behind (promote a peer, or keep the loop alive with nothing on the
+  primary until the last peer closes). Path B removes this wrinkle.
 - **Path B - extract a `Shell` host (later).** Factor the platform services
   both `Desktop` and `TearOffHost` consume (surface/backend, event loop,
   timer system, `CursorController`, clipboard, global pointer) into one host
-  type. Then a window+chrome runs directly on a `Shell` as root with no
-  Desktop. Torn window = "a Shell hosting one window on a secondary
-  surface"; solo app = "... on the primary surface"; Desktop = "a Shell that
-  also has wallpaper/dock/WM/multiple apps." This makes "the app replaces the
-  desktop" literally true. Build A first and let it reveal exactly which
-  services B must extract.
+  type that paints no chrome of its own. Then window+chrome surfaces run
+  directly on a `Shell` as peers with no Desktop. Torn window = "a Shell
+  hosting one window on a secondary surface"; solo app = "... on the primary
+  surface"; Desktop = "a Shell that also has wallpaper/dock/WM/multiple
+  apps." Because the Shell renders nothing itself, every surface is an app
+  window, "primary" is purely internal, and the loop simply runs until the
+  last surface closes - genuine peers with no host window. Build A first and
+  let it reveal exactly which services B must extract.
 
 ## Milestones
 
 1. **Solo handshake + solo desktop mode (Path A).** `solo` in the handshake;
-   `client.DialSolo`; the display flips its desktop into solo mode when the
-   root app's `main` window is adopted: suppress Psi/dock/wallpaper, maximize
-   and de-tear the main window, quit on root disconnect. Headless test:
-   connect solo, assert no Psi menu, main window maximized and non-tearable,
-   host quits when the root connection closes.
-2. **Additional windows as solo surfaces.** A solo app's non-main windows get
+   `client.DialSolo`; the display flips its desktop into solo mode when a
+   solo app's `main` window is adopted: suppress Psi/dock/wallpaper, maximize
+   and de-tear the main window. Quit when the *last* app window closes (not
+   the first). Headless test: connect solo, assert no Psi menu, main window
+   maximized and non-tearable, and that the host stays alive while any window
+   remains and quits only when the last closes.
+2. **Additional windows as peer surfaces.** A solo app's non-main windows get
    their own surfaces (reuse the tear-off host path) or an MDI pane, per the
-   app.
-3. **Shell extraction (Path B).** Unify torn / solo / desktop under one host.
+   app - all genuine peers. Settle the "primary window closes while peers
+   remain" case so no blank host surface is left behind.
+3. **Shell extraction (Path B).** Unify torn / solo / desktop under one
+   chrome-less host, making genuine peers with no host window exact.
