@@ -149,7 +149,15 @@ func createProtocolWindow(application *app.Application, desktop *trinkets.Deskto
 		return nil
 	}
 	w := window.NewWindow("Protocol Demo")
-	w.SetBounds(core.UnitRect{X: 8 * 8, Y: 16 * 4, Width: 8 * 56, Height: 16 * 16})
+	// Denomination-aware bounds: position is in the desktop's (the
+	// container's) cell units, and the size is in the window's own units
+	// (it inherits the desktop's), so both track font_size instead of
+	// the historical 8x16.
+	dm := desktop.EffectiveCellMetrics()
+	w.SetBounds(core.UnitRect{
+		X: dm.CellWidth * 8, Y: dm.CellHeight * 4,
+		Width: dm.CellWidth * 56, Height: dm.CellHeight * 16,
+	})
 	w.SetContent(rootTrinket)
 	return w
 }
@@ -337,11 +345,14 @@ sb=new statusbar children={new section children={new span text="Secondary Applic
 	// Create window for this application
 	w := window.NewWindow(fmt.Sprintf("App %d Window", appNum))
 	offset := (appNum - 1) % 5
+	// Position in the desktop's cell units, size in the window's own
+	// (inherited) cell units, so both scale with font_size.
+	dm := desktop.EffectiveCellMetrics()
 	w.SetBounds(core.UnitRect{
-		X:      core.Unit((offset*3 + 5) * 8),
-		Y:      core.Unit((offset*2 + 3) * 16),
-		Width:  core.Unit(60 * 8),
-		Height: core.Unit(20 * 16),
+		X:      dm.CellWidth * core.Unit(offset*3+5),
+		Y:      dm.CellHeight * core.Unit(offset*2+3),
+		Width:  dm.CellWidth * 60,
+		Height: dm.CellHeight * 20,
 	})
 
 	// Create a vertical splitter to divide the window
@@ -463,7 +474,9 @@ func buildStatusSections(script string) []trinkets.StatusSection {
 	if err != nil {
 		panic(fmt.Sprintf("statusbar script: %v", err))
 	}
-	bar := factory.byID[reply.IDs["sb"]].(interface{ Sections() []trinkets.StatusSection })
+	bar := factory.byID[reply.IDs["sb"]].(interface {
+		Sections() []trinkets.StatusSection
+	})
 	return bar.Sections()
 }
 
