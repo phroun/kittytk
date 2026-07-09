@@ -24,6 +24,9 @@ func TestResizeCursorForEdge(t *testing.T) {
 		{ResizeEdgeBottom, core.CursorResizeV},
 		{ResizeEdgeLeft | ResizeEdgeBottom, core.CursorResizeNESW},
 		{ResizeEdgeRight | ResizeEdgeBottom, core.CursorResizeNWSE},
+		{ResizeEdgeTop, core.CursorResizeV},
+		{ResizeEdgeLeft | ResizeEdgeTop, core.CursorResizeNWSE},
+		{ResizeEdgeRight | ResizeEdgeTop, core.CursorResizeNESW},
 	}
 	for _, c := range cases {
 		if got := resizeCursorForEdge(c.edge); got != c.want {
@@ -81,6 +84,9 @@ func TestTornCursorForEdge(t *testing.T) {
 		{resizeBottom, core.CursorResizeV},
 		{resizeLeft | resizeBottom, core.CursorResizeNESW},
 		{resizeRight | resizeBottom, core.CursorResizeNWSE},
+		{resizeTop, core.CursorResizeV},
+		{resizeLeft | resizeTop, core.CursorResizeNWSE},
+		{resizeRight | resizeTop, core.CursorResizeNESW},
 	}
 	for _, c := range cases {
 		if got := tornCursorForEdge(c.edges); got != c.want {
@@ -105,6 +111,20 @@ func TestTornEdgeRects(t *testing.T) {
 	}
 	if got[1] != wantBottom {
 		t.Errorf("bottom band = %v, want %v", got[1], wantBottom)
+	}
+
+	// Top-left corner -> left band + top band.
+	got = tornEdgeRects(b, resizeLeft|resizeTop, g)
+	if len(got) != 2 {
+		t.Fatalf("top corner: want 2 rects, got %d", len(got))
+	}
+	wantLeft := core.UnitRect{Width: g, Height: 120}
+	wantTop := core.UnitRect{Width: 200, Height: g}
+	if got[0] != wantLeft {
+		t.Errorf("left band = %v, want %v", got[0], wantLeft)
+	}
+	if got[1] != wantTop {
+		t.Errorf("top band = %v, want %v", got[1], wantTop)
 	}
 }
 

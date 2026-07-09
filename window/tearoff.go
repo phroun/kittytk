@@ -108,11 +108,13 @@ type TearOffHost struct {
 }
 
 // Resize edge bits. The top edge is the title bar (drag handle), so
-// only left/right/bottom resize - matching the in-surface manager.
+// left/right/bottom/top resize - matching the in-surface manager. Top
+// is grabbable because a torn window is always on a pixel surface.
 const (
 	resizeLeft = 1 << iota
 	resizeRight
 	resizeBottom
+	resizeTop
 )
 
 // tearResizeGrip is the edge thickness (units) that starts a resize.
@@ -241,9 +243,6 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 	if h.win.Flags()&WindowFlagNoResize != 0 || h.zoomed {
 		return 0
 	}
-	if y < core.DefaultCellMetrics().CellHeight {
-		return 0
-	}
 	b := h.win.Bounds()
 	edges := 0
 	if x < h.resizeGrip {
@@ -252,8 +251,13 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 	if x >= b.Width-h.resizeGrip {
 		edges |= resizeRight
 	}
-	if y >= b.Height-h.resizeGrip {
+	if y < h.resizeGrip {
+		edges |= resizeTop
+	} else if y >= b.Height-h.resizeGrip {
 		edges |= resizeBottom
+	} else if y < core.DefaultCellMetrics().CellHeight {
+		// Title row below the top grip: drag, not resize.
+		return 0
 	}
 	return edges
 }
@@ -263,15 +267,16 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 func tornCursorForEdge(edges int) core.CursorShape {
 	left := edges&resizeLeft != 0
 	right := edges&resizeRight != 0
+	top := edges&resizeTop != 0
 	bottom := edges&resizeBottom != 0
 	switch {
-	case left && bottom:
-		return core.CursorResizeNESW
-	case right && bottom:
-		return core.CursorResizeNWSE
+	case (left && top) || (right && bottom):
+		return core.CursorResizeNWSE // top-left / bottom-right diagonal
+	case (right && top) || (left && bottom):
+		return core.CursorResizeNESW // top-right / bottom-left diagonal
 	case left || right:
 		return core.CursorResizeH
-	case bottom:
+	case top || bottom:
 		return core.CursorResizeV
 	default:
 		return core.CursorDefault
@@ -291,6 +296,9 @@ func tornEdgeRects(b core.UnitRect, edges int, grip core.Unit) []core.UnitRect {
 	}
 	if edges&resizeBottom != 0 {
 		rects = append(rects, core.UnitRect{Y: b.Height - grip, Width: b.Width, Height: grip})
+	}
+	if edges&resizeTop != 0 {
+		rects = append(rects, core.UnitRect{Width: b.Width, Height: grip})
 	}
 	return rects
 }
@@ -664,18 +672,8 @@ func (h *TearOffHost) beginResize(x, y core.Unit) bool {
 		h.win.Flags()&WindowFlagNoResize != 0 {
 		return false
 	}
-	b := h.win.Bounds()
-	edges := 0
-	if x < h.resizeGrip {
-		edges |= resizeLeft
-	}
-	if x >= b.Width-h.resizeGrip {
-		edges |= resizeRight
-	}
-	if y >= b.Height-h.resizeGrip {
-		edges |= resizeBottom
-	}
-	if edges == 0 || y < core.DefaultCellMetrics().CellHeight {
+	edges := h.edgeAt(x, y)
+	if edges == 0 {
 		// Interior press, or within the title row (drag, not resize).
 		return false
 	}
@@ -720,7 +718,15 @@ func (h *TearOffHost) resizeMove() bool {
 			ht = minH
 		}
 	}
-	if h.resizeEdges&resizeLeft != 0 {
+	if h.resizeEdges&resizeTop != 0 {
+		ht -= dy
+		if ht < minH {
+			dy -= minH - ht
+			ht = minH
+		}
+		y += dy
+	}
+	if h.resizeEdges&(resizeLeft|resizeTop) != 0 {
 		h.native.SetScreenPositionPx(x, y)
 	}
 	h.native.SetScreenSizePx(w, ht)

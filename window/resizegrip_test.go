@@ -55,6 +55,60 @@ func TestResizeGripNarrowsBottomBand(t *testing.T) {
 	}
 }
 
+// On graphical frames the top edge is grabbable: pressing within the top
+// grip and dragging up grows the window and moves its top edge up, mirroring
+// the bottom edge. (The TUI reserves the top row for title dragging.)
+func TestTopGripResizesGraphical(t *testing.T) {
+	m, win := newPositioningManager(true)
+	m.SetResizeGrip(2)
+
+	// 1 unit below the top edge (y=81 of 80..240): within the grip.
+	// Drag up 13 units.
+	m.HandleMousePress(core.MousePressEvent{X: 200, Y: 81, Button: core.LeftButton})
+	m.HandleMouseMove(core.MouseMoveEvent{X: 200, Y: 68})
+	m.HandleMouseRelease(core.MouseReleaseEvent{X: 200, Y: 68, Button: core.LeftButton})
+
+	b := win.Bounds()
+	if b.Y != 67 || b.Height != 173 {
+		t.Errorf("top grip resize: got Y=%d Height=%d, want Y=67 Height=173", b.Y, b.Height)
+	}
+}
+
+// The top corner grabs both edges: dragging the top-left corner up-and-left
+// moves X and Y and grows both dimensions.
+func TestTopLeftCornerResizesGraphical(t *testing.T) {
+	m, win := newPositioningManager(true)
+	m.SetResizeGrip(2)
+
+	// Top-left corner (x=81 of 80..400, y=81 of 80..240): within both grips.
+	m.HandleMousePress(core.MousePressEvent{X: 81, Y: 81, Button: core.LeftButton})
+	m.HandleMouseMove(core.MouseMoveEvent{X: 71, Y: 68})
+	m.HandleMouseRelease(core.MouseReleaseEvent{X: 71, Y: 68, Button: core.LeftButton})
+
+	b := win.Bounds()
+	// dx=-10 -> X=70 Width=330; dy=-13 -> Y=67 Height=173.
+	if b.X != 70 || b.Width != 330 || b.Y != 67 || b.Height != 173 {
+		t.Errorf("top-left corner resize: got %v, want X=70 W=330 Y=67 H=173", b)
+	}
+}
+
+// On cell frames (zero grip) the top row stays a title-drag zone: pressing
+// there moves the window, it does not resize the top edge.
+func TestTopEdgeIsTitleDragOnCellFrames(t *testing.T) {
+	m, win := newPositioningManager(false)
+
+	orig := win.Bounds()
+	// Press in the top row (y=88, within the first cell row) and drag up.
+	m.HandleMousePress(core.MousePressEvent{X: 200, Y: 88, Button: core.LeftButton})
+	m.HandleMouseMove(core.MouseMoveEvent{X: 200, Y: 72})
+	m.HandleMouseRelease(core.MouseReleaseEvent{X: 200, Y: 72, Button: core.LeftButton})
+
+	b := win.Bounds()
+	if b.Height != orig.Height {
+		t.Errorf("cell-frame top row resized (height %d -> %d); it should drag-move", orig.Height, b.Height)
+	}
+}
+
 // Zero grip preserves the classic cell-frame zones untouched.
 func TestZeroGripKeepsCellZones(t *testing.T) {
 	m, win := newPositioningManager(false)

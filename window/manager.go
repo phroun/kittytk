@@ -257,6 +257,11 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	// Check if at bottom edge
 	atBottom := y >= bounds.Y+bounds.Height-bottomBand && y < bounds.Y+bounds.Height
 
+	// Top edge is grabbable only on graphical frames (grip > 0). In the
+	// TUI the whole top row is the titlebar for dragging - there is no
+	// pointer resolution to spare a sliver - so the top stays drag-only.
+	atTop := grip > 0 && y >= bounds.Y && y < bounds.Y+grip
+
 	// Check horizontal edges (left/right)
 	if x >= bounds.X && x < bounds.X+edgeThreshold {
 		edge |= ResizeEdgeLeft
@@ -275,8 +280,17 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 		}
 	}
 
-	// Only return resize edge if we're on a side or bottom edge
-	// (top edge is the titlebar for dragging)
+	// Check top edge (graphical only) - a thin sliver above the titlebar,
+	// with widened corners like the bottom.
+	if atTop {
+		edge |= ResizeEdgeTop
+		if x >= bounds.X && x < bounds.X+cornerThreshold {
+			edge |= ResizeEdgeLeft
+		} else if x >= bounds.X+bounds.Width-cornerThreshold && x < bounds.X+bounds.Width {
+			edge |= ResizeEdgeRight
+		}
+	}
+
 	return edge
 }
 
@@ -303,6 +317,11 @@ func (m *WindowManager) resizeEdgeRects(win *Window, edge int) []core.UnitRect {
 	}
 	if edge&ResizeEdgeRight != 0 {
 		rects = append(rects, core.UnitRect{X: b.Width - edgeThreshold, Width: edgeThreshold, Height: b.Height})
+	}
+	if edge&ResizeEdgeTop != 0 {
+		// The top band is grip-thick (top resize is graphical-only, where
+		// bottomBand == grip).
+		rects = append(rects, core.UnitRect{Width: b.Width, Height: bottomBand})
 	}
 	if edge&ResizeEdgeBottom != 0 {
 		rects = append(rects, core.UnitRect{Y: b.Height - bottomBand, Width: b.Width, Height: bottomBand})
@@ -373,15 +392,16 @@ func (m *WindowManager) topWindowAt(x, y core.Unit) *Window {
 func resizeCursorForEdge(edge int) core.CursorShape {
 	left := edge&ResizeEdgeLeft != 0
 	right := edge&ResizeEdgeRight != 0
-	bottom := edge&(ResizeEdgeBottom|ResizeEdgeTop) != 0
+	top := edge&ResizeEdgeTop != 0
+	bottom := edge&ResizeEdgeBottom != 0
 	switch {
-	case (left && bottom):
-		return core.CursorResizeNESW // bottom-left / top-right diagonal
-	case (right && bottom):
-		return core.CursorResizeNWSE // bottom-right / top-left diagonal
+	case (left && top) || (right && bottom):
+		return core.CursorResizeNWSE // top-left / bottom-right diagonal
+	case (right && top) || (left && bottom):
+		return core.CursorResizeNESW // top-right / bottom-left diagonal
 	case left || right:
 		return core.CursorResizeH
-	case bottom:
+	case top || bottom:
 		return core.CursorResizeV
 	default:
 		return core.CursorDefault
