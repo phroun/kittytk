@@ -41,6 +41,15 @@ func currentTextMeasurer() TextMeasurer {
 	return textMeasurer
 }
 
+// HasTextMeasurer reports whether a graphical render target has installed
+// a text measurer - i.e. the process renders on a pixel backend where
+// MeasureText/LineHeight answer with real font metrics rather than
+// text-mode cell arithmetic. It is the process-wide graphical/text-mode
+// signal (one render target per process).
+func HasTextMeasurer() bool {
+	return currentTextMeasurer() != nil
+}
+
 // FontStyle represents text styling attributes that can be combined.
 type FontStyle uint16
 

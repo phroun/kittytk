@@ -23,10 +23,10 @@ type PurfecTerm struct {
 	cols, rows int
 
 	// termFont sets the terminal's own font (graphical mode): the
-	// cell grid derives from ITS metrics, independent of the
-	// toolkit's cell denomination. nil = the monospace default at
-	// the toolkit grid (Monday 12 = 8x16 units). Text mode ignores
-	// the size (cells are cells).
+	// cell grid derives from ITS measured metrics (advance width and
+	// line height at its point size), independent of the toolkit's
+	// cell denomination. nil = the monospace default (defaultTermFont).
+	// Text mode ignores the size (cells are cells).
 	termFont *core.Font
 
 	// Track which mouse button is currently held for drag events
@@ -156,14 +156,63 @@ func (t *PurfecTerm) SetTerminalFont(f *core.Font) {
 	t.Update()
 }
 
-// cellDims returns the terminal's cell size in units. With a custom
-// terminal font it comes from that font's measurement (which the
-// render target answers - G1); otherwise from the inherited cell
-// metrics. Identical by construction for the default font.
-func (t *PurfecTerm) cellDims() (cw, ch core.Unit) {
+// TerminalFont returns the terminal's effective font (the app-chosen one
+// or the monospace default).
+func (t *PurfecTerm) TerminalFont() *core.Font { return t.effTermFont() }
+
+// SetTerminalFontSize sets the terminal font's point size, keeping the
+// current family (or the monospace default). On graphical targets the
+// cell grid re-derives from the font at the new size. Values <= 0 are
+// ignored.
+func (t *PurfecTerm) SetTerminalFontSize(pt int) {
+	if pt <= 0 {
+		return
+	}
+	f := *t.effTermFont()
+	f.Size = pt
+	t.SetTerminalFont(&f)
+}
+
+// SetTerminalFontFamily sets the terminal font family, keeping the
+// current point size (or the default). An empty name is ignored.
+func (t *PurfecTerm) SetTerminalFontFamily(name string) {
+	if name == "" {
+		return
+	}
+	f := *t.effTermFont()
+	f.Name = name
+	t.SetTerminalFont(&f)
+}
+
+// defaultTermFont is the monospace font used when no terminal font has
+// been set. Its family MUST match the default render family in
+// cellTextImage so the measured cell grid equals the rasterized glyphs.
+var defaultTermFont = core.Font{Name: "Monday", Size: 12}
+
+// effTermFont is the terminal's effective font: the app-chosen one, or
+// the monospace default.
+func (t *PurfecTerm) effTermFont() *core.Font {
 	if t.termFont != nil {
-		cw = t.termFont.MeasureText("M")
-		ch = t.termFont.LineHeight()
+		return t.termFont
+	}
+	f := defaultTermFont
+	return &f
+}
+
+// cellDims returns the terminal's cell size in units.
+//
+// On graphical targets the grid must follow the real font: the cell is
+// the effective terminal font's measured advance width and line height
+// at its point size (answered by the render target - G1), so glyphs and
+// the grid share one pitch. On the text-based system a cell is a
+// character cell, so the inherited denomination (which a container may
+// override) governs - and there MeasureText answers in cell units
+// anyway, keeping the two paths identical for the default font.
+func (t *PurfecTerm) cellDims() (cw, ch core.Unit) {
+	if core.HasTextMeasurer() {
+		f := t.effTermFont()
+		cw = f.MeasureText("M")
+		ch = f.LineHeight()
 		if cw > 0 && ch > 0 {
 			return cw, ch
 		}

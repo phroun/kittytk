@@ -52,6 +52,25 @@ func init() {
 				}
 				return nil
 			}),
+			// font / font-size pick the monospace face and point size the
+			// terminal's cell grid derives from on graphical targets. Text
+			// mode ignores them (cells are cells).
+			"font": wprop("font", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("font", v, f)
+				if err != nil {
+					return err
+				}
+				t.SetTerminalFontFamily(s)
+				return nil
+			}),
+			"font_size": wprop("font_size", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
+				pt, err := protocol.AsInt("font_size", v, f)
+				if err != nil {
+					return err
+				}
+				t.SetTerminalFontSize(pt)
+				return nil
+			}),
 		},
 		nil,
 		nil,

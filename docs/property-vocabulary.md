@@ -254,6 +254,8 @@ Events: `change selected=`.
 |---|---|---|
 | `feed` | string (stream) | **Pseudo-property**: every application APPENDS bytes to the terminal **display** — parsed into the screen buffer as if program output (`Terminal.Feed`, NOT `Write`, which is keyboard input to the child PTY). A channel, not state; never read back. Arbitrary bytes travel via the `\xNN` string escape (+ `\e` for ESC), so `set term feed="\e[1mhi\r\n"` works today; the O6 bulk frame arrives with transport as a more efficient encoding of the same statement. |
 | `shell` | flag | In-process convenience: starts the trinket's own local shell. Under the display-protocol split the PTY belongs to the APP, which pumps bytes through `feed=`. |
+| `font` | string | Monospace family the cell grid derives from on graphical targets (default `Monday`). Text mode ignores it (cells are cells). |
+| `font_size` | int (points) | Point size the cell grid derives from on graphical targets: the cell is the font's measured advance width × line height at this size, so glyphs and grid share one pitch (default 12). |
 | `columns`, `rows` | numeric | (future — currently bounds-driven) |
 
 Input direction (user keystrokes → app as `data` events) joins the

@@ -78,13 +78,18 @@ func TestGfxCursorInactiveHollowBox(t *testing.T) {
 	scheme := purfecterm.DefaultColorScheme()
 	cursor := pcRGBA(scheme.Cursor)
 
-	// Unfocused: hollow box at the cursor cell.
+	// Unfocused: hollow box at the cursor cell. Coordinates come from the
+	// measured cell pitch (scale=1) so the test tracks the font grid.
 	win.SetActive(false)
 	paintTerm(b, term)
 	img := b.Image()
-	// Cursor cell (col 2, row 1 of terminal at offset y=16): x 16..24, y 32..48.
-	edge := img.RGBAAt(16, 16+16+8)   // left edge, mid-height
-	center := img.RGBAAt(20, 16+16+8) // center
+	cw, ch := term.cellDims()
+	col, row := 2, 1
+	cellLeft := col * int(cw)
+	cellMidX := cellLeft + int(cw)/2
+	cellMidY := 16 + row*int(ch) + int(ch)/2 // +16 = paint offset below titlebar
+	edge := img.RGBAAt(cellLeft, cellMidY)   // left edge, mid-height
+	center := img.RGBAAt(cellMidX, cellMidY) // center
 	if edge != cursor {
 		t.Errorf("unfocused cursor: left edge = %v, want hollow outline %v", edge, cursor)
 	}
@@ -99,7 +104,7 @@ func TestGfxCursorInactiveHollowBox(t *testing.T) {
 		t.Skip("focus plumbing unavailable in harness")
 	}
 	paintTerm(b, term)
-	center = b.Image().RGBAAt(20, 16+16+8)
+	center = b.Image().RGBAAt(cellMidX, cellMidY)
 	fgDefault := pcRGBA(scheme.Foreground(buf.IsDarkTheme()))
 	if center != fgDefault {
 		t.Errorf("focused block cursor: center = %v, want swapped fg %v", center, fgDefault)

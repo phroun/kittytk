@@ -7,6 +7,7 @@ import (
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/raster"
 	"github.com/phroun/kittytk/style"
 )
 
@@ -438,6 +439,40 @@ func TestTerminalFeedOverWire(t *testing.T) {
 	}
 	if got := string(row0); !strings.Contains(got, "wire bytes") {
 		t.Errorf("display row 0 = %q, want it to contain \"wire bytes\"", got)
+	}
+}
+
+// font / font_size over the wire pick the terminal's monospace face and
+// point size; on a graphical target the cell grid re-derives from them.
+func TestTerminalFontOverWire(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	rb, err := raster.New(640, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(rb) // graphical: grid follows the font
+
+	session := protocol.NewSession()
+	f := &captureFactory{inner: protocol.NewRegistryFactory(&protocol.BindContext{})}
+	script, _ := protocol.Parse(`term=new terminal`)
+	if _, err := session.Execute(script, f); err != nil {
+		t.Fatal(err)
+	}
+	term := f.targets[0].(*PurfecTerm)
+	term.SetBounds(core.UnitRect{Width: 320, Height: 160})
+
+	smallCW, smallCH := term.cellDims()
+
+	set, _ := protocol.Parse(`set term font_size=24`)
+	if _, err := session.Execute(set, f); err != nil {
+		t.Fatalf("font_size: %v", err)
+	}
+	if term.TerminalFont().Size != 24 {
+		t.Errorf("font_size not applied: %d", term.TerminalFont().Size)
+	}
+	bigCW, bigCH := term.cellDims()
+	if bigCW <= smallCW || bigCH <= smallCH {
+		t.Errorf("font_size=24 cell %dx%d should exceed default %dx%d", bigCW, bigCH, smallCW, smallCH)
 	}
 }
 
