@@ -109,7 +109,22 @@ static void open_terminal_window(void *ud) {
 }
 
 static void open_secondary(App *a);
-static void on_new_window(void *ud) { open_secondary(((AppCtx *)ud)->a); }
+
+/* open_secondary dials a NEW connection and blocks on its handshake
+ * (including the host's approval prompt) and build. That must NOT run on
+ * the event-dispatch thread - blocking there wedges all further event
+ * delivery for this connection (checkboxes, menus stop responding). Run
+ * it on its own detached thread. */
+static void *secondary_thread(void *ud) {
+    open_secondary((App *)ud);
+    return NULL;
+}
+static void on_new_window(void *ud) {
+    App *a = ((AppCtx *)ud)->a;
+    pthread_t th;
+    if (pthread_create(&th, NULL, secondary_thread, a) == 0)
+        pthread_detach(th);
+}
 
 /* MDI events */
 static void on_mdi_active(const kt_event *ev, void *ud) {

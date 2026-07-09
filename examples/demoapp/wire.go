@@ -84,7 +84,12 @@ func (a *app) wireMenus() {
 	c.OnCommand("demo.view.speak", func() { _, _ = c.Exec("announce_speak") })
 
 	// Window menu: New Window is a whole new application (connection).
-	c.OnCommand("demo.window.new", func() { openSecondary(a.path) })
+	// Dial it on its own goroutine: openSecondary blocks on a fresh
+	// handshake (including the host's approval prompt) and build, and the
+	// command handler runs on the connection's single event-delivery
+	// goroutine - blocking here would starve all further events for this
+	// connection until it returns.
+	c.OnCommand("demo.window.new", func() { go openSecondary(a.path) })
 	c.OnCommand("demo.window.tile", func() { _, _ = c.Exec("tile") })
 	c.OnCommand("demo.window.cascade", func() { _, _ = c.Exec("cascade") })
 
