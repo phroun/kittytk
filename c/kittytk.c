@@ -701,12 +701,22 @@ static int do_exec(kt_conn *c, const char *src, kt_ui *out_ids) {
     c->reply_ready = 0;
     kt_mutex_unlock(&c->rmu);
 
-    if (conn_write_all(c, src, strlen(src)) < 0 || conn_write_all(c, "\nend\n", 5) < 0) {
+    /* One write: src + the D22 terminator as a single buffer, so the
+     * batch and its `end` can never be split across records (a lost or
+     * reordered terminator would leave the host's readBatch waiting
+     * forever). */
+    size_t srclen = strlen(src);
+    kt_buf wb = {0};
+    for (size_t i = 0; i < srclen; i++) buf_put(&wb, src[i]);
+    buf_puts(&wb, "\nend\n");
+    int werr = conn_write_all(c, wb.p, wb.len) < 0;
+    free(wb.p);
+    if (werr) {
         KTDBG("exec: write failed");
         kt_mutex_unlock(&c->write_mu);
         return -1;
     }
-    KTDBG("exec: batch sent (%zu bytes), awaiting reply", strlen(src) + 5);
+    KTDBG("exec: batch sent (%zu bytes), awaiting reply", srclen + 5);
 
     kt_mutex_lock(&c->rmu);
     while (!c->reply_ready) kt_cond_wait(&c->rcv, &c->rmu);
