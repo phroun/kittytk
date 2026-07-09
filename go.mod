@@ -6,7 +6,7 @@ require (
 	github.com/go-text/render v0.2.1
 	github.com/go-text/typesetting v0.3.4
 	github.com/phroun/direct-key-handler v0.3.3
-	github.com/phroun/purfecterm v0.2.19
+	github.com/phroun/purfecterm v0.2.22
 	github.com/veandco/go-sdl2 v0.4.40
 	golang.org/x/image v0.43.0
 	golang.org/x/term v0.40.0
