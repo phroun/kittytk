@@ -23,7 +23,8 @@ import (
 type Platform struct {
 	title    string
 	wPx, hPx int
-	scale    int // pixels per unit; see SetScale
+	scale    int              // pixels per unit; see SetScale
+	metrics  core.CellMetrics // root cell denomination for every surface (0 = raster default 8x16)
 
 	mu     sync.Mutex
 	posts  []func()
@@ -83,6 +84,23 @@ func (p *Platform) SetScale(scale int) {
 	p.scale = scale
 }
 
+// SetCellMetrics sets the root cell denomination applied to EVERY
+// surface's backend - the main window (including after a resize, which
+// recreates the framebuffer) and every torn-off/secondary window - so
+// font_size-derived chrome sizing survives across all of them. Call
+// before EnsureBackend/Run. A zero value keeps the raster default 8x16.
+func (p *Platform) SetCellMetrics(m core.CellMetrics) {
+	p.metrics = m
+}
+
+// applyMetrics re-seeds a freshly created backend with the platform's
+// denomination so its cell primitive (DrawCell) matches font_size.
+func (p *Platform) applyMetrics(b *raster.Backend) {
+	if p.metrics.CellWidth > 0 && p.metrics.CellHeight > 0 {
+		b.SetCellMetrics(p.metrics)
+	}
+}
+
 // Backend returns the main window's raster backend (valid after Run
 // starts; used by embedders that must seed desktop metrics before
 // RunOn).
@@ -96,6 +114,7 @@ func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 		if err != nil {
 			return nil, err
 		}
+		p.applyMetrics(b)
 		p.backend = b
 	}
 	return p.backend, nil
@@ -235,6 +254,7 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 	if err != nil {
 		return err
 	}
+	p.applyMetrics(b)
 	w.backend = b
 	if w == p.main || p.main == nil {
 		p.backend = b

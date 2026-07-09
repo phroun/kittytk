@@ -62,6 +62,23 @@ func TestMenuDropdownInheritsFontSize(t *testing.T) {
 	}
 }
 
+// The menubar clock renders at 80% of the UI font size on a graphical
+// surface, so it scales with font_size instead of a fixed ~10pt.
+func TestMenuBarClockScalesWithFontSize(t *testing.T) {
+	for _, size := range []int{12, 18, 24} {
+		mb := NewMenuBar()
+		mb.graphicalCached = true // pretend last paint was on a pixel surface
+		mb.SetFont(&core.Font{Name: "ui-text", Size: size})
+		f := mb.dateTimeFont()
+		if f == nil {
+			t.Fatalf("size %d: clock font nil on graphical surface", size)
+		}
+		if want := (size*8 + 5) / 10; f.Size != want {
+			t.Errorf("size %d: clock font = %dpt, want %dpt (80%%)", size, f.Size, want)
+		}
+	}
+}
+
 // PNG proof: the same dropdown rendered at 12pt and 18pt. The 18pt
 // dropdown is physically taller (its rows track the enlarged cell), so
 // it covers more painted pixels below the bar.

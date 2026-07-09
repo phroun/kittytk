@@ -33,18 +33,21 @@ func main() {
 
 	plat := sdlplat.New(cfg.Title, cfg.Width, cfg.Height)
 	plat.SetScale(cfg.Scale) // pixels per unit (DPI/zoom density)
-	backend, err := plat.EnsureBackend()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 
 	// font_size sizes the desktop's cell grid to the chosen UI point
 	// size: the root cell becomes one line box tall and one advance
 	// wide, and the base font renders at that size so text fills its
 	// cells. scale (above) is the separate pixel-density multiplier.
 	// At the default 12pt this reproduces the historical 8x16 grid.
-	backend.SetCellMetrics(raster.CellMetricsForFontSize(cfg.FontSize))
+	// Setting it on the platform (not just the first backend) keeps it
+	// across resizes and on every torn-off/secondary surface.
+	plat.SetCellMetrics(raster.CellMetricsForFontSize(cfg.FontSize))
+
+	backend, err := plat.EnsureBackend()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font

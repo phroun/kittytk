@@ -1657,15 +1657,20 @@ func (m *MenuBar) SetHideCalendar(hide bool) {
 const dateTimeFormat = " Mon Jan 02 15:04 "
 
 // dateTimeFont returns the face the clock renders in on graphical
-// surfaces: a monospace family at 80% of the standard size, which reads
-// as a compact clock and frees horizontal space for the menus. Returns
-// nil on text surfaces, where the clock stays one cell per character.
+// surfaces: a monospace family at 80% of the UI font size, which reads
+// as a compact clock and frees horizontal space for the menus, and
+// scales with font_size. Returns nil on text surfaces, where the clock
+// stays one cell per character.
 func (m *MenuBar) dateTimeFont() *core.Font {
 	if !m.graphicalCached {
 		return nil
 	}
-	f := *core.FontMonday12                      // monospace, deliberately not the UI face
-	f.Size = (core.FontMonday12.Size*8 + 5) / 10 // ~80%, rounded
+	base := core.FontMonday12.Size
+	if ef := m.EffectiveFont(); ef != nil && ef.Size > 0 {
+		base = ef.Size // the desktop's font_size
+	}
+	f := *core.FontMonday12    // monospace, deliberately not the UI face
+	f.Size = (base*8 + 5) / 10 // ~80% of the UI font size, rounded
 	return &f
 }
 
