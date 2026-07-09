@@ -1054,7 +1054,14 @@ func MapTrinketToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoi
 		// in the outer currency its bounds live in. (Windows exchange
 		// in the parent branch below, where the client-area offset must
 		// be added in the outer currency - skip them here.)
-		if _, isWin := current.(*Window); !isWin {
+		//
+		// The ROOT (a container with no parent - the desktop, or a torn
+		// host) is skipped: its denomination IS the screen currency, so
+		// its coordinates are final. Exchanging there would rescale every
+		// mapped point by root/DefaultCellMetrics - which is exactly what
+		// broke once the desktop's own denomination stopped being 8x16
+		// (font_size), sending popups to the wrong place.
+		if _, isWin := current.(*Window); !isWin && current.Parent() != nil {
 			if mp, ok := current.(core.CellMetricsProvider); ok {
 				if ov := mp.CellMetricsOverride(); ov != nil {
 					outer := core.ParentCellMetrics(current)
