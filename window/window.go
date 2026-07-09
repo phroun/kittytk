@@ -763,7 +763,7 @@ func (w *Window) chromeHeights() (menuTop, statusBottom core.Unit) {
 	if !detached {
 		return 0, 0
 	}
-	metrics := core.DefaultCellMetrics()
+	metrics := w.frameCellMetrics()
 	if mb != nil && mbVis {
 		menuTop = metrics.CellHeight
 	}
@@ -994,12 +994,26 @@ func (w *Window) SchemeBackgroundColor() *style.Color {
 	return &bgColor
 }
 
+// frameCellMetrics is the denomination the window's chrome (title bar,
+// borders, buttons) is drawn and hit-tested in. The frame paints with
+// the surface/container metrics (Painter.Metrics), and the window's
+// bounds live in the container's coordinate space - NOT the window's own
+// content denomination - so a per-window denomination override must not
+// change chrome geometry (layout stays invariant under re-denomination).
+// Falls back to the default when the window has no container yet.
+func (w *Window) frameCellMetrics() core.CellMetrics {
+	if p := w.Parent(); p != nil {
+		return core.FindEffectiveCellMetrics(p)
+	}
+	return core.DefaultCellMetrics()
+}
+
 // contentBounds returns the bounds for the content area. When the window
 // is detached and carries its own chrome, the menu bar (top) and status
 // bar (bottom) rows are reserved out of it (see reserveChrome).
 func (w *Window) contentBounds() core.UnitRect {
 	bounds := w.Bounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := w.frameCellMetrics()
 
 	w.mu.RLock()
 	state := w.state
@@ -1075,7 +1089,7 @@ func (w *Window) ClientAreaOffset() core.UnitPoint {
 func (w *Window) ClientArea() core.UnitRect {
 	b := w.Bounds()
 	mbr := w.menuBarRect()
-	top := core.DefaultCellMetrics().CellHeight
+	top := w.frameCellMetrics().CellHeight
 	// Bottom edge of the surface in menu-bar-local coordinates.
 	bottom := b.Height - mbr.Y
 	if bottom < top {
@@ -1944,7 +1958,7 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	titleFocus := w.titleFocus
 	w.mu.RUnlock()
 
-	metrics := core.DefaultCellMetrics()
+	metrics := w.frameCellMetrics()
 
 	// Must be in titlebar
 	if flags&WindowFlagNoTitle != 0 || y >= metrics.CellHeight {
@@ -2088,7 +2102,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 	flags := w.flags
 	w.mu.RUnlock()
 
-	metrics := core.DefaultCellMetrics()
+	metrics := w.frameCellMetrics()
 
 	// Handle navigation between title bar elements
 	switch event.Key {
@@ -2447,7 +2461,7 @@ func (w *Window) constrainBoundsForMovement(newBounds core.UnitRect) core.UnitRe
 	}
 
 	clientArea := getBounds()
-	metrics := core.DefaultCellMetrics()
+	metrics := w.frameCellMetrics()
 
 	// Title bar vertically within the client area, at least a couple of
 	// columns visible horizontally on each side (shared with the mouse
@@ -2730,7 +2744,7 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	flags := w.flags
 	w.mu.RUnlock()
 
-	metrics := core.DefaultCellMetrics()
+	metrics := w.frameCellMetrics()
 
 	// Check for title bar clicks
 	if flags&WindowFlagNoTitle == 0 && event.Y < metrics.CellHeight {
@@ -2948,7 +2962,7 @@ func (w *Window) SizeHint() core.UnitSize {
 	flags := w.flags
 	w.mu.RUnlock()
 
-	metrics := core.DefaultCellMetrics()
+	metrics := w.frameCellMetrics()
 
 	var width, height core.Unit
 
