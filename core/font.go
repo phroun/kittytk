@@ -202,14 +202,28 @@ func (f *Font) MeasureText(text string) Unit {
 // MeasureRunes returns the width in units for a given number of runes.
 // This assumes all characters are alphabetic (full width for Tuesday font).
 // For mixed content, use MeasureText instead.
+//
+// The per-rune advance scales with the font size so "N characters wide"
+// sizing hints track font_size instead of a fixed 8 units: it is the
+// monospace cell width for this size (round(Size*2/3) - 8 at the default
+// 12pt, so existing layouts are unchanged), doubled for the double-width
+// Tuesday demo face.
 func (f *Font) MeasureRunes(runeCount int) Unit {
 	if f == nil {
 		f = DefaultFont()
 	}
-	if f.Name == "Tuesday" {
-		return Unit(runeCount) * 16
+	size := f.Size
+	if size <= 0 {
+		size = 12
 	}
-	return Unit(runeCount) * 8
+	perRune := (size*2 + 1) / 3 // round(Size*2/3); 8 at 12pt
+	if perRune < 1 {
+		perRune = 1
+	}
+	if f.Name == "Tuesday" {
+		perRune *= 2 // double-width demo face (16 at 12pt)
+	}
+	return Unit(runeCount * perRune)
 }
 
 // isAlphabetic returns true if the character is a letter or digit.
