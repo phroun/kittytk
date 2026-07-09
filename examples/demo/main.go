@@ -43,7 +43,18 @@ func (f *fixedWidthBox) SizeHint() core.UnitSize {
 	// Convert the cell-count width to units in the current denomination so
 	// the column scales with font_size.
 	w := f.widthCells * f.EffectiveCellMetrics().CellWidth
-	return core.UnitSize{Width: w, Height: f.Panel.SizeHint().Height}
+	// Height is the content's height AT the pinned width (height-for-
+	// width): the width is fixed, so wrapping onto more lines must make
+	// the box taller rather than overflow its border. The plain SizeHint
+	// height is the content's height at its natural (unwrapped) width,
+	// which is too short once the text wraps into the narrow column.
+	h := f.Panel.SizeHint().Height
+	if hfw, ok := any(f.Panel).(core.HeightForWidther); ok && hfw.HasHeightForWidth() {
+		if hh := hfw.HeightForWidth(w); hh > h {
+			h = hh
+		}
+	}
+	return core.UnitSize{Width: w, Height: h}
 }
 
 // idCaptureFactory records built targets by object ID so the app can
