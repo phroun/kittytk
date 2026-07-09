@@ -54,15 +54,15 @@ func init() {
 		ID: func(t any) uint64 {
 			return uint64(t.(*Menu).ObjectID())
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"caption": wprop("caption", func(_ *protocol.BindContext, m *Menu, v *protocol.Value, f protocol.FlagState) error {
+		Props: map[string]protocol.Property{
+			"caption": protocol.NewProperty("string", wprop("caption", func(_ *protocol.BindContext, m *Menu, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("caption", v, f)
 				if err != nil {
 					return err
 				}
 				m.SetTitle(s)
 				return nil
-			}),
+			})).Tip("Menu title (& marks accelerator)"),
 		},
 		Append: func(parent, child any) error {
 			m := parent.(*Menu)
@@ -95,63 +95,63 @@ func init() {
 				}
 			})
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"caption": wprop("caption", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+		Props: map[string]protocol.Property{
+			"caption": protocol.NewProperty("string", wprop("caption", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("caption", v, f)
 				if err != nil {
 					return err
 				}
 				m.SetText(s)
 				return nil
-			}),
-			"action": wprop("action", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Item label (& marks accelerator)"),
+			"action": protocol.NewProperty("word", wprop("action", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
 				id, err := protocol.AsWord("action", v, f)
 				if err != nil {
 					return err
 				}
 				m.SetID(id)
 				return nil
-			}),
-			"shortcut": wprop("shortcut", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Command id dispatched on activation"),
+			"shortcut": protocol.NewProperty("string", wprop("shortcut", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("shortcut", v, f)
 				if err != nil {
 					return err
 				}
 				m.SetShortcut(core.NewShortcut(s))
 				return nil
-			}),
-			"checkable": wprop("checkable", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Keyboard shortcut (e.g. \"^N\")"),
+			"checkable": protocol.NewProperty("flag", wprop("checkable", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("checkable", v, f)
 				if err != nil {
 					return err
 				}
 				m.SetCheckable(b)
 				return nil
-			}),
-			"checked": wprop("checked", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Item can be checked").Def("false"),
+			"checked": protocol.NewProperty("flag", wprop("checked", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("checked", v, f)
 				if err != nil {
 					return err
 				}
 				m.SetChecked(b)
 				return nil
-			}),
-			"enabled": wprop("enabled", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Checked state").Def("false"),
+			"enabled": protocol.NewProperty("flag", wprop("enabled", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("enabled", v, f)
 				if err != nil {
 					return err
 				}
 				m.SetEnabled(b)
 				return nil
-			}),
-			"separator": wprop("separator", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Item is enabled").Def("true"),
+			"separator": protocol.NewProperty("flag", wprop("separator", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("separator", v, f)
 				if err != nil {
 					return err
 				}
 				m.Separator = b
 				return nil
-			}),
+			})).Tip("Render as a separator line").Def("false"),
 		},
 		Append: func(parent, child any) error {
 			it := parent.(*MenuItem)

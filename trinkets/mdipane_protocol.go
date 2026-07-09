@@ -82,8 +82,8 @@ func init() {
 				ctx.EmitEvent(ev)
 			})
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"fill": wprop("fill", func(_ *protocol.BindContext, m *MDIPane, v *protocol.Value, f protocol.FlagState) error {
+		Props: map[string]protocol.Property{
+			"fill": protocol.NewProperty("string", wprop("fill", func(_ *protocol.BindContext, m *MDIPane, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("fill", v, f)
 				if err != nil {
 					return err
@@ -94,15 +94,15 @@ func init() {
 				}
 				m.SetBackgroundChar(runes[0])
 				return nil
-			}),
-			"pattern":  boolProp("pattern", (*MDIPane).SetDrawPattern),
-			"tile":     mdiFlagAction("tile", (*MDIPane).TileWindows),
-			"cascade":  mdiFlagAction("cascade", (*MDIPane).CascadeWindows),
-			"next":     mdiFlagAction("next", (*MDIPane).NextWindow),
-			"prev":     mdiFlagAction("prev", (*MDIPane).PrevWindow),
-			"restore":  mdiWindowAction("restore", (*MDIPane).RestoreWindow),
-			"minimize": mdiWindowAction("minimize", (*MDIPane).MinimizeWindow),
-			"remove":   mdiWindowAction("remove", (*MDIPane).RemoveWindow),
+			})).Tip("Background fill character"),
+			"pattern":  boolProp("pattern", (*MDIPane).SetDrawPattern).Tip("Draw a pattern background").Def("false"),
+			"tile":     protocol.NewProperty("flag", mdiFlagAction("tile", (*MDIPane).TileWindows)).Tip("Tile the hosted windows"),
+			"cascade":  protocol.NewProperty("flag", mdiFlagAction("cascade", (*MDIPane).CascadeWindows)).Tip("Cascade the hosted windows"),
+			"next":     protocol.NewProperty("flag", mdiFlagAction("next", (*MDIPane).NextWindow)).Tip("Activate the next window"),
+			"prev":     protocol.NewProperty("flag", mdiFlagAction("prev", (*MDIPane).PrevWindow)).Tip("Activate the previous window"),
+			"restore":  protocol.NewProperty("int", mdiWindowAction("restore", (*MDIPane).RestoreWindow)).Tip("Restore a hosted window by id"),
+			"minimize": protocol.NewProperty("int", mdiWindowAction("minimize", (*MDIPane).MinimizeWindow)).Tip("Minimize a hosted window by id"),
+			"remove":   protocol.NewProperty("int", mdiWindowAction("remove", (*MDIPane).RemoveWindow)).Tip("Close a hosted window by id"),
 		},
 		Append: func(parent, child any) error {
 			m := parent.(*MDIPane)

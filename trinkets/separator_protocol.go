@@ -11,9 +11,9 @@ import (
 func init() {
 	regTrinket("separator",
 		func() core.Trinket { return NewLineSeparator() },
-		map[string]protocol.PropertyApplier{
-			"caption":     stringProp("caption", (*LineSeparator).SetTitle),
-			"orientation": orientationProp[*LineSeparator]((*LineSeparator).SetOrientation),
+		map[string]protocol.Property{
+			"caption":     stringProp("caption", (*LineSeparator).SetTitle).Tip("Optional separator title"),
+			"orientation": protocol.NewProperty("enum", orientationProp[*LineSeparator]((*LineSeparator).SetOrientation)).OneOf("horizontal", "vertical").Tip("Line orientation"),
 		},
 		nil,
 		nil,

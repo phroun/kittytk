@@ -62,9 +62,9 @@ func init() {
 					WithFlag("expanded", protocol.FlagFalse))
 			})
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"selected":     intProp("selected", (*TreeView).SetCurrentIndex),
-			"indent_width": intProp("indent_width", (*TreeView).SetIndentWidth),
+		Props: map[string]protocol.Property{
+			"selected":     intProp("selected", (*TreeView).SetCurrentIndex).Tip("Selected visible-row index.").Def("-1"),
+			"indent_width": intProp("indent_width", (*TreeView).SetIndentWidth).Tip("Indent width per tree level."),
 		},
 		Append: func(parent, child any) error {
 			tv, ok := parent.(*TreeView)

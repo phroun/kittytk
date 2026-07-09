@@ -27,8 +27,8 @@ import (
 func init() {
 	regTrinket("terminal",
 		func() core.Trinket { return NewPurfecTerm() },
-		map[string]protocol.PropertyApplier{
-			"feed": wprop("feed", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
+		map[string]protocol.Property{
+			"feed": protocol.NewProperty("stream", wprop("feed", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("feed", v, f)
 				if err != nil {
 					return err
@@ -39,8 +39,8 @@ func init() {
 				// dropped with no PTY running.)
 				t.Feed([]byte(s))
 				return nil
-			}),
-			"shell": wprop("shell", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Append bytes to the terminal display"),
+			"shell": protocol.NewProperty("flag", wprop("shell", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("shell", v, f)
 				if err != nil {
 					return err
@@ -51,26 +51,26 @@ func init() {
 					}
 				}
 				return nil
-			}),
+			})).Tip("Start the built-in local shell").Def("false"),
 			// font / font-size pick the monospace face and point size the
 			// terminal's cell grid derives from on graphical targets. Text
 			// mode ignores them (cells are cells).
-			"font": wprop("font", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
+			"font": protocol.NewProperty("string", wprop("font", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("font", v, f)
 				if err != nil {
 					return err
 				}
 				t.SetTerminalFontFamily(s)
 				return nil
-			}),
-			"font_size": wprop("font_size", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Monospace font family for the grid").Def("Monday"),
+			"font_size": protocol.NewProperty("int", wprop("font_size", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
 				pt, err := protocol.AsInt("font_size", v, f)
 				if err != nil {
 					return err
 				}
 				t.SetTerminalFontSize(pt)
 				return nil
-			}),
+			})).Tip("Font point size for the grid").Def("12"),
 		},
 		nil,
 		nil,

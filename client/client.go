@@ -173,6 +173,18 @@ func (c *Conn) Exec(src string) (*protocol.Reply, error) {
 	return c.transport.exec(src)
 }
 
+// Describe queries the host's wire vocabulary (D24): the supported
+// trinket types and, for each, the properties it accepts with each
+// property's kind, default, and a brief description. Common properties
+// (accepted by every non-virtual type) are reported once.
+func (c *Conn) Describe() (*protocol.Vocabulary, error) {
+	reply, err := c.transport.exec("describe")
+	if err != nil {
+		return nil, err
+	}
+	return protocol.DecodeVocabulary(reply.Extra)
+}
+
 // Close releases the connection (closes the socket for remote
 // connections; no-op in-process).
 func (c *Conn) Close() error {

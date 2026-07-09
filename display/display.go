@@ -375,6 +375,11 @@ func (c *conn) execute(batch []*protocol.Statement) {
 	c.server.desktop.RequestUpdate()
 	dbg("batch adopted for app=%q: app now has %d window(s)", c.app.Name(), len(c.app.Windows()))
 
+	// Deliver any verb-produced statements (the describe verb's flat
+	// vocabulary stream) ahead of the reply that terminates the batch.
+	for _, line := range reply.Extra {
+		c.send(line)
+	}
 	c.send(protocol.EncodeReply(reply))
 }
 

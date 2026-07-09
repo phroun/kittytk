@@ -26,47 +26,47 @@ func wprop[T any](name string, fn func(ctx *protocol.BindContext, w T, v *protoc
 }
 
 // stringProp is the common shape: a quoted string into a setter.
-func stringProp[T any](name string, set func(w T, s string)) protocol.PropertyApplier {
-	return wprop(name, func(_ *protocol.BindContext, w T, v *protocol.Value, f protocol.FlagState) error {
+func stringProp[T any](name string, set func(w T, s string)) protocol.Property {
+	return protocol.NewProperty("string", wprop(name, func(_ *protocol.BindContext, w T, v *protocol.Value, f protocol.FlagState) error {
 		s, err := protocol.AsString(name, v, f)
 		if err != nil {
 			return err
 		}
 		set(w, s)
 		return nil
-	})
+	}))
 }
 
 // boolProp is the common shape: a flag into a setter.
-func boolProp[T any](name string, set func(w T, b bool)) protocol.PropertyApplier {
-	return wprop(name, func(_ *protocol.BindContext, w T, v *protocol.Value, f protocol.FlagState) error {
+func boolProp[T any](name string, set func(w T, b bool)) protocol.Property {
+	return protocol.NewProperty("flag", wprop(name, func(_ *protocol.BindContext, w T, v *protocol.Value, f protocol.FlagState) error {
 		b, err := protocol.AsBool(name, v, f)
 		if err != nil {
 			return err
 		}
 		set(w, b)
 		return nil
-	})
+	}))
 }
 
 // intProp is the common shape: an integer into a setter.
-func intProp[T any](name string, set func(w T, n int)) protocol.PropertyApplier {
-	return wprop(name, func(_ *protocol.BindContext, w T, v *protocol.Value, f protocol.FlagState) error {
+func intProp[T any](name string, set func(w T, n int)) protocol.Property {
+	return protocol.NewProperty("int", wprop(name, func(_ *protocol.BindContext, w T, v *protocol.Value, f protocol.FlagState) error {
 		n, err := protocol.AsInt(name, v, f)
 		if err != nil {
 			return err
 		}
 		set(w, n)
 		return nil
-	})
+	}))
 }
 
 // actionProp records the command bound to a control (action=). The
 // control's activation wiring - set once in its Bind function -
 // consults BindContext.Action/FireAction, so assigning or replacing
 // the action never re-wires callbacks.
-func actionProp(name string) protocol.PropertyApplier {
-	return wprop(name, func(ctx *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+func actionProp(name string) protocol.Property {
+	return protocol.NewProperty("action", wprop(name, func(ctx *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		id, err := protocol.AsWord(name, v, f)
 		if err != nil {
 			return err
@@ -76,7 +76,7 @@ func actionProp(name string) protocol.PropertyApplier {
 		}
 		ctx.SetAction(trinketID(w), id)
 		return nil
-	})
+	}))
 }
 
 // destroyTrinket is the standard destroy: detach the trinket from its
@@ -104,7 +104,7 @@ func trinketID(w core.Trinket) uint64 {
 // regTrinket registers a trinket type whose targets are core.Trinkets.
 // bind, when non-nil, wires the trinket's event emission into the
 // connection (called once at construction).
-func regTrinket(name string, construct func() core.Trinket, props map[string]protocol.PropertyApplier, appendFn func(parent, child core.Trinket) error, bind func(ctx *protocol.BindContext, w core.Trinket)) {
+func regTrinket(name string, construct func() core.Trinket, props map[string]protocol.Property, appendFn func(parent, child core.Trinket) error, bind func(ctx *protocol.BindContext, w core.Trinket)) {
 	spec := &protocol.TypeSpec{
 		New:   func() any { return construct() },
 		Props: props,
@@ -150,19 +150,19 @@ func init() {
 	// collide with a core.ObjectID in a session's reply table.
 	protocol.SetVirtualIDSource(func() uint64 { return uint64(core.NextObjectID()) })
 
-	protocol.RegisterCommonProperty("enabled", boolProp("enabled", core.Trinket.SetEnabled))
-	protocol.RegisterCommonProperty("visible", boolProp("visible", core.Trinket.SetVisible))
-	protocol.RegisterCommonProperty("name", stringProp("name", core.Trinket.SetName))
+	protocol.RegisterCommonProperty("enabled", boolProp("enabled", core.Trinket.SetEnabled).Def("true").Tip("Whether the trinket accepts input."))
+	protocol.RegisterCommonProperty("visible", boolProp("visible", core.Trinket.SetVisible).Def("true").Tip("Whether the trinket is shown."))
+	protocol.RegisterCommonProperty("name", stringProp("name", core.Trinket.SetName).Tip("Debug/tooling label; not identity."))
 
-	protocol.RegisterCommonProperty("min_width", sizeProp("min_width", true, true))
-	protocol.RegisterCommonProperty("min_height", sizeProp("min_height", true, false))
-	protocol.RegisterCommonProperty("max_width", sizeProp("max_width", false, true))
-	protocol.RegisterCommonProperty("max_height", sizeProp("max_height", false, false))
+	protocol.RegisterCommonProperty("min_width", sizeProp("min_width", true, true).Tip("Minimum width, in units."))
+	protocol.RegisterCommonProperty("min_height", sizeProp("min_height", true, false).Tip("Minimum height, in units."))
+	protocol.RegisterCommonProperty("max_width", sizeProp("max_width", false, true).Tip("Maximum width, in units."))
+	protocol.RegisterCommonProperty("max_height", sizeProp("max_height", false, false).Tip("Maximum height, in units."))
 
-	protocol.RegisterCommonProperty("column_units", unitsProp("column_units", true))
-	protocol.RegisterCommonProperty("row_units", unitsProp("row_units", false))
+	protocol.RegisterCommonProperty("column_units", unitsProp("column_units", true).Def("inherited").Tip("Units one grid column spans (denomination override)."))
+	protocol.RegisterCommonProperty("row_units", unitsProp("row_units", false).Def("inherited").Tip("Units one grid row spans (denomination override)."))
 
-	protocol.RegisterCommonProperty("font", wprop("font", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+	protocol.RegisterCommonProperty("font", protocol.NewProperty("enum", wprop("font", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		s, err := protocol.AsString("font", v, f)
 		if err != nil {
 			return err
@@ -181,9 +181,9 @@ func init() {
 		}
 		fw.SetFont(fnt)
 		return nil
-	}))
+	})).OneOf("ui-text", "Monday", "Tuesday").Def("inherited").Tip("Font family for this trinket's text."))
 
-	protocol.RegisterCommonProperty("acc_name", wprop("acc_name", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+	protocol.RegisterCommonProperty("acc_name", protocol.NewProperty("string", wprop("acc_name", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		s, err := protocol.AsString("acc_name", v, f)
 		if err != nil {
 			return err
@@ -193,13 +193,13 @@ func init() {
 			return nil
 		}
 		return fmt.Errorf("acc_name: not supported by this type")
-	}))
+	})).Tip("Accessibility name announced by screen readers."))
 
 	// Layout hints live on the child (vocabulary decision 2026-07-05):
 	// the parent's layout manager consults them at attach time, so in
 	// scripts they must precede the trinket's placement in children={}
 	// (property application order already guarantees that).
-	protocol.RegisterCommonProperty("stretch", wprop("stretch", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+	protocol.RegisterCommonProperty("stretch", protocol.NewProperty("int", wprop("stretch", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		n, err := protocol.AsInt("stretch", v, f)
 		if err != nil {
 			return err
@@ -209,9 +209,9 @@ func init() {
 			return nil
 		}
 		return fmt.Errorf("stretch: not supported by this type")
-	}))
+	})).Def("0").Tip("Layout stretch factor relative to siblings."))
 
-	protocol.RegisterCommonProperty("align", wprop("align", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+	protocol.RegisterCommonProperty("align", protocol.NewProperty("enum", wprop("align", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		word, err := protocol.AsWord("align", v, f)
 		if err != nil {
 			return err
@@ -233,13 +233,13 @@ func init() {
 			return nil
 		}
 		return fmt.Errorf("align: not supported by this type")
-	}))
+	})).OneOf("fill", "left", "center", "right", "top", "middle", "bottom").Tip("Layout alignment of this item in its cell."))
 
 	// Colors (vocabulary decision 2026-07-05): named colors as bare
 	// words, RGB as quoted "#rrggbb". fg/bg build on the trinket's
 	// custom style override.
-	protocol.RegisterCommonProperty("fg", colorProp("fg", true))
-	protocol.RegisterCommonProperty("bg", colorProp("bg", false))
+	protocol.RegisterCommonProperty("fg", colorProp("fg", true).Def("inherited").Tip("Text/foreground color (named or \"#rrggbb\")."))
+	protocol.RegisterCommonProperty("bg", colorProp("bg", false).Def("inherited").Tip("Background color (named or \"#rrggbb\")."))
 }
 
 // parseColor interprets a wire color value: a bare named-color word
@@ -289,8 +289,8 @@ func parseColor(name string, v *protocol.Value, f protocol.FlagState) (style.Col
 }
 
 // colorProp applies fg=/bg= through the trinket's custom style.
-func colorProp(name string, isFg bool) protocol.PropertyApplier {
-	return wprop(name, func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+func colorProp(name string, isFg bool) protocol.Property {
+	return protocol.NewProperty("color", wprop(name, func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		c, err := parseColor(name, v, f)
 		if err != nil {
 			return err
@@ -313,11 +313,11 @@ func colorProp(name string, isFg bool) protocol.PropertyApplier {
 		}
 		styler.SetStyle(&s)
 		return nil
-	})
+	}))
 }
 
-func sizeProp(name string, min, isWidth bool) protocol.PropertyApplier {
-	return wprop(name, func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+func sizeProp(name string, min, isWidth bool) protocol.Property {
+	return protocol.NewProperty("units", wprop(name, func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		n, err := protocol.AsInt(name, v, f)
 		if err != nil {
 			return err
@@ -340,11 +340,11 @@ func sizeProp(name string, min, isWidth bool) protocol.PropertyApplier {
 			w.SetMaximumSize(s)
 		}
 		return nil
-	})
+	}))
 }
 
-func unitsProp(name string, isColumn bool) protocol.PropertyApplier {
-	return wprop(name, func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+func unitsProp(name string, isColumn bool) protocol.Property {
+	return protocol.NewProperty("units", wprop(name, func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		n, err := protocol.AsInt(name, v, f)
 		if err != nil {
 			return err
@@ -369,5 +369,5 @@ func unitsProp(name string, isColumn bool) protocol.PropertyApplier {
 		}
 		mw.SetCellMetrics(&m)
 		return nil
-	})
+	}))
 }

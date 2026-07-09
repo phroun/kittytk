@@ -31,9 +31,9 @@ func init() {
 					WithUint("trinket", id).WithInt("selected", index))
 			})
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"selected":       intProp("selected", (*ListView).SetCurrentIndex),
-			"alternate_rows": boolProp("alternate_rows", (*ListView).SetAlternateRowColors),
+		Props: map[string]protocol.Property{
+			"selected":       intProp("selected", (*ListView).SetCurrentIndex).Tip("Selected row index (-1 = none).").Def("-1"),
+			"alternate_rows": boolProp("alternate_rows", (*ListView).SetAlternateRowColors).Tip("Shade alternate rows.").Def("false"),
 		},
 		Append: func(parent, child any) error {
 			l, ok := parent.(*ListView)

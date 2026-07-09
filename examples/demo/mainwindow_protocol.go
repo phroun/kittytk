@@ -36,15 +36,15 @@ func init() {
 		ID: func(t any) uint64 {
 			return uint64(t.(*fixedWidthBox).ObjectID())
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"width": func(_ *protocol.BindContext, target any, v *protocol.Value, fl protocol.FlagState) error {
+		Props: map[string]protocol.Property{
+			"width": protocol.NewProperty("int", func(_ *protocol.BindContext, target any, v *protocol.Value, fl protocol.FlagState) error {
 				n, err := protocol.AsInt("width", v, fl)
 				if err != nil {
 					return err
 				}
 				target.(*fixedWidthBox).width = core.Unit(n)
 				return nil
-			},
+			}).Tip("Fixed box width in units"),
 		},
 		Append: func(parent, child any) error {
 			w, ok := child.(core.Trinket)

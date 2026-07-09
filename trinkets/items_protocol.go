@@ -43,8 +43,8 @@ func init() {
 	protocol.RegisterType("item", &protocol.TypeSpec{
 		Virtual: true,
 		New:     func() any { return &wireItem{} },
-		Props: map[string]protocol.PropertyApplier{
-			"caption": wprop("caption", func(_ *protocol.BindContext, it *wireItem, v *protocol.Value, f protocol.FlagState) error {
+		Props: map[string]protocol.Property{
+			"caption": protocol.NewProperty("string", wprop("caption", func(_ *protocol.BindContext, it *wireItem, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("caption", v, f)
 				if err != nil {
 					return err
@@ -55,8 +55,8 @@ func init() {
 					it.refresh()
 				}
 				return nil
-			}),
-			"expanded": wprop("expanded", func(_ *protocol.BindContext, it *wireItem, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Row or node display text."),
+			"expanded": protocol.NewProperty("flag", wprop("expanded", func(_ *protocol.BindContext, it *wireItem, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("expanded", v, f)
 				if err != nil {
 					return err
@@ -67,7 +67,7 @@ func init() {
 					it.refresh()
 				}
 				return nil
-			}),
+			})).Tip("Node expanded (tree nodes).").Def("false"),
 		},
 		Append: func(parent, child any) error {
 			p := parent.(*wireItem)

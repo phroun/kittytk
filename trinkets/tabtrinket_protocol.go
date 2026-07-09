@@ -27,15 +27,15 @@ func init() {
 	protocol.RegisterType("tab", &protocol.TypeSpec{
 		Virtual: true,
 		New:     func() any { return &wireTab{} },
-		Props: map[string]protocol.PropertyApplier{
-			"caption": wprop("caption", func(_ *protocol.BindContext, t *wireTab, v *protocol.Value, f protocol.FlagState) error {
+		Props: map[string]protocol.Property{
+			"caption": protocol.NewProperty("string", wprop("caption", func(_ *protocol.BindContext, t *wireTab, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("caption", v, f)
 				if err != nil {
 					return err
 				}
 				t.caption = s
 				return nil
-			}),
+			})).Tip("Tab label text."),
 		},
 		Append: func(parent, child any) error {
 			t := parent.(*wireTab)
@@ -64,14 +64,14 @@ func init() {
 					WithUint("trinket", id).WithInt("selected", index))
 			})
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"selected": intProp("selected", (*TabTrinket).SetCurrentIndex),
-			"movable":  boolProp("movable", (*TabTrinket).SetMovable),
-			"closable": boolProp("closable", (*TabTrinket).SetClosable),
+		Props: map[string]protocol.Property{
+			"selected": intProp("selected", (*TabTrinket).SetCurrentIndex).Tip("Active tab index.").Def("0"),
+			"movable":  boolProp("movable", (*TabTrinket).SetMovable).Tip("Allow reordering tabs by drag.").Def("false"),
+			"closable": boolProp("closable", (*TabTrinket).SetClosable).Tip("Show per-tab close buttons.").Def("false"),
 			// background paints the tab body; unlike the common `bg`
 			// style override, this drives the color the TabTrinket reports
 			// to its children. The word "default" clears it (inherit).
-			"background": wprop("background", func(_ *protocol.BindContext, tw *TabTrinket, v *protocol.Value, f protocol.FlagState) error {
+			"background": protocol.NewProperty("color", wprop("background", func(_ *protocol.BindContext, tw *TabTrinket, v *protocol.Value, f protocol.FlagState) error {
 				if v != nil && v.Kind == protocol.WordValue && v.Word == "default" {
 					tw.SetBackgroundColor(nil)
 					tw.Update()
@@ -84,8 +84,8 @@ func init() {
 				tw.SetBackgroundColor(&c)
 				tw.Update()
 				return nil
-			}),
-			"position": wprop("position", func(_ *protocol.BindContext, tw *TabTrinket, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Tab body background color."),
+			"position": protocol.NewProperty("enum", wprop("position", func(_ *protocol.BindContext, tw *TabTrinket, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("position", v, f)
 				if err != nil {
 					return err
@@ -101,7 +101,7 @@ func init() {
 				}
 				tw.SetTabPosition(pos)
 				return nil
-			}),
+			})).OneOf("top", "bottom", "left", "right").Tip("Tab strip edge."),
 		},
 		Append: func(parent, child any) error {
 			tw, ok := parent.(*TabTrinket)

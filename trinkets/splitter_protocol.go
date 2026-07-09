@@ -13,8 +13,8 @@ import (
 func init() {
 	regTrinket("splitter",
 		func() core.Trinket { return NewVSplitter() },
-		map[string]protocol.PropertyApplier{
-			"orientation": wprop("orientation", func(_ *protocol.BindContext, s *Splitter, v *protocol.Value, f protocol.FlagState) error {
+		map[string]protocol.Property{
+			"orientation": protocol.NewProperty("enum", wprop("orientation", func(_ *protocol.BindContext, s *Splitter, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("orientation", v, f)
 				if err != nil {
 					return err
@@ -28,16 +28,16 @@ func init() {
 					return fmt.Errorf("orientation: unknown value %q", w)
 				}
 				return nil
-			}),
-			"position": wprop("position", func(_ *protocol.BindContext, s *Splitter, v *protocol.Value, f protocol.FlagState) error {
+			})).OneOf("horizontal", "vertical").Tip("Split direction."),
+			"position": protocol.NewProperty("float", wprop("position", func(_ *protocol.BindContext, s *Splitter, v *protocol.Value, f protocol.FlagState) error {
 				pos, err := protocol.AsFloat("position", v, f)
 				if err != nil {
 					return err
 				}
 				s.SetPosition(pos)
 				return nil
-			}),
-			"caption": stringProp("caption", (*Splitter).SetTitle),
+			})).Tip("Divider ratio (0.0-1.0)."),
+			"caption": stringProp("caption", (*Splitter).SetTitle).Tip("Optional divider title."),
 		},
 		func(parent, child core.Trinket) error {
 			s := parent.(*Splitter)

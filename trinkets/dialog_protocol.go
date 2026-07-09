@@ -41,24 +41,24 @@ func init() {
 		ResultHelp:    "help",
 	}
 
-	props := map[string]protocol.PropertyApplier{
-		"title": wprop("title", func(_ *protocol.BindContext, m *MessageBox, v *protocol.Value, f protocol.FlagState) error {
+	props := map[string]protocol.Property{
+		"title": protocol.NewProperty("string", wprop("title", func(_ *protocol.BindContext, m *MessageBox, v *protocol.Value, f protocol.FlagState) error {
 			s, err := protocol.AsString("title", v, f)
 			if err != nil {
 				return err
 			}
 			m.SetTitle(s)
 			return nil
-		}),
-		"text": wprop("text", func(_ *protocol.BindContext, m *MessageBox, v *protocol.Value, f protocol.FlagState) error {
+		})).Tip("Dialog title bar text"),
+		"text": protocol.NewProperty("string", wprop("text", func(_ *protocol.BindContext, m *MessageBox, v *protocol.Value, f protocol.FlagState) error {
 			s, err := protocol.AsString("text", v, f)
 			if err != nil {
 				return err
 			}
 			m.SetText(s)
 			return nil
-		}),
-		"icon": wprop("icon", func(_ *protocol.BindContext, m *MessageBox, v *protocol.Value, f protocol.FlagState) error {
+		})).Tip("Message body text"),
+		"icon": protocol.NewProperty("enum", wprop("icon", func(_ *protocol.BindContext, m *MessageBox, v *protocol.Value, f protocol.FlagState) error {
 			w, err := protocol.AsWord("icon", v, f)
 			if err != nil {
 				return err
@@ -75,11 +75,11 @@ func init() {
 			}
 			m.SetIcon(icon)
 			return nil
-		}),
+		})).OneOf("none", "information", "warning", "error", "question").Tip("Icon shown beside the message"),
 	}
 	for name, flag := range buttonFlags {
 		name, flag := name, flag
-		props[name] = wprop(name, func(_ *protocol.BindContext, m *MessageBox, v *protocol.Value, f protocol.FlagState) error {
+		props[name] = protocol.NewProperty("flag", wprop(name, func(_ *protocol.BindContext, m *MessageBox, v *protocol.Value, f protocol.FlagState) error {
 			b, err := protocol.AsBool(name, v, f)
 			if err != nil {
 				return err
@@ -90,7 +90,7 @@ func init() {
 				m.SetButtons(m.Buttons() &^ flag)
 			}
 			return nil
-		})
+		})).Tip("Include the " + name + " button").Def("false")
 	}
 
 	protocol.RegisterType("messagebox", &protocol.TypeSpec{

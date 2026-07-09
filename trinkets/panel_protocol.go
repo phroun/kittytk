@@ -14,9 +14,9 @@ import (
 func init() {
 	regTrinket("panel",
 		func() core.Trinket { return NewPanel() },
-		map[string]protocol.PropertyApplier{
-			"border": boolProp("border", (*Panel).SetBorder),
-			"border_style": wprop("border_style", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
+		map[string]protocol.Property{
+			"border": boolProp("border", (*Panel).SetBorder).Tip("Draw a border around the panel").Def("false"),
+			"border_style": protocol.NewProperty("enum", wprop("border_style", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("border_style", v, f)
 				if err != nil {
 					return err
@@ -34,8 +34,8 @@ func init() {
 				}
 				p.SetBorderStyle(bs)
 				return nil
-			}),
-			"layout": wprop("layout", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
+			})).OneOf("single", "double", "rounded", "heavy", "ascii").Tip("Border line style"),
+			"layout": protocol.NewProperty("enum", wprop("layout", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("layout", v, f)
 				if err != nil {
 					return err
@@ -51,16 +51,16 @@ func init() {
 					return fmt.Errorf("layout: unknown value %q (grid arrives later)", w)
 				}
 				return nil
-			}),
-			"fixed_width": wprop("fixed_width", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
+			})).OneOf("vbox", "hbox", "none").Tip("Child layout manager"),
+			"fixed_width": protocol.NewProperty("int", wprop("fixed_width", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
 				n, err := protocol.AsInt("fixed_width", v, f)
 				if err != nil {
 					return err
 				}
 				p.SetFixedWidth(core.Unit(n))
 				return nil
-			}),
-			"spacing": wprop("spacing", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Fixed panel width in units"),
+			"spacing": protocol.NewProperty("int", wprop("spacing", func(_ *protocol.BindContext, p *Panel, v *protocol.Value, f protocol.FlagState) error {
 				n, err := protocol.AsInt("spacing", v, f)
 				if err != nil {
 					return err
@@ -71,7 +71,7 @@ func init() {
 				}
 				lm.SetSpacing(core.Unit(n))
 				return nil
-			}),
+			})).Tip("Spacing between laid-out children"),
 		},
 		func(parent, child core.Trinket) error {
 			parent.(*Panel).AddChild(child)

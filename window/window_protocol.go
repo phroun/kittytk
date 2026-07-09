@@ -31,50 +31,50 @@ func init() {
 		"tearable":     WindowFlagTearable,
 	}
 
-	props := map[string]protocol.PropertyApplier{
-		"title": func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+	props := map[string]protocol.Property{
+		"title": protocol.NewProperty("string", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			s, err := protocol.AsString("title", v, f)
 			if err != nil {
 				return err
 			}
 			target.(*Window).SetTitle(s)
 			return nil
-		},
+		}).Tip("Window title bar text"),
 		// native requests an OS window when the platform can create
 		// surfaces (G4 dual mode); single-surface platforms keep the
 		// window in-surface.
-		"native": func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+		"native": protocol.NewProperty("flag", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			b, err := protocol.AsBool("native", v, f)
 			if err != nil {
 				return err
 			}
 			target.(*Window).SetNativeRequested(b)
 			return nil
-		},
+		}).Tip("Request a native OS window").Def("false"),
 		// main marks this window as its application's main window: its
 		// menu/status chrome detaches with it on tear-off. The host acts
 		// on it when adopting the window.
-		"main": func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+		"main": protocol.NewProperty("flag", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			b, err := protocol.AsBool("main", v, f)
 			if err != nil {
 				return err
 			}
 			target.(*Window).SetMainRequested(b)
 			return nil
-		},
+		}).Tip("Mark as the application's main window").Def("false"),
 		// font overrides the window's font (its content inherits it);
 		// empty / "default" clears the override back to the desktop's.
-		"font": func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+		"font": protocol.NewProperty("string", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			s, err := protocol.AsString("font", v, f)
 			if err != nil {
 				return err
 			}
 			target.(*Window).SetFont(namedFont(s))
 			return nil
-		},
+		}).Tip("Window font override (\"default\" clears)"),
 		// denomination overrides the window's row height in units (its
 		// content re-grids to it); 0 clears the override.
-		"denomination": func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+		"denomination": protocol.NewProperty("int", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			n, err := protocol.AsInt("denomination", v, f)
 			if err != nil {
 				return err
@@ -88,12 +88,12 @@ func init() {
 				w.SetCellMetrics(&m)
 			}
 			return nil
-		},
+		}).Tip("Row height override in units (0 clears)"),
 	}
 
 	for _, dim := range []string{"x", "y", "width", "height"} {
 		dim := dim
-		props[dim] = func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+		props[dim] = protocol.NewProperty("int", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			n, err := protocol.AsInt(dim, v, f)
 			if err != nil {
 				return err
@@ -112,12 +112,12 @@ func init() {
 			}
 			w.SetBounds(b)
 			return nil
-		}
+		}).Tip("Window " + dim + " in desktop units")
 	}
 
 	for name, flag := range windowFlagProps {
 		name, flag := name, flag
-		props[name] = func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+		props[name] = protocol.NewProperty("flag", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			b, err := protocol.AsBool(name, v, f)
 			if err != nil {
 				return err
@@ -129,7 +129,7 @@ func init() {
 				w.SetFlags(w.Flags() &^ flag)
 			}
 			return nil
-		}
+		}).Tip(name + " behavior flag").Def("false")
 	}
 
 	protocol.RegisterType("window", &protocol.TypeSpec{

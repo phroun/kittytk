@@ -196,9 +196,9 @@ type TypeSpec struct {
 	// New constructs the target (a trinket, or a virtual item's record).
 	New func() any
 
-	// Props maps property names to appliers. Type-specific properties
-	// take precedence over common ones.
-	Props map[string]PropertyApplier
+	// Props maps property names to their Property (applier + descriptor).
+	// Type-specific properties take precedence over common ones.
+	Props map[string]Property
 
 	// Append attaches a constructed child target to a parent target
 	// (children blocks, D13). Nil means the type takes no children.
@@ -226,7 +226,7 @@ type TypeSpec struct {
 var (
 	regMu     sync.RWMutex
 	regTypes  = map[string]*TypeSpec{}
-	regCommon = map[string]PropertyApplier{}
+	regCommon = map[string]Property{}
 )
 
 // RegisterType registers a builtin type. Builtin names begin lowercase
@@ -251,14 +251,15 @@ func RegisterType(name string, spec *TypeSpec) {
 }
 
 // RegisterCommonProperty registers a property available on every
-// non-virtual type (enabled, visible, font, ...).
-func RegisterCommonProperty(name string, apply PropertyApplier) {
+// non-virtual type (enabled, visible, font, ...). The Property carries
+// both the applier and its introspection descriptor.
+func RegisterCommonProperty(name string, p Property) {
 	regMu.Lock()
 	defer regMu.Unlock()
 	if _, dup := regCommon[name]; dup {
 		panic(fmt.Sprintf("protocol: common property %q registered twice", name))
 	}
-	regCommon[name] = apply
+	regCommon[name] = p
 }
 
 // RegisteredTypes returns the sorted names of registered types.
@@ -341,15 +342,15 @@ func (o *registryObject) Target() any { return o.target }
 
 // Set implements Object.
 func (o *registryObject) Set(name string, v *Value, flag FlagState) error {
-	if apply, ok := o.spec.Props[name]; ok {
-		return apply(o.ctx, o.target, v, flag)
+	if p, ok := o.spec.Props[name]; ok {
+		return p.Apply(o.ctx, o.target, v, flag)
 	}
 	if !o.spec.Virtual {
 		regMu.RLock()
-		apply, ok := regCommon[name]
+		p, ok := regCommon[name]
 		regMu.RUnlock()
 		if ok {
-			return apply(o.ctx, o.target, v, flag)
+			return p.Apply(o.ctx, o.target, v, flag)
 		}
 	}
 	return fmt.Errorf("property %q is not supported by this type", name)

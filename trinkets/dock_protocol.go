@@ -32,8 +32,8 @@ func init() {
 		Bind: func(ctx *protocol.BindContext, target any) {
 			target.(*wireDockEntry).ctx = ctx
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"caption": wprop("caption", func(_ *protocol.BindContext, e *wireDockEntry, v *protocol.Value, f protocol.FlagState) error {
+		Props: map[string]protocol.Property{
+			"caption": protocol.NewProperty("string", wprop("caption", func(_ *protocol.BindContext, e *wireDockEntry, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("caption", v, f)
 				if err != nil {
 					return err
@@ -44,15 +44,15 @@ func init() {
 					e.row.Update()
 				}
 				return nil
-			}),
-			"window": wprop("window", func(_ *protocol.BindContext, e *wireDockEntry, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Dock entry caption"),
+			"window": protocol.NewProperty("int", wprop("window", func(_ *protocol.BindContext, e *wireDockEntry, v *protocol.Value, f protocol.FlagState) error {
 				n, err := protocol.AsInt("window", v, f)
 				if err != nil {
 					return err
 				}
 				e.window = uint64(n)
 				return nil
-			}),
+			})).Tip("Hosted window id"),
 		},
 		Destroy: func(t any) error {
 			e := t.(*wireDockEntry)
@@ -69,8 +69,8 @@ func init() {
 		ID: func(t any) uint64 {
 			return uint64(t.(*DockRow).ObjectID())
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"entry_width": intProp("entry_width", (*DockRow).SetEntryWidth),
+		Props: map[string]protocol.Property{
+			"entry_width": intProp("entry_width", (*DockRow).SetEntryWidth).Tip("Width of each dock entry in units"),
 		},
 		Append: func(parent, child any) error {
 			row, ok := parent.(*DockRow)

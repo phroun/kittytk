@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"fmt"
+	"strings"
 )
 
 // Object is a UI object under construction, provided by a Factory.
@@ -36,9 +37,12 @@ type destroyer interface {
 }
 
 // Reply reports server-assigned IDs for a request: top-level
-// correlation keys plus explicitly surfaced names (D11/D15).
+// correlation keys plus explicitly surfaced names (D11/D15). Extra
+// carries additional raw wire statements a verb wants delivered ahead
+// of the reply line (the describe verb's flat vocabulary stream, D24).
 type Reply struct {
-	IDs map[string]uint64
+	IDs   map[string]uint64
+	Extra []string
 }
 
 // Session holds connection-scoped interpretation state: alias and
@@ -167,6 +171,20 @@ func (s *Session) executeTopLevel(stmt *Statement, f Factory, st *execState) err
 		return nil
 	case "sub", "unsub":
 		return s.subscribe(stmt.Verb, stmt.Args, f)
+	case "describe":
+		// Introspection (D24): stream the registered wire vocabulary as
+		// flat statements (proptype/prop/propcommon), one per line, ahead
+		// of the reply. Takes no arguments.
+		if len(stmt.Args) != 0 {
+			return fmt.Errorf("describe: takes no arguments")
+		}
+		enc := EncodeVocabulary(DescribeVocabulary())
+		for _, line := range strings.Split(strings.TrimRight(enc, "\n"), "\n") {
+			if line != "" {
+				st.reply.Extra = append(st.reply.Extra, line)
+			}
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown verb %q", stmt.Verb)
 	}

@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/phroun/kittytk/protocol"
@@ -128,6 +129,11 @@ type remoteTransport struct {
 	writeMu sync.Mutex
 	replies chan replyOrError
 
+	// pendingDesc accumulates the describe verb's flat vocabulary
+	// statements (proptype/prop/propcommon) that arrive ahead of the
+	// reply terminating the batch; attached to that reply's Extra.
+	pendingDesc []string
+
 	// events are delivered on their own goroutine so a handler that
 	// executes statements (SetCaption inside OnToggle) cannot
 	// deadlock the reader that must route the reply.
@@ -182,8 +188,13 @@ func (t *remoteTransport) readLoop() {
 			switch stmt.Verb {
 			case "reply":
 				r, err := protocol.DecodeReply(stmt)
+				if r != nil && len(t.pendingDesc) > 0 {
+					r.Extra = t.pendingDesc
+				}
+				t.pendingDesc = nil
 				t.replies <- replyOrError{reply: r, err: err}
 			case "error":
+				t.pendingDesc = nil
 				msg := "display error"
 				for _, a := range stmt.Args {
 					if a.Name == "text" && a.Value != nil && a.Value.Kind == protocol.StringValue {
@@ -191,6 +202,9 @@ func (t *remoteTransport) readLoop() {
 					}
 				}
 				t.replies <- replyOrError{err: fmt.Errorf("%s", msg)}
+			case "proptype", "prop", "propcommon":
+				// describe verb output: buffer until the reply arrives.
+				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
 			case "event":
 				if ev, err := protocol.ParseEvent(text); err == nil {
 					t.events <- ev

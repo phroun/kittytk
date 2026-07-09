@@ -9,13 +9,13 @@ import (
 func init() {
 	regTrinket("button",
 		func() core.Trinket { return NewButton("") },
-		map[string]protocol.PropertyApplier{
-			"caption": stringProp("caption", (*Button).SetText),
-			"default": boolProp("default", (*Button).SetDefault),
+		map[string]protocol.Property{
+			"caption": stringProp("caption", (*Button).SetText).Tip("Display text (& = accelerator)."),
+			"default": boolProp("default", (*Button).SetDefault).Tip("Default-button styling and Enter behavior.").Def("false"),
 			// action is OPTIONAL: when set, clicking dispatches the
 			// command ID (via BindContext.FireAction in the click
 			// wiring below).
-			"action": actionProp("action"),
+			"action": actionProp("action").Tip("Optional command dispatched on click."),
 		},
 		nil, // buttons take no children
 		func(ctx *protocol.BindContext, w core.Trinket) {

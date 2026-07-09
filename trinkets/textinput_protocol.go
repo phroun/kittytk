@@ -11,9 +11,9 @@ import (
 func init() {
 	regTrinket("textinput",
 		func() core.Trinket { return NewTextInput() },
-		map[string]protocol.PropertyApplier{
-			"text":        stringProp("text", (*TextInput).SetText),
-			"placeholder": stringProp("placeholder", (*TextInput).SetPlaceholder),
+		map[string]protocol.Property{
+			"text":        stringProp("text", (*TextInput).SetText).Tip("Editable content (server-authoritative)."),
+			"placeholder": stringProp("placeholder", (*TextInput).SetPlaceholder).Tip("Placeholder text shown when empty."),
 		},
 		nil,
 		func(ctx *protocol.BindContext, w core.Trinket) {

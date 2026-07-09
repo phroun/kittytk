@@ -17,10 +17,10 @@ func init() {
 		ID: func(t any) uint64 {
 			return uint64(t.(*ScrollArea).ObjectID())
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"scroll_x":  intProp("scroll_x", (*ScrollArea).SetScrollX),
-			"scroll_y":  intProp("scroll_y", (*ScrollArea).SetScrollY),
-			"resizable": boolProp("resizable", (*ScrollArea).SetTrinketResizable),
+		Props: map[string]protocol.Property{
+			"scroll_x":  intProp("scroll_x", (*ScrollArea).SetScrollX).Tip("Horizontal scroll offset"),
+			"scroll_y":  intProp("scroll_y", (*ScrollArea).SetScrollY).Tip("Vertical scroll offset"),
+			"resizable": boolProp("resizable", (*ScrollArea).SetTrinketResizable).Tip("Content tracks viewport width").Def("false"),
 		},
 		Append: func(parent, child any) error {
 			sa, ok := parent.(*ScrollArea)

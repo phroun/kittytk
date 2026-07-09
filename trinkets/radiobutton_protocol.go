@@ -13,11 +13,11 @@ import (
 func init() {
 	regTrinket("radiobutton",
 		func() core.Trinket { return NewRadioButton("") },
-		map[string]protocol.PropertyApplier{
-			"caption": stringProp("caption", (*RadioButton).SetText),
-			"checked": boolProp("checked", (*RadioButton).SetChecked),
-			"wrap":    boolProp("wrap", (*RadioButton).SetWordWrap),
-			"group": wprop("group", func(ctx *protocol.BindContext, r *RadioButton, v *protocol.Value, f protocol.FlagState) error {
+		map[string]protocol.Property{
+			"caption": stringProp("caption", (*RadioButton).SetText).Tip("Radio button label text."),
+			"checked": boolProp("checked", (*RadioButton).SetChecked).Tip("Whether this button is selected.").Def("false"),
+			"wrap":    boolProp("wrap", (*RadioButton).SetWordWrap).Tip("Word-wrap the label.").Def("false"),
+			"group": protocol.NewProperty("word", wprop("group", func(ctx *protocol.BindContext, r *RadioButton, v *protocol.Value, f protocol.FlagState) error {
 				word, err := protocol.AsWord("group", v, f)
 				if err != nil {
 					return err
@@ -25,7 +25,7 @@ func init() {
 				g := ctx.Stash("radiogroup:"+word, func() any { return NewRadioGroup() }).(*RadioGroup)
 				g.AddButton(r)
 				return nil
-			}),
+			})).Tip("Radio group membership."),
 		},
 		nil,
 		func(ctx *protocol.BindContext, w core.Trinket) {

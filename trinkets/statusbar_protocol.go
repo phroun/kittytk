@@ -57,24 +57,24 @@ func init() {
 	protocol.RegisterType("section", &protocol.TypeSpec{
 		Virtual: true,
 		New:     func() any { return &wireSection{} },
-		Props: map[string]protocol.PropertyApplier{
-			"text": wprop("text", func(_ *protocol.BindContext, s *wireSection, v *protocol.Value, f protocol.FlagState) error {
+		Props: map[string]protocol.Property{
+			"text": protocol.NewProperty("string", wprop("text", func(_ *protocol.BindContext, s *wireSection, v *protocol.Value, f protocol.FlagState) error {
 				str, err := protocol.AsString("text", v, f)
 				if err != nil {
 					return err
 				}
 				s.section.Text = str
 				return nil
-			}),
-			"width": wprop("width", func(_ *protocol.BindContext, s *wireSection, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Section text (spans take precedence)"),
+			"width": protocol.NewProperty("int", wprop("width", func(_ *protocol.BindContext, s *wireSection, v *protocol.Value, f protocol.FlagState) error {
 				n, err := protocol.AsInt("width", v, f)
 				if err != nil {
 					return err
 				}
 				s.section.Width = n
 				return nil
-			}),
-			"stretch": wprop("stretch", func(_ *protocol.BindContext, s *wireSection, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Section width in units"),
+			"stretch": protocol.NewProperty("flag", wprop("stretch", func(_ *protocol.BindContext, s *wireSection, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("stretch", v, f)
 				if err != nil {
 					return err
@@ -83,8 +83,8 @@ func init() {
 					s.section.Width = -1
 				}
 				return nil
-			}),
-			"align": wprop("align", func(_ *protocol.BindContext, s *wireSection, v *protocol.Value, f protocol.FlagState) error {
+			})).Tip("Section grows to fill space"),
+			"align": protocol.NewProperty("enum", wprop("align", func(_ *protocol.BindContext, s *wireSection, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("align", v, f)
 				if err != nil {
 					return err
@@ -95,7 +95,7 @@ func init() {
 				}
 				s.section.Alignment = n
 				return nil
-			}),
+			})).OneOf("left", "center", "right").Tip("Text alignment within section"),
 		},
 		Append: func(parent, child any) error {
 			s := parent.(*wireSection)
@@ -111,17 +111,17 @@ func init() {
 	protocol.RegisterType("span", &protocol.TypeSpec{
 		Virtual: true,
 		New:     func() any { return &wireSpan{} },
-		Props: map[string]protocol.PropertyApplier{
-			"text": wprop("text", func(_ *protocol.BindContext, s *wireSpan, v *protocol.Value, f protocol.FlagState) error {
+		Props: map[string]protocol.Property{
+			"text": protocol.NewProperty("string", wprop("text", func(_ *protocol.BindContext, s *wireSpan, v *protocol.Value, f protocol.FlagState) error {
 				str, err := protocol.AsString("text", v, f)
 				if err != nil {
 					return err
 				}
 				s.span.Text = str
 				return nil
-			}),
-			"fg": spanColor("fg", true),
-			"bg": spanColor("bg", false),
+			})).Tip("Span text"),
+			"fg": protocol.NewProperty("color", spanColor("fg", true)).Tip("Span foreground color"),
+			"bg": protocol.NewProperty("color", spanColor("bg", false)).Tip("Span background color"),
 		},
 	})
 }

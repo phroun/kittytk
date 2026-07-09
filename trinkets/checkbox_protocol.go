@@ -12,9 +12,9 @@ import (
 func init() {
 	regTrinket("checkbox",
 		func() core.Trinket { return NewCheckbox("") },
-		map[string]protocol.PropertyApplier{
-			"caption": stringProp("caption", (*Checkbox).SetText),
-			"checked": wprop("checked", func(_ *protocol.BindContext, c *Checkbox, v *protocol.Value, f protocol.FlagState) error {
+		map[string]protocol.Property{
+			"caption": stringProp("caption", (*Checkbox).SetText).Tip("Checkbox label text."),
+			"checked": protocol.NewProperty("flag", wprop("checked", func(_ *protocol.BindContext, c *Checkbox, v *protocol.Value, f protocol.FlagState) error {
 				switch f {
 				case protocol.FlagTrue:
 					c.SetCheckState(Checked)
@@ -40,10 +40,10 @@ func init() {
 					}
 				}
 				return nil
-			}),
-			"tristate": boolProp("tristate", (*Checkbox).SetTriState),
-			"wrap":     boolProp("wrap", (*Checkbox).SetWordWrap),
-			"action":   actionProp("action"),
+			})).Tip("Checked state (tri-capable: on/off/mixed)."),
+			"tristate": boolProp("tristate", (*Checkbox).SetTriState).Tip("Allow clicking through the mixed state.").Def("false"),
+			"wrap":     boolProp("wrap", (*Checkbox).SetWordWrap).Tip("Word-wrap the label.").Def("false"),
+			"action":   actionProp("action").Tip("Optional command dispatched on toggle."),
 		},
 		nil,
 		func(ctx *protocol.BindContext, w core.Trinket) {

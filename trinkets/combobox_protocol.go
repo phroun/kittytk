@@ -30,11 +30,11 @@ func init() {
 					WithUint("trinket", id).WithInt("selected", index))
 			})
 		},
-		Props: map[string]protocol.PropertyApplier{
-			"selected":    intProp("selected", (*ComboBox).SetCurrentIndex),
-			"editable":    boolProp("editable", (*ComboBox).SetEditable),
-			"placeholder": stringProp("placeholder", (*ComboBox).SetPlaceholder),
-			"max_visible": intProp("max_visible", (*ComboBox).SetMaxVisibleItems),
+		Props: map[string]protocol.Property{
+			"selected":    intProp("selected", (*ComboBox).SetCurrentIndex).Tip("Selected index (-1 = none).").Def("-1"),
+			"editable":    boolProp("editable", (*ComboBox).SetEditable).Tip("Allow typing a custom value.").Def("false"),
+			"placeholder": stringProp("placeholder", (*ComboBox).SetPlaceholder).Tip("Empty-field hint text."),
+			"max_visible": intProp("max_visible", (*ComboBox).SetMaxVisibleItems).Tip("Max dropdown rows shown."),
 		},
 		Append: func(parent, child any) error {
 			c, ok := parent.(*ComboBox)

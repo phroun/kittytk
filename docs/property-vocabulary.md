@@ -93,6 +93,33 @@ is frozen; naming questions are collected at the end.
   Templates may contain children (component definitions). Builtins are
   lowercase; templates CamelCase by convention.
 
+## Introspection (D24)
+
+A connection can ask the host to describe its own wire vocabulary, so
+tooling and clients discover the surface at runtime instead of hard-coding
+it. Send the verb `describe` (no arguments); the host answers with a stream
+of **flat** statements (one per line, no nested blocks — the simplest
+parsers can read it) ahead of the batch's `reply`:
+
+```
+propcommon name="enabled" kind=flag default="true" doc="Whether the trinket accepts input."
+proptype   name="button" !virtual
+prop of="button" name="caption" kind=string default="" doc="Display text (& = accelerator)."
+prop of="button" name="action" kind=action default="" doc="Optional command dispatched on click."
+…
+```
+
+- `propcommon` — a property every non-virtual type accepts (reported once).
+- `proptype name=… virtual|!virtual` — a registered type; following `prop`
+  lines (matched by `of=`) are its type-specific properties.
+- Each property carries `kind` (string/int/float/flag/enum/word/color/units/
+  stream/action), `default` (a literal, or `inherited`/`as-noted`/empty),
+  a brief tooltip `doc`, and `enum` (comma-separated allowed words, else empty).
+
+The descriptors come straight from each trinket's registration, so they
+cannot drift from what the host actually accepts. Go clients call
+`Conn.Describe()`, which returns the decoded `protocol.Vocabulary`.
+
 ## Identity, creation, correlation
 
 | Concept | Form | Notes |
