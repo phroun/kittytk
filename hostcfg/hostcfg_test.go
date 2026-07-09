@@ -62,6 +62,16 @@ token = a;b#c
 	}
 }
 
+// CRLF line endings (as a Windows user's Notepad would save) parse the
+// same as LF: the trailing \r is not part of the value.
+func TestApplyHandlesCRLF(t *testing.T) {
+	cfg := Defaults()
+	apply([]byte("title = Win\r\nscale = 3\r\nendpoint = tcp://127.0.0.1:9797\r\n"), &cfg)
+	if cfg.Title != "Win" || cfg.Scale != 3 || cfg.Endpoint != "tcp://127.0.0.1:9797" {
+		t.Errorf("CRLF parse: %+v", cfg)
+	}
+}
+
 // A malformed number leaves the default rather than zeroing the field.
 func TestApplyKeepsDefaultOnBadNumber(t *testing.T) {
 	cfg := Defaults()
