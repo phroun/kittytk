@@ -1301,11 +1301,12 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 
 		// For tabs with backslash/slash separator when scrolling is needed, check if we can fit
 		// the minimum external ellipsis. If not, we must force internal ellipsis (truncate the text)
-		// Note: we check ALL tabs with special separators, including the last visible one,
-		// because the "more tabs" ellipsis still needs room after it.
+		// This reserve only matters when there are MORE tabs after this one - the trailing
+		// "more tabs" ellipsis is what it makes room for. The actual last tab has nothing after
+		// it, so reserving room there would truncate it for an ellipsis that never renders.
 		// We add 1 cell safety margin for boundary cases.
 		forceInternalEllipsis := false
-		if needsScrolling && (isSelected || nextIsSelected) {
+		if needsScrolling && (isSelected || nextIsSelected) && tabIndex != len(t.tabs)-1 {
 			textWidth := font.MeasureText(tab.Text)
 			var minCells core.Unit
 			if isSelected {
@@ -1988,11 +1989,12 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 
 		// For tabs with slash/backslash separator when scrolling is needed, check if we can fit
 		// the minimum external ellipsis. If not, we must force internal ellipsis (truncate the text)
-		// Note: we check ALL tabs with special separators, including the last visible one,
-		// because the "more tabs" ellipsis still needs room after it.
+		// This reserve only matters when there are MORE tabs after this one - the trailing
+		// "more tabs" ellipsis is what it makes room for. The actual last tab has nothing after
+		// it, so reserving room there would truncate it for an ellipsis that never renders.
 		// We use minCells = 4 to give a 1-cell safety margin for boundary cases.
 		forceInternalEllipsis := false
-		if needsScrolling && (isSelected || nextIsSelected) {
+		if needsScrolling && (isSelected || nextIsSelected) && tabIndex != len(t.tabs)-1 {
 			textWidth := font.MeasureText(tab.Text)
 			// Need separator char + slash/backslash + at least 1 dot + safety margin
 			// isSelected: _ + / + 1 dot + margin = 4
