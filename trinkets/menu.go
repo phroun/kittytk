@@ -2010,8 +2010,27 @@ func (m *MenuBar) OpenMenu(index int) {
 
 	// Calculate position (after scrolling so position is correct)
 	metrics := m.EffectiveCellMetrics()
-	x := m.calculateMenuX(index)
+	itemX := m.calculateMenuX(index)
+	itemWidth := m.menuTitleWidth(m.menus[index].title)
 	y := metrics.CellHeight
+
+	// Horizontal placement (popupX is in the menu bar's local space, where
+	// 0 is the surface's left edge and the bar spans its full width):
+	//   - Normally the dropdown is left-aligned to its menu-bar item.
+	//   - If a left-aligned dropdown would run past the surface's right
+	//     edge, right-align it so its right edge meets the item's right
+	//     edge instead.
+	//   - If even right-aligned it would fall off the left edge (a very
+	//     narrow surface), pin its left edge to the surface's left edge.
+	x := itemX
+	dropWidth := m.activeMenu.calculateSize().Width
+	surfaceWidth := m.Bounds().Width
+	if itemX+dropWidth > surfaceWidth {
+		x = itemX + itemWidth - dropWidth
+		if x < 0 {
+			x = 0
+		}
+	}
 
 	// Calculate available height from desktop client area and set up timer
 	if parent := m.Parent(); parent != nil {
@@ -2049,7 +2068,9 @@ func (m *MenuBar) OpenMenu(index int) {
 
 	// Gap the dropdown's top stroke across the parent menu-bar item, so
 	// the border merges into the bar rather than underlining the item.
-	m.activeMenu.SetStrokeGap(x, m.menuTitleWidth(m.menus[index].title), false)
+	// The gap tracks the item (itemX), not the possibly right-aligned
+	// dropdown; paintPopupOuterStroke clamps it to the dropdown's span.
+	m.activeMenu.SetStrokeGap(itemX, itemWidth, false)
 
 	// Announce the menu for accessibility
 	m.announceCurrentMenu()
