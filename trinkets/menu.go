@@ -726,6 +726,20 @@ func (m *Menu) setGraphicalHint(graphical bool) {
 	m.graphicalKnown = true
 }
 
+// inheritDisplayContext copies the opener's effective grid metrics and
+// font onto this popup. Popup menus aren't parented into the trinket
+// tree (see the note on the Menu struct), so their EffectiveCellMetrics
+// and EffectiveFont would otherwise fall back to the built-in 8x16 / 12pt
+// defaults and ignore the host's chosen font_size. The opener (a MenuBar
+// or a parent Menu) is parented to the desktop and knows both, so it
+// hands them down before the popup lays out - the same reason
+// setGraphicalHint exists.
+func (m *Menu) inheritDisplayContext(metrics core.CellMetrics, font *core.Font) {
+	cm := metrics
+	m.SetCellMetrics(&cm)
+	m.SetFont(font)
+}
+
 // SetStrokeGap marks a horizontal span of one outer-stroke edge to omit
 // so the border merges with the control that opened this menu (the edge
 // nearest it). x/w are in the menu's coordinate space; bottom selects
@@ -1324,8 +1338,9 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 
 	m.closeSubMenu()
 
-	// The submenu shares this menu's surface kind.
+	// The submenu shares this menu's surface kind, grid and font.
 	item.SubMenu.setGraphicalHint(m.graphicalSurface())
+	item.SubMenu.inheritDisplayContext(m.EffectiveCellMetrics(), m.EffectiveFont())
 
 	size := m.calculateSize()
 
@@ -1976,8 +1991,10 @@ func (m *MenuBar) OpenMenu(index int) {
 	m.currentIndex = index
 	m.activeMenu = m.menus[index]
 	// The MenuBar is parented to the desktop, so it can see the surface
-	// kind; hand it to the (unparented) dropdown before it lays out.
+	// kind and the host's grid/font; hand them to the (unparented)
+	// dropdown before it lays out.
 	m.activeMenu.setGraphicalHint(core.FindGraphicalFrames(m.Self()))
+	m.activeMenu.inheritDisplayContext(m.EffectiveCellMetrics(), m.EffectiveFont())
 	m.acceleratorsActive = false // Disable bar accelerators when menu is down
 
 	// Set up callback so when user presses on a menu item, we enter drag mode
