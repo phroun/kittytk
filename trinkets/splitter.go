@@ -434,6 +434,14 @@ func (sp *Splitter) Paint(p *core.Painter) {
 // fills its whole rectangle, a hairline runs its full length, and the
 // grab trinketry (title caption or dots) sits exactly centered in a
 // cleared mid-section - no cell quantization anywhere.
+// atLeast returns v clamped up to the floor (never below it).
+func atLeast(v, floor core.Unit) core.Unit {
+	if v < floor {
+		return floor
+	}
+	return v
+}
+
 func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect, dividerStyle style.CellStyle) {
 	line := dividerStyle.WithBg(dividerStyle.Fg)
 	p.FillRect(divider, ' ', dividerStyle)
@@ -452,15 +460,18 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 
 	if sp.orientation == core.Horizontal {
 		// Vertical band: hairline down the middle, broken by the ':'
-		// grab dots at the exact center.
+		// grab dots at the exact center. The dot/gap sizes are screen-space
+		// (so they survive re-denomination) but scale with the cell so they
+		// track font_size; the constants are the 8x16-baseline sizes.
+		metrics := sp.EffectiveCellMetrics()
 		lineX := divider.X + (divider.Width-hairW)/2
 		cx := divider.X + divider.Width/2
 		cy := divider.Y + divider.Height/2
-		gapHalf := p.ScreenHeightToLocal(6)
+		gapHalf := atLeast(p.ScreenHeightToLocal(6)*metrics.CellHeight/16, hairH)
 		p.FillRect(core.UnitRect{X: lineX, Y: divider.Y, Width: hairW, Height: cy - gapHalf - divider.Y}, ' ', line)
 		p.FillRect(core.UnitRect{X: lineX, Y: cy + gapHalf, Width: hairW, Height: divider.Y + divider.Height - cy - gapHalf}, ' ', line)
-		dotW := p.ScreenWidthToLocal(2)
-		dotH := p.ScreenHeightToLocal(2)
+		dotW := atLeast(p.ScreenWidthToLocal(2)*metrics.CellWidth/8, hairW)
+		dotH := atLeast(p.ScreenHeightToLocal(2)*metrics.CellHeight/16, hairH)
 		p.FillRect(core.UnitRect{X: cx - dotW/2, Y: cy - dotH - hairH, Width: dotW, Height: dotH}, ' ', line)
 		p.FillRect(core.UnitRect{X: cx - dotW/2, Y: cy + hairH, Width: dotW, Height: dotH}, ' ', line)
 		return
