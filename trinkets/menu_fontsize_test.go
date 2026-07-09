@@ -79,9 +79,10 @@ func TestMenuBarClockScalesWithFontSize(t *testing.T) {
 	}
 }
 
-// PNG proof: the same dropdown rendered at 12pt and 18pt. The 18pt
-// dropdown is physically taller (its rows track the enlarged cell), so
-// it covers more painted pixels below the bar.
+// PNG proof: the same dropdown rendered at 12pt and 18pt. Its unit
+// height is font_size-invariant (same rows, same denomination), but
+// pixels-per-unit grows, so the 18pt dropdown is physically taller and
+// covers more painted pixels below the bar.
 func TestMenuDropdownFontSizeProof(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	dir := t.TempDir()
@@ -90,22 +91,23 @@ func TestMenuDropdownFontSizeProof(t *testing.T) {
 	}
 
 	var heights [2]core.Unit
+	var ppu [2]float64
 	for i, size := range []int{12, 18} {
-		b, err := raster.New(360, 240)
+		b, err := raster.New(360, 360)
 		if err != nil {
 			t.Fatal(err)
 		}
-		b.SetCellMetrics(raster.CellMetricsForFontSize(size))
-		metrics := b.Metrics()
+		b.SetFontSize(size)
+		metrics := b.Metrics() // stays 8x16 under font_size
 
 		d := NewDesktop()
 		d.SetBackend(b)
-		d.SetFont(&core.Font{Name: "ui-text", Size: size})
+		d.SetFont(&core.Font{Name: "ui-text", Size: 12})
 
 		mb := NewMenuBar()
 		mb.SetHideCalendar(true)
 		mb.SetCellMetrics(&metrics)
-		mb.SetFont(&core.Font{Name: "ui-text", Size: size})
+		mb.SetFont(&core.Font{Name: "ui-text", Size: 12})
 		file := NewMenu("File")
 		for _, it := range []string{"New", "Open", "Save", "Quit"} {
 			file.AddItem(NewMenuItem(it))
@@ -115,6 +117,7 @@ func TestMenuDropdownFontSizeProof(t *testing.T) {
 		mb.OpenMenu(0)
 
 		heights[i] = file.DropdownBounds().Height
+		ppu[i] = b.PxPerUnit()
 
 		b.Clear(style.DefaultStyle())
 		mb.Paint(core.NewPainter(b))
@@ -123,12 +126,18 @@ func TestMenuDropdownFontSizeProof(t *testing.T) {
 		if err := b.WritePNG(out); err != nil {
 			t.Fatalf("WritePNG: %v", err)
 		}
-		t.Logf("font_size=%d -> cell %+v, dropdown height %d units, png %s",
-			size, metrics, heights[i], out)
+		t.Logf("font_size=%d -> cell %+v, dropdown height %d units, pxPerUnit %.3f, png %s",
+			size, metrics, heights[i], ppu[i], out)
 		mb.CloseMenu()
 	}
 
-	if heights[1] <= heights[0] {
-		t.Errorf("dropdown did not grow with font_size: 12pt=%d 18pt=%d", heights[0], heights[1])
+	// Same unit height (font_size-invariant layout)...
+	if heights[0] != heights[1] {
+		t.Errorf("dropdown unit height changed with font_size (should be invariant): 12pt=%d 18pt=%d",
+			heights[0], heights[1])
+	}
+	// ...but more device pixels per unit, so physically taller.
+	if ppu[1] <= ppu[0] {
+		t.Errorf("dropdown pixels did not grow with font_size: pxPerUnit 12pt=%.3f 18pt=%.3f", ppu[0], ppu[1])
 	}
 }

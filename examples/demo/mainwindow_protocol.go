@@ -37,14 +37,14 @@ func init() {
 			return uint64(t.(*fixedWidthBox).ObjectID())
 		},
 		Props: map[string]protocol.Property{
-			"cols": protocol.NewProperty("int", func(_ *protocol.BindContext, target any, v *protocol.Value, fl protocol.FlagState) error {
-				n, err := protocol.AsInt("cols", v, fl)
+			"width": protocol.NewProperty("int", func(_ *protocol.BindContext, target any, v *protocol.Value, fl protocol.FlagState) error {
+				n, err := protocol.AsInt("width", v, fl)
 				if err != nil {
 					return err
 				}
-				target.(*fixedWidthBox).widthCells = core.Unit(n)
+				target.(*fixedWidthBox).width = core.Unit(n)
 				return nil
-			}).Tip("Fixed box width in cells (columns)"),
+			}).Tip("Fixed box width in units"),
 		},
 		Append: func(parent, child any) error {
 			w, ok := child.(core.Trinket)
@@ -139,13 +139,13 @@ b=new tab caption="Basic Trinkets" children={
 s=new tab caption="Selection" children={
 	o=new panel layout=vbox spacing=0 children={
 		new panel layout=hbox spacing=8 align=fill children={
-			new fixedbox cols=32 children={
+			new fixedbox width=256 children={
 				new label caption="The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence" wrap align=fill
 			}
-			new fixedbox cols=32 children={
+			new fixedbox width=256 children={
 				new label caption="Pack my box with five dozen liquor jugs before the Tuesday checkbox below doubles every letter" wrap align=fill
 			}
-			new fixedbox cols=36 children={
+			new fixedbox width=288 children={
 				new panel layout=vbox align=fill children={
 					new checkbox caption="Enable the experimental feature that reticulates splines while the moon is full" wrap
 					new radiobutton caption="Prefer the long-form explanation whenever the assistant answers a question" wrap
@@ -427,10 +427,7 @@ func createMainWindow(desktop *trinkets.Desktop, application *app.Application) *
 		byID:  make(map[uint64]any),
 	}
 
-	// Rescale the script's absolute-unit dimensions (window size, spacing)
-	// to the desktop's denomination so they stay the same row/column
-	// count at any font_size (no-op at the default 8x16).
-	script, err := protocol.Parse(denominate(mainWindowScript(), desktop.EffectiveCellMetrics()))
+	script, err := protocol.Parse(mainWindowScript())
 	if err != nil {
 		panic(fmt.Sprintf("main window script: %v", err))
 	}

@@ -23,7 +23,8 @@ import (
 type Platform struct {
 	title    string
 	wPx, hPx int
-	scale    int              // pixels per unit; see SetScale
+	scale    int              // device zoom: pixels per unit at 12pt; see SetScale
+	fontSize int              // UI point size that sets the cell pixel size (0 = 12pt base)
 	metrics  core.CellMetrics // root cell denomination for every surface (0 = raster default 8x16)
 
 	mu     sync.Mutex
@@ -86,18 +87,30 @@ func (p *Platform) SetScale(scale int) {
 
 // SetCellMetrics sets the root cell denomination applied to EVERY
 // surface's backend - the main window (including after a resize, which
-// recreates the framebuffer) and every torn-off/secondary window - so
-// font_size-derived chrome sizing survives across all of them. Call
+// recreates the framebuffer) and every torn-off/secondary window. Call
 // before EnsureBackend/Run. A zero value keeps the raster default 8x16.
+// font_size does NOT go through here (it scales the cell's pixel size,
+// not the denomination); see SetFontSize.
 func (p *Platform) SetCellMetrics(m core.CellMetrics) {
 	p.metrics = m
 }
 
+// SetFontSize sets the UI point size that fixes the cell's pixel size on
+// EVERY surface's backend (12pt = the base 8x16-pixel cell at zoom 1). It
+// scales pixels-per-unit, so layout is unchanged in units and only the
+// pixel size of every cell grows. Call before EnsureBackend/Run.
+func (p *Platform) SetFontSize(size int) {
+	p.fontSize = size
+}
+
 // applyMetrics re-seeds a freshly created backend with the platform's
-// denomination so its cell primitive (DrawCell) matches font_size.
+// denomination and font_size so its geometry matches every other surface.
 func (p *Platform) applyMetrics(b *raster.Backend) {
 	if p.metrics.CellWidth > 0 && p.metrics.CellHeight > 0 {
 		b.SetCellMetrics(p.metrics)
+	}
+	if p.fontSize > 0 {
+		b.SetFontSize(p.fontSize)
 	}
 }
 

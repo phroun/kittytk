@@ -437,7 +437,11 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA,
 		naturalW = 1
 	}
 	raw := image.NewRGBA(image.Rect(0, 0, naturalW, naturalH))
-	text.Render(raw, sp, 0, 0, scale, fg)
+	// scale here is the integer device zoom (PurfecTerm renders its own
+	// cells at device pixels); text.Render now takes fractional
+	// pixels-per-unit, so widen it. font_size-aware terminal scaling is
+	// deferred.
+	text.Render(raw, sp, 0, 0, float64(scale), fg)
 
 	// Stretch/center per the gtk rules.
 	out := image.NewRGBA(image.Rect(0, 0, boxWPx, boxHPx))

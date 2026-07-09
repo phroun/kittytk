@@ -20,7 +20,6 @@ import (
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
-	"github.com/phroun/kittytk/raster"
 	sdlplat "github.com/phroun/kittytk/sdl"
 	"github.com/phroun/kittytk/trinkets"
 )
@@ -32,16 +31,15 @@ func main() {
 	cfg := hostcfg.Load()
 
 	plat := sdlplat.New(cfg.Title, cfg.Width, cfg.Height)
-	plat.SetScale(cfg.Scale) // pixels per unit (DPI/zoom density)
+	plat.SetScale(cfg.Scale) // device zoom: pixels per unit at the base font
 
-	// font_size sizes the desktop's cell grid to the chosen UI point
-	// size: the root cell becomes one line box tall and one advance
-	// wide, and the base font renders at that size so text fills its
-	// cells. scale (above) is the separate pixel-density multiplier.
-	// At the default 12pt this reproduces the historical 8x16 grid.
-	// Setting it on the platform (not just the first backend) keeps it
+	// font_size sets the PIXEL size of a cell: it scales pixels-per-unit
+	// (12pt = the base 8x16-pixel cell), so a bigger font grows every
+	// unit-measured length in pixels while the root denomination stays
+	// 8x16 and layout is unchanged in units. scale (above) multiplies on
+	// top as the device-density knob. Setting it on the platform keeps it
 	// across resizes and on every torn-off/secondary surface.
-	plat.SetCellMetrics(raster.CellMetricsForFontSize(cfg.FontSize))
+	plat.SetFontSize(cfg.FontSize)
 
 	backend, err := plat.EnsureBackend()
 	if err != nil {
@@ -51,7 +49,9 @@ func main() {
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font
-	desktop.SetFont(&core.Font{Name: "ui-text", Size: cfg.FontSize})
+	// The UI font stays one cell tall in UNITS (12); font_size makes it
+	// render larger by growing the cell's pixel size, not its unit count.
+	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})
 
 	// The desktop's own (windowless) application owns the base menu bar
 	// until a client dials in.

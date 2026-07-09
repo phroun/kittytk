@@ -3,6 +3,7 @@ package core
 
 import (
 	"image"
+	"math"
 
 	"github.com/phroun/kittytk/style"
 )
@@ -175,10 +176,27 @@ type ImageDrawer interface {
 	DrawImagePx(xPx, yPx int, img image.Image)
 }
 
-// DeviceScaler is an optional RenderBackend capability reporting how
-// many device pixels one unit covers (the raster backend's scale).
+// DeviceScaler is an optional RenderBackend capability reporting the
+// device zoom: how many device pixels one unit covers at the base font
+// size (the raster backend's integer scale). Chrome that wants a
+// physical hairline weight uses it; geometry that must track font_size
+// uses UnitPixelMapper instead.
 type DeviceScaler interface {
 	Scale() int
+}
+
+// UnitPixelMapper is an optional RenderBackend capability exposing the
+// backend's true (font_size-aware, possibly fractional and cell-snapped)
+// unit-to-device-pixel mapping, so the Painter's device-pixel helpers
+// place sub-unit fills exactly where the backend's own geometry lands.
+// Without it the Painter falls back to integer unit*DeviceScale.
+type UnitPixelMapper interface {
+	// PxPerUnit is the unsnapped device pixels per unit (for lengths).
+	PxPerUnit() float64
+	// UnitToPxX / UnitToPxY are the cell-snapped conversions of a unit
+	// position on each axis (for anchors).
+	UnitToPxX(Unit) int
+	UnitToPxY(Unit) int
 }
 
 // GraphicalModer is the D1 mode query: a backend reports true when
@@ -573,9 +591,9 @@ func (p *Painter) DrawImageOffset(x, y Unit, offXPx, offYPx int, img image.Image
 		return false
 	}
 	sx, sy := p.toScreen(x, y)
-	scale := p.DeviceScale()
+	ax, ay := p.deviceAnchor(sx, sy)
 	p.applyClip()
-	id.DrawImagePx(int(sx)*scale+offXPx, int(sy)*scale+offYPx, img)
+	id.DrawImagePx(ax+offXPx, ay+offYPx, img)
 	return true
 }
 
@@ -590,9 +608,9 @@ func (p *Painter) FillRectPixels(x, y Unit, offXPx, offYPx, wPx, hPx int, s styl
 		return false
 	}
 	sx, sy := p.toScreen(x, y)
-	scale := p.DeviceScale()
+	ax, ay := p.deviceAnchor(sx, sy)
 	p.applyClip()
-	pf.FillRectPx(int(sx)*scale+offXPx, int(sy)*scale+offYPx, wPx, hPx, s)
+	pf.FillRectPx(ax+offXPx, ay+offYPx, wPx, hPx, s)
 	return true
 }
 
@@ -608,14 +626,16 @@ func (p *Painter) FillRectPixelsAlpha(x, y Unit, offXPx, offYPx, wPx, hPx int, r
 		return false
 	}
 	sx, sy := p.toScreen(x, y)
-	scale := p.DeviceScale()
+	ax, ay := p.deviceAnchor(sx, sy)
 	p.applyClip()
-	tf.FillRectPxAlpha(int(sx)*scale+offXPx, int(sy)*scale+offYPx, wPx, hPx, r, g, b, alpha)
+	tf.FillRectPxAlpha(ax+offXPx, ay+offYPx, wPx, hPx, r, g, b, alpha)
 	return true
 }
 
-// DeviceScale reports how many device pixels one unit covers on this
-// target (1 on cell surfaces and unscaled pixel surfaces).
+// DeviceScale reports the device zoom: how many device pixels one unit
+// covers at the base font size (1 on cell surfaces and unscaled pixel
+// surfaces). It does NOT include the font_size cell scaling; use
+// UnitsToPx / the device anchor helpers for font_size-aware conversions.
 func (p *Painter) DeviceScale() int {
 	if ds, ok := p.backend.(DeviceScaler); ok {
 		if s := ds.Scale(); s > 0 {
@@ -623,6 +643,37 @@ func (p *Painter) DeviceScale() int {
 		}
 	}
 	return 1
+}
+
+// PxPerUnitF reports the fractional device pixels per unit, tracking
+// font_size on backends that expose UnitPixelMapper (else the integer
+// DeviceScale). Device-pixel render paths (e.g. the terminal cell
+// raster) multiply unit dimensions by this so they grow with the cell.
+func (p *Painter) PxPerUnitF() float64 {
+	if m, ok := p.backend.(UnitPixelMapper); ok {
+		if ppu := m.PxPerUnit(); ppu > 0 {
+			return ppu
+		}
+	}
+	return float64(p.DeviceScale())
+}
+
+// UnitsToPx converts a unit length to device pixels, tracking font_size
+// on backends that expose UnitPixelMapper (else integer unit*scale). For
+// device-pixel widths/heights that must grow with the cell size.
+func (p *Painter) UnitsToPx(u Unit) int {
+	return int(math.Round(float64(u) * p.PxPerUnitF()))
+}
+
+// deviceAnchor maps a screen-unit position to its device-pixel anchor,
+// matching the backend's own (cell-snapped, font_size-aware) geometry so
+// device-pixel fills line up with painted edges.
+func (p *Painter) deviceAnchor(sx, sy Unit) (int, int) {
+	if m, ok := p.backend.(UnitPixelMapper); ok {
+		return m.UnitToPxX(sx), m.UnitToPxY(sy)
+	}
+	scale := p.DeviceScale()
+	return int(sx) * scale, int(sy) * scale
 }
 
 // Graphical reports whether the target paints pixels rather than

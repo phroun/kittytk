@@ -284,7 +284,7 @@ func TestRenderProducesInk(t *testing.T) {
 
 	for _, scale := range []int{1, 2} {
 		img := image.NewRGBA(image.Rect(0, 0, int(sp.Width())*scale+4, int(sp.Height())*scale+4))
-		Render(img, sp, 0, 0, scale, color.RGBA{255, 255, 255, 255})
+		Render(img, sp, 0, 0, float64(scale), color.RGBA{255, 255, 255, 255})
 
 		ink := 0
 		bounds := img.Bounds()

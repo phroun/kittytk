@@ -11,10 +11,11 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// A ListView's default width is "30 characters"; that must track
-// font_size, not stay a fixed 240 units. Render at 6pt and 12pt and
-// assert the box width scales with the cell width (so it is ~30 cells at
-// either size, not a huge box around tiny text).
+// A ListView's default width is "30 characters" = 30 cells of the 8-wide
+// denomination = 240 units, at every font_size (font_size scales the
+// pixels of those units, not the count). Render at 6pt and 12pt and
+// assert the box is 30 cells wide at either size (and physically larger
+// at 12pt, visible in the PNGs).
 func TestListViewWidthTracksFontSize(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	dir := os.Getenv("KITTYTK_PROOF_DIR")
@@ -27,12 +28,12 @@ func TestListViewWidthTracksFontSize(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := raster.CellMetricsForFontSize(size)
-		b.SetCellMetrics(m)
+		b.SetFontSize(size)
+		m := b.Metrics() // stays 8x16 under font_size
 
 		d := NewDesktop()
 		d.SetBackend(b)
-		d.SetFont(&core.Font{Name: "ui-text", Size: size})
+		d.SetFont(&core.Font{Name: "ui-text", Size: 12})
 
 		lv := NewListView()
 		lv.SetParent(d)

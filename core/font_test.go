@@ -2,23 +2,22 @@ package core
 
 import "testing"
 
-// MeasureRunes scales its per-character advance with the font size, so a
-// "30 characters wide" sizing hint is ~30 cells at any font_size instead
-// of a fixed 240 units. The default 12pt keeps the historical 8 units
-// (16 for the double-width Tuesday face) so existing layouts are
-// unchanged.
-func TestMeasureRunesScalesWithSize(t *testing.T) {
+// MeasureRunes counts UNITS, not pixels: a rune is one cell of the
+// default denomination (8 units; 16 for the double-width Tuesday face)
+// regardless of font size. font_size scales the pixel size of a unit,
+// not the number of units per character, so the unit count is invariant.
+func TestMeasureRunesIsFontSizeInvariant(t *testing.T) {
 	cases := []struct {
 		name    string
 		size    int
-		perRune Unit // expected width of a single rune
+		perRune Unit // expected width of a single rune, in units
 	}{
-		{"ui-text", 12, 8}, // backward-compatible default
-		{"ui-text", 6, 4},  // half size -> half width
-		{"ui-text", 18, 12},
-		{"ui-text", 24, 16},
-		{"Tuesday", 12, 16}, // double-width demo face, unchanged at 12pt
-		{"Tuesday", 6, 8},
+		{"ui-text", 12, 8},
+		{"ui-text", 6, 8},
+		{"ui-text", 18, 8},
+		{"ui-text", 24, 8},
+		{"Tuesday", 12, 16}, // double-width demo face
+		{"Tuesday", 6, 16},
 	}
 	for _, tc := range cases {
 		f := &Font{Name: tc.name, Size: tc.size}

@@ -10,10 +10,13 @@
 // window and feed input back; the package itself is substrate-free
 // and cgo-free, so it also serves headless rendering and tests.
 //
-// Units: 1 unit = 1 pixel at scale 1 (D23 bring-up default). The
-// root CellMetrics derive from the default font - Monday's 8x16 -
-// so layout is identical to the TUI until mode-aware paint paths
-// (D1) start exploiting sub-cell precision.
+// Units: a unit is 1/denomination of a cell, and a cell's PIXEL size is
+// set by font_size (12pt = the historical 8x16-pixel cell at zoom 1).
+// The root denomination stays the default 8x16 regardless of font_size;
+// font_size instead scales pixels-per-unit, so a bigger font grows every
+// unit-measured length in pixels without changing its cell count. The
+// device zoom (scale) multiplies on top, so pixels-per-unit is
+// scale * font_size/12 and may be fractional.
 package raster
 
 import (
@@ -31,10 +34,11 @@ import (
 
 // Backend renders KittyTK drawing primitives into an RGBA image.
 type Backend struct {
-	img     *image.RGBA
-	w, h    int              // pixels
-	scale   int              // pixels per unit (framebuffer is w/scale x h/scale units)
-	metrics core.CellMetrics // root cell denomination (units per cell)
+	img      *image.RGBA
+	w, h     int              // pixels
+	scale    int              // device zoom: pixels per unit at the 12pt base font
+	fontSize int              // UI point size that sets the cell's pixel size (12 = base)
+	metrics  core.CellMetrics // root cell denomination (units per cell)
 
 	clip    core.UnitRect
 	hasClip bool
@@ -66,34 +70,14 @@ func NewScaled(widthPx, heightPx, scale int) (*Backend, error) {
 		scale = 1
 	}
 	b := &Backend{
-		img:     image.NewRGBA(image.Rect(0, 0, widthPx, heightPx)),
-		w:       widthPx,
-		h:       heightPx,
-		scale:   scale,
-		metrics: core.CellMetrics{CellWidth: 8, CellHeight: 16},
+		img:      image.NewRGBA(image.Rect(0, 0, widthPx, heightPx)),
+		w:        widthPx,
+		h:        heightPx,
+		scale:    scale,
+		fontSize: 12,
+		metrics:  core.CellMetrics{CellWidth: 8, CellHeight: 16},
 	}
 	return b, nil
-}
-
-// CellMetricsForFontSize returns the root cell denomination for a UI
-// font of the given point size. The height is the font's real line box
-// (Size*4/3 units); the width scales the historical 8-unit monospace
-// cell advance from its 12pt baseline (8 at 12pt). At the default 12pt
-// this is exactly the historical 8x16, so layout is unchanged.
-func CellMetricsForFontSize(size int) core.CellMetrics {
-	if size <= 0 {
-		size = 12
-	}
-	h := engine().LineHeight(&core.Font{Name: cellFont.Name, Size: size})
-	if h <= 0 {
-		h = core.Unit(size * 4 / 3)
-	}
-	// round(size * 2/3): the 8-unit cell advance scaled from 12pt.
-	w := core.Unit((size*2 + 1) / 3)
-	if w < 1 {
-		w = 1
-	}
-	return core.CellMetrics{CellWidth: w, CellHeight: h}
 }
 
 // termRGBA converts a palette color to an opaque framebuffer color.
@@ -101,11 +85,84 @@ func termRGBA(c style.TermRGB) color.RGBA {
 	return color.RGBA{R: c.R, G: c.G, B: c.B, A: 255}
 }
 
-// px converts an abstract-unit coordinate to framebuffer pixels.
-func (b *Backend) px(u core.Unit) int { return int(u) * b.scale }
+// cellPx is the exact integer pixel size of one root cell along an axis:
+// the denomination base (8 wide, 16 tall) scaled by the font_size ratio,
+// then by the integer device zoom. Whole cells land on exact multiples
+// of this, so cell-aligned geometry (grid lines, borders, the cell
+// primitive) never falls on a fractional pixel.
+func (b *Backend) cellPx(denom int) int {
+	if denom < 1 {
+		denom = 1
+	}
+	n := int(math.Round(float64(denom) * float64(b.fontSize) / 12))
+	if n < 1 {
+		n = 1
+	}
+	return n * b.scale
+}
 
-// Scale reports pixels per unit.
+func (b *Backend) cellWPx() int { return b.cellPx(int(b.metrics.CellWidth)) }
+func (b *Backend) cellHPx() int { return b.cellPx(int(b.metrics.CellHeight)) }
+
+// snapAxis converts a unit coordinate/length to device pixels along one
+// axis: whole denomination-cells map to exact cellPx multiples, the
+// sub-cell remainder to a rounded fraction of a cell (D: cells are the
+// alignment grid, so integer cells must stay pixel-exact).
+func snapAxis(u core.Unit, denom, cellPx int) int {
+	if denom < 1 {
+		denom = 1
+	}
+	cells := int(u) / denom
+	rem := int(u) % denom
+	return cells*cellPx + int(math.Round(float64(rem)*float64(cellPx)/float64(denom)))
+}
+
+// pxX / pxY are the cell-snapped unit-to-pixel conversions for the two
+// axes. Positions and cell-aligned rect edges go through these.
+func (b *Backend) pxX(u core.Unit) int { return snapAxis(u, int(b.metrics.CellWidth), b.cellWPx()) }
+func (b *Backend) pxY(u core.Unit) int { return snapAxis(u, int(b.metrics.CellHeight), b.cellHPx()) }
+
+// pxPerUnit is the unsnapped device pixels covered by one unit, equal on
+// both axes (cellPx/denomination = font_size/12 * zoom). Proportional
+// text glyphs and decorative lengths (radii, arc strokes) - which are
+// not cell-aligned - use this instead of the snapped conversions.
+func (b *Backend) pxPerUnit() float64 {
+	return float64(b.scale) * float64(b.fontSize) / 12
+}
+
+// pxLen rounds an axis-agnostic length (radius, stroke) to device pixels.
+func (b *Backend) pxLen(u core.Unit) int {
+	return int(math.Round(float64(u) * b.pxPerUnit()))
+}
+
+// Scale reports the device zoom (pixels per unit at the 12pt base font).
+// Chrome that wants a physical device-pixel weight (hairlines, grab
+// targets) uses this; geometry uses px()/PxPerUnit() so it also tracks
+// font_size.
 func (b *Backend) Scale() int { return b.scale }
+
+// PxPerUnit exposes the fractional pixels-per-unit (see pxPerUnit) so
+// the painter's device-pixel helpers place sub-unit fills where the
+// backend's own geometry lands, at any font_size. Implements
+// core.UnitPixelMapper together with UnitToPxX/UnitToPxY.
+func (b *Backend) PxPerUnit() float64 { return b.pxPerUnit() }
+
+// UnitToPxX / UnitToPxY expose the cell-snapped axis conversions so the
+// painter can anchor device-pixel fills on the same grid the backend
+// paints (core.UnitPixelMapper).
+func (b *Backend) UnitToPxX(u core.Unit) int { return b.pxX(u) }
+func (b *Backend) UnitToPxY(u core.Unit) int { return b.pxY(u) }
+
+// SetFontSize sets the UI point size that fixes the cell's pixel size
+// (12 = the base 8x16-pixel cell at zoom 1). It scales pixels-per-unit,
+// not the denomination, so layout is unchanged in units and only the
+// pixel size of every cell grows.
+func (b *Backend) SetFontSize(size int) {
+	if size < 1 {
+		size = 12
+	}
+	b.fontSize = size
+}
 
 // Image exposes the framebuffer (substrates blit it; tests read it).
 func (b *Backend) Image() *image.RGBA { return b.img }
@@ -125,16 +182,19 @@ func (b *Backend) WritePNG(path string) error {
 func (b *Backend) Init() error { return nil }
 func (b *Backend) Shutdown()   {}
 
-// Metrics: the root cell denomination. It derives from the default
-// font (Monday: 8x16 at 12pt) per D23/D8', and can be re-seeded from a
-// chosen font size via SetCellMetrics/CellMetricsForFontSize.
+// Metrics: the root cell denomination (default 8x16 per D23/D8'), the
+// units-per-cell subdivision. font_size does NOT change this - it scales
+// the cell's pixel size (see pxX/pxY) - but SetCellMetrics can re-seed a
+// non-default root denomination.
 func (b *Backend) Metrics() core.CellMetrics {
 	return b.metrics
 }
 
 // SetCellMetrics re-seeds the root cell denomination the desktop
-// inherits (see CellMetricsForFontSize). Call before Desktop.SetBackend
-// so the whole trinket tree picks it up.
+// inherits. font_size does NOT change this (it scales the cell's pixel
+// size, not its subdivision count); callers use it only to choose a
+// non-default root denomination. Call before Desktop.SetBackend so the
+// whole trinket tree picks it up.
 func (b *Backend) SetCellMetrics(m core.CellMetrics) {
 	if m.CellWidth < 1 {
 		m.CellWidth = 1
@@ -146,7 +206,14 @@ func (b *Backend) SetCellMetrics(m core.CellMetrics) {
 }
 
 func (b *Backend) Size() core.UnitSize {
-	return core.UnitSize{Width: core.Unit(b.w / b.scale), Height: core.Unit(b.h / b.scale)}
+	ppu := b.pxPerUnit()
+	if ppu <= 0 {
+		ppu = 1
+	}
+	return core.UnitSize{
+		Width:  core.Unit(float64(b.w) / ppu),
+		Height: core.Unit(float64(b.h) / ppu),
+	}
 }
 
 func (b *Backend) BeginFrame() {}
@@ -176,18 +243,18 @@ func (b *Backend) pointVisible(x, y int) bool {
 		return false
 	}
 	if b.hasClip {
-		if x < b.px(b.clip.X) || y < b.px(b.clip.Y) ||
-			x >= b.px(b.clip.X+b.clip.Width) || y >= b.px(b.clip.Y+b.clip.Height) {
+		if x < b.pxX(b.clip.X) || y < b.pxY(b.clip.Y) ||
+			x >= b.pxX(b.clip.X+b.clip.Width) || y >= b.pxY(b.clip.Y+b.clip.Height) {
 			return false
 		}
 	}
 	if b.hasRoundClip {
-		rx0, ry0 := b.px(b.roundClip.X), b.px(b.roundClip.Y)
-		rx1, ry1 := b.px(b.roundClip.X+b.roundClip.Width), b.px(b.roundClip.Y+b.roundClip.Height)
+		rx0, ry0 := b.pxX(b.roundClip.X), b.pxY(b.roundClip.Y)
+		rx1, ry1 := b.pxX(b.roundClip.X+b.roundClip.Width), b.pxY(b.roundClip.Y+b.roundClip.Height)
 		if x < rx0 || y < ry0 || x >= rx1 || y >= ry1 {
 			return false
 		}
-		rad := int(b.roundClipRadius) * b.scale
+		rad := b.pxLen(b.roundClipRadius)
 		if m := min(rx1-rx0, ry1-ry0) / 2; rad > m {
 			rad = m
 		}
@@ -260,8 +327,8 @@ func (b *Backend) styleColors(s style.CellStyle) (fg, bg color.RGBA) {
 
 func (b *Backend) fillPx(x0, y0, x1, y1 int, c color.RGBA) {
 	if b.hasClip {
-		cx0, cy0 := b.px(b.clip.X), b.px(b.clip.Y)
-		cx1, cy1 := b.px(b.clip.X+b.clip.Width), b.px(b.clip.Y+b.clip.Height)
+		cx0, cy0 := b.pxX(b.clip.X), b.pxY(b.clip.Y)
+		cx1, cy1 := b.pxX(b.clip.X+b.clip.Width), b.pxY(b.clip.Y+b.clip.Height)
 		if x0 < cx0 {
 			x0 = cx0
 		}
@@ -310,8 +377,8 @@ func (b *Backend) fillPx(x0, y0, x1, y1 int, c color.RGBA) {
 // translucent counterpart of fillPx.
 func (b *Backend) blendRectPx(x0, y0, x1, y1 int, over color.RGBA, alpha float64) {
 	if b.hasClip {
-		cx0, cy0 := b.px(b.clip.X), b.px(b.clip.Y)
-		cx1, cy1 := b.px(b.clip.X+b.clip.Width), b.px(b.clip.Y+b.clip.Height)
+		cx0, cy0 := b.pxX(b.clip.X), b.pxY(b.clip.Y)
+		cx1, cy1 := b.pxX(b.clip.X+b.clip.Width), b.pxY(b.clip.Y+b.clip.Height)
 		if x0 < cx0 {
 			x0 = cx0
 		}
@@ -447,8 +514,11 @@ func isWide(ch rune) bool {
 var cellFont = &core.Font{Name: "Monday", Size: 12}
 
 func (b *Backend) drawRune(x, y core.Unit, ch rune, adv, cellH core.Unit, fg, bg color.RGBA, underline, transparentBg bool) {
-	xPx, yPx, advPx := b.px(x), b.px(y), b.px(adv)
-	hPx := int(cellH) * b.scale
+	// Cell-snap the box so adjacent cells tile pixel-exact at any
+	// font_size: origin and far edges each convert through pxX/pxY.
+	xPx, yPx := b.pxX(x), b.pxY(y)
+	advPx := b.pxX(x+adv) - xPx
+	hPx := b.pxY(y+cellH) - yPx
 	if !transparentBg {
 		b.fillPx(xPx, yPx, xPx+advPx, yPx+hPx, bg)
 	}
@@ -466,7 +536,7 @@ func (b *Backend) drawRune(x, y core.Unit, ch rune, adv, cellH core.Unit, fg, bg
 		b.compositeRGBA(xPx+pad, yPx, ti.img)
 	}
 	if underline {
-		b.fillPx(xPx, yPx+(int(cellH)-2)*b.scale, xPx+advPx, yPx+(int(cellH)-1)*b.scale, fg)
+		b.fillPx(xPx, b.pxY(y+cellH-2), xPx+advPx, b.pxY(y+cellH-1), fg)
 	}
 }
 
@@ -504,7 +574,7 @@ var textImageCache = struct {
 
 const textImageCacheMax = 512
 
-func textImageKey(f *core.Font, s string, fg, bg color.RGBA, underline bool, scale int) string {
+func textImageKey(f *core.Font, s string, fg, bg color.RGBA, underline bool, scale, fontSize int) string {
 	if f == nil {
 		f = core.DefaultFont()
 	}
@@ -513,7 +583,7 @@ func textImageKey(f *core.Font, s string, fg, bg color.RGBA, underline bool, sca
 		u = 'u'
 	}
 	return f.Name + "\x00" + string([]byte{
-		byte(f.Style), byte(f.Style >> 8), byte(f.Size), byte(scale), u,
+		byte(f.Style), byte(f.Style >> 8), byte(f.Size), byte(scale), byte(fontSize), u,
 		fg.R, fg.G, fg.B, bg.R, bg.G, bg.B,
 	}) + "\x00" + s
 }
@@ -521,7 +591,7 @@ func textImageKey(f *core.Font, s string, fg, bg color.RGBA, underline bool, sca
 // cachedTextImage returns the cached render of one string (see
 // textImageCache), rasterizing on a miss.
 func (b *Backend) cachedTextImage(f *core.Font, s string, fg, bg color.RGBA, underline, opaque bool) textImage {
-	key := textImageKey(f, s, fg, bg, underline, b.scale)
+	key := textImageKey(f, s, fg, bg, underline, b.scale, b.fontSize)
 	if !opaque {
 		key = "t\x00" + key
 	}
@@ -556,7 +626,9 @@ func (b *Backend) renderTextImage(f *core.Font, s string, fg, bg color.RGBA, und
 	sp := engine().ShapeRun(f, s)
 	w := sp.Width()
 	h := engine().LineHeight(f)
-	img := image.NewRGBA(image.Rect(0, 0, b.px(w), b.px(h)))
+	// Proportional text is not cell-aligned: size and rasterize it at the
+	// unsnapped fractional pixels-per-unit.
+	img := image.NewRGBA(image.Rect(0, 0, b.pxLen(w), b.pxLen(h)))
 	if opaque {
 		for i := range img.Pix {
 			switch i % 4 {
@@ -571,9 +643,9 @@ func (b *Backend) renderTextImage(f *core.Font, s string, fg, bg color.RGBA, und
 			}
 		}
 	}
-	text.Render(img, sp, 0, 0, b.scale, fg)
+	text.Render(img, sp, 0, 0, b.pxPerUnit(), fg)
 	if underline && len(sp.Lines) > 0 {
-		uy := b.px(sp.Lines[0].Baseline) + b.scale
+		uy := b.pxLen(sp.Lines[0].Baseline) + b.scale
 		for py := uy; py < uy+b.scale && py < img.Rect.Max.Y; py++ {
 			for px := 0; px < img.Rect.Max.X; px++ {
 				img.SetRGBA(px, py, fg)
@@ -659,9 +731,9 @@ func (b *Backend) DrawText(x, y core.Unit, s string, st style.CellStyle, f *core
 	ti := b.cachedTextImage(f, s, fg, bg, underline, opaque)
 
 	if ti.opaque {
-		b.blitRGBA(b.px(x), b.px(y), ti.img)
+		b.blitRGBA(b.pxX(x), b.pxY(y), ti.img)
 	} else {
-		b.compositeRGBA(b.px(x), b.px(y), ti.img)
+		b.compositeRGBA(b.pxX(x), b.pxY(y), ti.img)
 	}
 	return ti.width
 }
@@ -701,19 +773,19 @@ func (b *Backend) FillRect(r core.UnitRect, ch rune, s style.CellStyle) {
 		if transparent {
 			return // nothing to paint: the background shows through
 		}
-		b.fillPx(b.px(r.X), b.px(r.Y), b.px(r.X+r.Width), b.px(r.Y+r.Height), bg)
+		b.fillPx(b.pxX(r.X), b.pxY(r.Y), b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height), bg)
 	default:
 		if a, ok := shadeAlpha[ch]; ok {
 			if transparent {
 				// Blend the shade's foreground over what is beneath.
-				for y := b.px(r.Y); y < b.px(r.Y+r.Height); y++ {
-					for x := b.px(r.X); x < b.px(r.X+r.Width); x++ {
+				for y := b.pxY(r.Y); y < b.pxY(r.Y+r.Height); y++ {
+					for x := b.pxX(r.X); x < b.pxX(r.X+r.Width); x++ {
 						b.blendPx(x, y, fg, a)
 					}
 				}
 				return
 			}
-			b.fillPx(b.px(r.X), b.px(r.Y), b.px(r.X+r.Width), b.px(r.Y+r.Height), blend(fg, bg, a))
+			b.fillPx(b.pxX(r.X), b.pxY(r.Y), b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height), blend(fg, bg, a))
 			return
 		}
 		// Arbitrary fill character: tile the glyph one cell at a time.
@@ -746,10 +818,13 @@ func (b *Backend) DrawRect(r core.UnitRect, bs style.BorderStyle, s style.CellSt
 	th, dbl := borderWeight(bs)
 	th *= b.scale
 
-	left := b.px(r.X) + 4*b.scale
-	right := b.px(r.X+r.Width) - 4*b.scale
-	top := b.px(r.Y) + 8*b.scale
-	bottom := b.px(r.Y+r.Height) - 8*b.scale
+	// The border sits centered in the cell ring: 4 units in horizontally
+	// (half the 8-wide cell), 8 units in vertically (half the 16-tall
+	// cell). Cell-snap so it lands on the same grid as the fills it rings.
+	left := b.pxX(r.X + 4)
+	right := b.pxX(r.X + r.Width - 4)
+	top := b.pxY(r.Y + 8)
+	bottom := b.pxY(r.Y + r.Height - 8)
 
 	stroke := func(x0, y0, x1, y1 int) {
 		b.fillPx(x0, y0, x1, y1, fg)
@@ -762,7 +837,8 @@ func (b *Backend) DrawRect(r core.UnitRect, bs style.BorderStyle, s style.CellSt
 	}
 	rect(left, top, right, bottom)
 	if dbl {
-		rect(left-3*b.scale, top-3*b.scale, right+3*b.scale, bottom+3*b.scale)
+		d := b.pxLen(3)
+		rect(left-d, top-d, right+d, bottom+d)
 	}
 }
 
@@ -800,8 +876,8 @@ func (b *Backend) blendPx(x, y int, c color.RGBA, a float64) {
 // the given weight follows the arc in its foreground (0 = no stroke).
 func (b *Backend) DrawArcWedge(r core.UnitRect, centerRight, centerBottom bool, strokeW core.Unit, s style.CellStyle) {
 	fg, bg := b.styleColors(s)
-	x0, y0 := b.px(r.X), b.px(r.Y)
-	x1, y1 := b.px(r.X+r.Width), b.px(r.Y+r.Height)
+	x0, y0 := b.pxX(r.X), b.pxY(r.Y)
+	x1, y1 := b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height)
 	w, h := x1-x0, y1-y0
 	if w <= 0 || h <= 0 {
 		return
@@ -814,7 +890,7 @@ func (b *Backend) DrawArcWedge(r core.UnitRect, centerRight, centerBottom bool, 
 	if centerBottom {
 		cy = float64(y1)
 	}
-	th := float64(int(strokeW) * b.scale)
+	th := float64(b.pxLen(strokeW))
 	clampCov := func(v float64) float64 {
 		if v < 0 {
 			return 0
@@ -870,14 +946,14 @@ func (b *Backend) StrokeRoundedRect(r core.UnitRect, radius core.Unit, bs style.
 
 func (b *Backend) roundedRect(r core.UnitRect, radius core.Unit, bs style.BorderStyle, s style.CellStyle, fill bool) {
 	fg, bg := b.styleColors(s)
-	x0, y0 := b.px(r.X), b.px(r.Y)
-	x1, y1 := b.px(r.X+r.Width), b.px(r.Y+r.Height)
+	x0, y0 := b.pxX(r.X), b.pxY(r.Y)
+	x1, y1 := b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height)
 	w, h := x1-x0, y1-y0
 	if w <= 0 || h <= 0 {
 		return
 	}
 	th := strokePx(bs)
-	rad := int(radius) * b.scale
+	rad := b.pxLen(radius)
 	if m := min(w, h) / 2; rad > m {
 		rad = m
 	}
@@ -958,12 +1034,14 @@ func (b *Backend) roundedRect(r core.UnitRect, radius core.Unit, bs style.Border
 
 func (b *Backend) DrawHLine(x, y, width core.Unit, ch rune, s style.CellStyle) {
 	fg, _ := b.styleColors(s)
-	b.fillPx(b.px(x), b.px(y)+8*b.scale, b.px(x+width), b.px(y)+8*b.scale+b.scale, fg)
+	top := b.pxY(y + 8) // centered in the 16-tall cell band
+	b.fillPx(b.pxX(x), top, b.pxX(x+width), top+b.scale, fg)
 }
 
 func (b *Backend) DrawVLine(x, y, height core.Unit, ch rune, s style.CellStyle) {
 	fg, _ := b.styleColors(s)
-	b.fillPx(b.px(x)+4*b.scale, b.px(y), b.px(x)+4*b.scale+b.scale, b.px(y+height), fg)
+	left := b.pxX(x + 4) // centered in the 8-wide cell band
+	b.fillPx(left, b.pxY(y), left+b.scale, b.pxY(y+height), fg)
 }
 
 func (b *Backend) DrawBox(r core.UnitRect, bs style.BorderStyle, title string, s style.CellStyle) {
@@ -987,7 +1065,7 @@ func (b *Backend) GraphicalMode() bool { return true }
 // image (alpha honored) at a unit position, respecting every active
 // clip.
 func (b *Backend) DrawImage(x, y core.Unit, img image.Image) {
-	b.DrawImagePx(b.px(x), b.px(y), img)
+	b.DrawImagePx(b.pxX(x), b.pxY(y), img)
 }
 
 // DrawImagePx implements core.ImageDrawer's device-pixel anchor for
@@ -1033,8 +1111,8 @@ func (b *Backend) FillPattern(r core.UnitRect, pattern [8]uint8, chunkPx int, s 
 		chunkPx = 1
 	}
 	fg, bg := b.styleColors(s)
-	x0, y0 := b.px(r.X), b.px(r.Y)
-	x1, y1 := b.px(r.X+r.Width), b.px(r.Y+r.Height)
+	x0, y0 := b.pxX(r.X), b.pxY(r.Y)
+	x1, y1 := b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height)
 
 	// Walk whole pattern blocks (origin-anchored), filling each with
 	// its color; fillPx clips each block to the rect and clips.
@@ -1078,7 +1156,8 @@ func mod(a, m int) int {
 // unchanged.
 func (b *Backend) DrawCaret(x, y, height core.Unit, s style.CellStyle) {
 	_, bar := b.styleColors(s)
-	b.fillPx(b.px(x), b.px(y), b.px(x)+b.scale, b.px(y+height), bar)
+	left := b.pxX(x)
+	b.fillPx(left, b.pxY(y), left+b.scale, b.pxY(y+height), bar)
 }
 
 // FillRectPx implements core.PixelRectFiller: a device-pixel rectangle

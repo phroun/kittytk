@@ -15,20 +15,19 @@ import (
 	"github.com/phroun/kittytk/window"
 )
 
-// fixedWidthBox is a bordered panel whose width is pinned to a number of
-// CELLS, so it stays the same character column across font sizes (the
-// width is denominated in the box's own cell metrics, not raw units).
-// Word wrap only happens when width is genuinely constrained; an
-// unconstrained label's SizeHint scales with the font and simply widens
-// instead of wrapping. Height is NOT pinned: it flows from the content
-// via height-for-width, so wrapping onto more lines makes the box taller.
+// fixedWidthBox is a bordered panel whose width is pinned to a raw unit
+// width (denomination units), so the column occupies the same number of
+// units at any font_size and simply grows in pixels as the cell grows.
+// Word wrap only happens when width is genuinely constrained. Height is
+// NOT pinned: it flows from the content via height-for-width, so wrapping
+// onto more lines makes the box taller rather than overflow its border.
 type fixedWidthBox struct {
 	*trinkets.Panel
-	widthCells core.Unit // pinned width in cells (columns)
+	width core.Unit // pinned width in units
 }
 
-func newFixedWidthBox(widthCells core.Unit, content core.Trinket) *fixedWidthBox {
-	f := &fixedWidthBox{Panel: trinkets.NewPanel(), widthCells: widthCells}
+func newFixedWidthBox(width core.Unit, content core.Trinket) *fixedWidthBox {
+	f := &fixedWidthBox{Panel: trinkets.NewPanel(), width: width}
 	f.SetBorder(true)
 	f.SetBorderStyle(style.BorderSingle) // zero-value BorderStyle renders invisibly
 
@@ -40,9 +39,7 @@ func newFixedWidthBox(widthCells core.Unit, content core.Trinket) *fixedWidthBox
 }
 
 func (f *fixedWidthBox) SizeHint() core.UnitSize {
-	// Convert the cell-count width to units in the current denomination so
-	// the column scales with font_size.
-	w := f.widthCells * f.EffectiveCellMetrics().CellWidth
+	w := f.width
 	// Height is the content's height AT the pinned width (height-for-
 	// width): the width is fixed, so wrapping onto more lines must make
 	// the box taller rather than overflow its border. The plain SizeHint
@@ -164,15 +161,7 @@ func createProtocolWindow(application *app.Application, desktop *trinkets.Deskto
 		return nil
 	}
 	w := window.NewWindow("Protocol Demo")
-	// Denomination-aware bounds: position is in the desktop's (the
-	// container's) cell units, and the size is in the window's own units
-	// (it inherits the desktop's), so both track font_size instead of
-	// the historical 8x16.
-	dm := desktop.EffectiveCellMetrics()
-	w.SetBounds(core.UnitRect{
-		X: dm.CellWidth * 8, Y: dm.CellHeight * 4,
-		Width: dm.CellWidth * 56, Height: dm.CellHeight * 16,
-	})
+	w.SetBounds(core.UnitRect{X: 8 * 8, Y: 16 * 4, Width: 8 * 56, Height: 16 * 16})
 	w.SetContent(rootTrinket)
 	return w
 }
@@ -360,14 +349,11 @@ sb=new statusbar children={new section children={new span text="Secondary Applic
 	// Create window for this application
 	w := window.NewWindow(fmt.Sprintf("App %d Window", appNum))
 	offset := (appNum - 1) % 5
-	// Position in the desktop's cell units, size in the window's own
-	// (inherited) cell units, so both scale with font_size.
-	dm := desktop.EffectiveCellMetrics()
 	w.SetBounds(core.UnitRect{
-		X:      dm.CellWidth * core.Unit(offset*3+5),
-		Y:      dm.CellHeight * core.Unit(offset*2+3),
-		Width:  dm.CellWidth * 60,
-		Height: dm.CellHeight * 20,
+		X:      core.Unit((offset*3 + 5) * 8),
+		Y:      core.Unit((offset*2 + 3) * 16),
+		Width:  core.Unit(60 * 8),
+		Height: core.Unit(20 * 16),
 	})
 
 	// Create a vertical splitter to divide the window

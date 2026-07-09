@@ -7,37 +7,24 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// CellMetricsForFontSize reproduces the historical 8x16 grid at the
-// default 12pt, so an unset/12pt font_size leaves layout unchanged.
-func TestCellMetricsForFontSizeDefaultIs8x16(t *testing.T) {
-	m := CellMetricsForFontSize(12)
-	if m.CellWidth != 8 || m.CellHeight != 16 {
-		t.Fatalf("12pt cell = %dx%d, want 8x16", m.CellWidth, m.CellHeight)
+// The root denomination stays 8x16 regardless of font_size: font_size
+// scales the cell's PIXEL size (pixels-per-unit), not its subdivision
+// count.
+func TestFontSizeLeavesDenominationAt8x16(t *testing.T) {
+	b, err := New(200, 200)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// A non-positive size is treated as the 12pt default.
-	if z := CellMetricsForFontSize(0); z != m {
-		t.Fatalf("0pt cell = %+v, want the 12pt default %+v", z, m)
-	}
-}
-
-// The cell grows with the point size, keeping the height as the font's
-// real line box (Size*4/3) and the width scaled from the 8@12 baseline.
-func TestCellMetricsForFontSizeScales(t *testing.T) {
-	prev := CellMetricsForFontSize(8)
-	for _, size := range []int{10, 12, 14, 16, 20, 24} {
-		m := CellMetricsForFontSize(size)
-		if m.CellWidth < prev.CellWidth || m.CellHeight < prev.CellHeight {
-			t.Fatalf("size %d cell %+v shrank vs previous %+v", size, m, prev)
+	for _, size := range []int{6, 12, 18, 24} {
+		b.SetFontSize(size)
+		if m := b.Metrics(); m.CellWidth != 8 || m.CellHeight != 16 {
+			t.Fatalf("%dpt denomination = %dx%d, want 8x16", size, m.CellWidth, m.CellHeight)
 		}
-		prev = m
-	}
-	// 24pt is exactly double 12pt on both axes (line box and advance).
-	if m := CellMetricsForFontSize(24); m.CellWidth != 16 || m.CellHeight != 32 {
-		t.Fatalf("24pt cell = %dx%d, want 16x32", m.CellWidth, m.CellHeight)
 	}
 }
 
-// SetCellMetrics re-seeds Metrics() and clamps degenerate values to 1.
+// SetCellMetrics re-seeds Metrics() (a non-default root denomination) and
+// clamps degenerate values to 1. font_size never routes through here.
 func TestSetCellMetrics(t *testing.T) {
 	b, err := New(100, 100)
 	if err != nil {
@@ -46,9 +33,9 @@ func TestSetCellMetrics(t *testing.T) {
 	if m := b.Metrics(); m.CellWidth != 8 || m.CellHeight != 16 {
 		t.Fatalf("default Metrics = %+v, want 8x16", m)
 	}
-	b.SetCellMetrics(CellMetricsForFontSize(24))
-	if m := b.Metrics(); m.CellWidth != 16 || m.CellHeight != 32 {
-		t.Fatalf("after set Metrics = %+v, want 16x32", m)
+	b.SetCellMetrics(core.CellMetrics{CellWidth: 10, CellHeight: 20})
+	if m := b.Metrics(); m.CellWidth != 10 || m.CellHeight != 20 {
+		t.Fatalf("after set Metrics = %+v, want 10x20", m)
 	}
 	b.SetCellMetrics(core.CellMetrics{CellWidth: 0, CellHeight: 0})
 	if m := b.Metrics(); m.CellWidth != 1 || m.CellHeight != 1 {
@@ -56,18 +43,19 @@ func TestSetCellMetrics(t *testing.T) {
 	}
 }
 
-// The cell primitive (DrawCell) fills exactly one cell of the backend's
-// denomination, so chrome glyphs (checkbox [x], radio, tree arrows)
-// grow with font_size instead of staying at the historical 8x16.
-func TestDrawCellFillsOneCell(t *testing.T) {
+// The cell primitive (DrawCell) fills one cell whose PIXEL size scales
+// with font_size: at 12pt the default cell is 8x16 px, at 24pt it is
+// 16x32 px (double). The denomination is unchanged; only pixels-per-unit
+// grows, so chrome glyphs grow with the host font_size.
+func TestDrawCellFillScalesWithFontSize(t *testing.T) {
 	// A distinctive opaque background so the filled cell is measurable.
 	bg := style.DefaultStyle().WithBg(style.RGB(10, 20, 200))
-	measure := func(m core.CellMetrics) (w, h int) {
+	measure := func(size int) (w, h int) {
 		b, err := New(200, 200)
 		if err != nil {
 			t.Fatal(err)
 		}
-		b.SetCellMetrics(m)
+		b.SetFontSize(size)
 		b.Clear(style.DefaultStyle())
 		b.DrawCell(0, 0, ' ', bg) // space: background fill only, no glyph
 		img := b.Image()
@@ -84,10 +72,31 @@ func TestDrawCellFillsOneCell(t *testing.T) {
 		return w, h
 	}
 
-	if w, h := measure(CellMetricsForFontSize(12)); w != 8 || h != 16 {
+	if w, h := measure(12); w != 8 || h != 16 {
 		t.Errorf("12pt cell fill = %dx%d px, want 8x16", w, h)
 	}
-	if w, h := measure(CellMetricsForFontSize(24)); w != 16 || h != 32 {
+	if w, h := measure(24); w != 16 || h != 32 {
 		t.Errorf("24pt cell fill = %dx%d px, want 16x32 (double)", w, h)
+	}
+}
+
+// Whole cells land on exact device-pixel multiples of the cell size, so
+// cell-aligned geometry stays crisp at any font_size (the sub-cell
+// remainder interpolates).
+func TestCellSnapping(t *testing.T) {
+	b, err := New(400, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetFontSize(18) // cell = 12x24 px (8*18/12 x 16*18/12)
+	if got := b.pxX(8 * 4); got != 12*4 {
+		t.Errorf("4 cells across (32 units) = %d px, want %d", got, 12*4)
+	}
+	if got := b.pxY(16 * 3); got != 24*3 {
+		t.Errorf("3 cells down (48 units) = %d px, want %d", got, 24*3)
+	}
+	// A sub-cell offset interpolates: half a cell (4 units of 8) is ~6 px.
+	if got := b.pxX(4); got != 6 {
+		t.Errorf("half a cell (4 units) = %d px, want 6", got)
 	}
 }

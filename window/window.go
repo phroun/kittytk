@@ -1411,11 +1411,10 @@ func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
 	if len(rects) == 0 {
 		return
 	}
-	scale := p.DeviceScale()
 	rp := p.WithRoundedClipRegion(localBounds, windowCornerRadius)
 	for _, r := range rects {
 		rp.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
-			int(r.Width)*scale, int(r.Height)*scale,
+			p.UnitsToPx(r.Width), p.UnitsToPx(r.Height),
 			255, 255, 255, resizeHoverAlpha)
 	}
 }

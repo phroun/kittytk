@@ -24,22 +24,20 @@ func (r *recPC) MapToScreen(t core.Trinket, p core.UnitPoint) core.UnitPoint {
 }
 
 // A combobox dropdown must open at the combobox's on-screen bottom edge.
-// Once the desktop's own denomination stopped being 8x16 (font_size),
-// MapToScreen wrongly re-exchanged coordinates at the (root) desktop's
-// metrics override, rescaling every popup position by 8/12 and flinging
-// the dropdown away from its control. This pins the popup to the mapped
-// bottom-left of the combobox.
+// font_size (here 18pt) scales pixels-per-unit but leaves the root
+// denomination at 8x16, so the popup mapping must land the dropdown flush
+// against its control - in units - regardless of font_size.
 func TestComboPopupOpensAtControlBottom(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	m := raster.CellMetricsForFontSize(18) // 12x24, != the 8x16 default
 	b, err := raster.New(1280, 900)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.SetCellMetrics(m)
+	b.SetFontSize(18)
+	m := b.Metrics() // stays 8x16 under font_size
 	d := NewDesktop()
 	d.SetBackend(b)
-	d.SetFont(&core.Font{Name: "ui-text", Size: 18})
+	d.SetFont(&core.Font{Name: "ui-text", Size: 12})
 	d.SetBounds(core.UnitRect{Width: 1280, Height: 900})
 	d.WindowManager().SetScreenBounds(core.UnitRect{Width: 1280, Height: 900})
 
