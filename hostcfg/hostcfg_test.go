@@ -36,6 +36,32 @@ scale = notanumber
 	}
 }
 
+// Inline (trailing) comments are stripped from values, including the
+// "blank value + explanatory comment" case that should yield an empty
+// endpoint - but a ';'/'#' inside a value with no leading space is kept.
+func TestApplyStripsInlineComments(t *testing.T) {
+	cfg := Defaults()
+	apply([]byte(`
+endpoint =      ; blank = default; tcp://…, or a socket path
+scale = 1   # crisp
+title = My # Desk
+token = a;b#c
+`), &cfg)
+
+	if cfg.Endpoint != "" {
+		t.Errorf("endpoint should be empty (comment stripped), got %q", cfg.Endpoint)
+	}
+	if cfg.Scale != 1 {
+		t.Errorf("scale with trailing comment = %d, want 1", cfg.Scale)
+	}
+	if cfg.Title != "My" {
+		t.Errorf("title = %q, want %q (space+# starts a comment)", cfg.Title, "My")
+	}
+	if cfg.Token != "a;b#c" {
+		t.Errorf("token = %q, want %q (no leading space -> not a comment)", cfg.Token, "a;b#c")
+	}
+}
+
 // A malformed number leaves the default rather than zeroing the field.
 func TestApplyKeepsDefaultOnBadNumber(t *testing.T) {
 	cfg := Defaults()

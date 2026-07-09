@@ -108,7 +108,7 @@ func apply(data []byte, cfg *Config) {
 			continue
 		}
 		key := strings.ToLower(strings.TrimSpace(line[:eq]))
-		val := strings.TrimSpace(line[eq+1:])
+		val := strings.TrimSpace(stripInlineComment(line[eq+1:]))
 		switch key {
 		case "title":
 			cfg.Title = val
@@ -130,6 +130,21 @@ func apply(data []byte, cfg *Config) {
 			cfg.Token = val
 		}
 	}
+}
+
+// stripInlineComment removes a trailing `;`/`#` comment from a value. A
+// comment starts only where the marker begins the value or follows
+// whitespace, so a value that itself contains ';' or '#' with no leading
+// space (a token like "a;b", a "#rrggbb" is not a hostcfg value) is kept.
+func stripInlineComment(v string) string {
+	for i := 0; i < len(v); i++ {
+		if c := v[i]; c == ';' || c == '#' {
+			if i == 0 || v[i-1] == ' ' || v[i-1] == '\t' {
+				return v[:i]
+			}
+		}
+	}
+	return v
 }
 
 // ResolveEndpoint returns the endpoint to serve on: $KITTYTK_DISPLAY if
