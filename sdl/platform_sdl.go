@@ -459,19 +459,60 @@ func (p *Platform) mainSurface() *sdlSurface {
 	return nil
 }
 
-// toUnits converts window-pixel mouse coordinates to abstract units.
+// rootDenomination is the platform's root cell denomination (units per
+// cell), matching what every surface's backend reports: the configured
+// override or the default 8x16.
+func (p *Platform) rootDenomination() (int, int) {
+	w, h := int(p.metrics.CellWidth), int(p.metrics.CellHeight)
+	if w < 1 {
+		w = 8
+	}
+	if h < 1 {
+		h = 16
+	}
+	return w, h
+}
+
+// cellPx is the exact integer pixel size of one root cell along an axis -
+// the same value the raster backend paints with (denomination base scaled
+// by font_size, then the integer device zoom).
+func (p *Platform) cellPx(denom int) int {
+	fs := p.fontSize
+	if fs < 1 {
+		fs = 12
+	}
+	n := (denom*fs + 6) / 12 // round(denom * fontSize/12)
+	if n < 1 {
+		n = 1
+	}
+	return n * p.scale
+}
+
+// pxToUnitAxis inverts the backend's cell-snapped forward mapping on one
+// axis: whole cells map back from exact cellPx multiples, the sub-cell
+// remainder from its rounded fraction. Floors toward negative infinity so
+// captured-drag coordinates left/above the window stay strictly negative.
+func pxToUnitAxis(px, denom, cellPx int) int {
+	if cellPx < 1 {
+		cellPx = 1
+	}
+	cells := px / cellPx
+	rem := px - cells*cellPx
+	if rem < 0 { // floor division for negative coordinates
+		cells--
+		rem += cellPx
+	}
+	sub := (rem*denom + cellPx/2) / cellPx // round(rem * denom/cellPx)
+	return cells*denom + sub
+}
+
+// toUnits converts window-pixel mouse coordinates to abstract units,
+// inverting the backend's font_size-aware, cell-snapped pixel mapping so
+// hit-testing lands on the same grid the UI paints on at any font_size.
 func (p *Platform) toUnits(x, y int32) (core.Unit, core.Unit) {
-	// Round toward negative infinity so captured-drag coordinates
-	// left/above the window stay strictly negative.
-	fx, fy := int(x), int(y)
-	ux := fx / p.scale
-	if fx < 0 && fx%p.scale != 0 {
-		ux--
-	}
-	uy := fy / p.scale
-	if fy < 0 && fy%p.scale != 0 {
-		uy--
-	}
+	denomW, denomH := p.rootDenomination()
+	ux := pxToUnitAxis(int(x), denomW, p.cellPx(denomW))
+	uy := pxToUnitAxis(int(y), denomH, p.cellPx(denomH))
 	return core.Unit(ux), core.Unit(uy)
 }
 
