@@ -409,15 +409,27 @@ func (b *Backend) LineHeight(f *core.Font) core.Unit {
 	return engine().LineHeight(f)
 }
 
-// cellAdvance is the terminal-region advance for one rune: exactly
-// one cell of layout units (two for wide characters). Used only by
-// the cell primitives (DrawCell, glyph tiling), never by DrawText.
-func cellAdvance(ch rune) core.Unit {
-	adv := core.Unit(8)
+// cellAdvance is the terminal-region advance for one rune: one cell of
+// the backend's current denomination (two for wide characters). Used
+// only by the cell primitives (DrawCell, glyph tiling), never by
+// DrawText. At the default 8x16 denomination this is 8 (16 wide).
+func (b *Backend) cellAdvance(ch rune) core.Unit {
+	adv := b.metrics.CellWidth
 	if isWide(ch) {
-		adv += 8
+		adv += b.metrics.CellWidth
 	}
 	return adv
+}
+
+// cellFontSize is the cell-face point size whose line box fills a cell
+// of the given height. LineHeight = Size*4/3, so Size = height*3/4; at
+// the default 16-unit cell this is 12pt (the historical cell face).
+func cellFontSize(cellHeight core.Unit) int {
+	s := int(cellHeight) * 3 / 4
+	if s < 1 {
+		s = 1
+	}
+	return s
 }
 
 func isWide(ch rune) bool {
@@ -434,14 +446,19 @@ func isWide(ch rune) bool {
 // markers, box drawing) the same per-rune fallback chain as text.
 var cellFont = &core.Font{Name: "Monday", Size: 12}
 
-func (b *Backend) drawRune(x, y core.Unit, ch rune, adv core.Unit, fg, bg color.RGBA, underline, transparentBg bool) {
+func (b *Backend) drawRune(x, y core.Unit, ch rune, adv, cellH core.Unit, fg, bg color.RGBA, underline, transparentBg bool) {
 	xPx, yPx, advPx := b.px(x), b.px(y), b.px(adv)
+	hPx := int(cellH) * b.scale
 	if !transparentBg {
-		b.fillPx(xPx, yPx, xPx+advPx, yPx+16*b.scale, bg)
+		b.fillPx(xPx, yPx, xPx+advPx, yPx+hPx, bg)
 	}
 
 	if ch != ' ' && ch != 0 {
-		ti := b.cachedTextImage(cellFont, string(ch), fg, color.RGBA{}, false, false)
+		// The cell face is sized to the cell so chrome glyphs (checkmarks,
+		// markers, brackets, box drawing) grow with the host font_size
+		// instead of staying at the historical 12pt.
+		f := &core.Font{Name: cellFont.Name, Size: cellFontSize(cellH)}
+		ti := b.cachedTextImage(f, string(ch), fg, color.RGBA{}, false, false)
 		pad := (advPx - ti.img.Rect.Dx()) / 2
 		if pad < 0 {
 			pad = 0
@@ -449,19 +466,19 @@ func (b *Backend) drawRune(x, y core.Unit, ch rune, adv core.Unit, fg, bg color.
 		b.compositeRGBA(xPx+pad, yPx, ti.img)
 	}
 	if underline {
-		b.fillPx(xPx, yPx+14*b.scale, xPx+advPx, yPx+15*b.scale, fg)
+		b.fillPx(xPx, yPx+(int(cellH)-2)*b.scale, xPx+advPx, yPx+(int(cellH)-1)*b.scale, fg)
 	}
 }
 
 // DrawCell is the CELL primitive: terminal-style regions (D23
 // carve-out - PurfecTerm and friends) paint through it, so its
-// advance is exactly one cell of layout units regardless of any
-// font. This is not a second text path: UI text goes through
+// advance is exactly one cell of the backend's denomination regardless
+// of any font. This is not a second text path: UI text goes through
 // DrawText's shaped path below.
 func (b *Backend) DrawCell(x, y core.Unit, ch rune, s style.CellStyle) {
 	fg, bg := b.styleColors(s)
-	b.drawRune(x, y, ch, cellAdvance(ch), fg, bg, s.Attrs&style.StyleUnderline != 0,
-		s.Bg == style.ColorTransparent)
+	b.drawRune(x, y, ch, b.cellAdvance(ch), b.metrics.CellHeight, fg, bg,
+		s.Attrs&style.StyleUnderline != 0, s.Bg == style.ColorTransparent)
 }
 
 // textImage is one cached rendered string at the backend's scale,
@@ -699,10 +716,11 @@ func (b *Backend) FillRect(r core.UnitRect, ch rune, s style.CellStyle) {
 			b.fillPx(b.px(r.X), b.px(r.Y), b.px(r.X+r.Width), b.px(r.Y+r.Height), blend(fg, bg, a))
 			return
 		}
-		// Arbitrary fill character: tile the glyph.
-		for y := r.Y; y < r.Y+r.Height; y += 16 {
-			for x := r.X; x < r.X+r.Width; x += 8 {
-				b.drawRune(x, y, ch, 8, fg, bg, false, s.Bg == style.ColorTransparent)
+		// Arbitrary fill character: tile the glyph one cell at a time.
+		cw, chH := b.metrics.CellWidth, b.metrics.CellHeight
+		for y := r.Y; y < r.Y+r.Height; y += chH {
+			for x := r.X; x < r.X+r.Width; x += cw {
+				b.drawRune(x, y, ch, cw, chH, fg, bg, false, s.Bg == style.ColorTransparent)
 			}
 		}
 	}
