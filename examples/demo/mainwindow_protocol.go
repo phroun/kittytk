@@ -42,9 +42,9 @@ func init() {
 				if err != nil {
 					return err
 				}
-				target.(*fixedWidthBox).width = core.Unit(n)
+				target.(*fixedWidthBox).widthCells = core.Unit(n)
 				return nil
-			}).Tip("Fixed box width in units"),
+			}).Tip("Fixed box width in cells (columns)"),
 		},
 		Append: func(parent, child any) error {
 			w, ok := child.(core.Trinket)
@@ -139,13 +139,13 @@ b=new tab caption="Basic Trinkets" children={
 s=new tab caption="Selection" children={
 	o=new panel layout=vbox spacing=0 children={
 		new panel layout=hbox spacing=8 align=fill children={
-			new fixedbox width=256 children={
+			new fixedbox width=32 children={
 				new label caption="The quick brown fox jumps over the lazy dog and then keeps trotting along the whole fence" wrap align=fill
 			}
-			new fixedbox width=256 children={
+			new fixedbox width=32 children={
 				new label caption="Pack my box with five dozen liquor jugs before the Tuesday checkbox below doubles every letter" wrap align=fill
 			}
-			new fixedbox width=288 children={
+			new fixedbox width=36 children={
 				new panel layout=vbox align=fill children={
 					new checkbox caption="Enable the experimental feature that reticulates splines while the moon is full" wrap
 					new radiobutton caption="Prefer the long-form explanation whenever the assistant answers a question" wrap

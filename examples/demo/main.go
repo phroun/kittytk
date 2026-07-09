@@ -15,19 +15,20 @@ import (
 	"github.com/phroun/kittytk/window"
 )
 
-// fixedWidthBox is a bordered panel whose width is pinned, so its
-// content width does not grow when the font changes. Word wrap only
-// happens when width is genuinely constrained; an unconstrained label's
-// SizeHint scales with the font and simply widens instead of wrapping.
-// Height is NOT pinned: it flows from the content via height-for-width,
-// so wrapping onto more lines makes the box taller.
+// fixedWidthBox is a bordered panel whose width is pinned to a number of
+// CELLS, so it stays the same character column across font sizes (the
+// width is denominated in the box's own cell metrics, not raw units).
+// Word wrap only happens when width is genuinely constrained; an
+// unconstrained label's SizeHint scales with the font and simply widens
+// instead of wrapping. Height is NOT pinned: it flows from the content
+// via height-for-width, so wrapping onto more lines makes the box taller.
 type fixedWidthBox struct {
 	*trinkets.Panel
-	width core.Unit
+	widthCells core.Unit // pinned width in cells (columns)
 }
 
-func newFixedWidthBox(width core.Unit, content core.Trinket) *fixedWidthBox {
-	f := &fixedWidthBox{Panel: trinkets.NewPanel(), width: width}
+func newFixedWidthBox(widthCells core.Unit, content core.Trinket) *fixedWidthBox {
+	f := &fixedWidthBox{Panel: trinkets.NewPanel(), widthCells: widthCells}
 	f.SetBorder(true)
 	f.SetBorderStyle(style.BorderSingle) // zero-value BorderStyle renders invisibly
 
@@ -39,7 +40,10 @@ func newFixedWidthBox(width core.Unit, content core.Trinket) *fixedWidthBox {
 }
 
 func (f *fixedWidthBox) SizeHint() core.UnitSize {
-	return core.UnitSize{Width: f.width, Height: f.Panel.SizeHint().Height}
+	// Convert the cell-count width to units in the current denomination so
+	// the column scales with font_size.
+	w := f.widthCells * f.EffectiveCellMetrics().CellWidth
+	return core.UnitSize{Width: w, Height: f.Panel.SizeHint().Height}
 }
 
 // idCaptureFactory records built targets by object ID so the app can
