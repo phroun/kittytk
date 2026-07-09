@@ -475,13 +475,14 @@ func (p *Platform) rootDenomination() (int, int) {
 
 // cellPx is the exact integer pixel size of one root cell along an axis -
 // the same value the raster backend paints with (denomination base scaled
-// by font_size, then the integer device zoom).
+// by font_size, ceil'd so a cell contains its glyph, then the integer
+// device zoom). Must match raster.Backend.cellPx or hit-testing drifts.
 func (p *Platform) cellPx(denom int) int {
 	fs := p.fontSize
 	if fs < 1 {
 		fs = 12
 	}
-	n := (denom*fs + 6) / 12 // round(denom * fontSize/12)
+	n := (denom*fs + 11) / 12 // ceil(denom * fontSize/12)
 	if n < 1 {
 		n = 1
 	}

@@ -90,11 +90,15 @@ func termRGBA(c style.TermRGB) color.RGBA {
 // then by the integer device zoom. Whole cells land on exact multiples
 // of this, so cell-aligned geometry (grid lines, borders, the cell
 // primitive) never falls on a fractional pixel.
+//
+// The ratio is rounded UP (ceil): a cell must fully contain its glyph
+// line box, so it can never be shorter than the character it holds -
+// otherwise descenders spill below the item's background fill.
 func (b *Backend) cellPx(denom int) int {
 	if denom < 1 {
 		denom = 1
 	}
-	n := int(math.Round(float64(denom) * float64(b.fontSize) / 12))
+	n := int(math.Ceil(float64(denom) * float64(b.fontSize) / 12))
 	if n < 1 {
 		n = 1
 	}

@@ -661,8 +661,34 @@ func (p *Painter) PxPerUnitF() float64 {
 // UnitsToPx converts a unit length to device pixels, tracking font_size
 // on backends that expose UnitPixelMapper (else integer unit*scale). For
 // device-pixel widths/heights that must grow with the cell size.
+//
+// For a span that borders cell-snapped geometry (a menu edge, a hairline
+// that must reach a fill's edge) use UnitSpanPxX/Y instead: those snap
+// both ends to the same grid the shapes paint on, so the device fill and
+// the shape line up exactly (no seam).
 func (p *Painter) UnitsToPx(u Unit) int {
 	return int(math.Round(float64(u) * p.PxPerUnitF()))
+}
+
+// UnitSpanPxX is the device-pixel distance between two unit X positions,
+// snapped to the same grid the backend paints on (see deviceAnchor), so a
+// device-pixel fill anchored at fromX and this many pixels wide ends
+// exactly where a cell-snapped shape at toX does.
+func (p *Painter) UnitSpanPxX(fromX, toX Unit) int {
+	sf, _ := p.toScreen(fromX, 0)
+	st, _ := p.toScreen(toX, 0)
+	af, _ := p.deviceAnchor(sf, 0)
+	at, _ := p.deviceAnchor(st, 0)
+	return at - af
+}
+
+// UnitSpanPxY is UnitSpanPxX for the Y axis.
+func (p *Painter) UnitSpanPxY(fromY, toY Unit) int {
+	_, sf := p.toScreen(0, fromY)
+	_, st := p.toScreen(0, toY)
+	_, af := p.deviceAnchor(0, sf)
+	_, at := p.deviceAnchor(0, st)
+	return at - af
 }
 
 // deviceAnchor maps a screen-unit position to its device-pixel anchor,

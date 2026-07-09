@@ -759,7 +759,10 @@ func (m *Menu) SetStrokeGap(x, w core.Unit, bottom bool) {
 // on cell surfaces, where FillRectPixels returns false).
 func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s style.CellStyle, gapX, gapW core.Unit, gapBottom bool) {
 	x, y, w, h := bounds.X, bounds.Y, bounds.Width, bounds.Height
-	wPx, hPx := p.UnitsToPx(w), p.UnitsToPx(h)
+	// Snap the spans to the grid the box fill paints on so the border
+	// lands exactly on the fill's edges (no over/undershoot at any
+	// font_size).
+	hPx := p.UnitSpanPxY(y, y+h)
 
 	// Left and right verticals span the full height plus both corners.
 	p.FillRectPixels(x, y, -1, -1, 1, hPx+2, s)
@@ -768,7 +771,7 @@ func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s s
 	// Horizontal edges between the verticals; the gapped one is split.
 	drawEdge := func(edgeY core.Unit, offY int, gapped bool) {
 		if !gapped || gapW <= 0 {
-			p.FillRectPixels(x, edgeY, 0, offY, wPx, 1, s)
+			p.FillRectPixels(x, edgeY, 0, offY, p.UnitSpanPxX(x, x+w), 1, s)
 			return
 		}
 		gx, ge := gapX, gapX+gapW
@@ -779,10 +782,10 @@ func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s s
 			ge = x + w
 		}
 		if gx > x {
-			p.FillRectPixels(x, edgeY, 0, offY, p.UnitsToPx(gx-x), 1, s)
+			p.FillRectPixels(x, edgeY, 0, offY, p.UnitSpanPxX(x, gx), 1, s)
 		}
 		if ge < x+w {
-			p.FillRectPixels(ge, edgeY, 0, offY, p.UnitsToPx((x+w)-ge), 1, s)
+			p.FillRectPixels(ge, edgeY, 0, offY, p.UnitSpanPxX(ge, x+w), 1, s)
 		}
 	}
 	drawEdge(y, -1, !gapBottom) // top edge (gapped for drop-downs)
@@ -799,7 +802,7 @@ func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSiz
 	p.FillRect(core.UnitRect{X: m.popupX, Y: y, Width: gutterWidth, Height: metrics.CellHeight}, ' ', gutterStyle)
 	p.FillRect(core.UnitRect{X: m.popupX + gutterWidth, Y: y, Width: size.Width - gutterWidth, Height: metrics.CellHeight}, ' ', contentStyle)
 	if g {
-		p.FillRectPixels(m.popupX+gutterWidth, y, -1, 0, 1, p.UnitsToPx(metrics.CellHeight), hairStyle)
+		p.FillRectPixels(m.popupX+gutterWidth, y, -1, 0, 1, p.UnitSpanPxY(y, y+metrics.CellHeight), hairStyle)
 	}
 	// Center the three glyphs in the white content area only.
 	centerX := m.popupX + gutterWidth + (size.Width-gutterWidth)/2
@@ -1077,7 +1080,7 @@ func (m *Menu) Paint(p *core.Painter) {
 		// row EXCEPT the focused one (its focus fill spans the gutter, so
 		// the divider would clash / is overwritten).
 		if g && itemIndex != m.currentIndex {
-			p.FillRectPixels(m.popupX+gutterWidth, itemY, -1, 0, 1, p.UnitsToPx(rowH), hairStyle)
+			p.FillRectPixels(m.popupX+gutterWidth, itemY, -1, 0, 1, p.UnitSpanPxY(itemY, itemY+rowH), hairStyle)
 		}
 
 		if item.Separator {
@@ -1085,9 +1088,9 @@ func (m *Menu) Paint(p *core.Painter) {
 				// A single hairline centered in the band, drawn only on
 				// the white content area, inset 4 device px at each end.
 				const marginPx = 4
-				bandPx := p.UnitsToPx(rowH)
+				bandPx := p.UnitSpanPxY(itemY, itemY+rowH)
 				offY := (bandPx - 1) / 2
-				wPx := p.UnitsToPx(size.Width-gutterWidth) - 2*marginPx
+				wPx := p.UnitSpanPxX(m.popupX+gutterWidth, m.popupX+size.Width) - 2*marginPx
 				if wPx > 0 {
 					p.FillRectPixels(m.popupX+gutterWidth, itemY, marginPx, offY, wPx, 1, hairStyle)
 				}
