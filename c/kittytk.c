@@ -451,6 +451,9 @@ struct kt_conn {
     int reply_ready, reply_err;
     kt_ui reply_ids;
     char reply_errmsg[256];
+    /* describe (D24): flat vocabulary statements buffered (under rmu)
+     * until the reply that terminates the batch. */
+    char **desc; int desc_n;
 
     kt_mutex emu; kt_cond ecv;
     evnode *ehead, *etail;
@@ -697,6 +700,14 @@ static void *read_loop(void *arg) {
             kt_mutex_unlock(&c->rmu);
         } else if (strcmp(st->verb, "event") == 0) {
             enqueue_event(c, text);
+        } else if (strcmp(st->verb, "proptype") == 0 ||
+                   strcmp(st->verb, "prop") == 0 ||
+                   strcmp(st->verb, "propcommon") == 0) {
+            /* describe verb output: buffer until the reply. */
+            kt_mutex_lock(&c->rmu);
+            c->desc = realloc(c->desc, (c->desc_n + 1) * sizeof(char *));
+            c->desc[c->desc_n++] = strdup(text);
+            kt_mutex_unlock(&c->rmu);
         }
         stmt_free(st);
         free(text);
@@ -705,12 +716,17 @@ static void *read_loop(void *arg) {
     return NULL;
 }
 
-/* Write src + "\nend\n"; wait for the reply. ids may be NULL. */
-static int do_exec(kt_conn *c, const char *src, kt_ui *out_ids) {
+/* Write src + "\nend\n"; wait for the reply. out_ids may be NULL. When
+ * out_desc is non-NULL it receives ownership of the batch's buffered
+ * describe statements (out_ndesc their count). */
+static int do_exec(kt_conn *c, const char *src, kt_ui *out_ids,
+                   char ***out_desc, int *out_ndesc) {
     kt_mutex_lock(&c->write_mu);
     kt_mutex_lock(&c->rmu);
     if (c->closed) { kt_mutex_unlock(&c->rmu); kt_mutex_unlock(&c->write_mu); return -1; }
     c->reply_ready = 0;
+    for (int i = 0; i < c->desc_n; i++) free(c->desc[i]);
+    free(c->desc); c->desc = NULL; c->desc_n = 0;
     kt_mutex_unlock(&c->rmu);
 
     /* One write: src + the D22 terminator as a single buffer, so the
@@ -751,16 +767,22 @@ static int do_exec(kt_conn *c, const char *src, kt_ui *out_ids) {
             out_ids->pairs[i].id = c->reply_ids.pairs[i].id;
         }
     }
+    if (out_desc) {
+        /* Transfer ownership of the buffered describe lines to the caller. */
+        *out_desc = err ? NULL : c->desc;
+        *out_ndesc = err ? 0 : c->desc_n;
+        if (!err) { c->desc = NULL; c->desc_n = 0; }
+    }
     kt_mutex_unlock(&c->rmu);
     kt_mutex_unlock(&c->write_mu);
     return err ? -1 : 0;
 }
 
-int kt_exec(kt_conn *c, const char *src) { return do_exec(c, src, NULL); }
+int kt_exec(kt_conn *c, const char *src) { return do_exec(c, src, NULL, NULL, NULL); }
 
 kt_ui *kt_build(kt_conn *c, const char *src) {
     kt_ui *ui = calloc(1, sizeof *ui);
-    if (do_exec(c, src, ui) != 0) { free(ui->pairs); free(ui); return NULL; }
+    if (do_exec(c, src, ui, NULL, NULL) != 0) { free(ui->pairs); free(ui); return NULL; }
     return ui;
 }
 uint64_t kt_ui_id(const kt_ui *ui, const char *name) {
@@ -774,6 +796,78 @@ void kt_ui_free(kt_ui *ui) {
     for (int i = 0; i < ui->n; i++) free(ui->pairs[i].name);
     free(ui->pairs);
     free(ui);
+}
+
+/* --- introspection (describe, D24) ----------------------------------- */
+
+static const char *stmt_str(const kt_stmt *st, const char *name) {
+    for (int i = 0; i < st->n; i++)
+        if (st->args[i].name && strcmp(st->args[i].name, name) == 0
+            && st->args[i].has_value && st->args[i].kind == 2)
+            return st->args[i].sval;
+    return "";
+}
+static int stmt_flag_true(const kt_stmt *st, const char *name) {
+    for (int i = 0; i < st->n; i++)
+        if (st->args[i].name && strcmp(st->args[i].name, name) == 0 && !st->args[i].has_value)
+            return st->args[i].flag == KT_FLAG_TRUE;
+    return 0;
+}
+static void fill_prop(kt_prop *p, const kt_stmt *st) {
+    p->name  = strdup(stmt_str(st, "name"));
+    p->kind  = strdup(stmt_str(st, "kind"));
+    p->deflt = strdup(stmt_str(st, "default"));
+    p->doc   = strdup(stmt_str(st, "doc"));
+    p->enums = strdup(stmt_str(st, "enum"));
+}
+
+kt_vocab *kt_describe(kt_conn *c) {
+    char **lines = NULL; int nlines = 0;
+    if (do_exec(c, "describe", NULL, &lines, &nlines) != 0) return NULL;
+    kt_vocab *v = calloc(1, sizeof *v);
+    for (int i = 0; i < nlines; i++) {
+        kt_stmt *st = parse_statement(lines[i]);
+        if (!st) continue;
+        if (strcmp(st->verb, "propcommon") == 0) {
+            v->common = realloc(v->common, (v->ncommon + 1) * sizeof(kt_prop));
+            fill_prop(&v->common[v->ncommon++], st);
+        } else if (strcmp(st->verb, "proptype") == 0) {
+            v->types = realloc(v->types, (v->ntypes + 1) * sizeof(kt_type));
+            kt_type *t = &v->types[v->ntypes++];
+            t->name = strdup(stmt_str(st, "name"));
+            t->is_virtual = stmt_flag_true(st, "virtual");
+            t->props = NULL; t->nprops = 0;
+        } else if (strcmp(st->verb, "prop") == 0) {
+            const char *of = stmt_str(st, "of");
+            for (int k = 0; k < v->ntypes; k++)
+                if (strcmp(v->types[k].name, of) == 0) {
+                    kt_type *t = &v->types[k];
+                    t->props = realloc(t->props, (t->nprops + 1) * sizeof(kt_prop));
+                    fill_prop(&t->props[t->nprops++], st);
+                    break;
+                }
+        }
+        stmt_free(st);
+    }
+    for (int i = 0; i < nlines; i++) free(lines[i]);
+    free(lines);
+    return v;
+}
+
+static void prop_free(kt_prop *p) {
+    free(p->name); free(p->kind); free(p->deflt); free(p->doc); free(p->enums);
+}
+void kt_vocab_free(kt_vocab *v) {
+    if (!v) return;
+    for (int i = 0; i < v->ncommon; i++) prop_free(&v->common[i]);
+    free(v->common);
+    for (int i = 0; i < v->ntypes; i++) {
+        for (int j = 0; j < v->types[i].nprops; j++) prop_free(&v->types[i].props[j]);
+        free(v->types[i].props);
+        free(v->types[i].name);
+    }
+    free(v->types);
+    free(v);
 }
 
 int kt_set(kt_conn *c, uint64_t id, const char *args) {
@@ -1172,5 +1266,7 @@ void kt_close(kt_conn *c) {
     if (c->ssl) { SSL_free(c->ssl); SSL_CTX_free(c->ssl_ctx); }
 #endif
     /* (handler/sub tables reclaimed at process exit in demo/smoke usage.) */
+    for (int i = 0; i < c->desc_n; i++) free(c->desc[i]);
+    free(c->desc);
     free(c);
 }

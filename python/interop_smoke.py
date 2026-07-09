@@ -60,6 +60,19 @@ def main(sock: str) -> int:
     ui.checkbox("wcb").on_toggle(on_toggle)
     conn.on_command("remote.act", lambda: (print("COMMAND ok", flush=True), got_command.set()))
 
+    # Introspection (D24): the host describes its wire vocabulary.
+    vocab = conn.describe()
+    common = {p.name for p in vocab.common}
+    if "enabled" not in common:
+        print("FAIL describe: no common 'enabled'", flush=True)
+        return 1
+    button = next((t for t in vocab.types if t.name == "button"), None)
+    caption = button and next((p for p in button.props if p.name == "caption"), None)
+    if caption is None or caption.kind != "string" or not caption.doc:
+        print("FAIL describe: button.caption missing/undescribed", flush=True)
+        return 1
+    print("DESCRIBE ok types=%d" % len(vocab.types), flush=True)
+
     print("READY", flush=True)  # host may now drive input
 
     if not got_toggle.wait(10) or not got_command.wait(10):

@@ -9,8 +9,12 @@ from .protocol import (
     Event,
     FlagState,
     ParseError,
+    PropInfo,
+    TypeInfo,
     Value,
     ValueKind,
+    Vocabulary,
+    decode_vocabulary,
     parse,
     parse_event,
     quote,
@@ -33,6 +37,7 @@ from .client import (
 
 __all__ = [
     "Event", "FlagState", "ParseError", "Value", "ValueKind",
+    "PropInfo", "TypeInfo", "Vocabulary", "decode_vocabulary",
     "parse", "parse_event", "quote",
     "Button", "Checkbox", "Conn", "Handle", "Label", "Selector",
     "TextInput", "UI", "Window",

@@ -71,6 +71,9 @@ class Conn:
         self._write_lock = threading.Lock()
         self._replies: "queue.Queue" = queue.Queue()
         self._events: "queue.Queue" = queue.Queue()
+        # describe (D24): flat vocabulary statements buffered until the
+        # reply that terminates the batch.
+        self._pending_desc: List[str] = []
 
         self._lock = threading.Lock()
         self._state: Dict[int, _ObjState] = {}
@@ -97,18 +100,24 @@ class Conn:
                     continue  # malformed inbound statement; skip
                 for stmt in script.statements:
                     if stmt.verb == "reply":
+                        desc = self._pending_desc
+                        self._pending_desc = []
                         try:
                             ids = protocol.decode_reply(stmt)
-                            self._replies.put(("reply", ids))
+                            self._replies.put(("reply", ids, desc))
                         except Exception as e:  # noqa: BLE001
-                            self._replies.put(("error", str(e)))
+                            self._replies.put(("error", str(e), None))
                     elif stmt.verb == "error":
+                        self._pending_desc = []
                         msg = "display error"
                         for a in stmt.args:
                             if a.name == "text" and a.value is not None \
                                     and a.value.kind == protocol.ValueKind.STRING:
                                 msg = a.value.str
-                        self._replies.put(("error", msg))
+                        self._replies.put(("error", msg, None))
+                    elif stmt.verb in ("proptype", "prop", "propcommon"):
+                        # describe verb output: buffer until the reply.
+                        self._pending_desc.append(text.strip())
                     elif stmt.verb == "event":
                         try:
                             self._events.put(protocol.parse_event(text))
@@ -144,9 +153,10 @@ class Conn:
 
     # --- request / reply -------------------------------------------------
 
-    def exec(self, src: str) -> Dict[str, int]:
-        """Execute one batch of protocol text; returns the surfaced
-        name->id map, or raises on a display error / disconnect."""
+    def _exec_raw(self, src: str):
+        """Execute one batch; returns (ids, extra_lines) where extra_lines
+        are any verb-produced statements delivered ahead of the reply
+        (the describe verb's flat vocabulary). Raises on error/disconnect."""
         with self._write_lock:
             with self._lock:
                 if self._closed_flag:
@@ -155,10 +165,24 @@ class Conn:
             item = self._replies.get()
             if item is _CLOSED:
                 raise ConnectionError("connection closed")
-            kind, payload = item
+            kind, payload, extra = item
             if kind == "error":
                 raise RuntimeError(payload)
-            return payload
+            return payload, (extra or [])
+
+    def exec(self, src: str) -> Dict[str, int]:
+        """Execute one batch of protocol text; returns the surfaced
+        name->id map, or raises on a display error / disconnect."""
+        ids, _ = self._exec_raw(src)
+        return ids
+
+    def describe(self) -> protocol.Vocabulary:
+        """Query the host's wire vocabulary (D24): the supported trinket
+        types and, for each, the properties it accepts with each
+        property's kind, default, and a brief description. Common
+        properties (accepted by every non-virtual type) are reported once."""
+        _, extra = self._exec_raw("describe")
+        return protocol.decode_vocabulary(extra)
 
     def build(self, src: str) -> "UI":
         return UI(self, self.exec(src))

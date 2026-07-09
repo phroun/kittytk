@@ -79,6 +79,39 @@ void kt_ui_free(kt_ui *ui);
 int kt_set(kt_conn *c, uint64_t id, const char *args);
 int kt_destroy(kt_conn *c, uint64_t id);
 
+/* --- introspection (describe, D24) ----------------------------------- */
+
+/* One property in a described vocabulary. All strings are owned by the
+ * kt_vocab and freed by kt_vocab_free. */
+typedef struct {
+    char *name;
+    char *kind;     /* string/int/float/flag/enum/word/color/units/stream/action */
+    char *deflt;    /* default: a literal, or "inherited"/"as-noted"/"" */
+    char *doc;      /* brief, tooltip-length */
+    char *enums;    /* comma-separated allowed words, "" unless kind is enum */
+} kt_prop;
+
+typedef struct {
+    char    *name;
+    int      is_virtual;
+    kt_prop *props;
+    int      nprops;
+} kt_type;
+
+typedef struct {
+    kt_prop *common;   /* properties every non-virtual type accepts */
+    int      ncommon;
+    kt_type *types;
+    int      ntypes;
+} kt_vocab;
+
+/* Query the host's wire vocabulary: the supported trinket types and,
+ * for each, the properties it accepts with each property's kind,
+ * default, and a brief description. NULL on error. Free with
+ * kt_vocab_free. */
+kt_vocab *kt_describe(kt_conn *c);
+void kt_vocab_free(kt_vocab *v);
+
 /* --- events ---------------------------------------------------------- */
 
 const char *kt_event_type(const kt_event *ev);

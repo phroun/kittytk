@@ -70,6 +70,26 @@ int main(int argc, char **argv) {
     kt_on(c, kt_ui_id(ui, "wcb"), "toggle", on_toggle, NULL);
     kt_on_command(c, "remote.act", on_command, NULL);
 
+    /* Introspection (D24): the host describes its wire vocabulary. */
+    kt_vocab *v = kt_describe(c);
+    if (!v) { printf("FAIL describe: no vocabulary\n"); return 1; }
+    int have_enabled = 0;
+    for (int i = 0; i < v->ncommon; i++)
+        if (strcmp(v->common[i].name, "enabled") == 0) have_enabled = 1;
+    const kt_prop *caption = NULL;
+    for (int i = 0; i < v->ntypes && !caption; i++)
+        if (strcmp(v->types[i].name, "button") == 0)
+            for (int j = 0; j < v->types[i].nprops; j++)
+                if (strcmp(v->types[i].props[j].name, "caption") == 0)
+                    caption = &v->types[i].props[j];
+    if (!have_enabled) { printf("FAIL describe: no common 'enabled'\n"); kt_vocab_free(v); return 1; }
+    if (!caption || strcmp(caption->kind, "string") != 0 || !caption->doc[0]) {
+        printf("FAIL describe: button.caption missing/undescribed\n");
+        kt_vocab_free(v); return 1;
+    }
+    printf("DESCRIBE ok types=%d\n", v->ntypes);
+    kt_vocab_free(v);
+
     printf("READY\n");
     fflush(stdout);
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 class FlagState(enum.IntEnum):
@@ -443,6 +443,79 @@ def decode_reply(stmt: Statement) -> dict:
             raise ValueError("reply %s: expected integer id" % a.name)
         ids[a.name] = int(a.value.number)
     return ids
+
+
+# --- Introspection / describe (D24) --------------------------------------
+
+@dataclass
+class PropInfo:
+    """One property in a described vocabulary: its value kind, default,
+    a brief (tooltip-length) description, and the enum words if any."""
+    name: str
+    kind: str = ""
+    default: str = ""
+    doc: str = ""
+    enum: List[str] = field(default_factory=list)
+
+
+@dataclass
+class TypeInfo:
+    name: str
+    virtual: bool = False
+    props: List[PropInfo] = field(default_factory=list)
+
+
+@dataclass
+class Vocabulary:
+    common: List[PropInfo] = field(default_factory=list)
+    types: List[TypeInfo] = field(default_factory=list)
+
+
+def _stmt_str(stmt: Statement, name: str) -> str:
+    for a in stmt.args:
+        if a.name == name and a.value is not None and a.value.kind == ValueKind.STRING:
+            return a.value.str
+    return ""
+
+
+def _stmt_flag(stmt: Statement, name: str) -> bool:
+    for a in stmt.args:
+        if a.name == name and a.value is None:
+            return a.flag == FlagState.TRUE
+    return False
+
+
+def _stmt_prop_info(stmt: Statement) -> PropInfo:
+    enum_s = _stmt_str(stmt, "enum")
+    return PropInfo(
+        name=_stmt_str(stmt, "name"),
+        kind=_stmt_str(stmt, "kind"),
+        default=_stmt_str(stmt, "default"),
+        doc=_stmt_str(stmt, "doc"),
+        enum=enum_s.split(",") if enum_s else [],
+    )
+
+
+def decode_vocabulary(lines: List[str]) -> Vocabulary:
+    """Parse the flat describe stream (proptype/prop/propcommon statements,
+    one per line) into a Vocabulary. Unknown lines are ignored."""
+    vocab = Vocabulary()
+    by_type: Dict[str, int] = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        for stmt in parse(line).statements:
+            if stmt.verb == "proptype":
+                name = _stmt_str(stmt, "name")
+                vocab.types.append(TypeInfo(name=name, virtual=_stmt_flag(stmt, "virtual")))
+                by_type[name] = len(vocab.types) - 1
+            elif stmt.verb == "propcommon":
+                vocab.common.append(_stmt_prop_info(stmt))
+            elif stmt.verb == "prop":
+                of = _stmt_str(stmt, "of")
+                if of in by_type:
+                    vocab.types[by_type[of]].props.append(_stmt_prop_info(stmt))
+    return vocab
 
 
 # --- Event ---------------------------------------------------------------

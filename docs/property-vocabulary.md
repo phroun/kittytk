@@ -117,8 +117,9 @@ prop of="button" name="action" kind=action default="" doc="Optional command disp
   a brief tooltip `doc`, and `enum` (comma-separated allowed words, else empty).
 
 The descriptors come straight from each trinket's registration, so they
-cannot drift from what the host actually accepts. Go clients call
-`Conn.Describe()`, which returns the decoded `protocol.Vocabulary`.
+cannot drift from what the host actually accepts. All three client
+libraries decode it: Go `Conn.Describe()` → `protocol.Vocabulary`, Python
+`conn.describe()` → `kittytk.Vocabulary`, C `kt_describe()` → `kt_vocab *`.
 
 ## Identity, creation, correlation
 
