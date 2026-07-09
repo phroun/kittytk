@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* --- platform shim: sockets & threads -------------------------------- */
 
@@ -32,6 +33,9 @@ static void kt_cond_init(kt_cond *c) { InitializeConditionVariable(c); }
 static void kt_cond_wait(kt_cond *c, kt_mutex *m) { SleepConditionVariableCS(c, m, INFINITE); }
 static void kt_cond_signal(kt_cond *c) { WakeConditionVariable(c); }
 static void kt_cond_broadcast(kt_cond *c) { WakeAllConditionVariable(c); }
+static int kt_cond_timedwait(kt_cond *c, kt_mutex *m, int ms) {
+    return SleepConditionVariableCS(c, m, (DWORD)ms) ? 0 : 1; /* 0 ok, nonzero timeout */
+}
 typedef struct { void *(*fn)(void *); void *arg; } kt_thunk;
 static unsigned __stdcall kt_trampoline(void *p) {
     kt_thunk t = *(kt_thunk *)p;
@@ -75,6 +79,14 @@ static void kt_cond_init(kt_cond *c) { pthread_cond_init(c, NULL); }
 static void kt_cond_wait(kt_cond *c, kt_mutex *m) { pthread_cond_wait(c, m); }
 static void kt_cond_signal(kt_cond *c) { pthread_cond_signal(c); }
 static void kt_cond_broadcast(kt_cond *c) { pthread_cond_broadcast(c); }
+static int kt_cond_timedwait(kt_cond *c, kt_mutex *m, int ms) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += ms / 1000;
+    ts.tv_nsec += (long)(ms % 1000) * 1000000L;
+    if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+    return pthread_cond_timedwait(c, m, &ts); /* 0 or ETIMEDOUT */
+}
 static int kt_thread_create(kt_thread *th, void *(*fn)(void *), void *arg) { return pthread_create(th, NULL, fn, arg); }
 static void kt_thread_join(kt_thread th) { pthread_join(th, NULL); }
 static void kt_platform_init(void) {}
@@ -719,7 +731,16 @@ static int do_exec(kt_conn *c, const char *src, kt_ui *out_ids) {
     KTDBG("exec: batch sent (%zu bytes), awaiting reply", srclen + 5);
 
     kt_mutex_lock(&c->rmu);
-    while (!c->reply_ready) kt_cond_wait(&c->rcv, &c->rmu);
+    while (!c->reply_ready) {
+        /* Bounded wait so a lost reply can't wedge the caller (and, in
+         * demoapp, the event thread) forever. */
+        if (kt_cond_timedwait(&c->rcv, &c->rmu, 30000) != 0 && !c->reply_ready) {
+            kt_mutex_unlock(&c->rmu);
+            kt_mutex_unlock(&c->write_mu);
+            KTDBG("exec: TIMED OUT after 30s waiting for reply");
+            return -1;
+        }
+    }
     int err = c->reply_err;
     KTDBG("exec: reply received (err=%d)", err);
     if (!err && out_ids) {
@@ -1037,6 +1058,7 @@ static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_o
     if (!opts) opts = &z;
     kt_platform_init();
 
+    KTDBG("client build: batch-onewrite+ssl-serialize (rev2)");
     kt_endpoint e = parse_endpoint(endpoint);
     KTDBG("dial app=%s unix=%d tls=%d addr=%s: connecting",
           app_name, e.is_unix, e.use_tls, e.address ? e.address : "");
