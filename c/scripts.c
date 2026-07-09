@@ -24,12 +24,26 @@ static void sb_add(sbuf *b, const char *s) {
     b->p[b->len] = '\0';
 }
 static void sb_addf(sbuf *b, const char *fmt, ...) {
-    char tmp[512];
-    va_list ap;
+    /* Size the output exactly, then format. A fixed stack buffer would
+     * silently truncate any fragment longer than it - e.g. the whole
+     * secondary-window build - leaving unbalanced braces that hang the
+     * host's batch scanner (it never reaches the `end` terminator). */
+    va_list ap, ap2;
     va_start(ap, fmt);
-    vsnprintf(tmp, sizeof tmp, fmt, ap);
+    va_copy(ap2, ap);
+    int n = vsnprintf(NULL, 0, fmt, ap);
     va_end(ap);
-    sb_add(b, tmp);
+    if (n < 0) {
+        va_end(ap2);
+        return;
+    }
+    char *tmp = malloc((size_t)n + 1);
+    if (tmp) {
+        vsnprintf(tmp, (size_t)n + 1, fmt, ap2);
+        sb_add(b, tmp);
+        free(tmp);
+    }
+    va_end(ap2);
 }
 
 /* The demo tree, shared by the Lists and Scroll Lists tabs. */

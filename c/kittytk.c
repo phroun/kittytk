@@ -1058,7 +1058,6 @@ static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_o
     if (!opts) opts = &z;
     kt_platform_init();
 
-    KTDBG("client build: batch-onewrite+ssl-serialize (rev2)");
     kt_endpoint e = parse_endpoint(endpoint);
     KTDBG("dial app=%s unix=%d tls=%d addr=%s: connecting",
           app_name, e.is_unix, e.use_tls, e.address ? e.address : "");

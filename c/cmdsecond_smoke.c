@@ -7,6 +7,7 @@
  * built. Endpoint is argv[1]. */
 #define _POSIX_C_SOURCE 200809L
 #include "kittytk.h"
+#include "scripts.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,14 +27,9 @@ static void on_newwin(void *ud) {
     (void)ud;
     kt_conn *c2 = kt_dial(g_ep, "App 1");
     if (!c2) { g_fail = 1; g_done = 1; return; }
-    kt_ui *u = kt_build(c2,
-        "w=new window title=\"Two\" width=260 height=140 children={\n"
-        "  p=new panel layout=vbox children={\n"
-        "    new label caption=\"secondary application window content\"\n"
-        "    new button caption=\"a button\"\n"
-        "    new textinput\n"
-        "  }\n"
-        "}\n");
+    char *s = secondary_build_script(1); /* the REAL secondary build */
+    kt_ui *u = kt_build(c2, s);
+    free(s);
     if (!u) { g_fail = 1; g_done = 1; return; }
     for (int i = 0; i < 10; i++) kt_exec(c2, "tile");
     kt_ui_free(u);
