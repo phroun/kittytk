@@ -24,16 +24,19 @@ TOKEN_ENV = "KITTYTK_TOKEN"
 
 
 def default_endpoint() -> str:
-    """The conventional endpoint: $KITTYTK_DISPLAY, else
-    <runtime>/kittytk/display-0.sock (a unix socket). The value may carry
-    any scheme (unix:/tcp://tls://); see endpoint.py.
+    """The conventional endpoint: $KITTYTK_DISPLAY, else a per-OS default,
+    matching the Go host's DefaultEndpoint so client and host always agree.
 
-    <runtime> matches the Go host's default exactly: $XDG_RUNTIME_DIR,
-    else Go's os.TempDir() (which is $TMPDIR, else /tmp). On macOS $TMPDIR
-    is /var/folders/.../T - NOT /tmp - so this must consult it."""
+    On Windows the default is loopback TCP (tcp://127.0.0.1:9797): AF_UNIX
+    is unsupported under Wine and unreliable on older Windows. Elsewhere it
+    is <runtime>/kittytk/display-0.sock, where <runtime> is $XDG_RUNTIME_DIR,
+    else Go's os.TempDir() (which is $TMPDIR, else /tmp; on macOS $TMPDIR is
+    /var/folders/.../T - NOT /tmp - so this must consult it)."""
     p = os.environ.get(DISPLAY_ENV)
     if p:
         return p
+    if os.name == "nt":
+        return "tcp://127.0.0.1:9797"
     runtime = (os.environ.get("XDG_RUNTIME_DIR")
                or os.environ.get("TMPDIR")
                or "/tmp")

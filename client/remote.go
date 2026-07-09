@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -16,12 +17,20 @@ import (
 // URL; DefaultEndpoint is used when unset.
 const DisplayEnv = "KITTYTK_DISPLAY"
 
-// DefaultEndpoint returns the conventional endpoint: $KITTYTK_DISPLAY,
-// else $XDG_RUNTIME_DIR/kittytk/display-0.sock (a unix socket). The
-// value may carry any scheme (see endpoint.go).
+// DefaultEndpoint returns the conventional endpoint: $KITTYTK_DISPLAY if
+// set, else a per-OS default. On Windows the default is loopback TCP
+// (tcp://127.0.0.1:9797): AF_UNIX is unsupported under Wine and unreliable
+// on older Windows, whereas loopback TCP works everywhere and is still a
+// same-machine ("local") connection. Elsewhere the default is a unix
+// socket at $XDG_RUNTIME_DIR/kittytk/display-0.sock. The value may carry
+// any scheme (see endpoint.go); client and host share this function, so
+// they always agree.
 func DefaultEndpoint() string {
 	if p := os.Getenv(DisplayEnv); p != "" {
 		return p
+	}
+	if runtime.GOOS == "windows" {
+		return "tcp://127.0.0.1:" + DefaultTCPPort
 	}
 	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
 	if runtimeDir == "" {

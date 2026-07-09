@@ -15,12 +15,16 @@ import (
 
 	"github.com/phroun/kittytk/app"
 	"github.com/phroun/kittytk/backend"
-	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/display"
+	"github.com/phroun/kittytk/hostcfg"
 	"github.com/phroun/kittytk/trinkets"
 )
 
 func main() {
+	// Shared launch config (kittytk.ini): the terminal host uses only the
+	// [service] keys; [window] settings apply to kittytk-sdl.
+	cfg := hostcfg.Load()
+
 	tuiBackend := backend.NewTUIBackend(backend.DefaultTUIOptions())
 
 	desktop := trinkets.NewDesktop()
@@ -36,8 +40,11 @@ func main() {
 	// service only touches the desktop via Post, so it is agnostic to the
 	// backend - the very same Serve call powers kittytk-sdl.
 	desktop.SetOnStartup(func() {
-		endpoint := client.DefaultEndpoint()
-		srv, err := display.ServeConfig(desktop, display.DefaultConfig(desktop, endpoint))
+		dcfg := display.DefaultConfig(desktop, cfg.ResolveEndpoint())
+		if dcfg.Token == "" {
+			dcfg.Token = cfg.ResolveToken()
+		}
+		srv, err := display.ServeConfig(desktop, dcfg)
 		if sb := desktop.StatusBar(); sb != nil {
 			switch {
 			case err != nil:

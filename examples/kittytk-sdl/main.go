@@ -17,15 +17,20 @@ import (
 	"os"
 
 	"github.com/phroun/kittytk/app"
-	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/display"
+	"github.com/phroun/kittytk/hostcfg"
 	sdlplat "github.com/phroun/kittytk/sdl"
 	"github.com/phroun/kittytk/trinkets"
 )
 
 func main() {
-	plat := sdlplat.New("KittyTK", 1024, 768)
-	plat.SetScale(2) // 2x font/cell size for now (per owner request)
+	// Launch options come from kittytk.ini (current dir, then the exe's
+	// folder, then the user config dir), so a non-technical user can
+	// configure the app without the command line. Env vars still override.
+	cfg := hostcfg.Load()
+
+	plat := sdlplat.New(cfg.Title, cfg.Width, cfg.Height)
+	plat.SetScale(cfg.Scale)
 	backend, err := plat.EnsureBackend()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -43,8 +48,11 @@ func main() {
 
 	// Start the display service: applications appear as they connect.
 	desktop.SetOnStartup(func() {
-		endpoint := client.DefaultEndpoint()
-		srv, err := display.ServeConfig(desktop, display.DefaultConfig(desktop, endpoint))
+		dcfg := display.DefaultConfig(desktop, cfg.ResolveEndpoint())
+		if dcfg.Token == "" {
+			dcfg.Token = cfg.ResolveToken()
+		}
+		srv, err := display.ServeConfig(desktop, dcfg)
 		if sb := desktop.StatusBar(); sb != nil {
 			switch {
 			case err != nil:

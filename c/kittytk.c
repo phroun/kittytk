@@ -224,6 +224,11 @@ static void make_parent_dirs(const char *path) {
 char *kt_default_endpoint(void) {
     const char *env = getenv("KITTYTK_DISPLAY");
     if (env && *env) return strdup(env);
+#ifdef _WIN32
+    /* AF_UNIX is unsupported under Wine and unreliable on older Windows, so
+     * default to loopback TCP - matching the Go host's Windows default. */
+    return strdup("tcp://127.0.0.1:9797");
+#else
     /* Match the Go host's default: XDG_RUNTIME_DIR, else TMPDIR, else
      * /tmp (macOS TMPDIR is /var/folders/.../T, NOT /tmp). */
     const char *rt = getenv("XDG_RUNTIME_DIR");
@@ -235,6 +240,7 @@ char *kt_default_endpoint(void) {
     char *out = malloc(n);
     snprintf(out, n, "%.*s/kittytk/display-0.sock", (int)rtlen, rt);
     return out;
+#endif
 }
 char *kt_default_socket_path(void) { return kt_default_endpoint(); }
 
