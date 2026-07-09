@@ -20,6 +20,7 @@ title = My Desk
 width = 800
 height = 600
 scale = 1
+font_size = 16
 
 [service]
 endpoint = tcp://0.0.0.0:9797
@@ -30,6 +31,13 @@ scale = notanumber
 
 	if cfg.Title != "My Desk" || cfg.Width != 800 || cfg.Height != 600 || cfg.Scale != 1 {
 		t.Errorf("window: %+v", cfg)
+	}
+	if cfg.FontSize != 16 {
+		t.Errorf("font_size = %d, want 16", cfg.FontSize)
+	}
+	// An absent/typo'd font_size keeps the default (12).
+	if Defaults().FontSize != 12 {
+		t.Errorf("default font_size = %d, want 12", Defaults().FontSize)
 	}
 	if cfg.Endpoint != "tcp://0.0.0.0:9797" || cfg.Token != "s3cret" {
 		t.Errorf("service: endpoint=%q token=%q", cfg.Endpoint, cfg.Token)

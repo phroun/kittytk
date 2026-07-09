@@ -31,9 +31,10 @@ import (
 
 // Backend renders KittyTK drawing primitives into an RGBA image.
 type Backend struct {
-	img   *image.RGBA
-	w, h  int // pixels
-	scale int // pixels per unit (framebuffer is w/scale x h/scale units)
+	img     *image.RGBA
+	w, h    int              // pixels
+	scale   int              // pixels per unit (framebuffer is w/scale x h/scale units)
+	metrics core.CellMetrics // root cell denomination (units per cell)
 
 	clip    core.UnitRect
 	hasClip bool
@@ -65,12 +66,34 @@ func NewScaled(widthPx, heightPx, scale int) (*Backend, error) {
 		scale = 1
 	}
 	b := &Backend{
-		img:   image.NewRGBA(image.Rect(0, 0, widthPx, heightPx)),
-		w:     widthPx,
-		h:     heightPx,
-		scale: scale,
+		img:     image.NewRGBA(image.Rect(0, 0, widthPx, heightPx)),
+		w:       widthPx,
+		h:       heightPx,
+		scale:   scale,
+		metrics: core.CellMetrics{CellWidth: 8, CellHeight: 16},
 	}
 	return b, nil
+}
+
+// CellMetricsForFontSize returns the root cell denomination for a UI
+// font of the given point size. The height is the font's real line box
+// (Size*4/3 units); the width scales the historical 8-unit monospace
+// cell advance from its 12pt baseline (8 at 12pt). At the default 12pt
+// this is exactly the historical 8x16, so layout is unchanged.
+func CellMetricsForFontSize(size int) core.CellMetrics {
+	if size <= 0 {
+		size = 12
+	}
+	h := engine().LineHeight(&core.Font{Name: cellFont.Name, Size: size})
+	if h <= 0 {
+		h = core.Unit(size * 4 / 3)
+	}
+	// round(size * 2/3): the 8-unit cell advance scaled from 12pt.
+	w := core.Unit((size*2 + 1) / 3)
+	if w < 1 {
+		w = 1
+	}
+	return core.CellMetrics{CellWidth: w, CellHeight: h}
 }
 
 // termRGBA converts a palette color to an opaque framebuffer color.
@@ -102,10 +125,24 @@ func (b *Backend) WritePNG(path string) error {
 func (b *Backend) Init() error { return nil }
 func (b *Backend) Shutdown()   {}
 
-// Metrics: the root cell denomination derives from the default font
-// (Monday: 8x16), per D23/D8'.
+// Metrics: the root cell denomination. It derives from the default
+// font (Monday: 8x16 at 12pt) per D23/D8', and can be re-seeded from a
+// chosen font size via SetCellMetrics/CellMetricsForFontSize.
 func (b *Backend) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return b.metrics
+}
+
+// SetCellMetrics re-seeds the root cell denomination the desktop
+// inherits (see CellMetricsForFontSize). Call before Desktop.SetBackend
+// so the whole trinket tree picks it up.
+func (b *Backend) SetCellMetrics(m core.CellMetrics) {
+	if m.CellWidth < 1 {
+		m.CellWidth = 1
+	}
+	if m.CellHeight < 1 {
+		m.CellHeight = 1
+	}
+	b.metrics = m
 }
 
 func (b *Backend) Size() core.UnitSize {

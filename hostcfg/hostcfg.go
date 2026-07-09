@@ -16,10 +16,11 @@
 // config:
 //
 //	[window]
-//	title  = KittyTK
-//	width  = 1024
-//	height = 768
-//	scale  = 2
+//	title     = KittyTK
+//	width     = 1024
+//	height    = 768
+//	scale     = 2
+//	font_size = 12
 //
 //	[service]
 //	endpoint =            ; blank = default; tcp://host:port, tls://…, or a socket path
@@ -44,10 +45,11 @@ const IniName = "kittytk.ini"
 // Config is the resolved launch configuration. Window fields apply only
 // to graphical hosts (kittytk-sdl); the terminal host ignores them.
 type Config struct {
-	Title  string // window title bar text
-	Width  int    // window width in pixels
-	Height int    // window height in pixels
-	Scale  int    // pixels per abstract unit (1 = small, 2 = crisp/large)
+	Title    string // window title bar text
+	Width    int    // window width in pixels
+	Height   int    // window height in pixels
+	Scale    int    // pixels per abstract unit (1 = small, 2 = crisp/large)
+	FontSize int    // UI font point size; sizes the desktop cell grid (12 = default)
 
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret
@@ -60,7 +62,7 @@ type Config struct {
 // Defaults returns the built-in configuration used when no ini is found
 // (and as the base every ini is applied onto).
 func Defaults() Config {
-	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2}
+	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12}
 }
 
 // SearchPaths returns the ordered candidate ini paths (see the package
@@ -123,6 +125,10 @@ func apply(data []byte, cfg *Config) {
 		case "scale":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				cfg.Scale = n
+			}
+		case "font_size":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.FontSize = n
 			}
 		case "endpoint":
 			cfg.Endpoint = val
