@@ -55,7 +55,7 @@ var mdiDockSeq int
 
 func createMDIDemo(desktop *trinkets.Desktop, application *app.Application, _ any) core.Trinket {
 	conn := client.NewInProcess(func(id string) { application.Commands().Dispatch(id) })
-	ui, err := conn.Build(mdiTabScript)
+	ui, err := conn.Build(denominate(mdiTabScript, desktop.EffectiveCellMetrics()))
 	if err != nil {
 		panic(fmt.Sprintf("mdi tab script: %v", err))
 	}
