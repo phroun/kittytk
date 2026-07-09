@@ -4,10 +4,10 @@ package trinkets
 import (
 	"fmt"
 
-	"github.com/phroun/purfecterm"
-	"github.com/phroun/purfecterm/cli"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/purfecterm"
+	"github.com/phroun/purfecterm/cli"
 )
 
 // PurfecTerm is a terminal emulator trinket that embeds PurfecTerm's CLI adapter.
@@ -42,17 +42,17 @@ type PurfecTerm struct {
 
 // CellDebugInfo contains debug information about a clicked cell.
 type CellDebugInfo struct {
-	Col, Row  int
-	Char      rune
-	FgType    string
+	Col, Row      int
+	Char          rune
+	FgType        string
 	FgR, FgG, FgB uint8
-	FgIndex   uint8
-	BgType    string
+	FgIndex       uint8
+	BgType        string
 	BgR, BgG, BgB uint8
-	BgIndex   uint8
-	Bold      bool
-	Underline bool
-	Reverse   bool
+	BgIndex       uint8
+	Bold          bool
+	Underline     bool
+	Reverse       bool
 }
 
 // NewPurfecTerm creates a new terminal emulator trinket.
@@ -190,12 +190,32 @@ func (t *PurfecTerm) SetTerminalFontFamily(name string) {
 var defaultTermFont = core.Font{Name: "Monday", Size: 12}
 
 // effTermFont is the terminal's effective font: the app-chosen one, or
-// the monospace default.
+// the monospace default. Its Size is the app's REQUESTED point size
+// (config getters/setters read it); rendering uses renderTermFont, which
+// interprets that size relative to the interface font.
 func (t *PurfecTerm) effTermFont() *core.Font {
 	if t.termFont != nil {
 		return t.termFont
 	}
 	f := defaultTermFont
+	return &f
+}
+
+// renderTermFont resolves the point size actually rendered on graphical
+// targets: the requested terminal size is interpreted RELATIVE to the
+// interface (UI) font, with 12pt as the neutral anchor. So a terminal
+// asking for 12pt renders at the interface font size, 14pt a touch
+// larger, 10pt a touch smaller - keeping the terminal in proportion with
+// the rest of the UI at any font_size. At the historical 12pt interface
+// this is identity, so nothing changes for the default.
+func (t *PurfecTerm) renderTermFont() *core.Font {
+	f := *t.effTermFont()
+	if ui := t.EffectiveFont(); ui != nil && ui.Size > 0 {
+		f.Size = (f.Size*ui.Size + 6) / 12 // round(requested * interface / 12)
+		if f.Size < 1 {
+			f.Size = 1
+		}
+	}
 	return &f
 }
 
@@ -210,7 +230,7 @@ func (t *PurfecTerm) effTermFont() *core.Font {
 // anyway, keeping the two paths identical for the default font.
 func (t *PurfecTerm) cellDims() (cw, ch core.Unit) {
 	if core.HasTextMeasurer() {
-		f := t.effTermFont()
+		f := t.renderTermFont()
 		cw = f.MeasureText("M")
 		ch = f.LineHeight()
 		if cw > 0 && ch > 0 {
