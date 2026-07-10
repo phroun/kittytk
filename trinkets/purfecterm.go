@@ -257,8 +257,21 @@ func (t *PurfecTerm) SetBounds(bounds core.UnitRect) {
 }
 
 // updateTerminalSize recalculates and applies the terminal size.
+//
+// This is the text-mode path: it divides the bounds by the cell size in
+// units, which is exact when cells are whole units. On graphical surfaces
+// the cell size is a fractional pixel rate, so this undercounts by a
+// row/column - and paintGraphical already sizes the grid authoritatively
+// from the native-pixel viewport. Running both would flip the emulator
+// between the two counts on every relayout-then-paint, and each shrink
+// scrolls the bottom line into scrollback (a runaway growth loop with the
+// cursor stranded a row above freshly-painted text). So defer to paint
+// when graphical frames are active.
 func (t *PurfecTerm) updateTerminalSize() {
 	if t.terminal == nil {
+		return
+	}
+	if core.FindGraphicalFrames(t) {
 		return
 	}
 	bounds := t.Bounds()
