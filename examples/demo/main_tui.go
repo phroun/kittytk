@@ -3,7 +3,7 @@
 package main
 
 import (
-	"github.com/phroun/kittytk/backend"
+	"github.com/phroun/kittytk/backend/tui"
 	"github.com/phroun/kittytk/trinkets"
 )
 
@@ -11,8 +11,8 @@ import (
 //
 //	go run ./examples/demo
 func main() {
-	opts := backend.DefaultTUIOptions()
-	tuiBackend := backend.NewTUIBackend(opts)
+	opts := tui.DefaultTUIOptions()
+	tuiBackend := tui.NewTUIBackend(opts)
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(tuiBackend)

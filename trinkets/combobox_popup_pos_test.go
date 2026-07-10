@@ -3,9 +3,9 @@ package trinkets
 import (
 	"testing"
 
+	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/layout"
-	"github.com/phroun/kittytk/raster"
 	"github.com/phroun/kittytk/window"
 )
 

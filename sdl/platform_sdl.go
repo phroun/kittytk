@@ -12,9 +12,9 @@ import (
 
 	sdl2 "github.com/veandco/go-sdl2/sdl"
 
+	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/platform"
-	"github.com/phroun/kittytk/raster"
 )
 
 // Platform runs KittyTK over SDL2 windows: each surface is an OS

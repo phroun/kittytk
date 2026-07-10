@@ -1,6 +1,6 @@
 //go:build windows
 
-package backend
+package tui
 
 // handleResize is a no-op on Windows: there is no SIGWINCH. The console
 // can still be polled for size changes elsewhere; this goroutine just

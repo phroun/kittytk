@@ -14,7 +14,7 @@ import (
 	"os"
 
 	"github.com/phroun/kittytk/app"
-	"github.com/phroun/kittytk/backend"
+	"github.com/phroun/kittytk/backend/tui"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
 	"github.com/phroun/kittytk/trinkets"
@@ -25,7 +25,7 @@ func main() {
 	// [service] keys; [window] settings apply to kittytk-sdl.
 	cfg := hostcfg.Load()
 
-	tuiBackend := backend.NewTUIBackend(backend.DefaultTUIOptions())
+	tuiBackend := tui.NewTUIBackend(tui.DefaultTUIOptions())
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(tuiBackend) // seeds root metrics from the cell grid

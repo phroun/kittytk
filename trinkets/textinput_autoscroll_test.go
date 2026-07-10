@@ -3,8 +3,8 @@ package trinkets
 import (
 	"testing"
 
+	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/raster"
 )
 
 // Drag-selecting past either edge autoscrolls that way (the horizontal

@@ -3,9 +3,9 @@ package window
 import (
 	"testing"
 
+	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/platform"
-	"github.com/phroun/kittytk/raster"
 )
 
 // nativeFakeSurface is an OS window's worth of fake: unit size, px

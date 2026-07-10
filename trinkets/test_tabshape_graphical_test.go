@@ -3,8 +3,8 @@ package trinkets
 import (
 	"testing"
 
+	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/raster"
 )
 
 // On pixel surfaces the tab strip's edge is one continuous hairline in

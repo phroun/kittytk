@@ -1,5 +1,5 @@
 // Package backend provides rendering backends for KittyTK.
-package backend
+package tui
 
 import (
 	"fmt"
