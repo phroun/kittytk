@@ -41,6 +41,13 @@ type TextInput struct {
 	// motion while the button is held).
 	selecting bool
 
+	// Drag-select autoscroll: while the pointer is held past the left or
+	// right edge, a repeating timer walks the caret (and the scroll) that
+	// way one character per tick, extending the selection - the horizontal
+	// analogue of a list view's edge autoscroll. scrollDir is -1/+1/0.
+	scrollTimer *DesktopTimer
+	scrollDir   int
+
 	// Context menu hover row (-1 = none).
 	menuHover int
 }
@@ -871,11 +878,25 @@ func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
-// HandleMouseMove extends the selection while the button is held.
+// HandleMouseMove extends the selection while the button is held. Past
+// either edge it hands off to the autoscroll timer (which keeps walking the
+// selection while the pointer is held still out there); inside the box it
+// tracks the pointer directly.
 func (t *TextInput) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if !t.selecting || event.Buttons&core.LeftButton == 0 {
 		return false
 	}
+	bounds := t.Bounds()
+	if event.X < 0 {
+		t.startAutoScroll(-1)
+		return true
+	}
+	if event.X >= bounds.Width {
+		t.startAutoScroll(1)
+		return true
+	}
+	t.stopAutoScroll()
+
 	font := t.EffectiveFont()
 	pos := t.findCharAtX(event.X, font)
 	if pos > len(t.text) {
@@ -892,10 +913,64 @@ func (t *TextInput) HandleMouseMove(event core.MouseMoveEvent) bool {
 	return true
 }
 
+// startAutoScroll begins (or redirects) the edge autoscroll in direction
+// dir (-1 left, +1 right). It steps once immediately so a drag past the edge
+// reacts at once, then a repeating timer continues while the pointer stays
+// out (no further move events arrive while it is held still).
+func (t *TextInput) startAutoScroll(dir int) {
+	if t.scrollDir == dir && t.scrollTimer != nil {
+		return // already walking this way
+	}
+	t.stopAutoScroll()
+	t.scrollDir = dir
+	t.autoScrollStep()
+	if d := findDesktopFor(t); d != nil {
+		t.scrollTimer = d.StartRepeatingTimer(50*time.Millisecond, func() {
+			t.autoScrollStep()
+		})
+	}
+}
+
+// stopAutoScroll halts the edge autoscroll.
+func (t *TextInput) stopAutoScroll() {
+	if t.scrollTimer != nil {
+		t.scrollTimer.Stop()
+		t.scrollTimer = nil
+	}
+	t.scrollDir = 0
+}
+
+// autoScrollStep walks the caret one character in the autoscroll direction,
+// extending the selection and scrolling to keep it visible. It stops itself
+// at either end of the text.
+func (t *TextInput) autoScrollStep() {
+	switch {
+	case t.scrollDir < 0:
+		if t.cursorPos <= 0 {
+			t.stopAutoScroll()
+			return
+		}
+		t.cursorPos--
+	case t.scrollDir > 0:
+		if t.cursorPos >= len(t.text) {
+			t.stopAutoScroll()
+			return
+		}
+		t.cursorPos++
+	default:
+		return
+	}
+	t.selEnd = t.cursorPos
+	t.ensureCursorVisible()
+	t.resetCaretBlink()
+	t.Update()
+}
+
 // HandleMouseRelease ends a drag selection.
 func (t *TextInput) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if t.selecting {
 		t.selecting = false
+		t.stopAutoScroll()
 		return true
 	}
 	return false
@@ -909,6 +984,7 @@ func (t *TextInput) HandleFocusIn() {
 // HandleFocusOut is called when focus is lost.
 func (t *TextInput) HandleFocusOut() {
 	t.stopCaretTimer()
+	t.stopAutoScroll()
 	t.selecting = false
 	// The selection survives - it shows in the resting selection
 	// colors until the box is edited again.
