@@ -14,12 +14,12 @@ type ScrollBar struct {
 	core.TrinketBase
 	core.AccessibleTrinket
 
-	orientation  core.Orientation
-	minimum      int
-	maximum      int
-	value        int
-	pageStep     int
-	singleStep   int
+	orientation core.Orientation
+	minimum     int
+	maximum     int
+	value       int
+	pageStep    int
+	singleStep  int
 
 	// Appearance
 	tracking bool // Update value while dragging
@@ -567,9 +567,9 @@ type ScrollArea struct {
 	core.TrinketBase
 	core.AccessibleTrinket
 
-	content      core.Trinket
-	scrollX      int
-	scrollY      int
+	content       core.Trinket
+	scrollX       int
+	scrollY       int
 	contentWidth  core.Unit
 	contentHeight core.Unit
 
@@ -1249,15 +1249,14 @@ func (s *ScrollArea) HandleMousePress(event core.MousePressEvent) bool {
 	s.vScrollBar.dragging = false
 	s.hScrollBar.dragging = false
 
-	// Pass to content
+	// Pass to content (copy the event so Modifiers - e.g. Shift for
+	// shift-click selection - survive the offset translation).
 	if s.content != nil {
 		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
-
-		return s.content.HandleMousePress(core.MousePressEvent{
-			X:      event.X + scrollOffsetX,
-			Y:      event.Y + scrollOffsetY,
-			Button: event.Button,
-		})
+		le := event
+		le.X = event.X + scrollOffsetX
+		le.Y = event.Y + scrollOffsetY
+		return s.content.HandleMousePress(le)
 	}
 
 	return false
@@ -1282,14 +1281,16 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 		})
 	}
 
-	// Forward to content trinket
+	// Forward to content trinket. Copy the event so Buttons and
+	// Modifiers survive - a drag-select needs Buttons&LeftButton set, and
+	// dropping it left text controls unable to extend a selection while
+	// scrolled (the move handler bailed on the missing button).
 	if s.content != nil {
 		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
-
-		return s.content.HandleMouseMove(core.MouseMoveEvent{
-			X: event.X + scrollOffsetX,
-			Y: event.Y + scrollOffsetY,
-		})
+		le := event
+		le.X = event.X + scrollOffsetX
+		le.Y = event.Y + scrollOffsetY
+		return s.content.HandleMouseMove(le)
 	}
 
 	return false
@@ -1406,15 +1407,13 @@ func (s *ScrollArea) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		})
 	}
 
-	// Forward to content trinket
+	// Forward to content trinket (copy the event to preserve Modifiers).
 	if s.content != nil {
 		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
-
-		return s.content.HandleMouseRelease(core.MouseReleaseEvent{
-			X:      event.X + scrollOffsetX,
-			Y:      event.Y + scrollOffsetY,
-			Button: event.Button,
-		})
+		le := event
+		le.X = event.X + scrollOffsetX
+		le.Y = event.Y + scrollOffsetY
+		return s.content.HandleMouseRelease(le)
 	}
 
 	return false
