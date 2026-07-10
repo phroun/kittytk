@@ -1404,9 +1404,15 @@ func (w *Window) Paint(p *core.Painter) {
 		// re-stroked over it - the frame stays visible on all sides.
 		frameStyle := w.GetScheme().GetWindowBorder(focused || isPassive)
 		if frameBorder == style.BorderHeavy {
-			frameStyle = frameStyle.WithFg(style.ColorYellow)
+			// Single border: the outer band disappears into the window
+			// background, then a thin inner line in the active border color
+			// sits just inside it.
+			bg := w.GetScheme().GetWindowBG(w.renderActive())
+			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle.WithFg(bg))
+			w.paintSingleBorderInner(p, localBounds)
+		} else {
+			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle)
 		}
-		p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle)
 	}
 
 	// Paint child windows (within the content area, clipped)
@@ -1759,6 +1765,30 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	p.FillRect(contentBounds, ' ', scheme.GetNormal(w.renderActive()))
 }
 
+// paintSingleBorderInner draws the thin inner line of a single-border
+// (active-but-not-focused) graphical frame. The outer frame band is painted
+// in the window background (reading as no border), so this hairline in the
+// active border color - one tab-stroke weight thick - sits just inside it.
+// No-op on cell surfaces.
+func (w *Window) paintSingleBorderInner(p *core.Painter, localBounds core.UnitRect) {
+	b := core.FindFrameBorderUnits(w)
+	inner := core.UnitRect{
+		X:      b,
+		Y:      b,
+		Width:  localBounds.Width - 2*b,
+		Height: localBounds.Height - 2*b,
+	}
+	radius := windowCornerRadius - b
+	if radius < 0 {
+		radius = 0
+	}
+	th := p.UnitsToPx(1) // match the tabbed control's tab-stroke weight
+	if th < 1 {
+		th = 1
+	}
+	p.StrokeRoundedRectWeight(inner, radius, th, w.GetScheme().GetWindowBorder(true))
+}
+
 // paintNormalFrame draws the full window frame with borders.
 func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics core.CellMetrics,
 	title string, titleStyle, frameStyle style.CellStyle, border style.BorderStyle, flags WindowFlags) {
@@ -1784,10 +1814,12 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	windowBG := w.GetScheme().GetWindowBG(w.renderActive())
 	roundedStyle := frameStyle.WithBg(windowBG)
 	// Single-border state (active but not focused - MDI child/menu bar holds
-	// focus) is drawn with BorderHeavy. Paint its stroke yellow so it reads
-	// distinctly from the normal double border on the graphical path.
+	// focus) is drawn with BorderHeavy. On the graphical path its outer frame
+	// band is painted in the window background so it reads as no border; a
+	// thin inner line in the active border color is drawn on top afterward
+	// (see paintSingleBorderInner).
 	if border == style.BorderHeavy {
-		roundedStyle = roundedStyle.WithFg(style.ColorYellow)
+		roundedStyle = roundedStyle.WithFg(windowBG)
 	}
 	rounded := p.DrawRoundedRect(localBounds, windowCornerRadius, border, roundedStyle)
 	if rounded {
@@ -1871,6 +1903,14 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		clip := p.WithRoundedClipRegion(localBounds, windowCornerRadius)
 		clip.FillRect(titleRect, ' ', fillStyle)
 		p.StrokeRoundedRect(localBounds, windowCornerRadius, border, roundedStyle)
+	}
+
+	// Single-border (active, not focused): the outer band is window-background
+	// colored (drawn above), so add the thin inner line in the active border
+	// color. Drawn here so it shows even when there is no edge-to-edge content
+	// re-stroke; that path re-adds it over the content.
+	if rounded && border == style.BorderHeavy {
+		w.paintSingleBorderInner(p, localBounds)
 	}
 
 	scheme := w.GetScheme()

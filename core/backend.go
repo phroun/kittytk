@@ -144,6 +144,15 @@ type RoundedRectDrawer interface {
 	StrokeRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle)
 }
 
+// RoundedRectWeightStroker is an optional RenderBackend capability: stroke
+// a rounded rectangle with an explicit device-pixel weight instead of the
+// fixed border-style weight. Used for the thin inner line of a
+// single-border (active-but-not-focused) window frame, whose weight tracks
+// the tabbed control's tab stroke rather than the frame border.
+type RoundedRectWeightStroker interface {
+	StrokeRoundedRectWeight(r UnitRect, radius Unit, strokePx int, s style.CellStyle)
+}
+
 // TranslucentPixelFiller is an optional RenderBackend capability: fill a
 // device-pixel rectangle with a color at partial opacity, blended over
 // the existing pixels and respecting the clip (including a rounded clip
@@ -869,6 +878,20 @@ func (p *Painter) StrokeRoundedRect(r UnitRect, radius Unit, border style.Border
 	screenRect := p.transform.ApplyRect(r)
 	p.applyClip()
 	rd.StrokeRoundedRect(screenRect, radius, border, s)
+	return true
+}
+
+// StrokeRoundedRectWeight paints only the rounded rectangle's stroke at an
+// explicit device-pixel weight (see RoundedRectWeightStroker), leaving the
+// interior untouched. Returns false on cell surfaces.
+func (p *Painter) StrokeRoundedRectWeight(r UnitRect, radius Unit, strokePx int, s style.CellStyle) bool {
+	rd, ok := p.backend.(RoundedRectWeightStroker)
+	if !ok {
+		return false
+	}
+	screenRect := p.transform.ApplyRect(r)
+	p.applyClip()
+	rd.StrokeRoundedRectWeight(screenRect, radius, strokePx, s)
 	return true
 }
 

@@ -1105,7 +1105,21 @@ func (b *Backend) StrokeRoundedRect(r core.UnitRect, radius core.Unit, bs style.
 	b.roundedRect(r, radius, bs, s, false)
 }
 
+// StrokeRoundedRectWeight implements core.RoundedRectWeightStroker: a
+// stroke-only rounded rectangle at an explicit device-pixel weight, used
+// for the thin inner line of a single-border window frame.
+func (b *Backend) StrokeRoundedRectWeight(r core.UnitRect, radius core.Unit, strokePx int, s style.CellStyle) {
+	if strokePx < 1 {
+		strokePx = 1
+	}
+	b.roundedRectTh(r, radius, strokePx, s, false)
+}
+
 func (b *Backend) roundedRect(r core.UnitRect, radius core.Unit, bs style.BorderStyle, s style.CellStyle, fill bool) {
+	b.roundedRectTh(r, radius, strokePx(bs), s, fill)
+}
+
+func (b *Backend) roundedRectTh(r core.UnitRect, radius core.Unit, th int, s style.CellStyle, fill bool) {
 	fg, bg := b.styleColors(s)
 	x0, y0 := b.pxX(r.X), b.pxY(r.Y)
 	x1, y1 := b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height)
@@ -1113,7 +1127,6 @@ func (b *Backend) roundedRect(r core.UnitRect, radius core.Unit, bs style.Border
 	if w <= 0 || h <= 0 {
 		return
 	}
-	th := strokePx(bs)
 	rad := b.pxLen(radius)
 	if m := min(w, h) / 2; rad > m {
 		rad = m

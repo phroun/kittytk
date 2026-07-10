@@ -99,3 +99,40 @@ func TestWindowFrameHasRoundedCorners(t *testing.T) {
 		t.Error("top edge should be stroke, not fill")
 	}
 }
+
+// StrokeRoundedRectWeight strokes at an explicit device-pixel weight,
+// independent of the border-style weight - used for a single-border
+// window's thin inner line.
+func TestStrokeRoundedRectWeight(t *testing.T) {
+	b, err := raster.New(100, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clear := style.DefaultStyle().WithBg(style.Color(256 + 0x000000))
+	b.Clear(clear)
+
+	ws, ok := interface{}(b).(core.RoundedRectWeightStroker)
+	if !ok {
+		t.Fatal("raster backend must implement RoundedRectWeightStroker")
+	}
+	// 3px red stroke, radius 6, no fill (interior stays black canvas).
+	s := style.DefaultStyle().WithFg(style.Color(256 + 0xFF0000))
+	ws.StrokeRoundedRectWeight(core.UnitRect{X: 10, Y: 10, Width: 80, Height: 60}, 6, 3, s)
+
+	img := b.Image()
+	red := color.RGBA{255, 0, 0, 255}
+	black := color.RGBA{0, 0, 0, 255}
+	// Top edge midpoint: the 3 outermost rows are stroke, the 4th is canvas.
+	for _, y := range []int{10, 11, 12} {
+		if img.RGBAAt(50, y) != red {
+			t.Errorf("row %d should be stroke: %v", y, img.RGBAAt(50, y))
+		}
+	}
+	if img.RGBAAt(50, 13) != black {
+		t.Errorf("row 13 should be interior canvas: %v", img.RGBAAt(50, 13))
+	}
+	// Center is untouched (stroke-only leaves the interior).
+	if img.RGBAAt(50, 40) != black {
+		t.Errorf("interior should be untouched: %v", img.RGBAAt(50, 40))
+	}
+}
