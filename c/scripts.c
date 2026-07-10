@@ -235,7 +235,7 @@ char *main_build_script(void) {
         "        }\n"
         "      }\n"
         "    }\n"
-        "    mdidock=new dockrow entry_width=20\n"
+        "    mdidock=new dockrow entry_width=16\n"
         "  }\n"
         "}\n"
         "\n"

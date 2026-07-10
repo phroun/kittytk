@@ -39,7 +39,7 @@ sp=new splitter orientation=vertical position=0.9 caption="Dock" children={
 			}
 		}
 	}
-	dock=new dockrow entry_width=20
+	dock=new dockrow entry_width=16
 }
 mdi=sp.sa.mdi
 status=sp.sa.mdi.cp.status

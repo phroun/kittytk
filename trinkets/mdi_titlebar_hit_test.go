@@ -51,3 +51,42 @@ func TestMDITitleBarDragCoversBorderOffset(t *testing.T) {
 		t.Errorf("press at titlebar-bottom (y=%d) did not start a drag; dragging=%v", y, pane.dragging)
 	}
 }
+
+// Clicking the minimize button of an MDI child (press then release on the
+// button) must fire the pane's minimize handler, which the demo turns into
+// a dock entry.
+func TestMDIMinimizeButtonFiresHandler(t *testing.T) {
+	stub := &graphicalFrameStub{Panel: NewPanel(), border: 2}
+
+	pane := NewMDIPane()
+	pane.SetParent(stub)
+	pane.SetBounds(core.UnitRect{Width: 800, Height: 600})
+
+	minimized := 0
+	pane.SetOnWindowMinimized(func(*window.Window) { minimized++ })
+
+	win := window.NewWindow("child")
+	pane.AddWindow(win)
+	win.SetBounds(core.UnitRect{X: 40, Y: 40, Width: 320, Height: 240})
+	pane.ActivateWindow(win)
+
+	metrics := pane.EffectiveCellMetrics()
+	border := core.FindFrameBorderUnits(win)
+	bw := metrics.TextWidth(3) // titlebar button width [x]/[_]/[^]
+
+	// Minimize is the second control button after the close button; both
+	// sit inside the left border, offset by the frame border on graphical
+	// frames. Aim at its center.
+	bx := 40 + border + metrics.CellWidth + bw + bw/2
+	by := 40 + border + metrics.CellHeight/2
+
+	pane.HandleMousePress(core.MousePressEvent{X: bx, Y: by, Button: core.LeftButton})
+	pane.HandleMouseRelease(core.MouseReleaseEvent{X: bx, Y: by, Button: core.LeftButton})
+
+	if minimized != 1 {
+		t.Errorf("minimize handler fired %d times, want 1 (button at %d,%d)", minimized, bx, by)
+	}
+	if !win.IsMinimized() {
+		t.Error("window is not minimized after clicking its minimize button")
+	}
+}

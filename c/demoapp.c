@@ -22,12 +22,24 @@
 #include <time.h>
 #include <unistd.h>
 
+/* One minimized-window dock entry: the window it stands for and the
+ * dockentry trinket showing it. A back-pointer lets the entry's click
+ * callback reach the app. Slots are never moved (freed slots have win==0),
+ * so a callback's userdata pointer stays valid for the app's lifetime. */
+#define MAX_DOCK 64
+struct App;
 typedef struct {
+    uint64_t win, entry;
+    struct App *a;
+} DockSlot;
+
+typedef struct App {
     kt_conn *conn;
     const char *path;
     uint64_t win, tabs, mdi, mdistatus, mdidock;
     int mdi_count;
     int dock_seq;
+    DockSlot dock[MAX_DOCK];
     volatile int quit;
     pthread_mutex_t mu;
 } App;
@@ -145,6 +157,67 @@ static void on_mdi_active(const kt_event *ev, void *ud) {
     snprintf(src, sizeof src, "caption=%s", q);
     free(q);
     kt_set(a->conn, a->mdistatus, src);
+}
+
+/* Dock choreography: minimize -> add an entry; entry click / restore /
+ * remove -> drop it. Mirrors the Go demo's mditab choreography. */
+static DockSlot *dock_find(App *a, uint64_t win) {
+    for (int i = 0; i < MAX_DOCK; i++)
+        if (a->dock[i].win == win) return &a->dock[i];
+    return NULL;
+}
+static void dock_drop(App *a, uint64_t win) {
+    DockSlot *s = dock_find(a, win);
+    if (!s) return;
+    if (s->entry) kt_destroy(a->conn, s->entry);
+    s->win = s->entry = 0;
+}
+static void on_dock_click(const kt_event *ev, void *ud) {
+    (void)ev;
+    DockSlot *s = ud;
+    App *a = s->a;
+    uint64_t win = s->win;
+    if (!win) return;
+    /* Our own set does not echo a restore event, so drop the entry here. */
+    char args[48];
+    snprintf(args, sizeof args, "restore=%llu", (unsigned long long)win);
+    if (kt_set(a->conn, a->mdi, args) == 0) dock_drop(a, win);
+}
+static void on_mdi_minimize(const kt_event *ev, void *ud) {
+    App *a = ud;
+    uint64_t win = 0;
+    if (!kt_event_uint(ev, "window", &win) || !win) return;
+    const char *title = kt_event_text(ev, "title");
+    dock_drop(a, win); /* never two entries for one window */
+    DockSlot *slot = NULL;
+    for (int i = 0; i < MAX_DOCK; i++)
+        if (!a->dock[i].win) { slot = &a->dock[i]; break; }
+    if (!slot) return;
+    int seq = ++a->dock_seq;
+    char *q = kt_quote(title ? title : "");
+    char *script = malloc(strlen(q) + 128);
+    if (!script) { free(q); return; }
+    sprintf(script,
+            "set mdidock children={e%d=new dockentry caption=%s window=%llu}\n"
+            "wentry=mdidock.e%d",
+            seq, q, (unsigned long long)win, seq);
+    free(q);
+    kt_ui *ui = kt_build(a->conn, script);
+    free(script);
+    if (!ui) return;
+    uint64_t entry = kt_ui_id(ui, "wentry");
+    kt_ui_free(ui);
+    if (!entry) return;
+    slot->win = win;
+    slot->entry = entry;
+    slot->a = a;
+    kt_on(a->conn, entry, "click", on_dock_click, slot);
+}
+/* A window restored or removed by some other path drops its dock entry. */
+static void on_mdi_drop_ev(const kt_event *ev, void *ud) {
+    App *a = ud;
+    uint64_t win = 0;
+    if (kt_event_uint(ev, "window", &win) && win) dock_drop(a, win);
 }
 
 /* MDI child New button spawns another document. */
@@ -322,6 +395,9 @@ int main(int argc, char **argv) {
     kt_on_command(a.conn, "demo.mdi.next", on_mdi_set, &mdi_next);
     kt_on_command(a.conn, "demo.mdi.prev", on_mdi_set, &mdi_prev);
     kt_on(a.conn, a.mdi, "active", on_mdi_active, &a);
+    kt_on(a.conn, a.mdi, "minimize", on_mdi_minimize, &a);
+    kt_on(a.conn, a.mdi, "restore", on_mdi_drop_ev, &a);
+    kt_on(a.conn, a.mdi, "remove", on_mdi_drop_ev, &a);
     spawn_mdi_child(&a);
 
     wire_protocol_window(&a);
