@@ -51,3 +51,26 @@ func TestQuasiActivateExclusive(t *testing.T) {
 		t.Errorf("B should be quasi-active")
 	}
 }
+
+// The Window menu checkmarks the currently lit top-level window.
+func TestWindowMenuChecksCurrentWindow(t *testing.T) {
+	d := NewDesktop()
+	d.windowManager = window.NewWindowManager()
+
+	winMenu := NewMenu("&Window")
+	a := window.NewWindow("Doc A")
+	b := window.NewWindow("Doc B")
+	a.SetActive(true) // the lit top-level window
+	app := &mockApp{name: "Demo", windows: []*window.Window{a, b}}
+
+	menu := d.buildDesktopWindowMenu(winMenu, app)
+	var checked []string
+	for _, it := range menu.Items() {
+		if it.Checkable && it.Checked {
+			checked = append(checked, it.Text)
+		}
+	}
+	if len(checked) != 1 || checked[0] != "Doc A" {
+		t.Errorf("checkmark = %v, want [Doc A]", checked)
+	}
+}

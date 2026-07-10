@@ -1390,6 +1390,9 @@ func (d *Desktop) buildDetachedWindowMenu(orig *Menu, app ApplicationProvider) *
 			for _, win := range wins {
 				win := win
 				item := NewMenuItem(win.Title())
+				if d.isCurrentTopLevel(win) {
+					item.SetCheckable(true).SetChecked(true)
+				}
 				item.SetOnTriggered(func() { d.activateWindowFromMenu(win) })
 				menu.AddItem(item)
 			}
@@ -1421,6 +1424,9 @@ func (d *Desktop) buildDesktopWindowMenu(orig *Menu, app ApplicationProvider) *M
 		}
 		addWindow := func(win *window.Window) {
 			item := NewMenuItem(win.Title())
+			if d.isCurrentTopLevel(win) {
+				item.SetCheckable(true).SetChecked(true)
+			}
 			item.SetOnTriggered(func() { d.activateWindowFromMenu(win) })
 			menu.AddItem(item)
 		}
@@ -1483,6 +1489,17 @@ func (d *Desktop) attachMainWindowChrome(win *window.Window) {
 func (d *Desktop) detachMainWindowChrome(win *window.Window) {
 	win.SetWindowMenuBar(nil)
 	win.SetWindowStatusBar(nil)
+}
+
+// isCurrentTopLevel reports whether win is the top-level window currently
+// shown lit - either genuinely focused (double border) or thick/single
+// (quasi-active or the desktop's menu-remembered passive window). The Window
+// menu marks this one with a checkmark.
+func (d *Desktop) isCurrentTopLevel(win *window.Window) bool {
+	if win == nil {
+		return false
+	}
+	return win.IsActive() || win.IsQuasiActive() || d.IsWindowPassive(win)
 }
 
 // tileableDesktopWindows returns the desktop's in-surface windows that
@@ -1582,6 +1599,9 @@ func (d *Desktop) buildWindowTileCascadeMenu() *Menu {
 			for _, win := range tileable {
 				win := win
 				item := NewMenuItem(win.Title())
+				if d.isCurrentTopLevel(win) {
+					item.SetCheckable(true).SetChecked(true)
+				}
 				item.SetOnTriggered(func() { d.activateWindowFromMenu(win) })
 				menu.AddItem(item)
 			}
