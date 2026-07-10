@@ -2,6 +2,7 @@
 package trinkets
 
 import (
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -440,6 +441,25 @@ func (d *Desktop) GraphicalWindowFrames() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.graphicalFrames
+}
+
+// WindowFrameBorderUnits implements core.FrameBorderProvider: the frame
+// border width (device pixels) converted to this surface's units, so
+// windows reserve it outside their content area. 0 on cell surfaces
+// (there the border already occupies a full cell). Rounded up so the
+// content always clears the drawn stroke.
+func (d *Desktop) WindowFrameBorderUnits() core.Unit {
+	d.mu.RLock()
+	graphical := d.graphicalFrames
+	d.mu.RUnlock()
+	if !graphical {
+		return 0
+	}
+	ppu := d.pxPerUnit()
+	if ppu <= 0 {
+		ppu = 1
+	}
+	return core.Unit(math.Ceil(float64(core.WindowFrameBorderPx()) / ppu))
 }
 
 // Backend returns the render backend.

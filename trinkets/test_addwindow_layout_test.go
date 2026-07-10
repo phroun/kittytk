@@ -32,7 +32,10 @@ func TestAddWindowRelayoutsUnderGraphicalFrames(t *testing.T) {
 	}
 
 	d.WindowManager().AddWindow(win)
-	if got := panel.Bounds().Width; got != 400 {
-		t.Errorf("post-add content width = %d, want 400 (graphical edge-to-edge)", got)
+	// After adoption the window re-lays out under graphical frames: the
+	// titlebar reserves the top and the frame border (2 units at scale 1)
+	// the sides, so content is the window width minus both side borders.
+	if got, want := panel.Bounds().Width, core.Unit(400-2*2); got != want {
+		t.Errorf("post-add content width = %d, want %d (graphical, border reserved)", got, want)
 	}
 }

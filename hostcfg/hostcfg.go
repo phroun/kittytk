@@ -51,7 +51,7 @@ type Config struct {
 	Height      int    // window height in pixels
 	Scale       int    // pixels per abstract unit (1 = small, 2 = crisp/large)
 	FontSize    int    // UI font point size; sizes the desktop cell grid (12 = default)
-	BorderWidth int    // graphical window-frame border width in device pixels (0 = default hairline)
+	BorderWidth int    // graphical window-frame border width in device pixels, reserved outside the content (0 = default)
 
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret

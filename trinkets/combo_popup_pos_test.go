@@ -64,9 +64,9 @@ func TestComboPopupOpensAtControlBottom(t *testing.T) {
 	wantBottom := window.MapTrinketToScreen(combo, core.UnitPoint{X: 0, Y: m.CellHeight})
 
 	// It must map inside the window, not rescaled toward the origin: the
-	// combobox sits at the window's left + its own indent, one titlebar
-	// row down.
-	wantX := win.Bounds().X + combo.Bounds().X
+	// combobox sits at the window's left + the client-area offset (frame
+	// border) + its own indent, one titlebar row down.
+	wantX := win.Bounds().X + win.ClientAreaOffset().X + combo.Bounds().X
 	wantY := win.Bounds().Y + win.ClientAreaOffset().Y + combo.Bounds().Y
 	if top.X != wantX || top.Y != wantY {
 		t.Errorf("combo mapped to %+v, want {%d %d} (window+offset+indent)", top, wantX, wantY)

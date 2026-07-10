@@ -9,8 +9,10 @@ import (
 )
 
 // The client-area contract per frame mode: cell frames reserve a full
-// cell on every side; graphical frames reserve only the titlebar row,
-// with content extending to the left, right, and bottom edges.
+// cell on every side; graphical frames reserve the titlebar row at the
+// top and the frame border (which rests OUTSIDE the content) on the left,
+// right, and bottom. The default border is 2px; on this scale-1 backend
+// that is 2 units.
 func TestClientAreaContractPerFrameMode(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 
@@ -29,7 +31,9 @@ func TestClientAreaContractPerFrameMode(t *testing.T) {
 		t.Errorf("cell frame client offset = %+v, want (8,16)", off)
 	}
 
-	// Pixel backend: edge-to-edge below the titlebar.
+	// Pixel backend: titlebar reserved at top, frame border reserved on
+	// the sides and bottom (2 units at scale 1).
+	const border = 2
 	pixel, err := raster.New(640, 480)
 	if err != nil {
 		t.Fatal(err)
@@ -37,19 +41,20 @@ func TestClientAreaContractPerFrameMode(t *testing.T) {
 	pixDesk := NewDesktop()
 	pixDesk.SetBackend(pixel)
 	pixWin := newWin(pixDesk)
-	if off := pixWin.ClientAreaOffset(); off.X != 0 || off.Y != 16 {
-		t.Errorf("graphical frame client offset = %+v, want (0,16)", off)
+	// Top reserves the border AND the titlebar row; sides/bottom the border.
+	if off := pixWin.ClientAreaOffset(); off.X != border || off.Y != border+16 {
+		t.Errorf("graphical frame client offset = %+v, want (%d,%d)", off, border, border+16)
 	}
 
-	// Content width tracks the full window width in graphical mode.
+	// Content spans the window minus the reserved border and titlebar.
 	content := NewPanel()
 	pixWin.SetContent(content)
 	pixWin.Layout()
-	if got := content.Bounds().Width; got != 240 {
-		t.Errorf("graphical content width = %d, want full window width 240", got)
+	if got, want := content.Bounds().Width, core.Unit(240-2*border); got != want {
+		t.Errorf("graphical content width = %d, want %d (window - 2*border)", got, want)
 	}
-	if got := content.Bounds().Height; got != 160-16 {
-		t.Errorf("graphical content height = %d, want %d (only titlebar reserved)", got, 160-16)
+	if got, want := content.Bounds().Height, core.Unit(160-16-2*border); got != want {
+		t.Errorf("graphical content height = %d, want %d (window - titlebar - 2*border)", got, want)
 	}
 }
 

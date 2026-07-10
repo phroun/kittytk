@@ -846,32 +846,14 @@ func (b *Backend) DrawRect(r core.UnitRect, bs style.BorderStyle, s style.CellSt
 	}
 }
 
-// frameStrokePx, when > 0, overrides the rounded-frame stroke weight -
-// the window border width, in device pixels. Rounded strokes are used
-// only for window frames, so this is a safe global knob. 0 keeps the
-// hairline weight derived from the border style. Set via SetFrameStrokePx.
-var frameStrokePx int
-
-// SetFrameStrokePx sets the graphical window-frame border width in device
-// pixels (hosts wire it from the ini's border_width). 0 (or negative)
-// restores the default hairline (2px for the double/heavy frame).
-func SetFrameStrokePx(px int) {
-	if px < 0 {
-		px = 0
-	}
-	frameStrokePx = px
-}
-
 // strokePx maps a border style to a stroke weight in device pixels:
-// 2 for double (and heavy), 1 for single - hairlines, deliberately
-// not multiplied by the unit scale. A configured frame border width
-// (SetFrameStrokePx) overrides it.
+// double/heavy is the window-frame border, whose width is the configured
+// (or default) value from core.WindowFrameBorderPx; single stays a 1px
+// hairline. Rounded strokes are used only for window frames, so honoring
+// the configured frame width here is safe.
 func strokePx(bs style.BorderStyle) int {
-	if frameStrokePx > 0 {
-		return frameStrokePx
-	}
 	if bs == style.BorderDouble || bs == style.BorderHeavy {
-		return 2
+		return core.WindowFrameBorderPx()
 	}
 	return 1
 }

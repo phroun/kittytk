@@ -7,16 +7,16 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// SetFrameStrokePx overrides the rounded window-frame border width in
-// device pixels; 0 restores the border-style default (2px for a double
-// frame). Measured as the thickness of the top stroke.
+// core.SetWindowFrameBorderPx sets the rounded window-frame border width
+// in device pixels; 0 restores the default (2px for a double frame).
+// Measured here as the thickness of the top stroke.
 func TestFrameStrokePxOverride(t *testing.T) {
-	defer SetFrameStrokePx(0)
+	defer core.SetWindowFrameBorderPx(0)
 
 	white := style.DefaultStyle().WithBg(style.RGB(255, 255, 255)).WithFg(style.RGB(255, 255, 255))
 
 	topStrokePx := func(widthPx int) int {
-		SetFrameStrokePx(widthPx)
+		core.SetWindowFrameBorderPx(widthPx)
 		b, err := New(100, 100)
 		if err != nil {
 			t.Fatal(err)

@@ -20,7 +20,6 @@ import (
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
-	"github.com/phroun/kittytk/raster"
 	sdlplat "github.com/phroun/kittytk/sdl"
 	"github.com/phroun/kittytk/trinkets"
 )
@@ -42,9 +41,11 @@ func main() {
 	// across resizes and on every torn-off/secondary surface.
 	plat.SetFontSize(cfg.FontSize)
 
-	// border_width overrides the graphical window frame thickness (device
-	// pixels); 0 keeps the default hairline.
-	raster.SetFrameStrokePx(cfg.BorderWidth)
+	// border_width sets the graphical window frame thickness (device
+	// pixels); it is drawn at that width AND reserved outside the window's
+	// content area, so a thicker border shrinks the interior. 0 keeps the
+	// default.
+	core.SetWindowFrameBorderPx(cfg.BorderWidth)
 
 	backend, err := plat.EnsureBackend()
 	if err != nil {

@@ -284,6 +284,61 @@ func FindGraphicalFrames(w Trinket) bool {
 	return false
 }
 
+// windowFrameBorderPx is the configured graphical window-frame border
+// width in device pixels (0 = the built-in default). Set by the host from
+// the ini's border_width. It is read both by the raster backend (to
+// stroke the frame) and, converted to units, by the window layout (to
+// reserve the border outside the content coordinate system).
+var windowFrameBorderPx int
+
+// SetWindowFrameBorderPx sets the graphical window-frame border width in
+// device pixels; 0 (or negative) restores the default.
+func SetWindowFrameBorderPx(px int) {
+	if px < 0 {
+		px = 0
+	}
+	windowFrameBorderPx = px
+}
+
+// WindowFrameBorderPx returns the effective frame border width in device
+// pixels - the configured value, or the built-in default (2) when unset.
+func WindowFrameBorderPx() int {
+	if windowFrameBorderPx > 0 {
+		return windowFrameBorderPx
+	}
+	return defaultWindowFrameBorderPx
+}
+
+// defaultWindowFrameBorderPx is the built-in frame stroke weight.
+const defaultWindowFrameBorderPx = 2
+
+// FrameBorderProvider is the trinket-side carrier of the graphical
+// window-frame border reservation: the desktop reports how many units the
+// frame border occupies (the device-pixel width converted at its
+// pixels-per-unit), 0 on cell surfaces. Windows reserve it out of their
+// content area so the border rests OUTSIDE the interior coordinate system
+// (a thicker border shrinks the interior / needs a bigger window).
+type FrameBorderProvider interface {
+	WindowFrameBorderUnits() Unit
+}
+
+// FindFrameBorderUnits walks up the trinket tree for a
+// FrameBorderProvider. Default (no provider found): 0 - no reserved
+// border, the cell-frame / safe answer.
+func FindFrameBorderUnits(w Trinket) Unit {
+	for current := Trinket(w); current != nil; {
+		if p, ok := current.(FrameBorderProvider); ok {
+			return p.WindowFrameBorderUnits()
+		}
+		parent := current.Parent()
+		if parent == nil {
+			return 0
+		}
+		current = parent
+	}
+	return 0
+}
+
 // CaretDrawer is an optional RenderBackend capability: pixel surfaces
 // draw the text-insertion caret as a thin vertical bar sitting at the
 // left edge of the glyph box at (x, y) - where the next character

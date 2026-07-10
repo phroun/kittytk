@@ -1028,13 +1028,18 @@ func (w *Window) contentBounds() core.UnitRect {
 	case flags&WindowFlagFrameless != 0:
 		cb = core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 	case core.FindGraphicalFrames(w):
-		// Graphical frames: the border is a hairline; only the titlebar
-		// reserves a full row and content extends to the other edges.
-		top := metrics.CellHeight
+		// Graphical frames: the frame border rests OUTSIDE the content
+		// coordinate system, reserving its own width on every edge, and the
+		// titlebar sits inside the top border. So the top reserves the
+		// border AND the titlebar row; the sides and bottom reserve just
+		// the border. A thicker border shrinks the interior rather than
+		// overlapping it.
+		b := core.FindFrameBorderUnits(w)
+		top := b + metrics.CellHeight
 		if flags&WindowFlagNoTitle != 0 {
-			top = 0
+			top = b
 		}
-		cb = core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: bounds.Height - top}
+		cb = core.UnitRect{X: b, Y: top, Width: bounds.Width - 2*b, Height: bounds.Height - top - b}
 	default:
 		// Cell frames: the border occupies a full cell on every side.
 		left, top, right, bottom := metrics.CellWidth, metrics.CellHeight, metrics.CellWidth, metrics.CellHeight
