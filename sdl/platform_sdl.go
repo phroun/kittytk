@@ -1011,6 +1011,15 @@ func (s *sdlSurface) Minimize() {
 	s.win.window.Minimize()
 }
 
+// Restore implements platform.NativeRestorer: un-minimizes (and unhides)
+// the OS window so the desktop's "Show All" can bring torn windows back.
+func (s *sdlSurface) Restore() {
+	if s.closed || s.win.window == nil {
+		return
+	}
+	s.win.window.Restore()
+}
+
 // Minimized implements platform.NativeSurface.
 func (s *sdlSurface) Minimized() bool {
 	if s.closed || s.win.window == nil {

@@ -1543,6 +1543,18 @@ func (d *Desktop) arrangeTornAppWindows(app ApplicationProvider, cascade bool) {
 		return
 	}
 
+	// place positions and (optionally) resizes a window's OS surface,
+	// honoring its constraints: a WindowFlagNoResize window keeps its own
+	// size, a WindowFlagNoMove window keeps its own position.
+	place := func(w *window.Window, n platform.NativeSurface, x, y, cw, ch int) {
+		if w.Flags()&window.WindowFlagNoResize == 0 {
+			n.SetScreenSizePx(cw, ch)
+		}
+		if w.Flags()&window.WindowFlagNoMove == 0 {
+			n.SetScreenPositionPx(x, y)
+		}
+	}
+
 	if cascade {
 		// Uniform size, staggered from the top-left; the main window is least
 		// offset so it sits at the upper-left, later windows stacked over it.
@@ -1563,8 +1575,7 @@ func (d *Desktop) arrangeTornAppWindows(app ApplicationProvider, cascade bool) {
 			if oy+ch > wy+wh {
 				oy = wy + wh - ch
 			}
-			n.SetScreenSizePx(cw, ch)
-			n.SetScreenPositionPx(ox, oy)
+			place(w, n, ox, oy, cw, ch)
 			n.Raise()
 		}
 		return
@@ -1584,8 +1595,7 @@ func (d *Desktop) arrangeTornAppWindows(app ApplicationProvider, cascade bool) {
 			continue
 		}
 		c, r := i%cols, i/cols
-		ns.SetScreenSizePx(cellW, cellH)
-		ns.SetScreenPositionPx(wx+c*cellW, wy+r*cellH)
+		place(w, ns, wx+c*cellW, wy+r*cellH, cellW, cellH)
 	}
 }
 
@@ -1737,20 +1747,55 @@ func (d *Desktop) buildWindowTileCascadeMenu() *Menu {
 	return menu
 }
 
+// hideAppWindow minimizes one of an app's windows. A torn-off window is
+// OS-minimized on its own surface (no SDL dock entry); an in-surface window
+// goes to the desktop dock via the window manager.
+func (d *Desktop) hideAppWindow(win *window.Window) {
+	if win == nil {
+		return
+	}
+	if h := d.hostForWindow(win); h != nil {
+		if n, ok := h.Surface().(platform.NativeSurface); ok && !n.Minimized() {
+			n.Minimize()
+		}
+		return
+	}
+	if d.windowManager != nil && win.IsVisible() && !win.IsMinimized() {
+		d.windowManager.MinimizeWindow(win)
+	}
+}
+
+// showAppWindow restores one of an app's windows. A torn-off window is
+// un-minimized on its own OS surface; an in-surface window is restored from
+// the desktop dock.
+func (d *Desktop) showAppWindow(win *window.Window) {
+	if win == nil {
+		return
+	}
+	if h := d.hostForWindow(win); h != nil {
+		if n, ok := h.Surface().(platform.NativeSurface); ok && n.Minimized() {
+			if r, ok := h.Surface().(platform.NativeRestorer); ok {
+				r.Restore()
+			}
+		}
+		return
+	}
+	if d.windowManager != nil && win.IsMinimized() {
+		d.windowManager.RestoreWindow(win)
+	}
+}
+
 // hideActiveApp minimizes all windows of the active application.
 func (d *Desktop) hideActiveApp() {
 	d.mu.RLock()
 	activeApp := d.activeApp
 	d.mu.RUnlock()
 
-	if activeApp == nil || d.windowManager == nil {
+	if activeApp == nil {
 		return
 	}
-
 	for _, win := range activeApp.Windows() {
-		if win != nil && win.IsVisible() && !win.IsMinimized() {
-			d.windowManager.MinimizeWindow(win)
-		}
+		d.hideAppWindow(win)
 	}
 }
 
@@ -1762,16 +1807,10 @@ func (d *Desktop) hideOtherApps() {
 	copy(apps, d.applications)
 	d.mu.RUnlock()
 
-	if d.windowManager == nil {
-		return
-	}
-
 	for _, app := range apps {
 		if app != activeApp {
 			for _, win := range app.Windows() {
-				if win != nil && win.IsVisible() && !win.IsMinimized() {
-					d.windowManager.MinimizeWindow(win)
-				}
+				d.hideAppWindow(win)
 			}
 		}
 	}
@@ -1784,15 +1823,9 @@ func (d *Desktop) showAllApps() {
 	copy(apps, d.applications)
 	d.mu.RUnlock()
 
-	if d.windowManager == nil {
-		return
-	}
-
 	for _, app := range apps {
 		for _, win := range app.Windows() {
-			if win != nil && win.IsMinimized() {
-				d.windowManager.RestoreWindow(win)
-			}
+			d.showAppWindow(win)
 		}
 	}
 }

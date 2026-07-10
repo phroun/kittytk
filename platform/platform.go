@@ -135,6 +135,14 @@ type BorderToggler interface {
 	SetBordered(bordered bool)
 }
 
+// NativeRestorer is an optional NativeSurface capability: programmatically
+// un-minimize the OS window (the counterpart to Minimize, which the OS
+// otherwise only reverses via the Dock/taskbar). Used by the desktop's
+// "Show All" to bring torn-off windows back.
+type NativeRestorer interface {
+	Restore()
+}
+
 // Surface is one render target: per-surface size, damage, input.
 type Surface interface {
 	// Size returns the surface size in units.
