@@ -103,13 +103,13 @@ static void *reader_thread(void *arg) {
 }
 
 /* on_input writes the user's keystrokes / mouse reports / paste to the
- * child. kt_event_text is NUL-terminated, which is exact for the escape
- * sequences and text a terminal produces. */
+ * child. The length-aware accessor preserves an interior NUL (Ctrl-@ sends
+ * 0x00), which a plain C string would truncate. */
 static void on_input(const kt_event *ev, void *ud) {
     kt_pty *p = ud;
-    const char *data = kt_event_text(ev, "data");
+    size_t len = 0;
+    const char *data = kt_event_text_n(ev, "data", &len);
     if (!data) return;
-    size_t len = strlen(data);
     for (size_t off = 0; off < len;) {
         ssize_t w = write(p->master, data + off, len - off);
         if (w <= 0) {

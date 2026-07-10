@@ -13,6 +13,7 @@
 #ifndef KITTYTK_H
 #define KITTYTK_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -119,6 +120,9 @@ const char *kt_event_type(const kt_event *ev);
 int kt_event_uint(const kt_event *ev, const char *name, uint64_t *out);
 int kt_event_int(const kt_event *ev, const char *name, long long *out);
 const char *kt_event_text(const kt_event *ev, const char *name); /* NULL if absent */
+/* Like kt_event_text but reports the byte length in *len, so a value with an
+ * interior NUL (a \x00 escape on the wire) is not truncated at the NUL. */
+const char *kt_event_text_n(const kt_event *ev, const char *name, size_t *len);
 const char *kt_event_word(const kt_event *ev, const char *name); /* NULL if absent */
 kt_flag kt_event_flag(const kt_event *ev, const char *name);
 uint64_t kt_event_trinket(const kt_event *ev, int *ok);

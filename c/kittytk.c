@@ -253,7 +253,8 @@ typedef struct {
     int kind;        /* 0=int 1=float 2=string 3=word */
     long long ival;
     double fval;
-    char *sval;      /* string (unescaped) or word text */
+    char *sval;      /* string (unescaped) or word text; NUL-terminated */
+    size_t slen;     /* byte length of sval, so interior NUL (\x00) survives */
 } kt_arg;
 
 typedef struct { char *verb; kt_arg *args; int n; } kt_stmt;
@@ -300,7 +301,7 @@ static int hexv(char c) {
     return -1;
 }
 
-static char *p_string(kt_p *p) {  /* assumes current char is '"' */
+static char *p_string(kt_p *p, size_t *outlen) {  /* assumes current char is '"' */
     kt_buf b = {0};
     p->pos++;  /* opening quote */
     while (!p_eof(p)) {
@@ -325,6 +326,7 @@ static char *p_string(kt_p *p) {  /* assumes current char is '"' */
             }
         } else buf_put(&b, c);
     }
+    if (outlen) *outlen = b.len;
     char *s = buf_dup(&b);
     free(b.p);
     return s;
@@ -333,7 +335,7 @@ static char *p_string(kt_p *p) {  /* assumes current char is '"' */
 static void p_value(kt_p *p, kt_arg *a) {
     char c = p_peek(p);
     if (c == '"') {
-        a->kind = 2; a->has_value = 1; a->sval = p_string(p);
+        a->kind = 2; a->has_value = 1; a->sval = p_string(p, &a->slen);
     } else if (c == '-' || isdigit((unsigned char)c)) {
         kt_buf b = {0};
         int dot = 0;
@@ -350,7 +352,7 @@ static void p_value(kt_p *p, kt_arg *a) {
         else { a->kind = 0; a->ival = strtoll(num, NULL, 10); }
         free(num);
     } else {
-        a->kind = 3; a->has_value = 1; a->sval = p_word(p);
+        a->kind = 3; a->has_value = 1; a->sval = p_word(p); a->slen = strlen(a->sval);
     }
 }
 
@@ -406,6 +408,12 @@ int kt_event_int(const kt_event *ev, const char *name, long long *out) {
 const char *kt_event_text(const kt_event *ev, const char *name) {
     const kt_arg *a = ev_field(ev, name);
     return (a && a->has_value && a->kind == 2) ? a->sval : NULL;
+}
+const char *kt_event_text_n(const kt_event *ev, const char *name, size_t *len) {
+    const kt_arg *a = ev_field(ev, name);
+    if (!a || !a->has_value || a->kind != 2) return NULL;
+    if (len) *len = a->slen;
+    return a->sval;
 }
 const char *kt_event_word(const kt_event *ev, const char *name) {
     const kt_arg *a = ev_field(ev, name);
