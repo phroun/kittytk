@@ -13,6 +13,7 @@ import (
 // the real platform (scale 1: pixels are units).
 type nativeFakeSurface struct {
 	size      core.UnitSize
+	pxW, pxH  int // OS pixel size; when 0 it mirrors size (scale-1 fakes)
 	handler   platform.SurfaceHandler
 	x, y      int
 	closed    bool
@@ -29,6 +30,12 @@ func (s *nativeFakeSurface) SetCursorVisible(bool)                {}
 func (s *nativeFakeSurface) SetCursorPosition(x, y core.Unit)     {}
 func (s *nativeFakeSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *nativeFakeSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
+func (s *nativeFakeSurface) ScreenSizePx() (int, int) {
+	if s.pxW != 0 || s.pxH != 0 {
+		return s.pxW, s.pxH
+	}
+	return int(s.size.Width), int(s.size.Height)
+}
 func (s *nativeFakeSurface) WorkAreaPx() (int, int, int, int)     { return 0, 30, 1600, 970 }
 func (s *nativeFakeSurface) Close()                               { s.closed = true }
 func (s *nativeFakeSurface) SetOpacity(o float64)                 { s.opacity = o }
@@ -37,6 +44,9 @@ func (s *nativeFakeSurface) Minimized() bool                      { return false
 func (s *nativeFakeSurface) Minimize()                            { s.minimized = true }
 
 func (s *nativeFakeSurface) SetScreenSizePx(w, h int) {
+	if s.pxW != 0 || s.pxH != 0 {
+		s.pxW, s.pxH = w, h
+	}
 	s.size = core.UnitSize{Width: core.Unit(w), Height: core.Unit(h)}
 	if s.handler != nil {
 		s.handler.Resized(s.size)

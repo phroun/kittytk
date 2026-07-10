@@ -907,6 +907,17 @@ func (s *sdlSurface) SetBordered(bordered bool) {
 	s.win.window.SetBordered(bordered)
 }
 
+// ScreenSizePx implements platform.NativeSurface: the OS window's current
+// pixel size, straight from SDL (no unit round-trip that would drift at
+// fractional pixels-per-unit).
+func (s *sdlSurface) ScreenSizePx() (int, int) {
+	if s.closed || s.win.window == nil {
+		return 0, 0
+	}
+	w, h := s.win.window.GetSize()
+	return int(w), int(h)
+}
+
 // SetScreenSizePx implements platform.NativeSurface: the size change
 // reports back through the WINDOWEVENT_SIZE_CHANGED path (framebuffer
 // recreate, shape reapply, handler.Resized).

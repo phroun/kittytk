@@ -682,9 +682,12 @@ func (h *TearOffHost) beginResize(x, y core.Unit) bool {
 	h.resizeEdges = edges
 	h.startGX, h.startGY = h.global()
 	h.startX, h.startY = h.native.ScreenPositionPx()
-	size := h.surf.Size()
-	h.startW = h.px(size.Width)
-	h.startH = h.px(size.Height)
+	// Anchor to the OS window's true pixel size. Deriving it from the
+	// surface's unit size and back through px() would undershoot at a
+	// fractional pixels-per-unit (the unit size snaps to whole cells at a
+	// rate slightly above ppu), so the first resizeMove would jump the
+	// window smaller by roughly the frame width.
+	h.startW, h.startH = h.native.ScreenSizePx()
 	return true
 }
 

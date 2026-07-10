@@ -36,6 +36,7 @@ func (s *msSurface) SetCursorVisible(bool)                {}
 func (s *msSurface) SetCursorPosition(x, y core.Unit)     {}
 func (s *msSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *msSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
+func (s *msSurface) ScreenSizePx() (int, int)             { return int(s.size.Width), int(s.size.Height) }
 
 // Close mimics the real platform: the primary (loop-owning) surface
 // refuses to close - solo mode reshapes it instead of destroying it.
