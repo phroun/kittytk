@@ -1378,7 +1378,12 @@ func (w *Window) CursorShapeAt(localX, localY core.Unit) core.CursorShape {
 }
 
 // cursorShapeAtTrinket descends to the deepest trinket containing pos and
-// returns its requested cursor, or the default when none applies.
+// returns its requested cursor, or the default when none applies. The
+// per-container coordinate transform must match the mouse-event descent
+// (each container's HandleMouseMove), or the cursor region drifts from
+// where clicks land - notably a scroll container positions its content
+// offset by the scroll amount, which the event path adds and this must
+// too, otherwise the I-beam region slides as the view scrolls.
 func cursorShapeAtTrinket(trinket core.Trinket, pos core.UnitPoint) core.CursorShape {
 	cur := trinket
 	p := pos
@@ -1391,8 +1396,16 @@ func cursorShapeAtTrinket(trinket core.Trinket, pos core.UnitPoint) core.CursorS
 		if child == nil || child == cur {
 			break
 		}
-		cb := child.Bounds()
-		p = core.UnitPoint{X: p.X - cb.X, Y: p.Y - cb.Y}
+		if sp, ok := cur.(core.ScrollOffsetUnitsProvider); ok {
+			// Mirror ScrollArea.HandleMouseMove: content coordinate is the
+			// viewport coordinate plus the scroll offset (content sits at
+			// the scroll origin, not at its Bounds()).
+			ox, oy := sp.ScrollOffsetUnits()
+			p = core.UnitPoint{X: p.X + ox, Y: p.Y + oy}
+		} else {
+			cb := child.Bounds()
+			p = core.UnitPoint{X: p.X - cb.X, Y: p.Y - cb.Y}
+		}
 		cur = child
 	}
 	if cp, ok := cur.(core.CursorProvider); ok {
