@@ -4,6 +4,7 @@ package trinkets
 import (
 	"fmt"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/phroun/kittytk/core"
@@ -52,6 +53,12 @@ type TextInput struct {
 
 	// Context menu hover row (-1 = none).
 	menuHover int
+
+	// Multi-click selection: a quick second click on the same spot selects
+	// the word under the pointer, a third selects all. clickStreak counts
+	// consecutive fast clicks; lastClickTime gates the streak.
+	lastClickTime time.Time
+	clickStreak   int
 }
 
 // EchoMode controls how text is displayed.
@@ -195,6 +202,52 @@ func (t *TextInput) SelectAll() {
 	t.selStart = 0
 	t.selEnd = len(t.text)
 	t.cursorPos = t.selEnd
+	t.Update()
+}
+
+// selectWordAt selects the run of same-class characters around pos: a word
+// (letters, digits, underscore), a run of whitespace, or a single
+// punctuation character. The caret lands at the end of the selection.
+func (t *TextInput) selectWordAt(pos int) {
+	if len(t.text) == 0 {
+		t.cursorPos, t.selStart, t.selEnd = 0, 0, 0
+		return
+	}
+	if pos >= len(t.text) {
+		pos = len(t.text) - 1
+	}
+	if pos < 0 {
+		pos = 0
+	}
+
+	isWord := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	}
+
+	start, end := pos, pos
+	switch {
+	case isWord(t.text[pos]):
+		for start > 0 && isWord(t.text[start-1]) {
+			start--
+		}
+		for end < len(t.text) && isWord(t.text[end]) {
+			end++
+		}
+	case unicode.IsSpace(t.text[pos]):
+		for start > 0 && unicode.IsSpace(t.text[start-1]) {
+			start--
+		}
+		for end < len(t.text) && unicode.IsSpace(t.text[end]) {
+			end++
+		}
+	default:
+		// A lone punctuation/symbol character selects just itself.
+		end = pos + 1
+	}
+
+	t.selStart = start
+	t.selEnd = end
+	t.cursorPos = end
 	t.Update()
 }
 
@@ -859,12 +912,33 @@ func (t *TextInput) HandleMousePress(event core.MousePressEvent) bool {
 			// (already) the anchor; only the moving end follows.
 			t.cursorPos = pos
 			t.selEnd = pos
+			t.selecting = true
+			t.clickStreak = 0 // shift-click isn't part of a multi-click run
 		} else {
-			t.cursorPos = pos
-			t.selStart = pos
-			t.selEnd = pos
+			// Count consecutive fast clicks: 2 selects the word under the
+			// pointer, 3 (or more) selects all. A slow click restarts the run.
+			now := time.Now()
+			if !t.lastClickTime.IsZero() && now.Sub(t.lastClickTime) < 400*time.Millisecond {
+				t.clickStreak++
+			} else {
+				t.clickStreak = 1
+			}
+			t.lastClickTime = now
+
+			switch {
+			case t.clickStreak >= 3:
+				t.SelectAll()
+				t.selecting = false
+			case t.clickStreak == 2:
+				t.selectWordAt(pos)
+				t.selecting = false
+			default:
+				t.cursorPos = pos
+				t.selStart = pos
+				t.selEnd = pos
+				t.selecting = true
+			}
 		}
-		t.selecting = true
 		t.SetFocus()
 		// A click that repositions the caret shows it immediately.
 		t.resetCaretBlink()

@@ -97,6 +97,61 @@ func TestTextInputClipboardActions(t *testing.T) {
 	}
 }
 
+// selectWordAt expands to the run of same-class characters around the click.
+func TestTextInputSelectWordAt(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("hello world_42 a,b")
+	// idx: h0 e1 l2 l3 o4 _5=space w6 o7 r8 l9 d10 _11 4:12 2:13 _14=space a15 ,16 b17
+
+	ti.selectWordAt(2) // inside "hello"
+	if got := ti.SelectedText(); got != "hello" {
+		t.Errorf("word at 2 = %q, want hello", got)
+	}
+	ti.selectWordAt(8) // inside "world_42" (underscore and digits are word chars)
+	if got := ti.SelectedText(); got != "world_42" {
+		t.Errorf("word at 8 = %q, want world_42", got)
+	}
+	ti.selectWordAt(5) // the space between "hello" and "world_42"
+	if got := ti.SelectedText(); got != " " {
+		t.Errorf("space at 5 = %q, want a single space", got)
+	}
+	ti.selectWordAt(16) // the comma - a lone punctuation character
+	if got := ti.SelectedText(); got != "," {
+		t.Errorf("punctuation at 16 = %q, want a single comma", got)
+	}
+}
+
+// Double-click selects the word under the pointer, triple-click selects all.
+func TestTextInputMultiClickSelection(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := rasterNew(240, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(px)
+
+	ti := NewTextInput()
+	ti.SetText("hello world")
+	ti.SetBounds(core.UnitRect{Width: 220, Height: 16})
+
+	click := func() {
+		ti.HandleMousePress(core.MousePressEvent{X: 3, Y: 4, Button: core.LeftButton})
+	}
+
+	click() // single: just places the caret, no selection
+	if ti.HasSelection() {
+		t.Errorf("single click should not select, got %q", ti.SelectedText())
+	}
+	click() // double: the word under the pointer
+	if got := ti.SelectedText(); got != "hello" {
+		t.Errorf("double click = %q, want hello", got)
+	}
+	click() // triple: everything
+	if got := ti.SelectedText(); got != "hello world" {
+		t.Errorf("triple click = %q, want the whole text", got)
+	}
+}
+
 // A right click opens the context menu on the popup controller.
 func TestTextInputContextMenu(t *testing.T) {
 	ti, clip := newClippedInput("hello")
