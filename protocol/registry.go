@@ -30,7 +30,7 @@ type BindContext struct {
 
 	mu       sync.Mutex
 	actions  map[uint64]string
-	subs     map[uint64]map[string]bool   // trinketID -> event types ("" = all; ID 0 = all trinkets)
+	subs     map[uint64]map[string]bool     // trinketID -> event types ("" = all; ID 0 = all trinkets)
 	onSub    map[uint64]map[string][]func() // trinketID -> event type -> on-subscribe hooks
 	suppress int
 	stash    map[string]any
