@@ -75,11 +75,11 @@ func newApp(path, name string, primary bool) (*app, error) {
 	a := &app{path: path, primary: primary, quit: make(chan struct{})}
 	// Command dispatch is observed via conn.OnCommand handlers, so the
 	// Dial sink is unused here.
-	dial := client.Dial
-	if primary && soloMode {
-		dial = client.DialSolo
-	}
-	conn, err := dial(path, name, nil)
+	// The demo opens secondary windows, so it declares multi-window: the
+	// display supplies its Window menu. Command dispatch is observed via
+	// conn.OnCommand handlers, so the Dial sink is unused here.
+	opts := client.DialOptions{MultiWindow: true, Solo: primary && soloMode}
+	conn, err := client.DialWith(path, name, opts)
 	if err != nil {
 		return nil, err
 	}

@@ -26,6 +26,12 @@ type ApplicationProvider interface {
 	// on the desktop bar, where the app menu carries the app name.
 	MenuName() string
 
+	// MultiWindow reports whether the app manages more than one primary
+	// window. A multi-window app automatically gets a system-managed Window
+	// menu (list of its windows, Tile/Cascade); a single-window app does not.
+	// See Application.SetMultiWindow for the window-creation contract.
+	MultiWindow() bool
+
 	// Windows returns all windows owned by this application.
 	Windows() []*window.Window
 
@@ -1188,34 +1194,38 @@ func (d *Desktop) updateMenuBarContent() {
 
 	// Add active app's menus with standard items injected into the first one
 	if activeApp != nil {
-		appMenus := activeApp.MenuBarContent()
 		appName := activeApp.Name()
+		// The app's Window and Help menus are placed by the system, not left
+		// wherever the app declared them: Window (when multi-window) is the
+		// final menu, and any Help menu comes after it.
+		ordered, appWin, helpMenu := partitionAppMenus(activeApp.MenuBarContent())
 
-		if len(appMenus) > 0 {
-			// Create a merged copy of the first menu with standard items
-			firstMenu := appMenus[0]
-			mergedMenu := d.createAppMenuWithStandardItems(firstMenu, appName)
-			d.menuBar.AddMenu(mergedMenu)
-
-			// Add remaining menus as-is, except the app's "Window" menu, which
-			// is augmented with the app's own windows and the other in-surface
-			// desktop windows (a fresh copy, so the shared menu is untouched).
-			for i := 1; i < len(appMenus); i++ {
-				m := appMenus[i]
-				if strings.EqualFold(m.Title(), "Window") {
-					m = d.buildDesktopWindowMenu(m, activeApp)
-				}
+		if len(ordered) > 0 {
+			// The leading menu gets the standard Hide/Quit sections merged in.
+			d.menuBar.AddMenu(d.createAppMenuWithStandardItems(ordered[0], appName))
+			for _, m := range ordered[1:] {
 				d.menuBar.AddMenu(m)
 			}
-		} else if len(activeApp.Windows()) > 0 {
-			// App has windows but no menus of its own - give it a standard
-			// app menu (Hide/Quit act on those windows).
-			appMenu := d.createStandardAppMenu(appName)
-			d.menuBar.AddMenu(appMenu)
+		} else if len(activeApp.Windows()) > 0 || activeApp.MultiWindow() {
+			// App has windows/menus of its own only through the system - give
+			// it a standard app menu (Hide/Quit act on its windows).
+			d.menuBar.AddMenu(d.createStandardAppMenu(appName))
 		}
-		// A windowless, menuless application - the empty desktop host at
-		// boot, before any client app connects - contributes no menu at
-		// all, so only the Psi menu shows.
+
+		// System-managed Window menu for multi-window apps (enforced, and
+		// always the final menu before Help). A single-window app that still
+		// tagged a Window menu gets it shown as-is, without augmentation.
+		if activeApp.MultiWindow() {
+			d.menuBar.AddMenu(d.buildDesktopWindowMenu(appWin, activeApp))
+		} else if appWin != nil {
+			d.menuBar.AddMenu(appWin)
+		}
+		if helpMenu != nil {
+			d.menuBar.AddMenu(helpMenu)
+		}
+		// A windowless, menuless, single-window application - the empty
+		// desktop host at boot, before any client app connects - contributes
+		// no menu at all, so only the Psi menu shows.
 	}
 }
 
@@ -1345,19 +1355,13 @@ func (d *Desktop) buildDetachedMenuBar(app ApplicationProvider) *MenuBar {
 	mb := NewMenuBar()
 	mb.SetHideCalendar(true)
 
-	appMenus := app.MenuBarContent()
 	appName := app.Name()
 	menuName := app.MenuName()
-	if len(appMenus) > 0 {
-		mb.AddMenu(d.createAppMenuWithQuitOnly(appMenus[0], menuName, appName))
-		for i := 1; i < len(appMenus); i++ {
-			m := appMenus[i]
-			// On the detached bar, the app's "Window" menu also lists all of
-			// the app's windows (a fresh copy, so the docked desktop bar's
-			// shared menu is untouched).
-			if strings.EqualFold(m.Title(), "Window") {
-				m = d.buildDetachedWindowMenu(m, app)
-			}
+	ordered, appWin, helpMenu := partitionAppMenus(app.MenuBarContent())
+
+	if len(ordered) > 0 {
+		mb.AddMenu(d.createAppMenuWithQuitOnly(ordered[0], menuName, appName))
+		for _, m := range ordered[1:] {
 			mb.AddMenu(m)
 		}
 	} else {
@@ -1365,46 +1369,64 @@ func (d *Desktop) buildDetachedMenuBar(app ApplicationProvider) *MenuBar {
 		d.appendQuitSection(m, appName)
 		mb.AddMenu(m)
 	}
+
+	// A multi-window app's detached bar gets the system Window menu too
+	// (listing the app's windows, Tile/Cascade its OS windows), always before
+	// any Help menu.
+	if app.MultiWindow() {
+		mb.AddMenu(d.buildDetachedWindowMenu(appWin, app))
+	} else if appWin != nil {
+		mb.AddMenu(appWin)
+	}
+	if helpMenu != nil {
+		mb.AddMenu(helpMenu)
+	}
 	return mb
 }
 
-// buildDetachedWindowMenu returns a copy of the app's "Window" menu for a
-// detached main window's own bar, with a separator and a list of all of the
-// app's windows (regardless of minimized state; MDI children are not
-// registered with the application, so they are naturally excluded) appended
-// at the end. Choosing a window raises it (restoring it if minimized). The
-// list is rebuilt on every open so it stays current, and the app's shared
-// menu (used on the docked desktop bar) is left untouched.
-func (d *Desktop) buildDetachedWindowMenu(orig *Menu, app ApplicationProvider) *Menu {
-	menu := NewMenu(orig.RawTitle())
-	base := orig.Items()
+// tornTileItem builds a Tile/Cascade item that arranges the app's torn-off
+// OS windows across the desktop (see arrangeTornAppWindows).
+func (d *Desktop) tornTileItem(app ApplicationProvider, cascade bool) *MenuItem {
+	label := "&Tile"
+	if cascade {
+		label = "&Cascade"
+	}
+	it := NewMenuItem(label)
+	it.SetOnTriggered(func() { d.arrangeTornAppWindows(app, cascade) })
+	return it
+}
+
+// buildDetachedWindowMenu builds the system Window menu for a detached main
+// window's own bar. It leads with Tile/Cascade (arranging the app's OS
+// windows), then - each behind a separator - the app's own Window-menu items
+// (if any), then the list of the app's windows. appWin (the app's own Window
+// menu, or nil) customizes the title and contributes the middle items.
+// Rebuilt on every open; the app's shared menu is left untouched.
+func (d *Desktop) buildDetachedWindowMenu(appWin *Menu, app ApplicationProvider) *Menu {
+	menu := NewMenu(windowMenuRawTitle(appWin))
+	menu.SetWellKnownID(MenuIDWindow)
+	var custom []*MenuItem
+	if appWin != nil {
+		custom = appWin.Items()
+	}
 
 	populate := func() {
 		menu.Clear()
-		for _, it := range base {
-			// On a detached bar, Tile/Cascade arrange the app's own torn-off
-			// windows across the OS desktop rather than the desktop's
-			// in-surface windows, so give those items a fresh action.
-			switch {
-			case !it.Separator && strings.EqualFold(it.Text, "Tile"):
-				menu.AddItem(d.tornArrangeItem(it, app, false))
-			case !it.Separator && strings.EqualFold(it.Text, "Cascade"):
-				menu.AddItem(d.tornArrangeItem(it, app, true))
-			default:
+		menu.AddItem(d.tornTileItem(app, false))
+		menu.AddItem(d.tornTileItem(app, true))
+
+		if len(custom) > 0 {
+			menu.AddSeparator()
+			for _, it := range custom {
 				menu.AddItem(it)
 			}
 		}
+
 		wins := app.Windows()
 		if len(wins) > 0 {
 			menu.AddSeparator()
 			for _, win := range wins {
-				win := win
-				item := NewMenuItem(win.Title())
-				if d.isCurrentTopLevel(win) {
-					item.SetCheckable(true).SetChecked(true)
-				}
-				item.SetOnTriggered(func() { d.activateWindowFromMenu(win) })
-				menu.AddItem(item)
+				d.appendWindowItem(menu, win)
 			}
 		}
 	}
@@ -1414,46 +1436,93 @@ func (d *Desktop) buildDetachedWindowMenu(orig *Menu, app ApplicationProvider) *
 	return menu
 }
 
-// buildDesktopWindowMenu returns a copy of the app's "Window" menu for the
-// desktop bar (the app's main menu showing in the SDL Desktop). After the
-// menu's own custom entries it appends, each behind a separator: the app's
-// own non-MDI-child windows (torn, minimized, or not), then all the other
-// in-surface desktop windows. wm.Windows() holds only in-surface windows,
-// so other apps' torn-off windows are naturally excluded. Choosing a window
-// raises it (restoring if minimized). Rebuilt on every open; the app's
-// shared menu is left untouched.
-func (d *Desktop) buildDesktopWindowMenu(orig *Menu, app ApplicationProvider) *Menu {
-	menu := NewMenu(orig.RawTitle())
-	base := orig.Items()
+// windowMenuRawTitle returns the raw title (with accelerator markup) for the
+// system Window menu: the app's own Window menu title customizes it, but a
+// blank title falls back to the default "&Window".
+func windowMenuRawTitle(appWin *Menu) string {
+	if appWin != nil && appWin.RawTitle() != "" {
+		return appWin.RawTitle()
+	}
+	return "&Window"
+}
+
+// appendWindowItem adds a menu item that raises win, checkmarking it when it
+// is the current top-level window.
+func (d *Desktop) appendWindowItem(menu *Menu, win *window.Window) {
+	win2 := win
+	item := NewMenuItem(win2.Title())
+	if d.isCurrentTopLevel(win2) {
+		item.SetCheckable(true).SetChecked(true)
+	}
+	item.SetOnTriggered(func() { d.activateWindowFromMenu(win2) })
+	menu.AddItem(item)
+}
+
+// desktopTileItem builds a Tile/Cascade item that arranges the desktop's
+// in-surface windows (the app is docked).
+func (d *Desktop) desktopTileItem(cascade bool) *MenuItem {
+	label := "&Tile"
+	if cascade {
+		label = "&Cascade"
+	}
+	it := NewMenuItem(label)
+	it.SetOnTriggered(func() {
+		wm := d.WindowManager()
+		if wm == nil {
+			return
+		}
+		if cascade {
+			wm.CascadeWindows()
+		} else {
+			wm.TileWindows()
+		}
+	})
+	return it
+}
+
+// buildDesktopWindowMenu builds the system Window menu for the desktop bar
+// (a multi-window app's main menu showing in the SDL Desktop). It leads with
+// Tile/Cascade (arranging in-surface windows), then - each behind a
+// separator - the app's own Window-menu items (if it supplied any via a
+// MenuIDWindow menu), then the app's own windows, then every other
+// in-surface desktop window. appWin (the app's own Window menu, or nil)
+// customizes the title and contributes the middle items. Rebuilt on every
+// open; the app's shared menu is left untouched.
+func (d *Desktop) buildDesktopWindowMenu(appWin *Menu, app ApplicationProvider) *Menu {
+	menu := NewMenu(windowMenuRawTitle(appWin))
+	menu.SetWellKnownID(MenuIDWindow)
+	var custom []*MenuItem
+	if appWin != nil {
+		custom = appWin.Items()
+	}
 
 	populate := func() {
 		menu.Clear()
-		// 1. The menu's own custom entries come first.
-		for _, it := range base {
-			menu.AddItem(it)
-		}
-		addWindow := func(win *window.Window) {
-			item := NewMenuItem(win.Title())
-			if d.isCurrentTopLevel(win) {
-				item.SetCheckable(true).SetChecked(true)
+		menu.AddItem(d.desktopTileItem(false))
+		menu.AddItem(d.desktopTileItem(true))
+
+		// The app's own Window-menu items sit between Tile/Cascade and the
+		// window list, separated on either side.
+		if len(custom) > 0 {
+			menu.AddSeparator()
+			for _, it := range custom {
+				menu.AddItem(it)
 			}
-			item.SetOnTriggered(func() { d.activateWindowFromMenu(win) })
-			menu.AddItem(item)
 		}
 
-		// 2. This app's own windows (torn-off, minimized, or not). MDI
-		// children are not registered with the app, so they are excluded.
+		// The app's own windows (torn, minimized, or not). MDI children are
+		// not registered with the app, so they are excluded.
 		appWins := app.Windows()
 		seen := make(map[*window.Window]bool, len(appWins))
 		if len(appWins) > 0 {
 			menu.AddSeparator()
 			for _, win := range appWins {
 				seen[win] = true
-				addWindow(win)
+				d.appendWindowItem(menu, win)
 			}
 		}
 
-		// 3. Every other in-surface desktop window (belonging to other apps).
+		// Every other in-surface desktop window (belonging to other apps).
 		var others []*window.Window
 		if wm := d.WindowManager(); wm != nil {
 			for _, w := range wm.Windows() {
@@ -1465,7 +1534,7 @@ func (d *Desktop) buildDesktopWindowMenu(orig *Menu, app ApplicationProvider) *M
 		if len(others) > 0 {
 			menu.AddSeparator()
 			for _, win := range others {
-				addWindow(win)
+				d.appendWindowItem(menu, win)
 			}
 		}
 	}
@@ -1475,14 +1544,24 @@ func (d *Desktop) buildDesktopWindowMenu(orig *Menu, app ApplicationProvider) *M
 	return menu
 }
 
-// tornArrangeItem clones a Tile/Cascade menu item (keeping its caption and
-// shortcut) but points it at arrangeTornAppWindows, so a detached window's
-// Window menu tiles/cascades the app's OS windows instead of the desktop's.
-func (d *Desktop) tornArrangeItem(orig *MenuItem, app ApplicationProvider, cascade bool) *MenuItem {
-	it := NewMenuItem(orig.rawText)
-	it.Shortcut = orig.Shortcut
-	it.SetOnTriggered(func() { d.arrangeTornAppWindows(app, cascade) })
-	return it
+// partitionAppMenus splits an app's menus into the ordered "other" menus,
+// the app's own Window menu (MenuIDWindow, or an untagged menu literally
+// titled "Window"), and its Help menu (MenuIDHelp) - so the system can place
+// the Window and Help menus itself.
+func partitionAppMenus(menus []*Menu) (ordered []*Menu, windowMenu, helpMenu *Menu) {
+	for _, m := range menus {
+		id := m.WellKnownID()
+		if id == MenuIDWindow || (id == "" && windowMenu == nil && strings.EqualFold(m.Title(), "Window")) {
+			windowMenu = m
+			continue
+		}
+		if id == MenuIDHelp {
+			helpMenu = m
+			continue
+		}
+		ordered = append(ordered, m)
+	}
+	return
 }
 
 // hostForWindow returns the tear-off host currently hosting win, or nil.

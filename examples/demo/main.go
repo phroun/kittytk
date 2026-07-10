@@ -257,6 +257,9 @@ sb=new statusbar children={
 		mainWindow := createMainWindow(desktop, application)
 		application.AddWindow(mainWindow)
 		application.SetMainWindow(mainWindow)
+		// The demo opens secondary windows (New Window, dialogs, terminals),
+		// so it's multi-window: the system supplies its Window menu.
+		application.SetMultiWindow(true)
 
 		// D22: this desktop IS a display service. Remote apps dial
 		// the socket and appear as full applications:

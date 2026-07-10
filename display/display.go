@@ -230,6 +230,7 @@ func (s *Server) serveConn(nc net.Conn) {
 	}
 	appName := "Remote App"
 	solo := false
+	multiWindow := false
 	token := ""
 	for _, a := range first[0].Args {
 		if a.Name == "app" && a.Value != nil && a.Value.Kind == protocol.StringValue {
@@ -237,6 +238,9 @@ func (s *Server) serveConn(nc net.Conn) {
 		}
 		if a.Name == "solo" && a.Flag == protocol.FlagTrue {
 			solo = true
+		}
+		if a.Name == "multiwindow" && a.Flag == protocol.FlagTrue {
+			multiWindow = true
 		}
 		if a.Name == "token" && a.Value != nil && a.Value.Kind == protocol.StringValue {
 			token = a.Value.Str
@@ -270,6 +274,7 @@ func (s *Server) serveConn(nc net.Conn) {
 	// The connection is a full Application (D22).
 	application := app.New(nil)
 	application.SetName(appName)
+	application.SetMultiWindow(multiWindow)
 	c.app = application
 	s.desktop.Post(func() { s.desktop.AddApplication(application) })
 	defer s.desktop.Post(func() { c.teardown() })

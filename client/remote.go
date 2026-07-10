@@ -97,6 +97,9 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 	if opts.Solo {
 		hello += " solo"
 	}
+	if opts.MultiWindow {
+		hello += " multiwindow"
+	}
 	if tok := opts.token(); tok != "" {
 		hello += " token=" + protocol.Quote(tok)
 	}

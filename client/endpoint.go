@@ -47,6 +47,10 @@ const InsecureEnv = "KITTYTK_INSECURE"
 type DialOptions struct {
 	Solo bool // request the whole display (see DialSolo)
 
+	// MultiWindow declares the app manages more than one primary window, so
+	// the display gives it a system-managed Window menu.
+	MultiWindow bool
+
 	// Token authorizes the client in the handshake. Empty defaults to
 	// $KITTYTK_TOKEN; still empty means no token is sent.
 	Token string

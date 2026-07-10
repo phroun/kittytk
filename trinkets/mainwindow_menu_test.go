@@ -11,14 +11,16 @@ import (
 // mockApp is a minimal ApplicationProvider for exercising the desktop's
 // menu-bar composition.
 type mockApp struct {
-	name     string
-	menuName string
-	main     *window.Window
-	menus    []*Menu
-	windows  []*window.Window
+	name        string
+	menuName    string
+	main        *window.Window
+	menus       []*Menu
+	windows     []*window.Window
+	multiWindow bool
 }
 
-func (a *mockApp) Name() string { return a.name }
+func (a *mockApp) Name() string      { return a.name }
+func (a *mockApp) MultiWindow() bool { return a.multiWindow }
 func (a *mockApp) MenuName() string {
 	if a.menuName == "" {
 		return "≡"
@@ -147,10 +149,12 @@ func TestDesktopWindowMenuListsAppThenOthers(t *testing.T) {
 	menu := d.buildDesktopWindowMenu(winMenu, app)
 	texts := itemTexts(menu)
 
-	if len(texts) == 0 || texts[0] != "Zoom" {
-		t.Fatalf("Window menu should lead with its custom entry, got %v", texts)
+	// Leads with the system Tile/Cascade, then the app's custom entry, then
+	// the window list.
+	if len(texts) < 2 || texts[0] != "Tile" || texts[1] != "Cascade" {
+		t.Fatalf("Window menu should lead with Tile/Cascade, got %v", texts)
 	}
-	for _, want := range []string{"Doc 1", "Doc 2", "Other Win"} {
+	for _, want := range []string{"Zoom", "Doc 1", "Doc 2", "Other Win"} {
 		if !menuHasItem(menu, want) {
 			t.Errorf("Window menu missing %q: %v", want, texts)
 		}
@@ -163,6 +167,10 @@ func TestDesktopWindowMenuListsAppThenOthers(t *testing.T) {
 			}
 		}
 		return -1
+	}
+	// Custom entry between Tile/Cascade and the window list.
+	if idx("Zoom") < idx("Cascade") || idx("Zoom") > idx("Doc 1") {
+		t.Errorf("custom entry should sit between Cascade and the window list: %v", texts)
 	}
 	if idx("Doc 1") > idx("Other Win") || idx("Doc 2") > idx("Other Win") {
 		t.Errorf("app windows should precede other-app windows: %v", texts)
@@ -188,4 +196,82 @@ func itemTexts(m *Menu) []string {
 		out = append(out, it.Text)
 	}
 	return out
+}
+
+func titlesEqual(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// A multi-window app gets a system Window menu on the desktop bar without
+// declaring one; it is the final menu, but a Help menu comes after it.
+func TestMultiWindowGetsWindowMenuBeforeHelp(t *testing.T) {
+	d := NewDesktop()
+	d.windowManager = window.NewWindowManager()
+
+	file := NewMenu("&File")
+	file.AddItem(NewMenuItem("New"))
+	help := NewMenu("&Help").SetWellKnownID(MenuIDHelp)
+	help.AddItem(NewMenuItem("About"))
+	app := &mockApp{name: "Demo", multiWindow: true, menus: []*Menu{file, help}}
+	d.activeApp = app
+
+	d.updateMenuBarContent()
+	got := menuTitles(d.menuBar)
+	if want := []string{"Ψ", "File", "Window", "Help"}; !titlesEqual(got, want) {
+		t.Fatalf("multi-window bar = %v, want %v", got, want)
+	}
+}
+
+// A single-window app gets no Window menu (Help still floats to the end).
+func TestSingleWindowHasNoWindowMenu(t *testing.T) {
+	d := NewDesktop()
+	d.windowManager = window.NewWindowManager()
+
+	file := NewMenu("&File")
+	file.AddItem(NewMenuItem("New"))
+	help := NewMenu("&Help").SetWellKnownID(MenuIDHelp)
+	app := &mockApp{name: "Demo", multiWindow: false, menus: []*Menu{file, help}}
+	d.activeApp = app
+
+	d.updateMenuBarContent()
+	got := menuTitles(d.menuBar)
+	if want := []string{"Ψ", "File", "Help"}; !titlesEqual(got, want) {
+		t.Fatalf("single-window bar = %v, want %v", got, want)
+	}
+}
+
+// An app's own Window menu customizes the system menu's title and its items
+// are merged between Tile/Cascade and the window list.
+func TestAppWindowMenuCustomizesTitleAndMerges(t *testing.T) {
+	d := NewDesktop()
+	d.windowManager = window.NewWindowManager()
+
+	file := NewMenu("&File")
+	file.AddItem(NewMenuItem("New"))
+	win := NewMenu("&Windows").SetWellKnownID(MenuIDWindow) // custom title + tag
+	win.AddItem(NewMenuItem("Zoom"))
+	app := &mockApp{name: "Demo", multiWindow: true, menus: []*Menu{file, win}}
+	d.activeApp = app
+
+	d.updateMenuBarContent()
+	got := menuTitles(d.menuBar)
+	if want := []string{"Ψ", "File", "Windows"}; !titlesEqual(got, want) {
+		t.Fatalf("bar = %v, want the custom-titled Windows menu last", got)
+	}
+	wm := d.menuBar.Menus()[2]
+	texts := itemTexts(wm)
+	if len(texts) < 2 || texts[0] != "Tile" || texts[1] != "Cascade" {
+		t.Fatalf("Window menu should lead with Tile/Cascade: %v", texts)
+	}
+	if !menuHasItem(wm, "Zoom") {
+		t.Errorf("app's custom Window item not merged: %v", texts)
+	}
 }

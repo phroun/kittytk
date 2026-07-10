@@ -63,6 +63,14 @@ func init() {
 				m.SetTitle(s)
 				return nil
 			})).Tip("Menu title (& marks accelerator)"),
+			"wellknown": protocol.NewProperty("string", wprop("wellknown", func(_ *protocol.BindContext, m *Menu, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("wellknown", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetWellKnownID(s)
+				return nil
+			})).Tip("System role tag: app/file/edit/format/view/window/help"),
 		},
 		Append: func(parent, child any) error {
 			m := parent.(*Menu)

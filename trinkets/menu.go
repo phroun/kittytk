@@ -20,7 +20,8 @@ type MenuItem struct {
 	Enabled         bool
 	Checkable       bool
 	Checked         bool
-	Separator       bool // If true, this is a separator line
+	Separator       bool   // If true, this is a separator line
+	wellKnownID     string // system-level role tag (see MenuID* constants), "" if none
 
 	// Submenu
 	SubMenu *Menu
@@ -124,6 +125,17 @@ func (m *MenuItem) SetEnabled(enabled bool) *MenuItem {
 	return m
 }
 
+// SetWellKnownID tags the item with a system-level role identifier (see the
+// MenuID* constants). Any string is accepted; only the known ones carry
+// meaning.
+func (m *MenuItem) SetWellKnownID(id string) *MenuItem {
+	m.wellKnownID = id
+	return m
+}
+
+// WellKnownID returns the item's system-level role tag, or "" if none.
+func (m *MenuItem) WellKnownID() string { return m.wellKnownID }
+
 // SetSubMenu sets the submenu.
 func (m *MenuItem) SetSubMenu(menu *Menu) *MenuItem {
 	m.SubMenu = menu
@@ -186,6 +198,20 @@ func (menu *Menu) BindCommands(reg *core.CommandRegistry) {
 	}
 }
 
+// Well-known menu identifiers. An app tags a menu (or menu item) with one
+// of these so the system can recognize its role - place it, merge into it,
+// or inject standard items - independently of the menu's display title. Any
+// string may be stored, but only these carry system meaning.
+const (
+	MenuIDApp    = "app"    // the app's leading menu (≡/application menu)
+	MenuIDFile   = "file"   // File
+	MenuIDEdit   = "edit"   // Edit
+	MenuIDFormat = "format" // Format
+	MenuIDView   = "view"   // View
+	MenuIDWindow = "window" // Window (the system manages its window list)
+	MenuIDHelp   = "help"   // Help (kept last, after the Window menu)
+)
+
 // Menu represents a dropdown menu.
 type Menu struct {
 	core.TrinketBase
@@ -198,6 +224,7 @@ type Menu struct {
 	items           []*MenuItem
 	currentIndex    int
 	visible         bool
+	wellKnownID     string // system-level role tag (see MenuID* constants), "" if none
 
 	// Position when shown as popup
 	popupX, popupY core.Unit
@@ -377,6 +404,18 @@ func (m *Menu) Title() string {
 func (m *Menu) RawTitle() string {
 	return m.rawTitle
 }
+
+// SetWellKnownID tags the menu with a system-level role identifier (see the
+// MenuID* constants), letting the system recognize its role independently of
+// its display title. Any string is accepted; only the known ones carry
+// meaning. Returns the menu for chaining.
+func (m *Menu) SetWellKnownID(id string) *Menu {
+	m.wellKnownID = id
+	return m
+}
+
+// WellKnownID returns the menu's system-level role tag, or "" if none.
+func (m *Menu) WellKnownID() string { return m.wellKnownID }
 
 // SetTitle sets the menu title.
 func (m *Menu) SetTitle(title string) {

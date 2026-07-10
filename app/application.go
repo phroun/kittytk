@@ -82,6 +82,10 @@ type Application struct {
 	// hosts the app's own menu bar and the desktop shows a reduced bar.
 	mainWindow *window.Window
 
+	// multiWindow declares that the app manages more than one primary
+	// window. See SetMultiWindow.
+	multiWindow bool
+
 	// Menu bar content for this application
 	menuBarContent []*trinkets.Menu
 
@@ -858,6 +862,34 @@ func (app *Application) MainWindow() *window.Window {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 	return app.mainWindow
+}
+
+// MultiWindow reports whether the app is declared multi-window.
+func (app *Application) MultiWindow() bool {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.multiWindow
+}
+
+// SetMultiWindow declares whether the application manages more than one
+// primary window.
+//
+// When true, the system gives the app a Window menu automatically - listing
+// its windows with Tile/Cascade - on both the desktop bar and its detached
+// main window's bar, so the app developer never has to add one by hand. The
+// app may still contribute its own Window-menu items by tagging a menu with
+// MenuIDWindow; those items are merged between the system's Tile/Cascade and
+// its window list.
+//
+// When false (the default), the app is single-window: it should create only
+// its first/main window plus transient dialog or tool-palette style windows
+// (tool palettes are not yet implemented). It receives no Window menu. This
+// contract is documented rather than hard-enforced for now, since the
+// window classification it depends on does not fully exist yet.
+func (app *Application) SetMultiWindow(multi bool) {
+	app.mu.Lock()
+	app.multiWindow = multi
+	app.mu.Unlock()
 }
 
 // SetMainWindow marks a window as the application's main window. When

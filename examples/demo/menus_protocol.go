@@ -85,11 +85,8 @@ bar=new menubar children={
 	}
 	b.WriteString(`
 	}
-	new menu caption="&Window" children={
+	new menu caption="&Window" wellknown="window" children={
 		new menuitem caption="&New Window" action=demo.window.new
-		new menuitem separator
-		new menuitem caption="&Tile" action=demo.window.tile
-		new menuitem caption="&Cascade" action=demo.window.cascade
 	}
 	new menu caption="&Alphabet" children={`)
 	for i := 0; i < 26; i++ {
@@ -101,7 +98,7 @@ bar=new menubar children={
 	}
 	b.WriteString(`
 	}
-	new menu caption="&Help" children={
+	new menu caption="&Help" wellknown="help" children={
 		new menuitem caption="&About" action=demo.help.about
 	}
 }
@@ -299,7 +296,7 @@ bar=new menubar children={
 	new menu caption="&Info" children={
 		new menuitem caption="&About This App" action=demo.app.info
 	}
-	new menu caption="&Help" children={
+	new menu caption="&Help" wellknown="help" children={
 		new menuitem caption="&About" action=demo.app.about
 	}
 }
