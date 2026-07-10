@@ -1635,7 +1635,17 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 			hoverTarget.HandleMouseMove(localEvent)
 			// The pointer is over this window: consume the move so the
 			// hover can't leak to windows stacked underneath or the
-			// background content.
+			// background content. First send the background content an
+			// out-of-bounds move so any item it had hovered (a parent-window
+			// control) doesn't stay stuck now that the pointer is over the
+			// child.
+			if content != nil {
+				if handler, ok := content.(interface {
+					HandleMouseMove(core.MouseMoveEvent) bool
+				}); ok {
+					handler.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
+				}
+			}
 			m.Update()
 			return true
 		}

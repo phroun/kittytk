@@ -1729,6 +1729,11 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		}
 	}
 
+	// The heavy (single) state is lit even though it isn't "focused": a
+	// maximized window in that state has no border to carry the distinction,
+	// so its icons must paint in the active style.
+	buttonActive := focused || border == style.BorderHeavy
+
 	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
 	// These are decorative buttons - use cell-based sizing (3 cells each)
 	buttonWidth := metrics.CellWidth * 3
@@ -1737,7 +1742,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		isFocused := titleFocus == TitleFocusClose
 		isPressed := pressedButton == TitleButtonClose && buttonHovered
 		isHovered := hoveredButton == TitleButtonClose && !isPressed && p.Graphical()
-		btnStyle := scheme.GetTitleBarButtonState(focused, isFocused, isHovered, isPressed)
+		btnStyle := scheme.GetTitleBarButtonState(buttonActive, isFocused, isHovered, isPressed)
 		p.DrawCell(controlX, 0, '[', btnStyle)
 		p.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
 		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
@@ -1747,7 +1752,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		isFocused := titleFocus == TitleFocusMinimize
 		isPressed := pressedButton == TitleButtonMinimize && buttonHovered
 		isHovered := hoveredButton == TitleButtonMinimize && !isPressed && p.Graphical()
-		btnStyle := scheme.GetTitleBarButtonState(focused, isFocused, isHovered, isPressed)
+		btnStyle := scheme.GetTitleBarButtonState(buttonActive, isFocused, isHovered, isPressed)
 		p.DrawCell(controlX, 0, '[', btnStyle)
 		p.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
 		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
@@ -1757,7 +1762,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		isFocused := titleFocus == TitleFocusMaximize
 		isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 		isHovered := hoveredButton == TitleButtonMaximize && !isPressed && p.Graphical()
-		btnStyle := scheme.GetTitleBarButtonState(focused, isFocused, isHovered, isPressed)
+		btnStyle := scheme.GetTitleBarButtonState(buttonActive, isFocused, isHovered, isPressed)
 		var icon rune
 		if state == WindowStateMaximized {
 			icon = 'o' // Restore icon
@@ -1776,7 +1781,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	// Tab / Shift+Tab focus change.
 	if titleFocus != TitleFocusTitle {
 		tearTitleW := font.MeasureText(title)
-		controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, bounds.Width, tearTitleW, focused, titleFocus)
+		controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, bounds.Width, tearTitleW, buttonActive, titleFocus)
 	}
 
 	// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
