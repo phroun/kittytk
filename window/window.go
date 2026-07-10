@@ -1852,6 +1852,20 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		p.DrawRect(localBounds, border, frameStyle)
 	}
 
+	// Graphical path only: the rounded fill painted the whole surface with
+	// the window background, so the title bar's non-text areas would show
+	// that background and read as gaps. Paint the entire title strip with
+	// the title style so the bar reads as one solid color, then re-stroke
+	// the border over it (clipped to the rounded outline so the top corners
+	// stay round). The cell path keeps the border color in those areas.
+	if rounded && flags&WindowFlagNoTitle == 0 {
+		b := core.FindFrameBorderUnits(w)
+		titleRect := core.UnitRect{Width: localBounds.Width, Height: b + metrics.CellHeight}
+		clip := p.WithRoundedClipRegion(localBounds, windowCornerRadius)
+		clip.FillRect(titleRect, ' ', titleStyle)
+		p.StrokeRoundedRect(localBounds, windowCornerRadius, border, roundedStyle)
+	}
+
 	scheme := w.GetScheme()
 	// Derive visual focus: active AND (parent has focus OR window has internal focus)
 	// When blur item is focused, buttons stay in active color but title bar text uses inactive

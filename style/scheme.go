@@ -339,7 +339,7 @@ func DefaultScheme() *Scheme {
 		ActiveWindowBorder:     ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
 		InactiveWindowBorder:   ptr(DefaultStyle().WithFg(ColorBrightBlue).WithBg(ColorBlue)),
 		ActiveWindowTitle:      ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue).Bold()),
-		InactiveWindowTitle:    ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue).WithAttrs(StyleDim)),
+		InactiveWindowTitle:    ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBrightBlack).WithAttrs(StyleDim)),
 		ActiveTitleBarButton:   ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
 		InactiveTitleBarButton: ptr(DefaultStyle().WithFg(ColorBrightBlue).WithBg(ColorBlue)),
 		FocusedTitleBarButton:  ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),

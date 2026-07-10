@@ -572,10 +572,16 @@ func (m *MDIPane) MaximizeWindow(win *window.Window) {
 func (m *MDIPane) MinimizeWindow(win *window.Window) {
 	win.Minimize()
 
-	// Notify via callback
+	// Minimizing the active child hands focus back to the parent, exactly as
+	// pressing its blur item would - the minimized window can't hold focus.
 	m.mu.RLock()
+	wasActive := m.activeWindow == win
 	handler := m.onWindowMinimized
 	m.mu.RUnlock()
+
+	if wasActive {
+		m.DeactivateActiveWindow()
+	}
 
 	if handler != nil {
 		handler(win)
