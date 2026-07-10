@@ -17,6 +17,7 @@ import (
 type recBackend struct {
 	*raster.Backend
 	texts   []recText
+	fills   []recFill
 	caretPx int
 	caret   bool
 }
@@ -24,6 +25,10 @@ type recBackend struct {
 type recText struct {
 	xPx, advPx int
 	s          string
+}
+
+type recFill struct {
+	xPx, wPx int
 }
 
 func (r *recBackend) DrawTextPx(xPx, yPx int, s string, st style.CellStyle, f *core.Font) int {
@@ -35,8 +40,9 @@ func (r *recBackend) DrawTextPx(xPx, yPx int, s string, st style.CellStyle, f *c
 }
 
 func (r *recBackend) FillRectPx(xPx, yPx, wPx, hPx int, st style.CellStyle) {
-	// In this fixture the only device-pixel fill is the caret bar (the
-	// focused speckled fill and any selection use whole-unit FillRect).
+	// Device-pixel fills here are the selection highlight and, last, the
+	// caret bar. The caret is the final fill, so caretPx tracks it.
+	r.fills = append(r.fills, recFill{xPx: xPx, wPx: wPx})
 	r.caretPx = xPx
 	r.caret = true
 	r.Backend.FillRectPx(xPx, yPx, wPx, hPx, st)
@@ -119,6 +125,62 @@ func TestTextInputTextStableAsCaretMoves(t *testing.T) {
 				t.Errorf("cursor %d: run %d = %+v, want %+v (text shifted with the caret)",
 					cursor, i, got[i], base[i])
 			}
+		}
+	}
+}
+
+// Dragging a selection (anchor fixed, caret moving) must keep the base text
+// drawn as one stable run and pin the anchor end of the highlight, so the
+// already-selected material does not shift as the selection grows.
+func TestTextInputSelectionAnchorStable(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.NewScaled(600, 40, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetFontSize(10)
+	core.SetTextMeasurer(b)
+
+	ti := NewTextInput()
+	ti.SetText("Hello World.")
+	font := ti.EffectiveFont()
+	ti.SetBounds(core.UnitRect{Width: 400, Height: b.LineHeight(font)})
+	ti.SetFocus()
+
+	// Anchor the selection at index 2 and sweep the caret rightward.
+	anchorPx := core.NewPainter(b).UnitsToPx(font.MeasureText("He"))
+
+	var baseRun *recText
+	for _, caret := range []int{5, 8, 11} {
+		rec := &recBackend{Backend: b}
+		ti.selStart = 2
+		ti.selEnd = caret
+		ti.cursorPos = caret
+		b.Clear(style.DefaultStyle())
+		ti.Paint(core.NewPainter(rec))
+
+		// The full text is always drawn as one un-split base run at pixel 0.
+		var base *recText
+		for i := range rec.texts {
+			if rec.texts[i].s == "Hello World." {
+				base = &rec.texts[i]
+			}
+		}
+		if base == nil || base.xPx != 0 {
+			t.Fatalf("caret %d: base run \"Hello World.\" not drawn at xPx=0; got %+v", caret, rec.texts)
+		}
+		if baseRun == nil {
+			baseRun = base
+		} else if *base != *baseRun {
+			t.Errorf("caret %d: base run = %+v, want stable %+v", caret, *base, *baseRun)
+		}
+		// The highlight's left edge (the anchor side) stays pinned.
+		if len(rec.fills) == 0 {
+			t.Fatalf("caret %d: no selection highlight drawn", caret)
+		}
+		if got := rec.fills[0].xPx; got != anchorPx {
+			t.Errorf("caret %d: highlight left edge=%dpx, want anchor %dpx (anchor drifted)",
+				caret, got, anchorPx)
 		}
 	}
 }

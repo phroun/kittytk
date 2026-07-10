@@ -3,7 +3,6 @@ package trinkets
 
 import (
 	"fmt"
-	"sort"
 	"time"
 	"unicode/utf8"
 
@@ -442,16 +441,12 @@ func (t *TextInput) Paint(p *core.Painter) {
 	visibleText := t.truncateToWidth(displayText, bounds.Width, font)
 	displayText = []rune(visibleText)
 
-	// Draw the text as chunks split at the selection bounds and (when the
-	// caret shows) the cursor, so every position the caret can sit on is a
-	// real segment edge. Each chunk advances x by its OWN rendered width
-	// (DrawText returns the advance it painted), and the caret is placed at
-	// the accumulated width of the chunks to its left. Measuring per segment
-	// and summing - the same structure the render walks - keeps the caret
-	// exactly where the glyphs paint instead of drifting from a separate
-	// whole-string measurement. Chunk drawing also replaces the old
-	// character-by-character selection path, whose per-glyph re-quantization
-	// loosened the letter spacing.
+	// Everything is measured from - and drawn as - the WHOLE text in one
+	// shaped run, never split at the caret or the selection edges. Splitting
+	// re-shapes the material at the split each time it moves (a substring
+	// shapes differently than the same characters mid-run), which jittered
+	// the text as the caret or selection swept through it. The caret and the
+	// selection are measured against this stable run and painted on top.
 	n := len(displayText)
 	showCaret := focused && !t.readOnly && core.FocusChainActive(t.Self())
 
@@ -463,93 +458,78 @@ func (t *TextInput) Paint(p *core.Painter) {
 		cursorDisp = n
 	}
 
-	selLo, selHi := -1, -1
-	if t.HasSelection() && !isPlaceholder {
-		lo, hi := t.selStart, t.selEnd
-		if lo > hi {
-			lo, hi = hi, lo
-		}
-		selLo, selHi = lo-t.scrollOffset, hi-t.scrollOffset
-		if selLo < 0 {
-			selLo = 0
-		}
-		if selHi > n {
-			selHi = n
-		}
-	}
-
-	// Interior segment boundaries (0 < b < n): ONLY the selection edges -
-	// NOT the cursor. Splitting the text at the caret would re-shape the run
-	// after it every time the caret moves (a substring shapes differently
-	// than the same characters mid-run), so that text jittered as the caret
-	// swept through it. The caret is instead measured and overlaid on top of
-	// stable text below.
-	var cuts []int
-	addCut := func(b int) {
-		if b <= 0 || b >= n {
-			return
-		}
-		for _, e := range cuts {
-			if e == b {
-				return
-			}
-		}
-		cuts = append(cuts, b)
-	}
-	if selLo >= 0 {
-		addCut(selLo)
-		addCut(selHi)
-	}
-	sort.Ints(cuts)
-	cuts = append(cuts, n) // the last segment ends at n
-
 	selStyle := scheme.GetEditBoxSelection(focused && t.IsEnabled(), paneType)
 
 	// On a pixel surface the glyphs rasterize at the unsnapped
-	// pixels-per-unit, so lay each chunk out - and site the caret - by
-	// accumulating the device-pixel advance from a single anchor at unit 0
-	// (DrawTextOffset), never re-snapping an intermediate unit position
-	// through the cell rate. At a fractional font size the two rates
-	// diverge, and re-snapping is what drifted the caret further right the
-	// deeper into the text it sat. On a cell surface (no TextPixelDrawer)
-	// fall back to the whole-unit DrawText advance.
+	// pixels-per-unit, so measure the caret/selection and place the text by
+	// device-pixel advance from the anchor at unit 0 (DrawTextOffset), never
+	// re-snapping an intermediate unit position through the cell rate. On a
+	// cell surface (no TextPixelDrawer) fall back to the whole-unit DrawText.
 	_, usePx := p.DrawTextOffset(0, 0, 0, 0, "", s, font)
-	x := core.Unit(0)
-	xPx := 0
-	caretX := core.Unit(0) // stays 0 when the cursor is at the start
-	caretXPx := 0
-	caretFound := false
-	prev := 0
-	for _, b := range cuts {
-		if b <= prev {
-			continue
+
+	// prefixWidth is the width, in units and device pixels, of the visible
+	// text before display index d - measured against the whole stable run.
+	prefixWidth := func(d int) (core.Unit, int) {
+		if d < 0 {
+			d = 0
 		}
-		// Memorize the caret's offset from this segment's start before the
-		// segment is drawn - measuring the material up to the caret, so the
-		// caret lands on the glyph boundary without cutting the run there.
-		if !caretFound && cursorDisp <= b {
-			pre := font.MeasureText(string(displayText[prev:cursorDisp]))
-			caretX = x + pre
-			caretXPx = xPx + p.UnitsToPx(pre)
-			caretFound = true
+		if d > n {
+			d = n
 		}
-		chunk := string(displayText[prev:b])
-		chStyle := s
-		if selLo >= 0 && prev >= selLo && b <= selHi {
-			chStyle = selStyle
-		}
-		if usePx {
-			adv, _ := p.DrawTextOffset(0, 0, xPx, 0, chunk, chStyle, font)
-			xPx += adv
-			x += font.MeasureText(chunk)
-		} else {
-			x += p.DrawText(x, 0, chunk, chStyle, font)
-		}
-		prev = b
+		w := font.MeasureText(string(displayText[:d]))
+		return w, p.UnitsToPx(w)
 	}
-	if !caretFound { // caret at the end of the text
-		caretX = x
-		caretXPx = xPx
+
+	// Selection span (display indices) and the fixed anchor - the selection
+	// end opposite the caret (selStart is the anchor; the caret is selEnd).
+	selLo, selHi := -1, -1
+	anchorDisp := cursorDisp
+	if t.HasSelection() && !isPlaceholder {
+		anchorDisp = t.selStart - t.scrollOffset
+		if anchorDisp < 0 {
+			anchorDisp = 0
+		}
+		if anchorDisp > n {
+			anchorDisp = n
+		}
+		selLo, selHi = anchorDisp, cursorDisp
+		if selLo > selHi {
+			selLo, selHi = selHi, selLo
+		}
+	}
+
+	// 1. Draw the whole text once - stable regardless of caret/selection.
+	endX := core.Unit(0)
+	if usePx {
+		p.DrawTextOffset(0, 0, 0, 0, string(displayText), s, font)
+		endX = font.MeasureText(string(displayText))
+	} else {
+		endX = p.DrawText(0, 0, string(displayText), s, font)
+	}
+
+	caretX, caretXPx := prefixWidth(cursorDisp)
+
+	// 2. Overstrike the selection: a highlight over the whole span, then the
+	// selected text re-struck in the selection style, ANCHORED at the fixed
+	// end - left-aligned when the anchor is on the left, right-aligned when it
+	// is on the right. Pinning the re-strike to the stationary end keeps the
+	// already-selected text from shifting as the caret end grows the span.
+	if selLo >= 0 && selHi > selLo {
+		loX, loPx := prefixWidth(selLo)
+		hiX, hiPx := prefixWidth(selHi)
+		_, anchorPx := prefixWidth(anchorDisp)
+		selText := string(displayText[selLo:selHi])
+		if usePx {
+			p.FillRectPixels(0, 0, loPx, 0, hiPx-loPx, p.UnitsToPx(font.LineHeight()), selStyle)
+			startPx := anchorPx // anchor on the left: left-align
+			if cursorDisp < anchorDisp {
+				startPx = anchorPx - p.UnitsToPx(font.MeasureText(selText)) // right-align
+			}
+			p.DrawTextOffset(0, 0, startPx, 0, selText, selStyle, font)
+		} else {
+			p.FillRect(core.UnitRect{X: loX, Width: hiX - loX, Height: bounds.Height}, ' ', selStyle)
+			p.DrawText(loX, 0, selText, selStyle, font)
+		}
 	}
 
 	// The selection can extend past the last visible glyph while more
@@ -563,8 +543,8 @@ func (t *TextInput) Paint(p *core.Painter) {
 			lo, hi = hi, lo
 		}
 		lastVisiblePos := t.scrollOffset + n
-		if x < bounds.Width && lo <= lastVisiblePos && hi > lastVisiblePos {
-			p.FillRect(core.UnitRect{X: x, Width: bounds.Width - x, Height: bounds.Height}, ' ', selStyle)
+		if endX < bounds.Width && lo <= lastVisiblePos && hi > lastVisiblePos {
+			p.FillRect(core.UnitRect{X: endX, Width: bounds.Width - endX, Height: bounds.Height}, ' ', selStyle)
 		}
 	}
 
