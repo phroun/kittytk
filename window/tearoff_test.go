@@ -36,12 +36,12 @@ func (s *nativeFakeSurface) ScreenSizePx() (int, int) {
 	}
 	return int(s.size.Width), int(s.size.Height)
 }
-func (s *nativeFakeSurface) WorkAreaPx() (int, int, int, int)     { return 0, 30, 1600, 970 }
-func (s *nativeFakeSurface) Close()                               { s.closed = true }
-func (s *nativeFakeSurface) SetOpacity(o float64)                 { s.opacity = o }
-func (s *nativeFakeSurface) Raise()                               { s.raised = true }
-func (s *nativeFakeSurface) Minimized() bool                      { return false }
-func (s *nativeFakeSurface) Minimize()                            { s.minimized = true }
+func (s *nativeFakeSurface) WorkAreaPx() (int, int, int, int) { return 0, 30, 1600, 970 }
+func (s *nativeFakeSurface) Close()                           { s.closed = true }
+func (s *nativeFakeSurface) SetOpacity(o float64)             { s.opacity = o }
+func (s *nativeFakeSurface) Raise()                           { s.raised = true }
+func (s *nativeFakeSurface) Minimized() bool                  { return false }
+func (s *nativeFakeSurface) Minimize()                        { s.minimized = true }
 
 func (s *nativeFakeSurface) SetScreenSizePx(w, h int) {
 	if s.pxW != 0 || s.pxH != 0 {
