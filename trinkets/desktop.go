@@ -1166,9 +1166,15 @@ func (d *Desktop) updateMenuBarContent() {
 			mergedMenu := d.createAppMenuWithStandardItems(firstMenu, appName)
 			d.menuBar.AddMenu(mergedMenu)
 
-			// Add remaining menus as-is
+			// Add remaining menus as-is, except the app's "Window" menu, which
+			// is augmented with the app's own windows and the other in-surface
+			// desktop windows (a fresh copy, so the shared menu is untouched).
 			for i := 1; i < len(appMenus); i++ {
-				d.menuBar.AddMenu(appMenus[i])
+				m := appMenus[i]
+				if strings.EqualFold(m.Title(), "Window") {
+					m = d.buildDesktopWindowMenu(m, activeApp)
+				}
+				d.menuBar.AddMenu(m)
 			}
 		} else if len(activeApp.Windows()) > 0 {
 			// App has windows but no menus of its own - give it a standard
@@ -1355,6 +1361,64 @@ func (d *Desktop) buildDetachedWindowMenu(orig *Menu, app ApplicationProvider) *
 				item := NewMenuItem(win.Title())
 				item.SetOnTriggered(func() { d.activateWindowFromMenu(win) })
 				menu.AddItem(item)
+			}
+		}
+	}
+
+	populate()
+	menu.SetOnAboutToShow(populate)
+	return menu
+}
+
+// buildDesktopWindowMenu returns a copy of the app's "Window" menu for the
+// desktop bar (the app's main menu showing in the SDL Desktop). After the
+// menu's own custom entries it appends, each behind a separator: the app's
+// own non-MDI-child windows (torn, minimized, or not), then all the other
+// in-surface desktop windows. wm.Windows() holds only in-surface windows,
+// so other apps' torn-off windows are naturally excluded. Choosing a window
+// raises it (restoring if minimized). Rebuilt on every open; the app's
+// shared menu is left untouched.
+func (d *Desktop) buildDesktopWindowMenu(orig *Menu, app ApplicationProvider) *Menu {
+	menu := NewMenu(orig.RawTitle())
+	base := orig.Items()
+
+	populate := func() {
+		menu.Clear()
+		// 1. The menu's own custom entries come first.
+		for _, it := range base {
+			menu.AddItem(it)
+		}
+		addWindow := func(win *window.Window) {
+			item := NewMenuItem(win.Title())
+			item.SetOnTriggered(func() { d.activateWindowFromMenu(win) })
+			menu.AddItem(item)
+		}
+
+		// 2. This app's own windows (torn-off, minimized, or not). MDI
+		// children are not registered with the app, so they are excluded.
+		appWins := app.Windows()
+		seen := make(map[*window.Window]bool, len(appWins))
+		if len(appWins) > 0 {
+			menu.AddSeparator()
+			for _, win := range appWins {
+				seen[win] = true
+				addWindow(win)
+			}
+		}
+
+		// 3. Every other in-surface desktop window (belonging to other apps).
+		var others []*window.Window
+		if wm := d.WindowManager(); wm != nil {
+			for _, w := range wm.Windows() {
+				if !seen[w] {
+					others = append(others, w)
+				}
+			}
+		}
+		if len(others) > 0 {
+			menu.AddSeparator()
+			for _, win := range others {
+				addWindow(win)
 			}
 		}
 	}

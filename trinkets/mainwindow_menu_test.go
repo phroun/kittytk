@@ -125,6 +125,63 @@ func TestDetachedWindowFirstMenuQuitOnly(t *testing.T) {
 	}
 }
 
+// The desktop-hosted Window menu keeps its own custom entries, then lists
+// the app's own windows, a separator, and the other in-surface desktop
+// windows (belonging to other apps). Torn windows of other apps live on
+// their own surfaces (not in the manager) and so never appear.
+func TestDesktopWindowMenuListsAppThenOthers(t *testing.T) {
+	d := NewDesktop()
+	d.windowManager = window.NewWindowManager()
+
+	winMenu := NewMenu("&Window")
+	winMenu.AddItem(NewMenuItem("Zoom"))
+
+	appWin1 := window.NewWindow("Doc 1")
+	appWin2 := window.NewWindow("Doc 2")
+	app := &mockApp{name: "Demo", windows: []*window.Window{appWin1, appWin2}}
+
+	// An in-surface window belonging to some other app.
+	other := window.NewWindow("Other Win")
+	d.windowManager.AddWindow(other)
+
+	menu := d.buildDesktopWindowMenu(winMenu, app)
+	texts := itemTexts(menu)
+
+	if len(texts) == 0 || texts[0] != "Zoom" {
+		t.Fatalf("Window menu should lead with its custom entry, got %v", texts)
+	}
+	for _, want := range []string{"Doc 1", "Doc 2", "Other Win"} {
+		if !menuHasItem(menu, want) {
+			t.Errorf("Window menu missing %q: %v", want, texts)
+		}
+	}
+
+	idx := func(s string) int {
+		for i, it := range menu.Items() {
+			if it.Text == s {
+				return i
+			}
+		}
+		return -1
+	}
+	if idx("Doc 1") > idx("Other Win") || idx("Doc 2") > idx("Other Win") {
+		t.Errorf("app windows should precede other-app windows: %v", texts)
+	}
+
+	// The app's own windows are not duplicated when they are also in-surface.
+	d.windowManager.AddWindow(appWin1)
+	menu = d.buildDesktopWindowMenu(winMenu, app)
+	count := 0
+	for _, it := range menu.Items() {
+		if it.Text == "Doc 1" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("Doc 1 listed %d times, want 1: %v", count, itemTexts(menu))
+	}
+}
+
 func itemTexts(m *Menu) []string {
 	var out []string
 	for _, it := range m.Items() {
