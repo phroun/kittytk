@@ -16,10 +16,8 @@ type Scheme struct {
 	StatusBarShortcut *CellStyle
 	Dock              *CellStyle
 	DockItem          *CellStyle
-	FocusedDockItemFG *CellStyle // FG only
-	FocusedDockItemBG *CellStyle // BG only
-	HoveredDockItemFG *CellStyle // nil = HoverFG (FG only)
-	HoveredDockItemBG *CellStyle // nil = HoverBG (BG only)
+	FocusedDockItem   *CellStyle
+	HoveredDockItem   *CellStyle // nil = HoverBG + HoverFG
 
 	// =========================================================================
 	// Window Frame Related Colors
@@ -57,37 +55,34 @@ type Scheme struct {
 	// Menu Related Colors
 	// =========================================================================
 
-	MenuBar                 *CellStyle
-	MenuBarMeta             *CellStyle // accelerator keys on menu bar
-	MenuBarInfo             *CellStyle // clock, etc.
-	HoveredMenuBar          *CellStyle // menu bar item under the pointer; nil = HoverBG + HoverFG
-	HoveredMenuBarMeta      *CellStyle // accelerator on hovered menu bar item; nil = MenuBarMeta FG on HoverBG
-	ActiveMenuBarItem       *CellStyle
-	ActiveMenuBarMeta       *CellStyle // accelerator keys on active menu
-	FocusedMenuBarItem      *CellStyle // menu bar has focus but dropdown not shown, or dropdown has no selection
-	FocusedMenuBarMeta      *CellStyle // accelerator keys on focused menu bar item
-	MenuGutter              *CellStyle
-	MenuCheckIcon           *CellStyle
-	MenuRadioIcon           *CellStyle
-	MenuItemText            *CellStyle
-	MenuAccelerator         *CellStyle
-	MenuShortcut            *CellStyle
-	MenuSeparator           *CellStyle
-	MenuSeparatorGutter     *CellStyle
-	MenuBarButtonFG         *CellStyle // for [<][>] scroll buttons (FG only)
-	MenuBarButtonBG         *CellStyle // for [<][>] scroll buttons (BG only)
-	HoveredMenuBarButtonFG  *CellStyle // nil = HoverFG (FG only)
-	HoveredMenuBarButtonBG  *CellStyle // nil = HoverBG (BG only)
-	DisabledMenuBarButtonFG *CellStyle // FG only
-	DisabledMenuBarButtonBG *CellStyle // BG only
-	DisabledMenuGutter      *CellStyle
-	DisabledMenuItem        *CellStyle // applies to Text, Shortcut and Accelerator
-	DisabledMenuIcon        *CellStyle // applies to Check and Radio
-	FocusedMenuCheckIcon    *CellStyle
-	FocusedMenuRadioIcon    *CellStyle
-	FocusedMenuItemText     *CellStyle
-	FocusedMenuAccelerator  *CellStyle
-	FocusedMenuShortcut     *CellStyle
+	MenuBar                *CellStyle
+	MenuBarMeta            *CellStyle // accelerator keys on menu bar
+	MenuBarInfo            *CellStyle // clock, etc.
+	HoveredMenuBar         *CellStyle // menu bar item under the pointer; nil = HoverBG + HoverFG
+	HoveredMenuBarMeta     *CellStyle // accelerator on hovered menu bar item; nil = MenuBarMeta FG on HoverBG
+	ActiveMenuBarItem      *CellStyle
+	ActiveMenuBarMeta      *CellStyle // accelerator keys on active menu
+	FocusedMenuBarItem     *CellStyle // menu bar has focus but dropdown not shown, or dropdown has no selection
+	FocusedMenuBarMeta     *CellStyle // accelerator keys on focused menu bar item
+	MenuGutter             *CellStyle
+	MenuCheckIcon          *CellStyle
+	MenuRadioIcon          *CellStyle
+	MenuItemText           *CellStyle
+	MenuAccelerator        *CellStyle
+	MenuShortcut           *CellStyle
+	MenuSeparator          *CellStyle
+	MenuSeparatorGutter    *CellStyle
+	MenuBarButton          *CellStyle // for [<][>] scroll buttons
+	HoveredMenuBarButton   *CellStyle // nil = HoverBG + HoverFG
+	DisabledMenuBarButton  *CellStyle
+	DisabledMenuGutter     *CellStyle
+	DisabledMenuItem       *CellStyle // applies to Text, Shortcut and Accelerator
+	DisabledMenuIcon       *CellStyle // applies to Check and Radio
+	FocusedMenuCheckIcon   *CellStyle
+	FocusedMenuRadioIcon   *CellStyle
+	FocusedMenuItemText    *CellStyle
+	FocusedMenuAccelerator *CellStyle
+	FocusedMenuShortcut    *CellStyle
 
 	// =========================================================================
 	// Trinket Group Colors (used as defaults for other things)
@@ -192,11 +187,17 @@ type Scheme struct {
 	// Tab Trinket (Page Control) Related Colors
 	// =========================================================================
 
-	TabsFG                *CellStyle // nil = WindowFG, currently bright white
-	TabsBG                *CellStyle // nil = inherit
-	TabsButton            *CellStyle // nil = TabsFG + TabsBG
+	TabsFG *CellStyle // nil = WindowFG, currently bright white
+	TabsBG *CellStyle // nil = inherit
+	// TabsButton and DisabledTabsButton stay split into FG/BG because their
+	// background inherits the surrounding pane colour (inheritedBG); the
+	// foreground can be themed while the background follows context.
+	TabsButtonFG          *CellStyle // nil = TabsFG (FG only)
+	TabsButtonBG          *CellStyle // nil = inheritedBG (BG only)
+	DisabledTabsButtonFG  *CellStyle // nil = DisabledTextFG (FG only)
+	DisabledTabsButtonBG  *CellStyle // nil = inheritedBG (BG only)
+	HoveredTabsButton     *CellStyle // nil = HoverBG + HoverFG
 	PressedTabsButton     *CellStyle // nil = black on white
-	DisabledTabsButton    *CellStyle // nil = DisabledTextFG on TabsBG
 	ActiveTabFG           *CellStyle // currently bright and bold yellow, nil = TrinketGroupFG
 	ActiveTabBG           *CellStyle // nil = TrinketGroupBG, currently ansi 49
 	FocusedTab            *CellStyle // nil = FocusBG + FocusFG
@@ -331,10 +332,8 @@ func DefaultScheme() *Scheme {
 		StatusBarShortcut: ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorWhite)),
 		Dock:              ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
 		DockItem:          ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
-		FocusedDockItemFG: ptr(DefaultStyle().WithFg(ColorBlack)),
-		FocusedDockItemBG: ptr(DefaultStyle().WithBg(ColorBrightCyan)),
-		HoveredDockItemFG: nil, // HoverFG
-		HoveredDockItemBG: nil, // HoverBG
+		FocusedDockItem:   ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightCyan)),
+		HoveredDockItem:   nil, // HoverBG + HoverFG
 
 		// Window Frame Related Colors
 		ActiveWindowBorder:     ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
@@ -363,37 +362,34 @@ func DefaultScheme() *Scheme {
 		Normal:         nil, // nil = WindowFG on WindowBG
 
 		// Menu Related Colors
-		MenuBar:                 ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		MenuBarMeta:             ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorWhite)),
-		MenuBarInfo:             ptr(DefaultStyle().WithFg(ColorBrightYellow).WithBg(ColorYellow)),
-		HoveredMenuBar:          nil, // HoverBG + HoverFG
-		HoveredMenuBarMeta:      nil, // MenuBarMeta FG (red) on HoverBG
-		ActiveMenuBarItem:       ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue)),
-		ActiveMenuBarMeta:       ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
-		FocusedMenuBarItem:      ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
-		FocusedMenuBarMeta:      ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
-		MenuGutter:              ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		MenuCheckIcon:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		MenuRadioIcon:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		MenuItemText:            ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
-		MenuAccelerator:         ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorBrightWhite)),
-		MenuShortcut:            ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
-		MenuSeparator:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
-		MenuSeparatorGutter:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		MenuBarButtonFG:         ptr(DefaultStyle().WithFg(ColorBlack)),
-		MenuBarButtonBG:         ptr(DefaultStyle().WithBg(ColorWhite)),
-		HoveredMenuBarButtonFG:  nil, // HoverFG
-		HoveredMenuBarButtonBG:  nil, // HoverBG
-		DisabledMenuBarButtonFG: ptr(DefaultStyle().WithFg(ColorBrightBlack)),
-		DisabledMenuBarButtonBG: ptr(DefaultStyle().WithBg(ColorWhite)),
-		DisabledMenuGutter:      ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
-		DisabledMenuItem:        ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
-		DisabledMenuIcon:        ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
-		FocusedMenuCheckIcon:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
-		FocusedMenuRadioIcon:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
-		FocusedMenuItemText:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
-		FocusedMenuAccelerator:  ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
-		FocusedMenuShortcut:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		MenuBar:                ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		MenuBarMeta:            ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorWhite)),
+		MenuBarInfo:            ptr(DefaultStyle().WithFg(ColorBrightYellow).WithBg(ColorYellow)),
+		HoveredMenuBar:         nil, // HoverBG + HoverFG
+		HoveredMenuBarMeta:     nil, // MenuBarMeta FG (red) on HoverBG
+		ActiveMenuBarItem:      ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue)),
+		ActiveMenuBarMeta:      ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
+		FocusedMenuBarItem:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		FocusedMenuBarMeta:     ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
+		MenuGutter:             ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		MenuCheckIcon:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		MenuRadioIcon:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		MenuItemText:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
+		MenuAccelerator:        ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorBrightWhite)),
+		MenuShortcut:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
+		MenuSeparator:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
+		MenuSeparatorGutter:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		MenuBarButton:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		HoveredMenuBarButton:   nil, // HoverBG + HoverFG
+		DisabledMenuBarButton:  ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
+		DisabledMenuGutter:     ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
+		DisabledMenuItem:       ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
+		DisabledMenuIcon:       ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
+		FocusedMenuCheckIcon:   ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		FocusedMenuRadioIcon:   ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		FocusedMenuItemText:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		FocusedMenuAccelerator: ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
+		FocusedMenuShortcut:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
 
 		// Trinket Group Colors
 		TrinketGroupFG:   ptr(DefaultStyle().WithFg(ColorBrightWhite)),
@@ -485,9 +481,12 @@ func DefaultScheme() *Scheme {
 		// Tab Trinket
 		TabsFG:                ptr(DefaultStyle().WithFg(ColorBrightWhite)),
 		TabsBG:                ptr(DefaultStyle().WithBg(ColorBlue)), // blue tab bar background
-		TabsButton:            nil,                                   // TabsFG + TabsBG
+		TabsButtonFG:          nil,                                   // TabsFG
+		TabsButtonBG:          nil,                                   // inheritedBG
+		DisabledTabsButtonFG:  nil,                                   // DisabledTextFG
+		DisabledTabsButtonBG:  nil,                                   // inheritedBG
+		HoveredTabsButton:     nil,                                   // HoverBG + HoverFG
 		PressedTabsButton:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		DisabledTabsButton:    nil, // DisabledTextFG on TabsBG
 		ActiveTabFG:           ptr(DefaultStyle().WithFg(ColorBrightYellow).Bold()),
 		ActiveTabBG:           ptr(DefaultStyle().WithBg(ColorDefault)), // ansi 49
 		FocusedTab:            ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
@@ -506,7 +505,7 @@ func DefaultScheme() *Scheme {
 		// Scrollbar
 		Scrollbar:             ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack)),
 		ScrollbarThumb:        ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack)),
-		HoveredScrollbarThumb: nil, // HoverBG + HoverFG
+		HoveredScrollbarThumb: ptr(DefaultStyle().WithFg(ColorMagenta).WithBg(ColorBlack)), // dark magenta thumb
 
 		// ProgressBar
 		ProgressFull:      ptr(DefaultStyle().WithFg(ColorBrightGreen).WithBg(ColorGreen)),
@@ -565,14 +564,13 @@ func (s *Scheme) GetStatusBarShortcut() CellStyle { return or(s.StatusBarShortcu
 func (s *Scheme) GetDock() CellStyle              { return or(s.Dock) }
 func (s *Scheme) GetDockItem() CellStyle          { return or(s.DockItem) }
 
-func (s *Scheme) GetFocusedDockItem() CellStyle {
-	return DefaultStyle().WithFg(orFG(s.FocusedDockItemFG)).WithBg(orBG(s.FocusedDockItemBG))
-}
+func (s *Scheme) GetFocusedDockItem() CellStyle { return or(s.FocusedDockItem) }
 
 func (s *Scheme) GetHoveredDockItem() CellStyle {
-	return DefaultStyle().
-		WithFg(orFG(s.HoveredDockItemFG, s.HoverFG)).
-		WithBg(orBG(s.HoveredDockItemBG, s.HoverBG))
+	if s.HoveredDockItem != nil {
+		return *s.HoveredDockItem
+	}
+	return s.hover()
 }
 
 // GetDockItemState resolves a dock item's style, with focus taking
@@ -695,24 +693,21 @@ func (s *Scheme) GetFocusedMenuBarItem() CellStyle {
 func (s *Scheme) GetFocusedMenuBarMeta() CellStyle {
 	return or(s.FocusedMenuBarMeta, s.FocusedMenuAccelerator)
 }
-func (s *Scheme) GetMenuGutter() CellStyle          { return or(s.MenuGutter) }
-func (s *Scheme) GetMenuCheckIcon() CellStyle       { return or(s.MenuCheckIcon) }
-func (s *Scheme) GetMenuRadioIcon() CellStyle       { return or(s.MenuRadioIcon) }
-func (s *Scheme) GetMenuItemText() CellStyle        { return or(s.MenuItemText) }
-func (s *Scheme) GetMenuAccelerator() CellStyle     { return or(s.MenuAccelerator) }
-func (s *Scheme) GetMenuShortcut() CellStyle        { return or(s.MenuShortcut) }
-func (s *Scheme) GetMenuSeparator() CellStyle       { return or(s.MenuSeparator) }
-func (s *Scheme) GetMenuSeparatorGutter() CellStyle { return or(s.MenuSeparatorGutter) }
-func (s *Scheme) GetMenuBarButton() CellStyle {
-	return DefaultStyle().WithFg(orFG(s.MenuBarButtonFG)).WithBg(orBG(s.MenuBarButtonBG))
-}
-func (s *Scheme) GetDisabledMenuBarButton() CellStyle {
-	return DefaultStyle().WithFg(orFG(s.DisabledMenuBarButtonFG)).WithBg(orBG(s.DisabledMenuBarButtonBG))
-}
+func (s *Scheme) GetMenuGutter() CellStyle            { return or(s.MenuGutter) }
+func (s *Scheme) GetMenuCheckIcon() CellStyle         { return or(s.MenuCheckIcon) }
+func (s *Scheme) GetMenuRadioIcon() CellStyle         { return or(s.MenuRadioIcon) }
+func (s *Scheme) GetMenuItemText() CellStyle          { return or(s.MenuItemText) }
+func (s *Scheme) GetMenuAccelerator() CellStyle       { return or(s.MenuAccelerator) }
+func (s *Scheme) GetMenuShortcut() CellStyle          { return or(s.MenuShortcut) }
+func (s *Scheme) GetMenuSeparator() CellStyle         { return or(s.MenuSeparator) }
+func (s *Scheme) GetMenuSeparatorGutter() CellStyle   { return or(s.MenuSeparatorGutter) }
+func (s *Scheme) GetMenuBarButton() CellStyle         { return or(s.MenuBarButton) }
+func (s *Scheme) GetDisabledMenuBarButton() CellStyle { return or(s.DisabledMenuBarButton) }
 func (s *Scheme) GetHoveredMenuBarButton() CellStyle {
-	return DefaultStyle().
-		WithFg(orFG(s.HoveredMenuBarButtonFG, s.HoverFG)).
-		WithBg(orBG(s.HoveredMenuBarButtonBG, s.HoverBG))
+	if s.HoveredMenuBarButton != nil {
+		return *s.HoveredMenuBarButton
+	}
+	return s.hover()
 }
 func (s *Scheme) GetHoveredMenuBar() CellStyle {
 	if s.HoveredMenuBar != nil {
@@ -1135,10 +1130,24 @@ func (s *Scheme) GetActiveTab() CellStyle {
 }
 
 func (s *Scheme) GetTabsButton(active bool, inheritedBG Color) CellStyle {
-	if s.TabsButton != nil {
-		return *s.TabsButton
+	fg := s.GetTabsFG(active)
+	if s.TabsButtonFG != nil {
+		fg = s.TabsButtonFG.Fg
 	}
-	return DefaultStyle().WithFg(s.GetTabsFG(active)).WithBg(inheritedBG)
+	bg := inheritedBG
+	if s.TabsButtonBG != nil {
+		bg = s.TabsButtonBG.Bg
+	}
+	return DefaultStyle().WithFg(fg).WithBg(bg)
+}
+
+// GetHoveredTabsButton is the tab scroll button ([<]/[>]) style under the
+// pointer, defaulting to the HoverFG/HoverBG pair.
+func (s *Scheme) GetHoveredTabsButton() CellStyle {
+	if s.HoveredTabsButton != nil {
+		return *s.HoveredTabsButton
+	}
+	return s.hover()
 }
 
 func (s *Scheme) GetPressedTabsButton() CellStyle {
@@ -1149,10 +1158,15 @@ func (s *Scheme) GetPressedTabsButton() CellStyle {
 }
 
 func (s *Scheme) GetDisabledTabsButton(inheritedBG Color) CellStyle {
-	if s.DisabledTabsButton != nil {
-		return *s.DisabledTabsButton
+	fg := s.GetDisabledTextFG()
+	if s.DisabledTabsButtonFG != nil {
+		fg = s.DisabledTabsButtonFG.Fg
 	}
-	return DefaultStyle().WithFg(s.GetDisabledTextFG()).WithBg(inheritedBG)
+	bg := inheritedBG
+	if s.DisabledTabsButtonBG != nil {
+		bg = s.DisabledTabsButtonBG.Bg
+	}
+	return DefaultStyle().WithFg(fg).WithBg(bg)
 }
 
 func (s *Scheme) GetActiveTabFG() Color {

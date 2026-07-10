@@ -155,6 +155,10 @@ type Window struct {
 	statusBar        core.Trinket
 	menuBarVisible   bool
 	statusBarVisible bool
+	// lastChromeHover is the chrome trinket (menu/status bar) that last
+	// received a hover move, so it can be sent a clearing move when the
+	// pointer leaves it and its hover doesn't stick.
+	lastChromeHover core.Trinket
 
 	// shortcutResolver, when set, gets first crack at a key event's
 	// accelerator after the window's own menu bar. The desktop points a
@@ -3010,7 +3014,26 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 
 	// Chrome (open-menu drag-select / hover) before content.
-	if target, r, owns := w.chromeMouseTarget(event.X, event.Y); owns {
+	target, r, owns := w.chromeMouseTarget(event.X, event.Y)
+	var chromeTarget core.Trinket
+	if owns {
+		chromeTarget = target
+	}
+	// When the pointer leaves a chrome trinket (e.g. the menu bar), send it
+	// an out-of-bounds move so its hover doesn't stick - chromeMouseTarget
+	// only forwards while the pointer is actually over the chrome.
+	w.mu.Lock()
+	prevChrome := w.lastChromeHover
+	w.lastChromeHover = chromeTarget
+	w.mu.Unlock()
+	if prevChrome != nil && prevChrome != chromeTarget {
+		if h, ok := prevChrome.(interface {
+			HandleMouseMove(core.MouseMoveEvent) bool
+		}); ok {
+			h.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
+		}
+	}
+	if owns {
 		if h, ok := target.(interface {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {

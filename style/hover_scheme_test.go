@@ -27,12 +27,19 @@ func TestHoveredDefaultsUseHoverPair(t *testing.T) {
 		"menuBar":    s.GetHoveredMenuBar(),
 		"splitterH":  s.GetHoveredSplitterHandle(),
 		"splitterT":  s.GetHoveredSplitterTitle(),
-		"scrollbar":  s.GetHoveredScrollbarThumb(),
 		"menuBarBtn": s.GetHoveredMenuBarButton(),
 	} {
 		if got.Fg != ColorBrightYellow || got.Bg != ColorMagenta {
 			t.Errorf("%s hover = %v/%v, want bright yellow/magenta", name, got.Fg, got.Bg)
 		}
+	}
+}
+
+// The hovered scrollbar thumb fills dark magenta (its FG is the fill
+// colour), distinct from the yellow-on-purple hover pair.
+func TestHoveredScrollbarThumbIsMagenta(t *testing.T) {
+	if got := DefaultScheme().GetHoveredScrollbarThumb(); got.Fg != ColorMagenta {
+		t.Errorf("hovered scrollbar thumb Fg = %v, want magenta", got.Fg)
 	}
 }
 
