@@ -1438,7 +1438,12 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					}
 				}
 
-				// Draw full text using font-aware rendering
+				// Draw full text using font-aware rendering (with a tab-color
+				// foundation on pixel surfaces so the label/separator seam can't
+				// show the bar color - see the normal path below).
+				if p.Graphical() && isSelected {
+					p.FillRect(core.UnitRect{X: x, Y: 0, Width: font.MeasureText(tab.Text) + metrics.CellWidth, Height: tabHeight}, ' ', s)
+				}
 				p.DrawText(x, 0, tab.Text, s, font)
 				x += font.MeasureText(tab.Text)
 				lastTextEndX = x // Track where text ends
@@ -1569,6 +1574,11 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				// Draw partial text using font-aware rendering
 				if charsToShow > 0 {
 					partialText := string(textRunes[:charsToShow])
+					// Tab-color foundation under the label so the seam to the
+					// ellipsis/separator can't leak the bar color (pixel surfaces).
+					if p.Graphical() && isSelected {
+						p.FillRect(core.UnitRect{X: x, Y: 0, Width: font.MeasureText(partialText) + metrics.CellWidth, Height: tabHeight}, ' ', s)
+					}
 					p.DrawText(x, 0, partialText, s, font)
 					x += font.MeasureText(partialText)
 					lastTextEndX = x
@@ -1668,6 +1678,13 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		// Draw tab text using font-aware rendering
 		textStartX := x
 		textWidth := font.MeasureText(tab.Text)
+		// Solid tab-color foundation under the label and its trailing cell, so
+		// the sub-pixel seam between the proportional label (unsnapped rate)
+		// and the cell-based separator (cell rate) can't show the bar color
+		// through at a fractional font size.
+		if p.Graphical() && isSelected {
+			p.FillRect(core.UnitRect{X: x, Y: 0, Width: textWidth + metrics.CellWidth, Height: tabHeight}, ' ', s)
+		}
 		p.DrawText(x, 0, tab.Text, s, font)
 		x += textWidth
 
