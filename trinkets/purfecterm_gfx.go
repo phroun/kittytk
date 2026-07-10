@@ -177,15 +177,23 @@ func pcStyle(c purfecterm.Color) style.CellStyle {
 
 // fillUnitsF fills a float-unit rect, rounding edges (not sizes) so
 // adjacent cells tile without seams.
-func fillUnitsF(p *core.Painter, x0, y0, x1, y1 float64, c purfecterm.Color) {
-	rx0 := core.Unit(math.Round(x0))
-	ry0 := core.Unit(math.Round(y0))
-	rx1 := core.Unit(math.Round(x1))
-	ry1 := core.Unit(math.Round(y1))
+// fillPixels fills a rectangle given in PurfecTerm's own coordinate units
+// by converting to device pixels at ppu (the renderer's font_size-aware
+// pixels-per-unit) and painting a CONTIGUOUS pixel rect anchored at the
+// widget origin (unit 0,0). The terminal lays out its own grid in native
+// pixels this way, so cells tile seamlessly and never re-snap to the
+// host's cell grid. Adjacent cells share a boundary pixel (cell N's right
+// edge rounds to the same pixel as cell N+1's left edge), so there are no
+// seams.
+func fillPixels(p *core.Painter, x0, y0, x1, y1, ppu float64, c purfecterm.Color) {
+	rx0 := int(math.Round(x0 * ppu))
+	ry0 := int(math.Round(y0 * ppu))
+	rx1 := int(math.Round(x1 * ppu))
+	ry1 := int(math.Round(y1 * ppu))
 	if rx1 <= rx0 || ry1 <= ry0 {
 		return
 	}
-	p.FillRect(core.UnitRect{X: rx0, Y: ry0, Width: rx1 - rx0, Height: ry1 - ry0}, ' ', pcStyle(c))
+	p.FillRectPixels(0, 0, rx0, ry0, rx1-rx0, ry1-ry0, pcStyle(c))
 }
 
 // ---------------------------------------------------------------
@@ -201,7 +209,12 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	}
 	buf := t.terminal.Buffer()
 	scheme := t.gfxScheme()
-	scale := p.DeviceScale()
+	// PurfecTerm renders its interior in native device pixels. ppu is the
+	// renderer's font_size-aware pixels-per-unit - the sole scaling knob -
+	// used to convert the terminal's own unit cell geometry to pixels;
+	// unlike the raw device zoom it tracks font_size, and unlike the unit
+	// fill path it does not re-snap cells to the host grid.
+	ppu := p.PxPerUnitF()
 	baseCW, baseCH := t.cellDims()
 
 	isDark := buf.IsDarkTheme()
@@ -223,7 +236,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	chh := float64(baseCH) * vertScale // scaled cell height in units
 
 	// Whole-trinket background.
-	fillUnitsF(p, 0, 0, float64(bounds.Width), float64(bounds.Height), scheme.Background(isDark))
+	fillPixels(p, 0, 0, float64(bounds.Width), float64(bounds.Height), ppu, scheme.Background(isDark))
 
 	// Screen crop clip (crop values in sprite units).
 	widthCrop, heightCrop := buf.GetScreenCrop()
@@ -246,7 +259,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 
 	horizOffset := buf.GetHorizOffset()
 	behind, front := buf.GetSpritesForRendering()
-	t.renderSpritesGfx(painter, behind, buf, scheme, isDark, cw, chh, scale, scrollOffset, horizOffset)
+	t.renderSpritesGfx(painter, behind, buf, scheme, isDark, cw, chh, ppu, scrollOffset, horizOffset)
 
 	focused := t.gfxFocused()
 	cursorLineWasRendered := false
@@ -311,24 +324,24 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 			visibleAccumulatedWidth += cellVisualWidth
 
 			if bg != scheme.Background(isDark) {
-				fillUnitsF(painter, cellX, cellY, cellX+cellW, cellY+cellH, bg)
+				fillPixels(painter, cellX, cellY, cellX+cellW, cellY+cellH, ppu, bg)
 			}
 
 			if cell.Char != ' ' && cell.Char != 0 && blinkVisible {
 				yOffPx := 0
 				if cell.Blink && scheme.BlinkMode == purfecterm.BlinkModeBounce {
 					wavePhase := t.gfx.blinkPhase + float64(x)*0.5
-					yOffPx = int(math.Round(math.Sin(wavePhase) * 3.0 * float64(scale)))
+					yOffPx = int(math.Round(math.Sin(wavePhase) * 3.0 * ppu))
 				}
-				if !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, scale, yOffPx) {
-					t.drawCellText(painter, &cell, fg, cellX, cellY, cellW, cellH, lineAttr, scale, yOffPx, cellVisualWidth)
+				if !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx) {
+					t.drawCellText(painter, &cell, fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth)
 				}
 			}
 
-			t.drawCellDecorations(painter, buf, &cell, scheme, isDark, fg, cellX, cellY, cellW, cellH, lineAttr)
+			t.drawCellDecorations(painter, buf, &cell, scheme, isDark, fg, cellX, cellY, cellW, cellH, lineAttr, ppu)
 
 			if isCursor {
-				t.drawCursorOverlay(painter, scheme, focused, cursorShape, cellX, cellY, cellW, cellH, scale)
+				t.drawCursorOverlay(painter, scheme, focused, cursorShape, cellX, cellY, cellW, cellH, ppu)
 			}
 		}
 
@@ -358,12 +371,12 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 		}
 	}
 
-	t.renderSpritesGfx(painter, front, buf, scheme, isDark, cw, chh, scale, scrollOffset, horizOffset)
+	t.renderSpritesGfx(painter, front, buf, scheme, isDark, cw, chh, ppu, scrollOffset, horizOffset)
 
 	// Screen splits overlay regions of the logical screen.
 	splits := buf.GetScreenSplitsSorted()
 	if len(splits) > 0 {
-		w := t.renderSplitsGfx(painter, buf, splits, scheme, isDark, cols, rows, cw, chh, unitX, unitY, scale, horizOffset)
+		w := t.renderSplitsGfx(painter, buf, splits, scheme, isDark, cols, rows, cw, chh, unitX, unitY, ppu, horizOffset)
 		buf.SetSplitContentWidth(w)
 	} else {
 		buf.SetSplitContentWidth(0)
@@ -397,9 +410,12 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 
 // cellTextImage rasterizes one cell's text at an exact device-pixel
 // box, applying the gtk stretch/center rules, and caches the result.
-func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA, boxWPx, boxHPx, scale int, wideCell bool, ch rune) *image.RGBA {
+func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA, boxWPx, boxHPx int, ppu float64, wideCell bool, ch rune) *image.RGBA {
 	if boxWPx <= 0 || boxHPx <= 0 {
 		return nil
+	}
+	if ppu <= 0 {
+		ppu = 1
 	}
 	key := fmt.Sprintf("%s|%t|%t|%02x%02x%02x|%d|%d|%t", str, bold, italic, fg.R, fg.G, fg.B, boxWPx, boxHPx, wideCell)
 	if img, ok := t.gfx.textCur[key]; ok {
@@ -414,8 +430,10 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA,
 	if t.termFont != nil {
 		family = t.termFont.Name
 	}
-	// Choose the point size whose line budget fills the box height.
-	sizeUnits := boxHPx / scale
+	// Choose the point size whose line budget fills the box height. The box
+	// is device pixels at ppu, so dividing it back out gives the cell height
+	// in units; the point size then follows the renderer's font_size.
+	sizeUnits := int(math.Round(float64(boxHPx) / ppu))
 	pt := sizeUnits * 3 / 4
 	if pt < 1 {
 		pt = 1
@@ -431,17 +449,15 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA,
 
 	eng := t.gfxEngine()
 	sp := eng.ShapeRun(f, str)
-	naturalW := int(sp.Width()) * scale
-	naturalH := int(eng.LineHeight(f)) * scale
+	naturalW := int(math.Round(float64(sp.Width()) * ppu))
+	naturalH := int(math.Round(float64(eng.LineHeight(f)) * ppu))
 	if naturalW <= 0 {
 		naturalW = 1
 	}
 	raw := image.NewRGBA(image.Rect(0, 0, naturalW, naturalH))
-	// scale here is the integer device zoom (PurfecTerm renders its own
-	// cells at device pixels); text.Render now takes fractional
-	// pixels-per-unit, so widen it. font_size-aware terminal scaling is
-	// deferred.
-	text.Render(raw, sp, 0, 0, float64(scale), fg)
+	// Rasterize at the renderer's font_size-aware pixels-per-unit so the
+	// glyph fills its (font_size-scaled) cell box.
+	text.Render(raw, sp, 0, 0, ppu, fg)
 
 	// Stretch/center per the gtk rules.
 	out := image.NewRGBA(image.Rect(0, 0, boxWPx, boxHPx))
@@ -486,19 +502,19 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA,
 // drawCellText renders one cell's character with all scaling rules,
 // including double-width/height lines (top/bottom halves clipped).
 func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg purfecterm.Color,
-	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, scale, yOffPx int, cellVisualWidth float64) {
+	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, ppu float64, yOffPx int, cellVisualWidth float64) {
 
 	str := cell.String()
-	boxW := int(math.Round(cellW * float64(scale)))
-	contentH := int(math.Round(cellH * float64(scale)))
-	xPx := int(math.Round(cellX * float64(scale)))
-	yPx := int(math.Round(cellY*float64(scale))) + yOffPx
+	boxW := int(math.Round(cellW * ppu))
+	contentH := int(math.Round(cellH * ppu))
+	xPx := int(math.Round(cellX * ppu))
+	yPx := int(math.Round(cellY*ppu)) + yOffPx
 	wide := cellVisualWidth > 1.0
 
 	switch lineAttr {
 	case purfecterm.LineAttrDoubleTop, purfecterm.LineAttrDoubleBottom:
 		// Rendered at 2x height; only one half shows through the clip.
-		img := t.cellTextImage(str, cell.Bold, cell.Italic, pcRGBA(fg), boxW, contentH*2, scale, wide, cell.Char)
+		img := t.cellTextImage(str, cell.Bold, cell.Italic, pcRGBA(fg), boxW, contentH*2, ppu, wide, cell.Char)
 		if img == nil {
 			return
 		}
@@ -511,7 +527,7 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg pur
 		}
 		clip.DrawImageOffset(0, 0, xPx, yPx, img)
 	default:
-		img := t.cellTextImage(str, cell.Bold, cell.Italic, pcRGBA(fg), boxW, contentH, scale, wide, cell.Char)
+		img := t.cellTextImage(str, cell.Bold, cell.Italic, pcRGBA(fg), boxW, contentH, ppu, wide, cell.Char)
 		if img == nil {
 			return
 		}
@@ -557,7 +573,7 @@ func compositeInto(dst, src *image.RGBA, xOff, yOff int) {
 
 func (t *PurfecTerm) drawCellDecorations(p *core.Painter, buf *purfecterm.Buffer, cell *purfecterm.Cell,
 	scheme purfecterm.ColorScheme, isDark bool, fg purfecterm.Color,
-	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute) {
+	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, ppu float64) {
 
 	if cell.UnderlineStyle != purfecterm.UnderlineNone {
 		ulColor := fg
@@ -571,10 +587,10 @@ func (t *PurfecTerm) drawCellDecorations(p *core.Painter, buf *purfecterm.Buffer
 		}
 		switch cell.UnderlineStyle {
 		case purfecterm.UnderlineSingle:
-			fillUnitsF(p, cellX, underlineY, cellX+cellW, underlineY+lineH, ulColor)
+			fillPixels(p, cellX, underlineY, cellX+cellW, underlineY+lineH, ppu, ulColor)
 		case purfecterm.UnderlineDouble:
-			fillUnitsF(p, cellX, underlineY-2, cellX+cellW, underlineY-2+lineH, ulColor)
-			fillUnitsF(p, cellX, underlineY+1, cellX+cellW, underlineY+1+lineH, ulColor)
+			fillPixels(p, cellX, underlineY-2, cellX+cellW, underlineY-2+lineH, ppu, ulColor)
+			fillPixels(p, cellX, underlineY+1, cellX+cellW, underlineY+1+lineH, ppu, ulColor)
 		case purfecterm.UnderlineCurly:
 			numCycles := 2.0
 			if cell.CellWidth >= 2.0 {
@@ -589,19 +605,19 @@ func (t *PurfecTerm) drawCellDecorations(p *core.Painter, buf *purfecterm.Buffer
 				tt := float64(s) / float64(steps)
 				x := cellX + tt*cellW
 				y := underlineY + amplitude*math.Sin(tt*numCycles*2*math.Pi)
-				fillUnitsF(p, x, y, x+cellW/float64(steps)+0.5, y+lineH, ulColor)
+				fillPixels(p, x, y, x+cellW/float64(steps)+0.5, y+lineH, ppu, ulColor)
 			}
 		case purfecterm.UnderlineDotted:
 			dotSpacing := 3.0 * lineH
 			for x := cellX; x < cellX+cellW; x += dotSpacing {
-				fillUnitsF(p, x, underlineY, x+lineH, underlineY+lineH, ulColor)
+				fillPixels(p, x, underlineY, x+lineH, underlineY+lineH, ppu, ulColor)
 			}
 		case purfecterm.UnderlineDashed:
 			dashLen := 4.0 * lineH
 			gapLen := 2.0 * lineH
 			for x := cellX; x < cellX+cellW; x += dashLen + gapLen {
 				endX := math.Min(x+dashLen, cellX+cellW)
-				fillUnitsF(p, x, underlineY, endX, underlineY+lineH, ulColor)
+				fillPixels(p, x, underlineY, endX, underlineY+lineH, ppu, ulColor)
 			}
 		}
 	}
@@ -612,7 +628,7 @@ func (t *PurfecTerm) drawCellDecorations(p *core.Painter, buf *purfecterm.Buffer
 		if lineAttr == purfecterm.LineAttrDoubleTop || lineAttr == purfecterm.LineAttrDoubleBottom {
 			strikeH = 2.0
 		}
-		fillUnitsF(p, cellX, strikeY, cellX+cellW, strikeY+strikeH, fg)
+		fillPixels(p, cellX, strikeY, cellX+cellW, strikeY+strikeH, ppu, fg)
 	}
 }
 
@@ -626,12 +642,12 @@ func (t *PurfecTerm) drawCellDecorations(p *core.Painter, buf *purfecterm.Buffer
 // and bar shapes with their thinner unfocused variants. All device-
 // pixel exact via cached overlay images.
 func (t *PurfecTerm) drawCursorOverlay(p *core.Painter, scheme purfecterm.ColorScheme, focused bool,
-	shape int, cellX, cellY, cellW, cellH float64, scale int) {
+	shape int, cellX, cellY, cellW, cellH float64, ppu float64) {
 
-	wPx := int(math.Round(cellW * float64(scale)))
-	hPx := int(math.Round(cellH * float64(scale)))
-	xPx := int(math.Round(cellX * float64(scale)))
-	yPx := int(math.Round(cellY * float64(scale)))
+	wPx := int(math.Round(cellW * ppu))
+	hPx := int(math.Round(cellH * ppu))
+	xPx := int(math.Round(cellX * ppu))
+	yPx := int(math.Round(cellY * ppu))
 	c := pcRGBA(scheme.Cursor)
 
 	var img *image.RGBA
@@ -709,7 +725,7 @@ func (t *PurfecTerm) overlayImage(key string, w, h int, draw func(*image.RGBA)) 
 // images keyed by purfecterm.GlyphCacheKey, seam extension, flips,
 // double-height clipping.
 func (t *PurfecTerm) renderCustomGlyphCell(p *core.Painter, buf *purfecterm.Buffer, cell *purfecterm.Cell,
-	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, scale, yOffPx int) bool {
+	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, ppu float64, yOffPx int) bool {
 
 	glyph := buf.GetGlyph(cell.Char)
 	if glyph == nil || glyph.Width == 0 || glyph.Height == 0 {
@@ -727,8 +743,8 @@ func (t *PurfecTerm) renderCustomGlyphCell(p *core.Painter, buf *purfecterm.Buff
 		renderY = cellY - cellH
 	}
 
-	wPx := int(math.Round(cellW * float64(scale)))
-	hPx := int(math.Round(cellH * scaleY * float64(scale)))
+	wPx := int(math.Round(cellW * ppu))
+	hPx := int(math.Round(cellH * scaleY * ppu))
 
 	// Palette identity for the cache key.
 	paletteNum := cell.BGP
@@ -770,8 +786,8 @@ func (t *PurfecTerm) renderCustomGlyphCell(p *core.Painter, buf *purfecterm.Buff
 		t.gfx.glyphCur[key] = img
 	}
 
-	xPx := int(math.Round(cellX * float64(scale)))
-	yPx := int(math.Round(renderY*float64(scale))) + yOffPx
+	xPx := int(math.Round(cellX * ppu))
+	yPx := int(math.Round(renderY*ppu)) + yOffPx
 	target := p
 	if clipNeeded {
 		target = p.WithClip(core.UnitRect{
@@ -838,14 +854,14 @@ func spriteCoordToPx(coordinate float64, unitsPerCell int, cellPx float64) float
 }
 
 func (t *PurfecTerm) renderSpritesGfx(p *core.Painter, sprites []*purfecterm.Sprite, buf *purfecterm.Buffer,
-	scheme purfecterm.ColorScheme, isDark bool, cw, chh float64, scale, scrollOffsetY, horizOffsetX int) {
+	scheme purfecterm.ColorScheme, isDark bool, cw, chh, ppu float64, scrollOffsetY, horizOffsetX int) {
 
 	if len(sprites) == 0 {
 		return
 	}
 	unitX, unitY := buf.GetSpriteUnits()
-	cwPx := cw * float64(scale)
-	chPx := chh * float64(scale)
+	cwPx := cw * ppu
+	chPx := chh * ppu
 	scrollPixelY := float64(scrollOffsetY) * chPx
 	scrollPixelX := float64(horizOffsetX) * cwPx
 	defaultFg := scheme.Foreground(isDark)
@@ -941,10 +957,10 @@ func (t *PurfecTerm) renderSpritesGfx(p *core.Painter, sprites []*purfecterm.Spr
 		// Crop rect confines the sprite (unit-space clip).
 		target := p
 		if cropRect != nil {
-			cx0 := (spriteCoordToPx(cropRect.MinX, unitX, cwPx) - scrollPixelX) / float64(scale)
-			cy0 := (spriteCoordToPx(cropRect.MinY, unitY, chPx) + scrollPixelY) / float64(scale)
-			cx1 := (spriteCoordToPx(cropRect.MaxX, unitX, cwPx) - scrollPixelX) / float64(scale)
-			cy1 := (spriteCoordToPx(cropRect.MaxY, unitY, chPx) + scrollPixelY) / float64(scale)
+			cx0 := (spriteCoordToPx(cropRect.MinX, unitX, cwPx) - scrollPixelX) / ppu
+			cy0 := (spriteCoordToPx(cropRect.MinY, unitY, chPx) + scrollPixelY) / ppu
+			cx1 := (spriteCoordToPx(cropRect.MaxX, unitX, cwPx) - scrollPixelX) / ppu
+			cy1 := (spriteCoordToPx(cropRect.MaxY, unitY, chPx) + scrollPixelY) / ppu
 			target = p.WithClip(core.UnitRect{
 				X: core.Unit(math.Round(cx0)), Y: core.Unit(math.Round(cy0)),
 				Width: core.Unit(math.Round(cx1 - cx0)), Height: core.Unit(math.Round(cy1 - cy0)),
@@ -963,7 +979,7 @@ func (t *PurfecTerm) renderSpritesGfx(p *core.Painter, sprites []*purfecterm.Spr
 // positions and fine scroll. Returns the max content width found
 // (for the horizontal scrollbar).
 func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, splits []*purfecterm.ScreenSplit,
-	scheme purfecterm.ColorScheme, isDark bool, cols, rows int, cw, chh float64, unitX, unitY, scale, horizOffset int) int {
+	scheme purfecterm.ColorScheme, isDark bool, cols, rows int, cw, chh float64, unitX, unitY int, ppu float64, horizOffset int) int {
 
 	maxSplitContentWidth := 0
 	widthCrop, _ := buf.GetScreenCrop()
@@ -1030,7 +1046,7 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 
 		if !cleared[currentSplitIdx] {
 			cleared[currentSplitIdx] = true
-			fillUnitsF(p, 0, startY, float64(cols)*cw, endY, scheme.Background(isDark))
+			fillPixels(p, 0, startY, float64(cols)*cw, endY, ppu, scheme.Background(isDark))
 		}
 
 		relativeY := y - currentSplit.ScreenY + currentSplit.TopFineScroll
@@ -1084,10 +1100,10 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 			fg := scheme.ResolveColor(cell.Foreground, true, isDark)
 			bg := scheme.ResolveColor(cell.Background, false, isDark)
 			if bg != scheme.Background(isDark) {
-				fillUnitsF(clip, cellX, rowY, cellX+cellW, rowY+chh, bg)
+				fillPixels(clip, cellX, rowY, cellX+cellW, rowY+chh, ppu, bg)
 			}
 			if cell.Char != ' ' && cell.Char != 0 {
-				t.drawCellText(clip, &cell, fg, cellX, rowY, cellW, chh, lineAttr, scale, 0, 1.0)
+				t.drawCellText(clip, &cell, fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0)
 			}
 		}
 
