@@ -240,14 +240,31 @@ func (b *Backend) SetCellMetrics(m core.CellMetrics) {
 	b.metrics = m
 }
 
-func (b *Backend) Size() core.UnitSize {
-	ppu := b.pxPerUnit()
-	if ppu <= 0 {
-		ppu = 1
+// unSnapAxisFloor inverts snapAxis to a unit extent that fits WITHIN px:
+// the largest unit count whose cell-snapped placement (pxX/pxY) stays at
+// or below px. It floors the sub-cell remainder (rather than rounding to
+// nearest, as hit-testing's pxToUnitAxis does) so a reported surface size
+// never maps back to a pixel beyond the true edge - which would push
+// right/bottom-aligned content off and clip it.
+func unSnapAxisFloor(px, denom, cellPx int) int {
+	if cellPx < 1 {
+		cellPx = 1
 	}
+	cells := px / cellPx
+	rem := px - cells*cellPx
+	return cells*denom + rem*denom/cellPx
+}
+
+// Size reports the surface extent in units. It inverts the SAME
+// cell-snapped mapping content is placed with (pxX/pxY), NOT the unsnapped
+// pixels-per-unit: at fractional cell sizes those differ, and using the
+// unsnapped ratio here made the surface look wider in units than snapped
+// placement could fit, so right/bottom-aligned content (e.g. the menu-bar
+// clock) landed past the true edge and clipped.
+func (b *Backend) Size() core.UnitSize {
 	return core.UnitSize{
-		Width:  core.Unit(float64(b.w) / ppu),
-		Height: core.Unit(float64(b.h) / ppu),
+		Width:  core.Unit(unSnapAxisFloor(b.w, int(b.metrics.CellWidth), b.cellWPx())),
+		Height: core.Unit(unSnapAxisFloor(b.h, int(b.metrics.CellHeight), b.cellHPx())),
 	}
 }
 
