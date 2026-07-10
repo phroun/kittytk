@@ -61,3 +61,39 @@ func TestTextInputDragAutoScrollBothDirections(t *testing.T) {
 		t.Error("release should stop the autoscroll")
 	}
 }
+
+// The autoscroll step size grows with how far the pointer is past the edge:
+// a nudge crawls, a big overshoot races. (With no timer, one move does one
+// step, so the caret delta from a single move reports the per-tick speed.)
+func TestTextInputAutoScrollSpeedScalesWithDistance(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.New(400, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+
+	ti := NewTextInput()
+	ti.SetText("The quick brown fox jumps over the lazy dog, twice over.")
+	m := ti.EffectiveCellMetrics()
+	ti.SetBounds(core.UnitRect{Width: m.CellWidth * 10, Height: m.CellHeight})
+	ti.SetFocus()
+	ti.selecting = true
+
+	step := func(overCells core.Unit) int {
+		ti.stopAutoScroll()
+		ti.cursorPos, ti.selStart, ti.selEnd = 20, 20, 20
+		before := ti.cursorPos
+		ti.HandleMouseMove(core.MouseMoveEvent{X: ti.Bounds().Width + overCells*m.CellWidth, Buttons: core.LeftButton})
+		return ti.cursorPos - before
+	}
+
+	slow := step(0) // right at the edge
+	fast := step(6) // six cells past
+	if slow < 1 {
+		t.Fatalf("a drag at the edge should still step: got %d", slow)
+	}
+	if fast <= slow {
+		t.Errorf("autoscroll speed did not scale with distance: edge=%d, far=%d", slow, fast)
+	}
+}

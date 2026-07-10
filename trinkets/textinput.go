@@ -43,10 +43,12 @@ type TextInput struct {
 
 	// Drag-select autoscroll: while the pointer is held past the left or
 	// right edge, a repeating timer walks the caret (and the scroll) that
-	// way one character per tick, extending the selection - the horizontal
-	// analogue of a list view's edge autoscroll. scrollDir is -1/+1/0.
+	// way, extending the selection - the horizontal analogue of a list
+	// view's edge autoscroll. scrollDir is -1/+1/0; scrollOverX is how far
+	// (in units) the pointer is past the edge, which sets the per-tick speed.
 	scrollTimer *DesktopTimer
 	scrollDir   int
+	scrollOverX core.Unit
 
 	// Context menu hover row (-1 = none).
 	menuHover int
@@ -506,12 +508,10 @@ func (t *TextInput) Paint(p *core.Painter) {
 	}
 
 	// 1. Draw the whole text once - stable regardless of caret/selection.
-	endX := core.Unit(0)
 	if usePx {
 		p.DrawTextOffset(0, 0, 0, 0, string(displayText), s, font)
-		endX = font.MeasureText(string(displayText))
 	} else {
-		endX = p.DrawText(0, 0, string(displayText), s, font)
+		p.DrawText(0, 0, string(displayText), s, font)
 	}
 
 	caretX, caretXPx := prefixWidth(cursorDisp)
@@ -528,6 +528,23 @@ func (t *TextInput) Paint(p *core.Painter) {
 	if selLo >= 0 && selHi > selLo {
 		loX, loPx := prefixWidth(selLo)
 		hiX, hiPx := prefixWidth(selHi)
+		// When the selection's far end is scrolled off the right of the box,
+		// its highlight must reach the box's own right edge, not stop at the
+		// last visible glyph - otherwise the trailing sliver draws in the
+		// normal color even though the selection continues off-screen.
+		selHiAbs := t.selStart
+		if t.selEnd > selHiAbs {
+			selHiAbs = t.selEnd
+		}
+		if selHiAbs > t.scrollOffset+n {
+			if usePx {
+				if edge := p.UnitSpanPxX(0, bounds.Width); edge > hiPx {
+					hiPx = edge
+				}
+			} else if bounds.Width > hiX {
+				hiX = bounds.Width
+			}
+		}
 		if usePx {
 			p.FillRectPixels(0, 0, loPx, 0, hiPx-loPx, p.UnitsToPx(font.LineHeight()), selStyle)
 			selFg := selStyle.WithBg(style.ColorTransparent) // glyphs over the highlight
@@ -535,22 +552,6 @@ func (t *TextInput) Paint(p *core.Painter) {
 		} else {
 			p.FillRect(core.UnitRect{X: loX, Width: hiX - loX, Height: bounds.Height}, ' ', selStyle)
 			p.DrawText(loX, 0, string(displayText[selLo:selHi]), selStyle, font)
-		}
-	}
-
-	// The selection can extend past the last visible glyph while more
-	// selected text is scrolled off the right (proportional fonts leave a
-	// sliver of the box unfilled where a cell grid would not). Color that
-	// trailing gap as selection so the highlight reaches the edge. No-op on
-	// cell surfaces, where the text fills the box exactly.
-	if selLo >= 0 {
-		lo, hi := t.selStart, t.selEnd
-		if lo > hi {
-			lo, hi = hi, lo
-		}
-		lastVisiblePos := t.scrollOffset + n
-		if endX < bounds.Width && lo <= lastVisiblePos && hi > lastVisiblePos {
-			p.FillRect(core.UnitRect{X: endX, Width: bounds.Width - endX, Height: bounds.Height}, ' ', selStyle)
 		}
 	}
 
@@ -888,10 +889,12 @@ func (t *TextInput) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 	bounds := t.Bounds()
 	if event.X < 0 {
+		t.scrollOverX = -event.X
 		t.startAutoScroll(-1)
 		return true
 	}
 	if event.X >= bounds.Width {
+		t.scrollOverX = event.X - bounds.Width
 		t.startAutoScroll(1)
 		return true
 	}
@@ -940,30 +943,51 @@ func (t *TextInput) stopAutoScroll() {
 	t.scrollDir = 0
 }
 
-// autoScrollStep walks the caret one character in the autoscroll direction,
-// extending the selection and scrolling to keep it visible. It stops itself
-// at either end of the text.
+// autoScrollStep walks the caret in the autoscroll direction, extending the
+// selection and scrolling to keep it visible. The step size grows with how
+// far the pointer is past the edge - a nudge crawls, a big overshoot races -
+// and it stops itself at either end of the text.
 func (t *TextInput) autoScrollStep() {
-	switch {
-	case t.scrollDir < 0:
-		if t.cursorPos <= 0 {
-			t.stopAutoScroll()
-			return
+	if t.scrollDir == 0 {
+		return
+	}
+	moved := false
+	for i := 0; i < t.autoScrollSpeed(); i++ {
+		if t.scrollDir < 0 {
+			if t.cursorPos <= 0 {
+				break
+			}
+			t.cursorPos--
+		} else {
+			if t.cursorPos >= len(t.text) {
+				break
+			}
+			t.cursorPos++
 		}
-		t.cursorPos--
-	case t.scrollDir > 0:
-		if t.cursorPos >= len(t.text) {
-			t.stopAutoScroll()
-			return
-		}
-		t.cursorPos++
-	default:
+		moved = true
+	}
+	if !moved {
+		t.stopAutoScroll()
 		return
 	}
 	t.selEnd = t.cursorPos
 	t.ensureCursorVisible()
 	t.resetCaretBlink()
 	t.Update()
+}
+
+// autoScrollSpeed is the number of characters to advance per tick: one at
+// the edge, plus one for every cell the pointer is dragged past it, capped
+// so a far overshoot stays controllable.
+func (t *TextInput) autoScrollSpeed() int {
+	speed := 1
+	if cw := t.EffectiveCellMetrics().CellWidth; cw > 0 {
+		speed += int(t.scrollOverX / cw)
+	}
+	if speed > 12 {
+		speed = 12
+	}
+	return speed
 }
 
 // HandleMouseRelease ends a drag selection.
