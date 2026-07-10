@@ -1687,7 +1687,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	if flags&WindowFlagNoClose == 0 {
 		isFocused := titleFocus == TitleFocusClose
 		isPressed := pressedButton == TitleButtonClose && buttonHovered
-		isHovered := hoveredButton == TitleButtonClose && !isPressed
+		isHovered := hoveredButton == TitleButtonClose && !isPressed && p.Graphical()
 		btnStyle := scheme.GetTitleBarButtonState(focused, isFocused, isHovered, isPressed)
 		p.DrawCell(controlX, 0, '[', btnStyle)
 		p.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
@@ -1697,7 +1697,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	if flags&WindowFlagNoMinimize == 0 {
 		isFocused := titleFocus == TitleFocusMinimize
 		isPressed := pressedButton == TitleButtonMinimize && buttonHovered
-		isHovered := hoveredButton == TitleButtonMinimize && !isPressed
+		isHovered := hoveredButton == TitleButtonMinimize && !isPressed && p.Graphical()
 		btnStyle := scheme.GetTitleBarButtonState(focused, isFocused, isHovered, isPressed)
 		p.DrawCell(controlX, 0, '[', btnStyle)
 		p.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
@@ -1707,7 +1707,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	if canMaximize(flags) {
 		isFocused := titleFocus == TitleFocusMaximize
 		isPressed := pressedButton == TitleButtonMaximize && buttonHovered
-		isHovered := hoveredButton == TitleButtonMaximize && !isPressed
+		isHovered := hoveredButton == TitleButtonMaximize && !isPressed && p.Graphical()
 		btnStyle := scheme.GetTitleBarButtonState(focused, isFocused, isHovered, isPressed)
 		var icon rune
 		if state == WindowStateMaximized {
@@ -1922,7 +1922,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		if flags&WindowFlagNoClose == 0 {
 			isFocused := titleFocus == TitleFocusClose
 			isPressed := pressedButton == TitleButtonClose && buttonHovered
-			isHovered := hoveredButton == TitleButtonClose && !isPressed
+			isHovered := hoveredButton == TitleButtonClose && !isPressed && p.Graphical()
 			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
 			tp.DrawCell(controlX, 0, '[', btnStyle)
 			tp.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
@@ -1932,7 +1932,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		if flags&WindowFlagNoMinimize == 0 {
 			isFocused := titleFocus == TitleFocusMinimize
 			isPressed := pressedButton == TitleButtonMinimize && buttonHovered
-			isHovered := hoveredButton == TitleButtonMinimize && !isPressed
+			isHovered := hoveredButton == TitleButtonMinimize && !isPressed && p.Graphical()
 			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
 			tp.DrawCell(controlX, 0, '[', btnStyle)
 			tp.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
@@ -1942,7 +1942,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		if canMaximize(flags) {
 			isFocused := titleFocus == TitleFocusMaximize
 			isPressed := pressedButton == TitleButtonMaximize && buttonHovered
-			isHovered := hoveredButton == TitleButtonMaximize && !isPressed
+			isHovered := hoveredButton == TitleButtonMaximize && !isPressed && p.Graphical()
 			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
 			var icon rune
 			if state == WindowStateMaximized {

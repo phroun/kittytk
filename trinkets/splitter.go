@@ -358,7 +358,9 @@ func (sp *Splitter) Paint(p *core.Painter) {
 	// so only an explicitly-set hover style changes anything on hover.
 	divider := sp.dividerBounds()
 	focused := sp.HasFocus()
-	hovered := sp.hoveringDivider && !sp.dragging
+	// Hover is graphical-only: the cell/TUI path gets no free mouse moves, so
+	// a hover set during a drag could never clear and would stick.
+	hovered := sp.hoveringDivider && !sp.dragging && p.Graphical()
 	dividerStyle := scheme.GetSplitterHandleState(focused, hovered, sp.dragging)
 	titleStyle := scheme.GetSplitterTitleState(focused, hovered, sp.dragging)
 

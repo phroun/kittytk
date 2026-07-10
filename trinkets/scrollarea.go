@@ -312,7 +312,7 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, schem
 	// sit (and move) between cell boundaries.
 	if p.Graphical() {
 		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
-			thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered)
+			thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered && p.Graphical())
 			p.FillRect(core.UnitRect{
 				X:      core.Unit(posU + 0.5),
 				Width:  core.Unit(thumbU + 0.5),
@@ -349,7 +349,7 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, schem
 		}
 
 		// Draw thumb
-		thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered)
+		thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered && p.Graphical())
 		for i := 0; i < thumbSize; i++ {
 			x := core.Unit(thumbPos+i) * metrics.CellWidth
 			p.DrawCell(x, 0, '█', thumbStyle)
@@ -366,7 +366,7 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme 
 	// sit (and move) between cell boundaries.
 	if p.Graphical() {
 		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
-			thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered)
+			thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered && p.Graphical())
 			p.FillRect(core.UnitRect{
 				Y:      core.Unit(posU + 0.5),
 				Width:  bounds.Width,
@@ -403,7 +403,7 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme 
 		}
 
 		// Draw thumb
-		thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered)
+		thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered && p.Graphical())
 		for i := 0; i < thumbSize; i++ {
 			y := core.Unit(thumbPos+i) * metrics.CellHeight
 			p.FillRect(core.UnitRect{Y: y, Width: bounds.Width, Height: metrics.CellHeight}, '█', thumbStyle)

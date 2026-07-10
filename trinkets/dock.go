@@ -227,8 +227,10 @@ func (d *DockRow) Paint(p *core.Painter) {
 		x := core.Unit(col) * entryWidthUnits
 		y := core.Unit(row) * metrics.CellHeight
 
-		// Choose style based on state; focus takes priority over hover.
-		entryStyle := scheme.GetDockItemState(focused && i == d.selectedIndex, i == d.hoverIndex)
+		// Choose style based on state; focus takes priority over hover. Hover
+		// is graphical-only (the cell/TUI path gets no free moves, so a hover
+		// set during a drag could never clear).
+		entryStyle := scheme.GetDockItemState(focused && i == d.selectedIndex, i == d.hoverIndex && p.Graphical())
 
 		// Draw entry background (button-like)
 		entryRect := core.UnitRect{

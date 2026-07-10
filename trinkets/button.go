@@ -259,9 +259,13 @@ func (b *Button) Paint(p *core.Painter) {
 	if !b.IsEnabled() {
 		s = style.DefaultStyle().WithFg(scheme.GetDisabledButtonFG()).WithBg(inheritedBg)
 	} else {
+		// Hover is a graphical-only affordance: the cell/TUI path receives no
+		// free mouse-move events, so a hover set during a drag could never be
+		// cleared and would stick. Only honor it on graphical surfaces.
+		hover := b.mouseOver && p.Graphical()
 		// TODO: pass actual window active state instead of true.
-		s = scheme.GetButtonState(true, focused, b.mouseOver, showPressed)
-		if b.isDefault && !showPressed && !focused && !b.mouseOver {
+		s = scheme.GetButtonState(true, focused, hover, showPressed)
+		if b.isDefault && !showPressed && !focused && !hover {
 			// Default button gets bold text in its resting state.
 			s = s.WithAttrs(style.StyleBold)
 		}
