@@ -13,11 +13,11 @@ type Button struct {
 	core.TrinketBase
 	core.AccessibleTrinket
 
-	text           string
-	icon           *style.Icon
-	iconSize       style.IconSize
-	checkable      bool
-	checked        bool
+	text      string
+	icon      *style.Icon
+	iconSize  style.IconSize
+	checkable bool
+	checked   bool
 	pressed        bool
 	hovered        bool // Mouse is over button while pressed
 	spacePressed   bool // Space key is being held down
@@ -26,34 +26,8 @@ type Button struct {
 	isDefault      bool // Default button (shown bold when not focused)
 	isCancel       bool // Cancel button (activated by Escape)
 
-	// graphicalCached records whether the last paint was on a pixel
-	// surface, so the mouse handlers can offset the hit region the same
-	// way the paint offsets the face (the event path has no painter).
-	graphicalCached bool
-
 	onClick  func()
 	onToggle func(checked bool)
-}
-
-// contentYOffset is the vertical shift applied to the button's drawn face
-// and its hit region. The button's external box is two rows but the face
-// is one; on a pixel surface it drops half a row so it sits centered in
-// that box instead of hugging the top. Cell surfaces keep it at the top.
-func (b *Button) contentYOffset() core.Unit {
-	if b.graphicalCached {
-		return b.EffectiveCellMetrics().CellHeight / 2
-	}
-	return 0
-}
-
-// inFace reports whether a point (in the button's local coordinates) is
-// over the drawn face - the full width, one row tall, dropped by
-// contentYOffset. The shadow rows above and below are not clickable.
-func (b *Button) inFace(x, y core.Unit) bool {
-	bounds := b.Bounds()
-	cy := b.contentYOffset()
-	return x >= 0 && x < bounds.Width &&
-		y >= cy && y < cy+b.EffectiveCellMetrics().CellHeight
 }
 
 // NewButton creates a new button with the given text.
@@ -339,24 +313,17 @@ func (b *Button) Paint(p *core.Painter) {
 	buttonWidth := bracketWidth + textWidth + iconWidth
 
 	graphical := p.Graphical()
-	b.graphicalCached = graphical
-
-	// On a pixel surface the one-row face and its shadow sit centered in
-	// the two-row external box, dropped half a row from the top; the hit
-	// region (contentYOffset) drops with them. Cell surfaces keep the
-	// face at the top row.
-	contentY := b.contentYOffset()
 
 	// Pressed offset: on pixel surfaces the face scoots down-right to
 	// land exactly where the shadow rectangle was; cell surfaces keep
 	// the classic one-column shift.
 	shadowOff := metrics.CellWidth / 2
 	xOffset := core.Unit(0)
-	yOffset := contentY
+	yOffset := core.Unit(0)
 	if showPressed {
 		if graphical {
 			xOffset = shadowOff
-			yOffset = contentY + shadowOff
+			yOffset = shadowOff
 		} else {
 			xOffset = metrics.CellWidth
 		}
@@ -372,7 +339,7 @@ func (b *Button) Paint(p *core.Painter) {
 	if graphical && !showPressed {
 		p.FillRect(core.UnitRect{
 			X:      shadowOff,
-			Y:      contentY + shadowOff,
+			Y:      shadowOff,
 			Width:  buttonWidth,
 			Height: metrics.CellHeight,
 		}, ' ', style.DefaultStyle().WithBg(shadowFg))
@@ -497,7 +464,7 @@ func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 		}
 		b.SetFocus() // Focus on mouse down
 		b.pressed = true
-		b.hovered = b.inFace(event.X, event.Y)
+		b.hovered = true
 		b.Update()
 		return true
 	}
@@ -510,10 +477,13 @@ func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	// Check if mouse is still inside the button face (the one-row face,
-	// dropped half a row on pixel surfaces to match the paint, not the
-	// shadow row).
-	newHovered := b.inFace(event.X, event.Y)
+	// Check if mouse is still inside button area
+	bounds := b.Bounds()
+	metrics := b.EffectiveCellMetrics()
+
+	// Simple bounds check for first row (button area, not shadow)
+	newHovered := event.X >= 0 && event.X < bounds.Width &&
+		event.Y >= 0 && event.Y < metrics.CellHeight
 
 	if newHovered != b.hovered {
 		b.hovered = newHovered
