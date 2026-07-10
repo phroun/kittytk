@@ -325,7 +325,18 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 			}
 		default: // AlignMiddle and unspecified
 			if height < bounds.Height {
-				bounds.Y += (bounds.Height - height) / 2
+				// Snap the centering offset to the cell grid. A sub-row offset
+				// (a 1-row item centered in a 2-row row is half a row down) is
+				// drawn snapped to a row on a cell surface but hit-tested at the
+				// raw half-row bounds, so clicks land a row off; grid-aligning
+				// keeps draw and hit together. Pixel surfaces are unaffected -
+				// the offset is already a whole number of rows there or rounds
+				// to the same row.
+				off := (bounds.Height - height) / 2
+				if ch := core.FindEffectiveCellMetrics(item.Trinket).CellHeight; ch > 0 {
+					off = (off / ch) * ch
+				}
+				bounds.Y += off
 				bounds.Height = height
 			}
 		}
@@ -350,7 +361,13 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 			bounds.Width = hint.Width
 		case core.AlignCenter:
 			if hint.Width < bounds.Width {
-				bounds.X += (bounds.Width - hint.Width) / 2
+				// Grid-snap the offset (see the vertical-centering note) so a
+				// cell surface draws and hit-tests the child in the same column.
+				off := (bounds.Width - hint.Width) / 2
+				if cw := core.FindEffectiveCellMetrics(item.Trinket).CellWidth; cw > 0 {
+					off = (off / cw) * cw
+				}
+				bounds.X += off
 				bounds.Width = hint.Width
 			}
 		case core.AlignRight:
