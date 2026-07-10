@@ -42,14 +42,11 @@ func (r *recBackend) FillRectPx(xPx, yPx, wPx, hPx int, st style.CellStyle) {
 	r.Backend.FillRectPx(xPx, yPx, wPx, hPx, st)
 }
 
-// At a fractional pixels-per-unit, the caret must sit exactly at the left
-// edge of the text after the cursor. The render draws the pre-cursor and
-// post-cursor chunks by accumulating device-pixel advances from a single
-// anchor, and the caret is that same accumulated pixel offset - so the bar,
-// the end of the pre-cursor glyphs, and the start of the post-cursor glyphs
-// all coincide. The old path measured the caret in units and re-snapped it
-// through the (coarser) cell rate, so it drifted right of the glyphs, more
-// the deeper into the text the cursor sat.
+// With no selection the whole text draws as ONE stable run (not split at
+// the caret, which would re-shape the trailing text as the caret moves and
+// make it jitter). The caret is measured from the prefix up to the cursor
+// and overlaid, landing exactly on the glyph boundary at a fractional
+// pixels-per-unit.
 func TestTextInputCaretMatchesGlyphBoundary(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	b, err := raster.NewScaled(600, 40, 2)
@@ -62,38 +59,66 @@ func TestTextInputCaretMatchesGlyphBoundary(t *testing.T) {
 
 	ti := NewTextInput()
 	ti.SetText("HelloWorld")
-	ti.SetBounds(core.UnitRect{Width: 300, Height: b.LineHeight(ti.EffectiveFont())})
+	font := ti.EffectiveFont()
+	ti.SetBounds(core.UnitRect{Width: 300, Height: b.LineHeight(font)})
 	ti.SetFocus()
 	ti.SetCursorPosition(5) // between "Hello" and "World"
 
 	b.Clear(style.DefaultStyle())
-	ti.Paint(core.NewPainter(rec))
+	p := core.NewPainter(rec)
+	ti.Paint(p)
 
 	if !rec.caret {
 		t.Fatal("no caret was drawn")
 	}
-	// Two chunks: "Hello" at pixel 0, "World" at the caret pixel.
-	var pre, post *recText
-	for i := range rec.texts {
-		switch rec.texts[i].s {
-		case "Hello":
-			pre = &rec.texts[i]
-		case "World":
-			post = &rec.texts[i]
+	// The text is drawn as a single un-split run, anchored at pixel 0.
+	if len(rec.texts) != 1 || rec.texts[0].s != "HelloWorld" || rec.texts[0].xPx != 0 {
+		t.Fatalf("expected one \"HelloWorld\" run at xPx=0, got %+v", rec.texts)
+	}
+	// The caret sits at the rasterized width of the prefix before the cursor.
+	wantPx := p.UnitsToPx(font.MeasureText("Hello"))
+	if rec.caretPx != wantPx {
+		t.Errorf("caret at %dpx, want the \"Hello\" prefix width %dpx", rec.caretPx, wantPx)
+	}
+}
+
+// Moving the caret must NOT change the drawn text (no selection): the run
+// is not cut at the caret, so the material after it renders identically
+// wherever the caret sits - it does not jitter as the caret sweeps through.
+func TestTextInputTextStableAsCaretMoves(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.NewScaled(600, 40, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetFontSize(10)
+	core.SetTextMeasurer(b)
+
+	ti := NewTextInput()
+	ti.SetText("Hello World. Hello World.")
+	ti.SetBounds(core.UnitRect{Width: 400, Height: b.LineHeight(ti.EffectiveFont())})
+	ti.SetFocus()
+
+	draw := func(cursor int) []recText {
+		rec := &recBackend{Backend: b}
+		ti.SetCursorPosition(cursor)
+		b.Clear(style.DefaultStyle())
+		ti.Paint(core.NewPainter(rec))
+		return rec.texts
+	}
+
+	base := draw(3)
+	for _, cursor := range []int{7, 12, 20, 25} {
+		got := draw(cursor)
+		if len(got) != len(base) {
+			t.Fatalf("cursor %d: %d text runs, want %d (text was re-split at the caret)",
+				cursor, len(got), len(base))
 		}
-	}
-	if pre == nil || post == nil {
-		t.Fatalf("expected the text split into \"Hello\"+\"World\" chunks, got %+v", rec.texts)
-	}
-	if pre.xPx != 0 {
-		t.Errorf("pre-cursor chunk drawn at xPx=%d, want 0", pre.xPx)
-	}
-	if pre.xPx+pre.advPx != rec.caretPx {
-		t.Errorf("caret at %dpx, but the pre-cursor text ends at %dpx (drift)",
-			rec.caretPx, pre.xPx+pre.advPx)
-	}
-	if post.xPx != rec.caretPx {
-		t.Errorf("post-cursor text drawn at xPx=%d, but the caret is at %dpx - they must coincide",
-			post.xPx, rec.caretPx)
+		for i := range got {
+			if got[i] != base[i] {
+				t.Errorf("cursor %d: run %d = %+v, want %+v (text shifted with the caret)",
+					cursor, i, got[i], base[i])
+			}
+		}
 	}
 }

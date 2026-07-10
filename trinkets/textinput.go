@@ -478,8 +478,12 @@ func (t *TextInput) Paint(p *core.Painter) {
 		}
 	}
 
-	// Interior segment boundaries (0 < b < n): selection edges, and the
-	// cursor when its caret is visible.
+	// Interior segment boundaries (0 < b < n): ONLY the selection edges -
+	// NOT the cursor. Splitting the text at the caret would re-shape the run
+	// after it every time the caret moves (a substring shapes differently
+	// than the same characters mid-run), so that text jittered as the caret
+	// swept through it. The caret is instead measured and overlaid on top of
+	// stable text below.
 	var cuts []int
 	addCut := func(b int) {
 		if b <= 0 || b >= n {
@@ -495,9 +499,6 @@ func (t *TextInput) Paint(p *core.Painter) {
 	if selLo >= 0 {
 		addCut(selLo)
 		addCut(selHi)
-	}
-	if showCaret {
-		addCut(cursorDisp)
 	}
 	sort.Ints(cuts)
 	cuts = append(cuts, n) // the last segment ends at n
@@ -517,10 +518,20 @@ func (t *TextInput) Paint(p *core.Painter) {
 	xPx := 0
 	caretX := core.Unit(0) // stays 0 when the cursor is at the start
 	caretXPx := 0
+	caretFound := false
 	prev := 0
 	for _, b := range cuts {
 		if b <= prev {
 			continue
+		}
+		// Memorize the caret's offset from this segment's start before the
+		// segment is drawn - measuring the material up to the caret, so the
+		// caret lands on the glyph boundary without cutting the run there.
+		if !caretFound && cursorDisp <= b {
+			pre := font.MeasureText(string(displayText[prev:cursorDisp]))
+			caretX = x + pre
+			caretXPx = xPx + p.UnitsToPx(pre)
+			caretFound = true
 		}
 		chunk := string(displayText[prev:b])
 		chStyle := s
@@ -534,11 +545,11 @@ func (t *TextInput) Paint(p *core.Painter) {
 		} else {
 			x += p.DrawText(x, 0, chunk, chStyle, font)
 		}
-		if b == cursorDisp {
-			caretX = x
-			caretXPx = xPx
-		}
 		prev = b
+	}
+	if !caretFound { // caret at the end of the text
+		caretX = x
+		caretXPx = xPx
 	}
 
 	// The selection can extend past the last visible glyph while more
