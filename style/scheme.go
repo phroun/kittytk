@@ -340,8 +340,11 @@ func DefaultScheme() *Scheme {
 		InactiveWindowBorder:   ptr(DefaultStyle().WithFg(ColorBrightBlue).WithBg(ColorBlue)),
 		ActiveWindowTitle:      ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue).Bold()),
 		InactiveWindowTitle:    ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBrightBlack).WithAttrs(StyleDim)),
-		ActiveTitleBarButton:   ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
-		InactiveTitleBarButton: ptr(DefaultStyle().WithFg(ColorBrightBlue).WithBg(ColorBlue)),
+		// No explicit background: each defaults to its matching (active or
+		// inactive) title-bar background, so a button blends into the bar it
+		// sits on unless a scheme overrides it (see GetTitleBarButton).
+		ActiveTitleBarButton:   ptr(DefaultStyle().WithFg(ColorBrightCyan)),
+		InactiveTitleBarButton: ptr(DefaultStyle().WithFg(ColorBrightBlue)),
 		FocusedTitleBarButton:  ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
 		HoveredTitleBarButton:  nil, // HoverBG + HoverFG
 		PressedTitleBarButton:  ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
@@ -602,6 +605,23 @@ func (s *Scheme) GetWindowTitle(active bool) CellStyle {
 	return or(s.InactiveWindowTitle)
 }
 
+// titleBarButton resolves the plain (active/inactive) title-bar button
+// style, defaulting its background to the matching title-bar background
+// when the scheme leaves it unspecified (ColorDefault) - so a button blends
+// into the bar it sits on.
+func (s *Scheme) titleBarButton(active bool) CellStyle {
+	var st CellStyle
+	if active {
+		st = or(s.ActiveTitleBarButton)
+	} else {
+		st = or(s.InactiveTitleBarButton)
+	}
+	if st.Bg == ColorDefault {
+		st = st.WithBg(s.GetWindowTitle(active).Bg)
+	}
+	return st
+}
+
 func (s *Scheme) GetTitleBarButton(active, focused, pressed bool) CellStyle {
 	if pressed {
 		return or(s.PressedTitleBarButton)
@@ -609,10 +629,7 @@ func (s *Scheme) GetTitleBarButton(active, focused, pressed bool) CellStyle {
 	if focused {
 		return or(s.FocusedTitleBarButton)
 	}
-	if active {
-		return or(s.ActiveTitleBarButton)
-	}
-	return or(s.InactiveTitleBarButton)
+	return s.titleBarButton(active)
 }
 
 func (s *Scheme) GetHoveredTitleBarButton() CellStyle {
@@ -634,10 +651,7 @@ func (s *Scheme) GetTitleBarButtonState(active, focused, hovered, pressed bool) 
 	if hovered {
 		return s.GetHoveredTitleBarButton()
 	}
-	if active {
-		return or(s.ActiveTitleBarButton)
-	}
-	return or(s.InactiveTitleBarButton)
+	return s.titleBarButton(active)
 }
 
 func (s *Scheme) GetWindowFG(active bool) Color {

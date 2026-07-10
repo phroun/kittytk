@@ -1861,8 +1861,15 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	if rounded && flags&WindowFlagNoTitle == 0 {
 		b := core.FindFrameBorderUnits(w)
 		titleRect := core.UnitRect{Width: localBounds.Width, Height: b + metrics.CellHeight}
+		fillStyle := titleStyle
+		if titleFocus == TitleFocusBlur {
+			// Blur item focused: the whole bar reads inactive on the graphical
+			// path (only the blur button stays highlighted), matching the cell
+			// path's dimmed dashed frame.
+			fillStyle = w.GetScheme().GetWindowTitle(false)
+		}
 		clip := p.WithRoundedClipRegion(localBounds, windowCornerRadius)
-		clip.FillRect(titleRect, ' ', titleStyle)
+		clip.FillRect(titleRect, ' ', fillStyle)
 		p.StrokeRoundedRect(localBounds, windowCornerRadius, border, roundedStyle)
 	}
 
@@ -1887,8 +1894,13 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		}
 	}
 
-	// For button styling, use active appearance even when blur is focused
+	// For button styling, use active appearance even when blur is focused -
+	// except on the graphical path, where a blur-focused bar renders fully
+	// inactive (the other buttons dim; only the blur button stays lit).
 	buttonFocused := focused || titleFocus == TitleFocusBlur
+	if rounded && titleFocus == TitleFocusBlur {
+		buttonFocused = false
+	}
 	font := w.EffectiveFont()
 
 	// Draw title if enabled

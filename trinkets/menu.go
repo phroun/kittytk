@@ -474,6 +474,16 @@ func (m *Menu) CurrentItem() *MenuItem {
 	return m.ItemAt(m.currentIndex)
 }
 
+// SelectFirstItem highlights the first enabled item. Used when a menu is
+// opened from the keyboard (Down/Space/Enter on a focused menu bar), so
+// navigation starts on a real option instead of no selection.
+func (m *Menu) SelectFirstItem() {
+	m.currentIndex = m.findNextEnabled(-1)
+	m.ensureVisible(m.currentIndex)
+	m.announceCurrentItem()
+	m.Update()
+}
+
 // IsVisible returns whether the menu is visible.
 func (m *Menu) IsVisible() bool {
 	return m.visible
@@ -2625,6 +2635,11 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 				m.CloseMenu()
 			} else {
 				m.OpenMenu(m.currentIndex)
+				// Opening from the keyboard lands focus on the first valid
+				// option (mouse-opening leaves nothing selected until hover).
+				if m.activeMenu != nil {
+					m.activeMenu.SelectFirstItem()
+				}
 			}
 		}
 		return true

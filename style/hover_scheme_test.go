@@ -92,3 +92,19 @@ func TestMenuBarButtonSplitComposes(t *testing.T) {
 		t.Errorf("disabled menu-bar button = %v/%v, want bright black/white", dis.Fg, dis.Bg)
 	}
 }
+
+// Active/inactive title-bar buttons inherit the matching title-bar
+// background when the scheme leaves their background unspecified.
+func TestTitleBarButtonBgInheritsTitle(t *testing.T) {
+	s := DefaultScheme()
+	if got, want := s.GetTitleBarButton(true, false, false).Bg, s.GetWindowTitle(true).Bg; got != want {
+		t.Errorf("active title button bg = %v, want active title bg %v", got, want)
+	}
+	if got, want := s.GetTitleBarButton(false, false, false).Bg, s.GetWindowTitle(false).Bg; got != want {
+		t.Errorf("inactive title button bg = %v, want inactive title bg %v", got, want)
+	}
+	// State resolver takes the same default.
+	if got, want := s.GetTitleBarButtonState(false, false, false, false).Bg, s.GetWindowTitle(false).Bg; got != want {
+		t.Errorf("inactive title button (state) bg = %v, want %v", got, want)
+	}
+}
