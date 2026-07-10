@@ -796,6 +796,14 @@ func (app *Application) AddWindow(w *window.Window) {
 	desktop := app.desktop
 	app.mu.Unlock()
 
+	// Closing the window must drop it from this app's list too. The manager
+	// and tear-off host each reassign the single onCloseComplete slot for
+	// their own removal, so use an accumulating observer that survives -
+	// otherwise a dismissed dialog would linger in Windows() (and the Window
+	// menu) forever. forgetWindow only touches the app's slice; the manager
+	// and host already forget the window through their own close paths.
+	w.AddOnClosed(func() { app.forgetWindow(w) })
+
 	// Also add to Desktop's WindowManager if we have one
 	if desktop != nil {
 		if d, ok := desktop.(*trinkets.Desktop); ok {
@@ -808,6 +816,19 @@ func (app *Application) AddWindow(w *window.Window) {
 			d.SyncAddedWindowDetachState(w)
 		}
 	}
+}
+
+// forgetWindow removes w from the application's window list only (the
+// manager and tear-off host handle their own removal on close).
+func (app *Application) forgetWindow(w *window.Window) {
+	app.mu.Lock()
+	for i, win := range app.windows {
+		if win == w {
+			app.windows = append(app.windows[:i], app.windows[i+1:]...)
+			break
+		}
+	}
+	app.mu.Unlock()
 }
 
 // RemoveWindow removes a window from this application.

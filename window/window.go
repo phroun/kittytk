@@ -180,6 +180,7 @@ type Window struct {
 	onTearRequest         func()                   // Called when the tear handle is activated (dock<->detach)
 	onBoundsRequest       func(core.UnitRect) bool // Takes title-focus keyboard geometry whole (torn-off hosts)
 	onCloseComplete       func()                   // Called when window is closed, to remove from manager
+	onClosedObservers     []func()                 // Additional close observers (survive onCloseComplete reassignment)
 	getConstrainingBounds func() core.UnitRect     // Returns the client area for movement constraints
 	popupController       core.PopupController     // Popup controller for ComboBox etc.
 
@@ -659,6 +660,7 @@ func (w *Window) Close() bool {
 	w.mu.RLock()
 	handler := w.onClose
 	closeComplete := w.onCloseComplete
+	observers := append([]func(){}, w.onClosedObservers...)
 	title := w.title
 	w.mu.RUnlock()
 
@@ -686,6 +688,11 @@ func (w *Window) Close() bool {
 	// Notify manager to remove this window
 	if closeComplete != nil {
 		closeComplete()
+	}
+	// Notify any additional observers (e.g. the owning Application, whose
+	// removal must survive the manager/tear-off reassigning onCloseComplete).
+	for _, fn := range observers {
+		fn()
 	}
 
 	return true
@@ -991,6 +998,20 @@ func (w *Window) requestTear() {
 func (w *Window) SetOnCloseComplete(handler func()) {
 	w.mu.Lock()
 	w.onCloseComplete = handler
+	w.mu.Unlock()
+}
+
+// AddOnClosed registers an additional observer fired when the window is
+// closed. Unlike SetOnCloseComplete (a single slot the manager and tear-off
+// host reassign), observers accumulate and always run - the owning
+// Application uses one to drop the window from its list no matter which
+// surface the window was living on.
+func (w *Window) AddOnClosed(fn func()) {
+	if fn == nil {
+		return
+	}
+	w.mu.Lock()
+	w.onClosedObservers = append(w.onClosedObservers, fn)
 	w.mu.Unlock()
 }
 
