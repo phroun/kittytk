@@ -1661,6 +1661,13 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		startX := (titleRect.Width - totalWidth) / 2
 		x := startX
 
+		// Foundation fill: paint the decoration's highlight background as one
+		// rectangle first, so the sub-pixel seams between the cell brackets
+		// and the proportional title (two pixel rates at a fractional font
+		// size) can't show the title-bar background through. This mirrors the
+		// button, whose rectangle foundation is why it has no such gap.
+		p.FillRect(core.UnitRect{X: startX, Width: totalWidth, Height: metrics.CellHeight}, ' ', titleDisplayStyle)
+
 		// Draw left bracket and space (decorative)
 		p.DrawCell(x, 0, '<', titleDisplayStyle)
 		p.DrawCell(x+metrics.CellWidth, 0, ' ', titleDisplayStyle)
@@ -1885,6 +1892,11 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			// Center the total width in the title area
 			startX := (titleRect.Width - totalWidth) / 2
 			x := startX
+
+			// Foundation fill (see the non-torn path): the decoration's
+			// highlight as one rectangle, so the cell/proportional seams do
+			// not leak the title-bar background at a fractional font size.
+			tp.FillRect(core.UnitRect{X: startX, Width: totalWidth, Height: metrics.CellHeight}, ' ', titleDisplayStyle)
 
 			// Draw left bracket and space (decorative)
 			tp.DrawCell(x, 0, '<', titleDisplayStyle)
