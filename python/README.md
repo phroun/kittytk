@@ -21,8 +21,8 @@ interop_test.go   Go harness: a real headless host driven by the clients
 
 ```sh
 # terminal 1 — a desktop host (either renderer):
-go run ./examples/kittytk-tui                 # terminal
-go run -tags sdl ./examples/kittytk-sdl       # graphical
+go run ./cmd/kittytk-tui                 # terminal
+go run -tags sdl ./cmd/kittytk-sdl       # graphical
 
 # terminal 2 — the Python app (from this directory):
 python3 -m demoapp                            # attaches to the host

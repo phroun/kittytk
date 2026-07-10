@@ -2,6 +2,7 @@
 package trinkets
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -314,10 +315,11 @@ func (d *Desktop) createSystemMenu() *Menu {
 // name, a one-line description, the version, and the copyright. The name and
 // version come from the core package's single source of truth.
 func aboutDesktopText() string {
-	return core.Name + " — " + core.Tagline + "\n\n" +
-		"A cross-surface UI toolkit in Go.\n\n" +
-		"Version " + core.Version + "\n\n" +
-		"© 2026 Jeffrey R. Day. All rights reserved."
+	return fmt.Sprintf("%s — %s\n\n"+
+		"A cross-surface UI toolkit in Go.\n\n"+
+		"Version %s (build %d)\n\n"+
+		"© 2026 Jeffrey R. Day. All rights reserved.",
+		core.Name, core.Tagline, core.Version, core.Build)
 }
 
 // showAboutDesktop opens the About KittyTK dialog - the About entry in the

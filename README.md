@@ -19,13 +19,16 @@ hiding in `Kitty` — a sibling to the rest of the line: **PurfecTerm**
 
 A **desktop host** renders the display and serves the protocol socket;
 applications dial in and attach without knowing which renderer is on the
-other end. Two interchangeable hosts ship as examples:
+other end. Two interchangeable hosts ship under `cmd/`:
 
 ```
-go run ./examples/kittytk-tui             # terminal desktop
-go run -tags sdl ./examples/kittytk-sdl   # graphical (SDL) desktop
-go run ./examples/demoapp                 # an app that attaches to either
+go run ./cmd/kittytk-tui             # terminal desktop
+go run -tags sdl ./cmd/kittytk-sdl   # graphical (SDL) desktop
+go run ./examples/demoapp            # an app that attaches to either
 ```
+
+`make` builds both hosts into `bin/`; `make increment` bumps the build
+counter in `core/version.go`.
 
 The socket can be a unix socket (default), `tcp://host:port`, or
 `tls://host:port` — the same protocol over any transport, from Go, Python,

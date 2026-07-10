@@ -5,8 +5,8 @@
 // host is running, without knowing (or caring) which renderer is on the
 // other end; the display protocol is identical either way:
 //
-//	terminal 1:  go run ./examples/kittytk-tui             (terminal)
-//	         or:  go run -tags sdl ./examples/kittytk-sdl   (graphical)
+//	terminal 1:  go run ./cmd/kittytk-tui             (terminal)
+//	         or:  go run -tags sdl ./cmd/kittytk-sdl   (graphical)
 //	terminal 2:  go run ./examples/demoapp   (or ./examples/remoteapp)
 package main
 

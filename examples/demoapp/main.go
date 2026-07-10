@@ -4,7 +4,7 @@
 // nine-tab trinket gallery, menu bars, status bar, the protocol-built
 // window, terminal child windows, dialogs and MDI - over the socket.
 //
-//	terminal 1:  go run ./examples/kittytk-tui             (or -tags sdl ./examples/kittytk-sdl)
+//	terminal 1:  go run ./cmd/kittytk-tui             (or -tags sdl ./cmd/kittytk-sdl)
 //	terminal 2:  go run ./examples/demoapp
 //
 // It is the backendless twin of examples/demo: same windows, built from
@@ -37,7 +37,7 @@ func main() {
 	a, err := newPrimary(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot reach display service at %s: %v\n", path, err)
-		fmt.Fprintln(os.Stderr, "start a desktop first: go run ./examples/kittytk-tui (or -tags sdl ./examples/kittytk-sdl)")
+		fmt.Fprintln(os.Stderr, "start a desktop first: go run ./cmd/kittytk-tui (or -tags sdl ./cmd/kittytk-sdl)")
 		os.Exit(1)
 	}
 	a.wait() // blocks until the main window closes or the desktop exits

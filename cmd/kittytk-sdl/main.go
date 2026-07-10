@@ -7,8 +7,8 @@
 // whichever host is running, without knowing (or caring) which renderer
 // is on the other end:
 //
-//	terminal 1:  go run -tags sdl ./examples/kittytk-sdl   (graphical)
-//	         or:  go run ./examples/kittytk-tui             (terminal)
+//	terminal 1:  go run -tags sdl ./cmd/kittytk-sdl   (graphical)
+//	         or:  go run ./cmd/kittytk-tui             (terminal)
 //	terminal 2:  go run ./examples/demoapp   (or ./examples/remoteapp)
 package main
 

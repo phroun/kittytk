@@ -26,8 +26,8 @@ make KT_TLS=1                                 # same, with tls:// support (OpenS
 # macOS TLS: brew install openssl@3  (the Makefile finds Homebrew's copy)
 
 # terminal 1 — a desktop host (either renderer):
-go run ./examples/kittytk-tui                 # terminal
-go run -tags sdl ./examples/kittytk-sdl       # graphical
+go run ./cmd/kittytk-tui                 # terminal
+go run -tags sdl ./cmd/kittytk-sdl       # graphical
 
 # terminal 2 — the C app:
 ./demoapp                                     # attaches to the host

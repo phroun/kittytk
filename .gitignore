@@ -13,6 +13,9 @@
 *.so
 *.dylib
 
+# Built binaries (make build -> bin/)
+/bin/
+
 # Test binary
 *.test
 
