@@ -1400,6 +1400,14 @@ func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 	return true
 }
 
+// ResizeHoverRects returns the window-local resize-edge highlight
+// rectangles currently set (nil when the overlay is off).
+func (w *Window) ResizeHoverRects() []core.UnitRect {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.resizeHoverRects
+}
+
 func sameRects(a, b []core.UnitRect) bool {
 	if len(a) != len(b) {
 		return false

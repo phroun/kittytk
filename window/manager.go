@@ -361,17 +361,22 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 // given resize edge, matching detectResizeEdge's thresholds. Used to
 // highlight the edge under the pointer.
 func (m *WindowManager) resizeEdgeRects(win *Window, edge int) []core.UnitRect {
+	m.mu.RLock()
+	baseGrip := m.resizeGrip
+	m.mu.RUnlock()
+	return ResizeEdgeRects(win, edge, EffectiveResizeGrip(win, baseGrip))
+}
+
+// ResizeEdgeRects returns the window-local rectangles to highlight for the
+// given resize edge(s), sized to the effective grip (the border width plus
+// the grip sliver, matching ResizeEdgeAt) so the band covers the whole
+// outer border. Shared by the WindowManager and the MDIPane so both draw
+// the same resize overlay.
+func ResizeEdgeRects(win *Window, edge int, grip core.Unit) []core.UnitRect {
 	b := win.Bounds()
 	metrics := core.DefaultCellMetrics()
 	edgeThreshold := metrics.CellWidth
 	bottomBand := metrics.CellHeight
-	m.mu.RLock()
-	baseGrip := m.resizeGrip
-	m.mu.RUnlock()
-	// Match detectResizeEdge: border width plus the grip sliver, so the
-	// highlight covers the whole outer border and the small overlap into
-	// the content.
-	grip := EffectiveResizeGrip(win, baseGrip)
 	if grip > 0 {
 		edgeThreshold = grip
 		bottomBand = grip
