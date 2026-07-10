@@ -2215,6 +2215,23 @@ func (d *Desktop) MenuBar() *MenuBar {
 	return d.menuBar
 }
 
+// ActiveMenuBarContentChanged rebuilds and repaints the desktop menu bar
+// when the app whose menus just changed is the active one. An app can
+// update its menus at any time - including a freshly built window whose
+// `menubar` statement is adopted after the window itself activated (which
+// rebuilt the bar while the app still had no menus) - and the change
+// appears immediately instead of only after the next focus switch.
+func (d *Desktop) ActiveMenuBarContentChanged(who ApplicationProvider) {
+	d.mu.RLock()
+	active := d.activeApp
+	d.mu.RUnlock()
+	if who != active {
+		return
+	}
+	d.updateMenuBarContent()
+	d.RequestUpdate()
+}
+
 // CloseActiveMenu closes any active dropdown menu.
 func (d *Desktop) CloseActiveMenu() {
 	if d.menuBar != nil && d.menuBar.ActiveMenu() != nil {

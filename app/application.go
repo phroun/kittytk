@@ -869,6 +869,19 @@ func (app *Application) SetMenuBarContent(menus []*trinkets.Menu) {
 			menu.BindCommands(commands)
 		}
 	}
+
+	// Tell the desktop so it can rebuild its visible bar if this app is
+	// active - menus can change at any time (including a window's menubar
+	// adopted just after the window activated), and the change must show
+	// without waiting for a focus switch.
+	app.mu.RLock()
+	desktop := app.desktop
+	app.mu.RUnlock()
+	if r, ok := desktop.(interface {
+		ActiveMenuBarContentChanged(trinkets.ApplicationProvider)
+	}); ok {
+		r.ActiveMenuBarContentChanged(app)
+	}
 }
 
 // Commands returns the application's command registry: handlers keyed
