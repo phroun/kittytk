@@ -373,6 +373,11 @@ func (m *Menu) Title() string {
 	return m.title
 }
 
+// RawTitle returns the original title including any "&" accelerator markup.
+func (m *Menu) RawTitle() string {
+	return m.rawTitle
+}
+
 // SetTitle sets the menu title.
 func (m *Menu) SetTitle(title string) {
 	displayTitle, accel, pos := parseAcceleratorTitle(title)

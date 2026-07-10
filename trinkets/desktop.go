@@ -396,9 +396,25 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	// Wire up menu bar integration
 	if d.menuBar != nil {
 		d.menuBar.SetOnMenuOpen(func() {
+			// While a torn-off window owns focus the desktop bar is the
+			// desktop's own menu bar; opening/closing it must not deactivate
+			// or re-activate an in-surface window, which would steal focus
+			// from the torn window.
+			d.mu.RLock()
+			torn := d.tornFocusOwner != nil
+			d.mu.RUnlock()
+			if torn {
+				return
+			}
 			d.windowManager.DeactivateActiveWindow()
 		})
 		d.menuBar.SetOnMenuDismiss(func() {
+			d.mu.RLock()
+			torn := d.tornFocusOwner != nil
+			d.mu.RUnlock()
+			if torn {
+				return
+			}
 			d.windowManager.RestorePreviousActiveWindow()
 		})
 	}
@@ -1290,7 +1306,14 @@ func (d *Desktop) buildDetachedMenuBar(app ApplicationProvider) *MenuBar {
 	if len(appMenus) > 0 {
 		mb.AddMenu(d.createAppMenuWithQuitOnly(appMenus[0], menuName, appName))
 		for i := 1; i < len(appMenus); i++ {
-			mb.AddMenu(appMenus[i])
+			m := appMenus[i]
+			// On the detached bar, the app's "Window" menu also lists all of
+			// the app's windows (a fresh copy, so the docked desktop bar's
+			// shared menu is untouched).
+			if strings.EqualFold(m.Title(), "Window") {
+				m = d.buildDetachedWindowMenu(m, app)
+			}
+			mb.AddMenu(m)
 		}
 	} else {
 		m := NewMenu(menuName)
@@ -1298,6 +1321,39 @@ func (d *Desktop) buildDetachedMenuBar(app ApplicationProvider) *MenuBar {
 		mb.AddMenu(m)
 	}
 	return mb
+}
+
+// buildDetachedWindowMenu returns a copy of the app's "Window" menu for a
+// detached main window's own bar, with a separator and a list of all of the
+// app's windows (regardless of minimized state; MDI children are not
+// registered with the application, so they are naturally excluded) appended
+// at the end. Choosing a window raises it (restoring it if minimized). The
+// list is rebuilt on every open so it stays current, and the app's shared
+// menu (used on the docked desktop bar) is left untouched.
+func (d *Desktop) buildDetachedWindowMenu(orig *Menu, app ApplicationProvider) *Menu {
+	menu := NewMenu(orig.RawTitle())
+	base := orig.Items()
+
+	populate := func() {
+		menu.Clear()
+		for _, it := range base {
+			menu.AddItem(it)
+		}
+		wins := app.Windows()
+		if len(wins) > 0 {
+			menu.AddSeparator()
+			for _, win := range wins {
+				win := win
+				item := NewMenuItem(win.Title())
+				item.SetOnTriggered(func() { d.activateWindowFromMenu(win) })
+				menu.AddItem(item)
+			}
+		}
+	}
+
+	populate()
+	menu.SetOnAboutToShow(populate)
+	return menu
 }
 
 // buildDetachedStatusBar builds the status bar a detached main window
@@ -1326,28 +1382,111 @@ func (d *Desktop) detachMainWindowChrome(win *window.Window) {
 	win.SetWindowStatusBar(nil)
 }
 
-// buildWindowTileCascadeMenu builds the reduced Window menu (Tile and
-// Cascade only) shown on the desktop bar while the main window is
-// detached.
+// tileableDesktopWindows returns the desktop's in-surface windows that
+// Tile/Cascade would arrange: visible and not minimized.
+func (d *Desktop) tileableDesktopWindows() []*window.Window {
+	wm := d.WindowManager()
+	if wm == nil {
+		return nil
+	}
+	var out []*window.Window
+	for _, w := range wm.Windows() {
+		if w.IsVisible() && !w.IsMinimized() {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// activateWindowFromMenu raises a window chosen from a Window menu, from
+// whichever surface it lives on, restoring it first if it was minimized.
+// A torn-off window's own OS surface is raised; an in-surface desktop
+// window is raised/activated within the desktop and the desktop's own OS
+// window is brought to the front.
+func (d *Desktop) activateWindowFromMenu(win *window.Window) {
+	if win == nil {
+		return
+	}
+	d.mu.RLock()
+	hosts := make([]*window.TearOffHost, len(d.tornHosts))
+	copy(hosts, d.tornHosts)
+	surface := d.surface
+	d.mu.RUnlock()
+
+	// Torn-off window: raise its own OS surface (restore first if needed).
+	for _, th := range hosts {
+		if th.Window() == win {
+			if win.IsMinimized() {
+				win.Restore()
+			}
+			if n, ok := th.Surface().(platform.NativeSurface); ok {
+				n.Raise()
+			}
+			return
+		}
+	}
+
+	// In-surface desktop window: raise/restore within the desktop, then
+	// bring the desktop's own OS window forward.
+	if wm := d.WindowManager(); wm != nil {
+		if win.IsMinimized() {
+			wm.RestoreWindow(win)
+		} else {
+			wm.ActivateWindow(win)
+		}
+	}
+	if n, ok := surface.(platform.NativeSurface); ok {
+		n.Raise()
+	}
+}
+
+// buildWindowTileCascadeMenu builds the reduced Window menu shown on the
+// desktop bar while the main window is detached: Tile and Cascade (disabled
+// when there is nothing to arrange), plus - when there are windows - a
+// separator and a list of the desktop's windows that raises the chosen one.
+// It repopulates on every open so the window list and the enabled state
+// stay current.
 func (d *Desktop) buildWindowTileCascadeMenu() *Menu {
 	menu := NewMenu("&Window")
 
-	tile := NewMenuItem("&Tile")
-	tile.SetOnTriggered(func() {
-		if wm := d.WindowManager(); wm != nil {
-			wm.TileWindows()
-		}
-	})
-	menu.AddItem(tile)
+	populate := func() {
+		menu.Clear()
 
-	cascade := NewMenuItem("&Cascade")
-	cascade.SetOnTriggered(func() {
-		if wm := d.WindowManager(); wm != nil {
-			wm.CascadeWindows()
-		}
-	})
-	menu.AddItem(cascade)
+		tileable := d.tileableDesktopWindows()
 
+		tile := NewMenuItem("&Tile")
+		tile.SetOnTriggered(func() {
+			if wm := d.WindowManager(); wm != nil {
+				wm.TileWindows()
+			}
+		})
+		cascade := NewMenuItem("&Cascade")
+		cascade.SetOnTriggered(func() {
+			if wm := d.WindowManager(); wm != nil {
+				wm.CascadeWindows()
+			}
+		})
+		// Nothing to tile/cascade when there are no non-minimized windows.
+		if len(tileable) == 0 {
+			tile.SetEnabled(false)
+			cascade.SetEnabled(false)
+		}
+		menu.AddItem(tile)
+		menu.AddItem(cascade)
+
+		if len(tileable) > 0 {
+			menu.AddSeparator()
+			for _, win := range tileable {
+				win := win
+				item := NewMenuItem(win.Title())
+				item.SetOnTriggered(func() { d.activateWindowFromMenu(win) })
+				menu.AddItem(item)
+			}
+		}
+	}
+
+	populate()
+	menu.SetOnAboutToShow(populate)
 	return menu
 }
 
