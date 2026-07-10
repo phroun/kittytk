@@ -43,6 +43,12 @@ type Backend struct {
 	clip    core.UnitRect
 	hasClip bool
 
+	// originPxX/Y nudge every unit->pixel conversion by a whole number of
+	// device pixels (see ShiftOriginPx): a sub-unit visual offset the
+	// integer unit grid can't express, set around a synchronous draw and
+	// restored right after.
+	originPxX, originPxY int
+
 	// Rounded clip (core.RoundedClipper): an additional constraint on
 	// top of the rectangular clip. Window frames confine their
 	// edge-to-edge content with it.
@@ -123,8 +129,24 @@ func snapAxis(u core.Unit, denom, cellPx int) int {
 
 // pxX / pxY are the cell-snapped unit-to-pixel conversions for the two
 // axes. Positions and cell-aligned rect edges go through these.
-func (b *Backend) pxX(u core.Unit) int { return snapAxis(u, int(b.metrics.CellWidth), b.cellWPx()) }
-func (b *Backend) pxY(u core.Unit) int { return snapAxis(u, int(b.metrics.CellHeight), b.cellHPx()) }
+func (b *Backend) pxX(u core.Unit) int {
+	return b.originPxX + snapAxis(u, int(b.metrics.CellWidth), b.cellWPx())
+}
+func (b *Backend) pxY(u core.Unit) int {
+	return b.originPxY + snapAxis(u, int(b.metrics.CellHeight), b.cellHPx())
+}
+
+// ShiftOriginPx nudges the device-pixel origin of every subsequent
+// unit->pixel conversion by a whole number of device pixels, until
+// shifted back. It expresses a sub-unit visual offset the integer unit
+// grid can't (the menu bar insets its first item by one device pixel).
+// Paints are synchronous, so callers set it around a draw and restore it
+// with the negated offset immediately after. Implements
+// core.DeviceOriginShifter.
+func (b *Backend) ShiftOriginPx(dxPx, dyPx int) {
+	b.originPxX += dxPx
+	b.originPxY += dyPx
+}
 
 // pxPerUnit is the unsnapped device pixels covered by one unit, equal on
 // both axes (cellPx/denomination = font_size/12 * zoom). Proportional

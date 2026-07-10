@@ -2283,6 +2283,13 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// Available width for menus
 	availableWidth := dateTimeX - scrollButtonsWidth
 
+	// Inset the menu items (and their subsequent siblings) by one device
+	// pixel on graphical surfaces so the first item is not flush against
+	// the very left pixel column. The background fill and the item hit
+	// zones stay at unit 0 - only the drawing shifts - so the leftmost
+	// pixel still clicks the first item. Restored right after the loop.
+	itemsNudged := p.ShiftDeviceOrigin(1, 0)
+
 	// Draw left ellipsis if scrolled
 	x := core.Unit(0)
 	if m.scrollOffset > 0 {
@@ -2464,6 +2471,13 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		x += menuWidth
 	}
 
+	// End of the one-pixel item inset: restore the origin so the
+	// right-aligned clock and any popped-item outline paint on the true
+	// grid.
+	if itemsNudged {
+		p.ShiftDeviceOrigin(-1, 0)
+	}
+
 	// Draw date/time background and text (unless the calendar is hidden).
 	// The background always fills the full bar height; on graphical
 	// surfaces the clock text renders in a compact 80% monospace face
@@ -2503,7 +2517,13 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			Height: metrics.CellHeight,
 		}
 		lineStyle := style.DefaultStyle().WithBg(scheme.GetMenuSeparator().Fg)
+		// The framed bar item is drawn with the one-pixel item inset, so
+		// stroke its outline through the same nudge to stay aligned.
+		outlineNudged := p.ShiftDeviceOrigin(1, 0)
 		paintPopupOuterStroke(p, itemRect, p.DeviceScale(), lineStyle, 0, 0, false)
+		if outlineNudged {
+			p.ShiftDeviceOrigin(-1, 0)
+		}
 	}
 }
 

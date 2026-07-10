@@ -2903,12 +2903,23 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	w.mu.RLock()
 	content := w.content
 	flags := w.flags
+	state := w.state
 	w.mu.RUnlock()
 
 	metrics := w.frameCellMetrics()
 
+	// The titlebar chrome sits inside the frame border (offset down by the
+	// border), so the titlebar band runs [0, border+CellHeight) in window-
+	// local coordinates - not [0, CellHeight). Missing the border here would
+	// leave the bottom of the visible titlebar (and the bottoms of the
+	// titlebar buttons) routed to content. Maximized has no side border.
+	titleBand := metrics.CellHeight
+	if state != WindowStateMaximized {
+		titleBand += core.FindFrameBorderUnits(w)
+	}
+
 	// Check for title bar clicks
-	if flags&WindowFlagNoTitle == 0 && event.Y < metrics.CellHeight {
+	if flags&WindowFlagNoTitle == 0 && event.Y < titleBand {
 		// Check if clicking on a button
 		button := w.buttonAtPosition(event.X, event.Y)
 		if button != TitleButtonNone {

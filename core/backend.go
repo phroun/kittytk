@@ -339,6 +339,15 @@ func FindFrameBorderUnits(w Trinket) Unit {
 	return 0
 }
 
+// DeviceOriginShifter is an optional RenderBackend capability: nudge the
+// device-pixel origin of subsequent unit->pixel conversions by a whole
+// number of device pixels, for a sub-unit visual offset the integer unit
+// grid can't express (the menu bar insets its first item by one device
+// pixel). Cell surfaces omit it, so the nudge is a graphical-only no-op.
+type DeviceOriginShifter interface {
+	ShiftOriginPx(dxPx, dyPx int)
+}
+
 // CaretDrawer is an optional RenderBackend capability: pixel surfaces
 // draw the text-insertion caret as a thin vertical bar sitting at the
 // left edge of the glyph box at (x, y) - where the next character
@@ -755,6 +764,21 @@ func (p *Painter) deviceAnchor(sx, sy Unit) (int, int) {
 	}
 	scale := p.DeviceScale()
 	return int(sx) * scale, int(sy) * scale
+}
+
+// ShiftDeviceOrigin nudges the device-pixel origin of subsequent draws by
+// whole device pixels when the backend supports it (graphical surfaces),
+// returning true if it took effect. Because paints are synchronous, the
+// caller restores it with the negated offset right after the nudged draw.
+// Cell surfaces return false, so callers get a graphical-only nudge for
+// free. For a sub-unit visual offset the integer unit grid can't express
+// (the menu bar's one-pixel first-item inset).
+func (p *Painter) ShiftDeviceOrigin(dxPx, dyPx int) bool {
+	if s, ok := p.backend.(DeviceOriginShifter); ok {
+		s.ShiftOriginPx(dxPx, dyPx)
+		return true
+	}
+	return false
 }
 
 // Graphical reports whether the target paints pixels rather than

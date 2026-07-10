@@ -1265,31 +1265,45 @@ func (m *WindowManager) CascadeWindows() {
 
 	clientArea := m.ClientArea()
 	metrics := core.DefaultCellMetrics()
-	offset := metrics.CellWidth * 2
+	// The cascade step includes the frame border, so each window's whole
+	// top chrome (border + titlebar) clears the one beneath it.
+	border := core.FindFrameBorderUnits(windows[0])
+	offset := metrics.CellWidth*2 + border
 
 	// Standard size for cascaded windows - align to cell boundaries
 	width := metrics.RoundDownToCellX(clientArea.Width * 3 / 4)
 	height := metrics.RoundDownToCellY(clientArea.Height * 3 / 4)
 
 	for i, win := range windows {
+		// Leave any maximized/minimized state before positioning, so the
+		// cascade bounds stick (Restore would otherwise overwrite them).
+		win.Restore()
+
 		x := clientArea.X + core.Unit(i)*offset
 		y := clientArea.Y + core.Unit(i)*offset
 
+		// A window that can't be resized is only repositioned, keeping its
+		// own size; only resizable windows adopt the standard cascade size.
+		w, h := width, height
+		if win.Flags()&WindowFlagNoResize != 0 {
+			b := win.Bounds()
+			w, h = b.Width, b.Height
+		}
+
 		// Wrap if off screen
-		if x+width > clientArea.X+clientArea.Width {
+		if x+w > clientArea.X+clientArea.Width {
 			x = clientArea.X
 		}
-		if y+height > clientArea.Y+clientArea.Height {
+		if y+h > clientArea.Y+clientArea.Height {
 			y = clientArea.Y
 		}
 
 		win.SetBounds(core.UnitRect{
 			X:      x,
 			Y:      y,
-			Width:  width,
-			Height: height,
+			Width:  w,
+			Height: h,
 		})
-		win.Restore()
 	}
 }
 
