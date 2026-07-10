@@ -173,6 +173,31 @@ static void wire_protocol_window(App *a) {
     kt_ui_free(ui);
 }
 
+/* A secondary application's per-connection menu wiring. Its edit verbs go
+ * out on ITS OWN connection (they act on its focused surface), and Close
+ * destroys its window. Heap-allocated and left for the process lifetime,
+ * like the connection it serves. */
+typedef struct {
+    kt_conn *c;
+    uint64_t win;
+} SecApp;
+
+static void on_sec_cut(void *ud) { kt_exec(((SecApp *)ud)->c, "cut"); }
+static void on_sec_copy(void *ud) { kt_exec(((SecApp *)ud)->c, "copy"); }
+static void on_sec_paste(void *ud) { kt_exec(((SecApp *)ud)->c, "paste"); }
+static void on_sec_sall(void *ud) { kt_exec(((SecApp *)ud)->c, "selectall"); }
+static void on_sec_rawkey(void *ud) { kt_exec(((SecApp *)ud)->c, "rawkey"); }
+static void on_sec_close(void *ud) {
+    SecApp *s = ud;
+    if (s->win) kt_destroy(s->c, s->win);
+}
+static void on_sec_close_ev(const kt_event *ev, void *ud) { (void)ev; on_sec_close(ud); }
+static void on_sec_about(void *ud) {
+    char *s = about_dialog_script();
+    kt_exec(((SecApp *)ud)->c, s);
+    free(s);
+}
+
 static void open_secondary(App *a) {
     static int count = 0;
     int n = ++count;
@@ -188,6 +213,23 @@ static void open_secondary(App *a) {
     if (ui) {
         uint64_t term = kt_ui_id(ui, "term");
         if (term) kt_pty_attach(c, term, NULL);
+
+        /* Wire this window's menu (App/Edit/Help) and its Close button on
+         * the secondary connection, so Cut/Copy/Paste/Select All/Raw Key
+         * Input, Close and About all work here too. */
+        SecApp *sa = calloc(1, sizeof *sa);
+        sa->c = c;
+        sa->win = kt_ui_id(ui, "w");
+        kt_on_command(c, "demo.app.close", on_sec_close, sa);
+        kt_on_command(c, "demo.app.cut", on_sec_cut, sa);
+        kt_on_command(c, "demo.app.copy", on_sec_copy, sa);
+        kt_on_command(c, "demo.app.paste", on_sec_paste, sa);
+        kt_on_command(c, "demo.app.selectall", on_sec_sall, sa);
+        kt_on_command(c, "demo.app.rawkey", on_sec_rawkey, sa);
+        kt_on_command(c, "demo.app.about", on_sec_about, sa);
+        uint64_t closer = kt_ui_id(ui, "closer");
+        if (closer) kt_on(c, closer, "click", on_sec_close_ev, sa);
+
         kt_ui_free(ui);
     }
 }
