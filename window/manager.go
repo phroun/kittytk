@@ -217,39 +217,22 @@ func abs(x int) int {
 	return x
 }
 
-// detectResizeEdge determines which window edge(s) the mouse is near.
-// Returns a combination of ResizeEdge constants.
-// Note: Top edge is excluded since the titlebar is used for dragging.
-func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
-	if win.Flags()&WindowFlagNoResize != 0 {
-		return ResizeEdgeNone
-	}
-
-	// Maximized windows don't have visible resize edges (only titlebar)
-	if win.IsMaximized() {
-		return ResizeEdgeNone
-	}
-
-	bounds := win.Bounds()
-	metrics := core.DefaultCellMetrics()
-
-	// Edge detection threshold (one cell for edges)
+// ResizeEdgeAt returns the resize edge bits for point (x, y) against a
+// window occupying `bounds` (all in the same coordinate space). `grip` is
+// the effective grab-zone thickness in units - the graphical grip sliver
+// plus any frame border; when it is 0 the cell-frame defaults from
+// `metrics` apply (a full cell on the sides and bottom) and the top edge
+// is NOT grabbable (the top row is the titlebar, used for dragging). The
+// bottom and (when grabbable) top edges widen at the corners so diagonal
+// resize is easy to hit.
+//
+// This is the single source of resize-edge geometry: the desktop
+// WindowManager and the embedded MDIPane both call it, so desktop and MDI
+// windows detect identical edges and corners.
+func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics, grip core.Unit) int {
 	edgeThreshold := metrics.CellWidth
-	// Corner detection threshold (2 cells for corners)
 	cornerThreshold := metrics.CellWidth * 2
-	// Bottom band thickness (one row on cell frames)
 	bottomBand := metrics.CellHeight
-
-	// Graphical frames: only the outer sliver of an edge is the grip,
-	// so edge trinkets stay clickable (the frame is a hairline, not a
-	// cell band).
-	m.mu.RLock()
-	grip := m.resizeGrip
-	m.mu.RUnlock()
-	// The grab zone spans the whole frame border PLUS the original grip
-	// sliver, so it still reaches a little (~1/4 cell) into the content
-	// past the border.
-	grip += core.FindFrameBorderUnits(win)
 	if grip > 0 {
 		edgeThreshold = grip
 		cornerThreshold = grip * 2
@@ -258,25 +241,17 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 
 	edge := ResizeEdgeNone
 
-	// Check if at bottom edge
 	atBottom := y >= bounds.Y+bounds.Height-bottomBand && y < bounds.Y+bounds.Height
-
-	// Top edge is grabbable only on graphical frames (grip > 0). In the
-	// TUI the whole top row is the titlebar for dragging - there is no
-	// pointer resolution to spare a sliver - so the top stays drag-only.
 	atTop := grip > 0 && y >= bounds.Y && y < bounds.Y+grip
 
-	// Check horizontal edges (left/right)
 	if x >= bounds.X && x < bounds.X+edgeThreshold {
 		edge |= ResizeEdgeLeft
 	} else if x >= bounds.X+bounds.Width-edgeThreshold && x < bounds.X+bounds.Width {
 		edge |= ResizeEdgeRight
 	}
 
-	// Check bottom edge
 	if atBottom {
 		edge |= ResizeEdgeBottom
-		// For bottom corners, extend the left/right detection zone
 		if x >= bounds.X && x < bounds.X+cornerThreshold {
 			edge |= ResizeEdgeLeft
 		} else if x >= bounds.X+bounds.Width-cornerThreshold && x < bounds.X+bounds.Width {
@@ -284,8 +259,6 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 		}
 	}
 
-	// Check top edge (graphical only) - a thin sliver above the titlebar,
-	// with widened corners like the bottom.
 	if atTop {
 		edge |= ResizeEdgeTop
 		if x >= bounds.X && x < bounds.X+cornerThreshold {
@@ -298,6 +271,27 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	return edge
 }
 
+// EffectiveResizeGrip is the grab-zone thickness in units for `win`: the
+// base grip sliver plus the frame border (a thicker border makes a
+// proportionally thicker grip that also overlaps a little into content).
+// Shared so WindowManager and MDIPane compute the same grip.
+func EffectiveResizeGrip(win *Window, baseGrip core.Unit) core.Unit {
+	return baseGrip + core.FindFrameBorderUnits(win)
+}
+
+// detectResizeEdge determines which window edge(s) the mouse is near.
+// Returns a combination of ResizeEdge constants.
+func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
+	if win.Flags()&WindowFlagNoResize != 0 || win.IsMaximized() {
+		return ResizeEdgeNone
+	}
+	m.mu.RLock()
+	baseGrip := m.resizeGrip
+	m.mu.RUnlock()
+	return ResizeEdgeAt(win.Bounds(), x, y, core.DefaultCellMetrics(),
+		EffectiveResizeGrip(win, baseGrip))
+}
+
 // resizeEdgeRects returns the window-local rectangles (one per set edge
 // bit, two for a corner) covering the size-sensitive band(s) for the
 // given resize edge, matching detectResizeEdge's thresholds. Used to
@@ -308,12 +302,12 @@ func (m *WindowManager) resizeEdgeRects(win *Window, edge int) []core.UnitRect {
 	edgeThreshold := metrics.CellWidth
 	bottomBand := metrics.CellHeight
 	m.mu.RLock()
-	grip := m.resizeGrip
+	baseGrip := m.resizeGrip
 	m.mu.RUnlock()
 	// Match detectResizeEdge: border width plus the grip sliver, so the
 	// highlight covers the whole outer border and the small overlap into
 	// the content.
-	grip += core.FindFrameBorderUnits(win)
+	grip := EffectiveResizeGrip(win, baseGrip)
 	if grip > 0 {
 		edgeThreshold = grip
 		bottomBand = grip
@@ -394,10 +388,11 @@ func (m *WindowManager) topWindowAt(x, y core.Unit) *Window {
 	return nil
 }
 
-// resizeCursorForEdge maps a resize-edge bitmask to its directional
-// cursor. Bottom corners use the diagonal cursors; a lone left/right or
-// bottom edge uses the horizontal/vertical cursor.
-func resizeCursorForEdge(edge int) core.CursorShape {
+// ResizeCursorForEdge maps a set of resize edges to the cursor shape that
+// signals resizing them (H/V for a single edge, the two diagonals for
+// corners, default for none). Shared by the desktop WindowManager and the
+// embedded MDIPane so both show the same resize cursors.
+func ResizeCursorForEdge(edge int) core.CursorShape {
 	left := edge&ResizeEdgeLeft != 0
 	right := edge&ResizeEdgeRight != 0
 	top := edge&ResizeEdgeTop != 0
@@ -425,7 +420,7 @@ func (m *WindowManager) CursorAt(x, y core.Unit) core.CursorShape {
 	if win == nil {
 		return core.CursorDefault
 	}
-	if s := resizeCursorForEdge(m.detectResizeEdge(win, x, y)); s != core.CursorDefault {
+	if s := ResizeCursorForEdge(m.detectResizeEdge(win, x, y)); s != core.CursorDefault {
 		return s
 	}
 	b := win.Bounds()

@@ -29,7 +29,7 @@ func TestResizeCursorForEdge(t *testing.T) {
 		{ResizeEdgeRight | ResizeEdgeTop, core.CursorResizeNESW},
 	}
 	for _, c := range cases {
-		if got := resizeCursorForEdge(c.edge); got != c.want {
+		if got := ResizeCursorForEdge(c.edge); got != c.want {
 			t.Errorf("edge %d: got %v, want %v", c.edge, got, c.want)
 		}
 	}

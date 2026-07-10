@@ -914,55 +914,19 @@ func (m *MDIPane) layoutContent() {
 	}
 }
 
-// detectResizeEdge determines which window edge(s) the mouse is near.
-func (m *MDIPane) detectResizeEdge(win *window.Window, localX, localY core.Unit) int {
+// detectResizeEdge determines which window edge(s) the interior point
+// (x, y) is near, delegating to the shared window.ResizeEdgeAt so MDI
+// children detect exactly the same edges and corners (top edge and top
+// corners included) as desktop windows.
+func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 	if win.Flags()&window.WindowFlagNoResize != 0 || win.IsMaximized() {
 		return window.ResizeEdgeNone
 	}
-
-	bounds := win.Bounds()
-	metrics := m.EffectiveCellMetrics()
-
-	// Convert local coordinates to global (within MDI pane)
-	x := localX
-	y := localY
-
-	edgeThreshold := metrics.CellWidth
-	cornerThreshold := metrics.CellWidth * 2
-	bottomBand := metrics.CellHeight
-
-	// Graphical frames: only the outer sliver of an edge is the grip
-	// (quarter-column, min 4 device px), so edge trinkets stay
-	// clickable. The desktop provides the thickness.
-	if grip := core.FindResizeGrip(m.Self()); grip > 0 {
-		edgeThreshold = grip
-		cornerThreshold = grip * 2
-		bottomBand = grip
-	}
-
-	edge := window.ResizeEdgeNone
-
-	// Check if at bottom edge
-	atBottom := y >= bounds.Y+bounds.Height-bottomBand && y < bounds.Y+bounds.Height
-
-	// Check horizontal edges
-	if x >= bounds.X && x < bounds.X+edgeThreshold {
-		edge |= window.ResizeEdgeLeft
-	} else if x >= bounds.X+bounds.Width-edgeThreshold && x < bounds.X+bounds.Width {
-		edge |= window.ResizeEdgeRight
-	}
-
-	// Check bottom edge
-	if atBottom {
-		edge |= window.ResizeEdgeBottom
-		if x >= bounds.X && x < bounds.X+cornerThreshold {
-			edge |= window.ResizeEdgeLeft
-		} else if x >= bounds.X+bounds.Width-cornerThreshold && x < bounds.X+bounds.Width {
-			edge |= window.ResizeEdgeRight
-		}
-	}
-
-	return edge
+	// Use the displayed (provisional-corralled) bounds so hover detection
+	// agrees with what the user sees and with the press path (which commits
+	// these bounds before detecting).
+	grip := window.EffectiveResizeGrip(win, core.FindResizeGrip(m.Self()))
+	return window.ResizeEdgeAt(m.displayBounds(win), x, y, m.EffectiveCellMetrics(), grip)
 }
 
 // SetBounds sets the MDI pane bounds and triggers layout.
@@ -1081,6 +1045,13 @@ func (m *MDIPane) CursorShapeAt(localX, localY core.Unit) core.CursorShape {
 		}
 		b := m.displayBounds(win)
 		if b.Contains(pos) {
+			// A size-sensitive edge wins (matches WindowManager.CursorAt),
+			// so MDI children show resize cursors on every edge and corner;
+			// otherwise defer to the trinket under the pointer (e.g. an
+			// I-beam over a text field).
+			if s := window.ResizeCursorForEdge(m.detectResizeEdge(win, pos.X, pos.Y)); s != core.CursorDefault {
+				return s
+			}
 			return win.CursorShapeAt(pos.X-b.X, pos.Y-b.Y)
 		}
 	}
