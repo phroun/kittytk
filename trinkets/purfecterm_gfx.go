@@ -45,6 +45,14 @@ type purfecTermGfx struct {
 	cursorBlinkOn bool
 	blinkTimer    *DesktopTimer
 
+	// hitKX/hitKY scale an incoming mouse UNIT coordinate into the
+	// terminal's own render-unit space, cached on each paint. The outer
+	// system converts a click at the snapped cell rate, but cells render at
+	// ppu; a click must be scaled by (widget snapped px-rate / ppu) before
+	// the cell lookup or hits drift the further in the pointer is. 0/1 =
+	// identity (integer pixels-per-unit, the default 12pt).
+	hitKX, hitKY float64
+
 	// Local selection drag.
 	mouseDown      bool
 	mouseDownX     int
@@ -217,6 +225,40 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	ppu := p.PxPerUnitF()
 	baseCW, baseCH := t.cellDims()
 
+	// Cache the mouse-hit scale factors: the outer system converts a click
+	// at the widget's snapped device-pixel rate, but cells render at ppu, so
+	// scaling a click's unit coordinate by (snapped px-rate / ppu) puts it
+	// back in the terminal's own render-unit space - otherwise hits drift
+	// the further in the pointer is. 1 at integer ppu (default 12pt).
+	t.gfx.hitKX, t.gfx.hitKY = 1, 1
+	if bounds.Width > 0 && ppu > 0 {
+		t.gfx.hitKX = float64(p.UnitSpanPxX(0, bounds.Width)) / (float64(bounds.Width) * ppu)
+	}
+	if bounds.Height > 0 && ppu > 0 {
+		t.gfx.hitKY = float64(p.UnitSpanPxY(0, bounds.Height)) / (float64(bounds.Height) * ppu)
+	}
+
+	// Size the terminal to the whole cells that actually fit its native
+	// pixel viewport. updateTerminalSize divides in units (the unsnapped
+	// rate) and undercounts: the widget's device-pixel extent uses the
+	// snapped cell size while cells render at ppu, so a strip of columns
+	// (and a row) went unused. Deriving cols/rows straight from the pixel
+	// viewport and the pixel cell size fills the space exactly.
+	if baseCW > 0 && baseCH > 0 {
+		wUnits := bounds.Width
+		if t.gfxInputActive() {
+			wUnits -= gfxScrollbarLane // reserve the scrollbar lane
+		}
+		vpWpx := p.UnitSpanPxX(0, wUnits)
+		vpHpx := p.UnitSpanPxY(0, bounds.Height)
+		fitCols := int(float64(vpWpx) / (float64(baseCW) * ppu))
+		fitRows := int(float64(vpHpx) / (float64(baseCH) * ppu))
+		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
+			t.cols, t.rows = fitCols, fitRows
+			t.terminal.Resize(fitCols, fitRows)
+		}
+	}
+
 	isDark := buf.IsDarkTheme()
 	cols, rows := buf.GetSize()
 	cursorVisible := buf.IsCursorVisible()
@@ -383,11 +425,13 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	}
 
 	// Yellow dashed boundary between scrollback and the logical screen.
+	// Filled in native pixels at the same ppu the cells use, so it lands on
+	// the row boundary instead of drifting against the (ppu-rendered) rows.
 	if boundaryRow := buf.GetScrollbackBoundaryVisibleRow(); boundaryRow > 0 {
-		lineY := core.Unit(math.Round(float64(boundaryRow) * chh))
-		yellow := style.DefaultStyle().WithBg(style.RGB(255, 200, 0))
-		for x := core.Unit(0); x < bounds.Width; x += 8 {
-			p.FillRect(core.UnitRect{X: x, Y: lineY, Width: 4, Height: 1}, ' ', yellow)
+		rowY := float64(boundaryRow) * chh
+		yellow := purfecterm.TrueColor(255, 200, 0)
+		for x := 0.0; x < float64(bounds.Width); x += 8 {
+			fillPixels(p, x, rowY, x+4, rowY+1, ppu, yellow)
 		}
 	}
 
@@ -1398,7 +1442,20 @@ func (t *PurfecTerm) screenToCellGfx(x, y core.Unit) (cellX, cellY int) {
 		return 0, 0
 	}
 
-	cellY = int(float64(y) / chh)
+	// Scale the incoming click from outer (snapped) units into the
+	// terminal's render-unit space so the cell lookup below - which walks
+	// unit cell widths - matches the ppu-rendered grid without drift.
+	kx, ky := t.gfx.hitKX, t.gfx.hitKY
+	if kx <= 0 {
+		kx = 1
+	}
+	if ky <= 0 {
+		ky = 1
+	}
+	fx := float64(x) * kx
+	fy := float64(y) * ky
+
+	cellY = int(fy / chh)
 	cols, rows := buf.GetSize()
 	if cellY < 0 {
 		cellY = 0
@@ -1410,7 +1467,7 @@ func (t *PurfecTerm) screenToCellGfx(x, y core.Unit) (cellX, cellY int) {
 	if buf.GetVisibleLineAttribute(cellY) != purfecterm.LineAttrNormal {
 		lineScale = 2.0
 	}
-	relativeX := float64(x)
+	relativeX := fx
 	if relativeX < 0 {
 		return 0, cellY
 	}
