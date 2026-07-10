@@ -9,7 +9,6 @@
 /spawndesktop
 *.exe
 *.exe~
-*.dll
 *.so
 *.dylib
 
@@ -38,3 +37,6 @@ __pycache__/
 *.swp
 *.swo
 *~
+
+.DS_Store
+DEADJOE
