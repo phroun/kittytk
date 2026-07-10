@@ -50,6 +50,11 @@ type Conn struct {
 	// Command sink for action= dispatch (the app's registry).
 	dispatch func(commandID string)
 
+	// appID is this connection's Application ObjectID, reported by the
+	// display service in the handshake (0 for in-process connections, which
+	// have no handshake). Address app-wide properties by it - see SetApp.
+	appID uint64
+
 	// closed fires once when the transport disconnects (remote) or
 	// Close is called, so callers can block on the connection's life.
 	closed    chan struct{}
@@ -85,6 +90,23 @@ func newConn(dispatch func(commandID string)) *Conn {
 // Closed returns a channel that is closed when the connection ends,
 // whether by the app calling Close or the display service disconnecting.
 func (c *Conn) Closed() <-chan struct{} { return c.closed }
+
+// AppID returns the ObjectID of this connection's application, as reported by
+// the display service in the handshake. It is 0 for in-process connections
+// (which have no handshake). Use it to address application-wide properties -
+// e.g. c.Exec(fmt.Sprintf("set %d multiwindow", c.AppID())), or SetApp.
+func (c *Conn) AppID() uint64 { return c.appID }
+
+// SetApp applies application-wide properties to this connection's app with the
+// same syntax as any object: SetApp("multiwindow contextonly") sends
+// `set <appID> multiwindow contextonly`. It errors before the handshake has
+// assigned an app ID (in-process connections have none).
+func (c *Conn) SetApp(props string) (*protocol.Reply, error) {
+	if c.appID == 0 {
+		return nil, fmt.Errorf("SetApp: no application id (in-process connection)")
+	}
+	return c.Exec(fmt.Sprintf("set %d %s", c.appID, props))
+}
 
 // markClosed fires the Closed channel exactly once.
 func (c *Conn) markClosed() { c.closeOnce.Do(func() { close(c.closed) }) }

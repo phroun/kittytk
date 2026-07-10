@@ -212,6 +212,87 @@ wbtn=w.p.btn
 	}
 }
 
+// The handshake hands the client its Application ObjectID, and the client
+// can then set application-wide properties over the wire (Conn.SetApp), which
+// land on the real server-side Application.
+func TestHandshakeAppIDAndSetApp(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "display.sock")
+
+	desktop := trinkets.NewDesktop()
+	desktop.SetBackend(&nullBackend{})
+
+	ready := make(chan *display.Server, 1)
+	desktop.SetOnStartup(func() {
+		srv, err := display.Serve(desktop, sock)
+		if err != nil {
+			t.Errorf("serve: %v", err)
+			desktop.Quit()
+			return
+		}
+		ready <- srv
+	})
+
+	exited := make(chan int, 1)
+	go func() { exited <- desktop.Run() }()
+	var srv *display.Server
+	select {
+	case srv = <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop did not start")
+	}
+	defer func() {
+		srv.Close()
+		desktop.Quit()
+		<-exited
+	}()
+
+	conn, err := client.Dial(sock, "Settable App", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// The handshake carried a real app id.
+	if conn.AppID() == 0 {
+		t.Fatal("handshake did not report an application id")
+	}
+
+	// It matches the server-side application's ObjectID, which starts
+	// single-window.
+	var serverID uint64
+	var before bool
+	onUI(desktop, func() {
+		for _, a := range desktop.Applications() {
+			if a.Name() == "Settable App" {
+				serverID = uint64(a.ObjectID())
+				before = a.MultiWindow()
+			}
+		}
+	})
+	if serverID != conn.AppID() {
+		t.Fatalf("handshake app id %d != server app id %d", conn.AppID(), serverID)
+	}
+	if before {
+		t.Fatal("app should start single-window")
+	}
+
+	// Set an app-wide property over the wire; it lands on the real app.
+	if _, err := conn.SetApp("multiwindow"); err != nil {
+		t.Fatalf("SetApp: %v", err)
+	}
+	var after bool
+	onUI(desktop, func() {
+		for _, a := range desktop.Applications() {
+			if a.Name() == "Settable App" {
+				after = a.MultiWindow()
+			}
+		}
+	})
+	if !after {
+		t.Error("SetApp(multiwindow) did not flip the server app to multi-window")
+	}
+}
+
 // A solo connection puts the desktop into solo mode, and the host quits
 // when the last window closes. (The visual tear-off - the main window on
 // its own borderless surface - needs a real platform and is covered by a

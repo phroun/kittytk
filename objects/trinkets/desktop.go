@@ -22,6 +22,11 @@ type ApplicationProvider interface {
 	// Name returns the application name.
 	Name() string
 
+	// ObjectID returns the application's stable protocol identity, from the
+	// same space as windows and trinkets - so a running app can be referred
+	// to (and set) over the protocol. See Application.ObjectID.
+	ObjectID() core.ObjectID
+
 	// MenuName returns the title of the app's own menu as shown on its
 	// detached main window's menu bar (defaulting to "≡"). It is not used
 	// on the desktop bar, where the app menu carries the app name.

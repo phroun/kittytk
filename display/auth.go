@@ -146,6 +146,41 @@ func (s *authStore) decide(req AuthRequest) (allow bool, ok bool) {
 	return false, false
 }
 
+// allowsAllApps reports whether the store grants this client an "Always for
+// All Apps" standing (AuthAllowClient): a persistent `allow client <id>` rule
+// with no overriding client-wide deny. It is the signal the host uses to let
+// a remote app change its own name over the wire.
+func (s *authStore) allowsAllApps(req AuthRequest) bool {
+	id := req.identity()
+	if id == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, err := os.Open(s.path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	var allowClient, denyClient bool
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		verdict, scope, fp, _, ok := parseAuthLine(sc.Text())
+		if !ok || fp != id || scope != "client" {
+			continue
+		}
+		switch verdict {
+		case "allow":
+			allowClient = true
+		case "deny":
+			denyClient = true
+		}
+	}
+	return allowClient && !denyClient
+}
+
 // record persists the durable part of a decision (the once-only
 // outcomes write nothing).
 func (s *authStore) record(req AuthRequest, d AuthDecision) error {
