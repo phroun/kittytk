@@ -572,63 +572,79 @@ func (t *TabTrinket) scrollButtonWidth() core.Unit {
 	return t.EffectiveCellMetrics().TextWidth(3) // [<] or [>]
 }
 
-// fillArcWedge fills the part of an r x r square lying OUTSIDE the
-// quarter circle of radius r centered on the chosen corner of the
-// square - the building block for the tab silhouette's convex
-// shoulders and concave feet.
-func fillArcWedge(p *core.Painter, x, y, r core.Unit, centerRight, centerBottom bool, s style.CellStyle) {
-	rf := float64(r)
-	for i := core.Unit(0); i < r; i++ {
+// fillArcWedge fills the part of an rX x rY box lying OUTSIDE the
+// quarter ellipse inscribed in it and centered on the chosen corner -
+// the building block for the tab silhouette's convex shoulders and
+// concave feet. The horizontal radius (rX) comes from the cell width
+// and the vertical radius (rY) from the row height, so the curve keeps
+// its shape when the row denomination stretches the tab. (The pixel
+// backend's DrawArcWedge draws the same ellipse antialiased; this is the
+// scanline fallback.)
+func fillArcWedge(p *core.Painter, x, y, rX, rY core.Unit, centerRight, centerBottom bool, s style.CellStyle) {
+	rxf, ryf := float64(rX), float64(rY)
+	for i := core.Unit(0); i < rY; i++ {
 		var row core.Unit
 		if centerBottom {
 			row = y + i // rows farthest from the center first
 		} else {
-			row = y + r - 1 - i
+			row = y + rY - 1 - i
 		}
-		dy := rf - float64(i) - 0.5
-		w := rf - math.Sqrt(rf*rf-dy*dy)
+		dy := ryf - float64(i) - 0.5
+		frac := 1 - dy*dy/(ryf*ryf)
+		if frac < 0 {
+			frac = 0
+		}
+		w := rxf - rxf*math.Sqrt(frac)
 		wu := core.Unit(w + 0.5)
 		if wu <= 0 {
 			continue
 		}
-		if wu > r {
-			wu = r
+		if wu > rX {
+			wu = rX
 		}
 		sx := x
 		if !centerRight {
-			sx = x + r - wu
+			sx = x + rX - wu
 		}
 		p.FillRect(core.UnitRect{X: sx, Y: row, Width: wu, Height: 1}, ' ', s)
 	}
 }
 
-// strokeArc traces the quarter-circle boundary of the wedge painted
-// by fillArcWedge with a hairline, spanning each scanline from the
-// boundary's position at the row's far edge to its position at the
-// near edge so the drawn curve stays connected.
-func strokeArc(p *core.Painter, x, y, r core.Unit, centerRight, centerBottom bool, s style.CellStyle, hair core.Unit) {
-	rf := float64(r)
-	for i := core.Unit(0); i < r; i++ {
+// strokeArc traces the quarter-ellipse boundary of the wedge painted by
+// fillArcWedge with a hairline, spanning each scanline from the
+// boundary's position at the row's far edge to its position at the near
+// edge so the drawn curve stays connected.
+func strokeArc(p *core.Painter, x, y, rX, rY core.Unit, centerRight, centerBottom bool, s style.CellStyle, hair core.Unit) {
+	rxf, ryf := float64(rX), float64(rY)
+	for i := core.Unit(0); i < rY; i++ {
 		var row core.Unit
 		if centerBottom {
 			row = y + i // rows farthest from the center first
 		} else {
-			row = y + r - 1 - i
+			row = y + rY - 1 - i
 		}
-		dyFar := rf - float64(i)
+		dyFar := ryf - float64(i)
 		dyNear := dyFar - 1
 		if dyNear < 0 {
 			dyNear = 0
 		}
-		w0 := core.Unit(rf - math.Sqrt(rf*rf-dyNear*dyNear))          // floor
-		w1 := core.Unit(rf - math.Sqrt(rf*rf-dyFar*dyFar) + 0.999999) // ceil
+		fFar := 1 - dyFar*dyFar/(ryf*ryf)
+		if fFar < 0 {
+			fFar = 0
+		}
+		fNear := 1 - dyNear*dyNear/(ryf*ryf)
+		if fNear < 0 {
+			fNear = 0
+		}
+		w0 := core.Unit(rxf - rxf*math.Sqrt(fNear))           // floor
+		w1 := core.Unit(rxf - rxf*math.Sqrt(fFar) + 0.999999) // ceil
 		if w1-w0 < hair {
 			w1 = w0 + hair
 		}
-		if w1 > r {
-			w1 = r
-			if w0 > r-hair {
-				w0 = r - hair
+		if w1 > rX {
+			w1 = rX
+			if w0 > rX-hair {
+				w0 = rX - hair
 			}
 		}
 		if w0 < 0 {
@@ -636,10 +652,28 @@ func strokeArc(p *core.Painter, x, y, r core.Unit, centerRight, centerBottom boo
 		}
 		sx := x + w0
 		if !centerRight {
-			sx = x + r - w1
+			sx = x + rX - w1
 		}
 		p.FillRect(core.UnitRect{X: sx, Y: row, Width: w1 - w0, Height: 1}, ' ', s)
 	}
+}
+
+// tabSilhouetteRadii returns the horizontal and vertical radii of the
+// selected tab's concave feet (Small) and convex shoulders (Big). The
+// radius is split by axis so a tab keeps its shape when the row
+// denomination stretches it: the HORIZONTAL radii come from the cell
+// width (the foot flares within the slash cell, the shoulder is a column
+// and a quarter) and the VERTICAL radii from the row height, with the
+// shoulder taking the rest of the row so the two arcs always meet - no
+// straight edge stranded between a cell-width-constant curve top and
+// bottom. At the base 8x16 denomination the two axes coincide (a
+// circle); a taller row turns the corners into taller ellipses.
+func tabSilhouetteRadii(cw, rowH core.Unit) (rSmallX, rBigX, rSmallY, rBigY core.Unit) {
+	rSmallX = cw * 3 / 4
+	rBigX = cw + cw/4
+	rSmallY = rowH * 3 / 8
+	rBigY = rowH - rSmallY
+	return
 }
 
 // paintTabShape shapes the selected tab on pixel surfaces and draws
@@ -679,38 +713,42 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 			p.FillRect(core.UnitRect{X: x0, Y: y, Width: x1 - x0, Height: hairH}, ' ', line)
 		}
 	}
-	rSmall := cw * 3 / 4
-	rBig := cw + cw/4
+	// The curve radius is split by axis so a tab keeps its shape under
+	// re-denomination: the HORIZONTAL radii come from the cell width (the
+	// foot flares within the slash cell, the shoulder is a column and a
+	// quarter), the VERTICAL radii from the row height, so the silhouette
+	// keeps its shape under re-denomination (see tabSilhouetteRadii).
+	rSmallX, rBigX, rSmallY, rBigY := tabSilhouetteRadii(cw, rowH)
 	bodyLeft := leadX + cw
 	bodyRight := trailX
 	hasTrail := trailX > bodyLeft
 	if !hasTrail {
 		bodyRight = endX
 	}
-	if bodyRight-bodyLeft < rBig*2 {
-		rBig = (bodyRight - bodyLeft) / 2
+	if bodyRight-bodyLeft < rBigX*2 {
+		rBigX = (bodyRight - bodyLeft) / 2
 	}
-	if leadX < 0 || rBig <= 0 || rSmall <= 0 || bodyRight <= bodyLeft {
+	if leadX < 0 || rBigX <= 0 || rSmallX <= 0 || rBigY <= 0 || rSmallY <= 0 || bodyRight <= bodyLeft {
 		hline(0, stripW, barEdgeY)
 		return
 	}
-	footY := rowY + rowH - rSmall // slash cells flare at the bar edge
+	footY := rowY + rowH - rSmallY // slash cells flare at the bar edge
 	shoY := rowY
 	if !top {
 		footY = rowY
-		shoY = rowY + rowH - rBig
+		shoY = rowY + rowH - rBigY
 	}
 	// One quarter arc of the silhouette: the wedge outside the arc in
 	// the given fill color, edged along the arc in the line color -
 	// antialiased by the backend when it can, scanline fills
 	// otherwise.
-	arc := func(x, y, r core.Unit, cRight, cBottom bool, fill style.CellStyle) {
-		box := core.UnitRect{X: x, Y: y, Width: r, Height: r}
+	arc := func(x, y, rX, rY core.Unit, cRight, cBottom bool, fill style.CellStyle) {
+		box := core.UnitRect{X: x, Y: y, Width: rX, Height: rY}
 		if p.DrawArcWedge(box, cRight, cBottom, 1, fill.WithFg(bar.Fg)) {
 			return
 		}
-		fillArcWedge(p, x, y, r, cRight, cBottom, fill)
-		strokeArc(p, x, y, r, cRight, cBottom, line, hairW)
+		fillArcWedge(p, x, y, rX, rY, cRight, cBottom, fill)
+		strokeArc(p, x, y, rX, rY, cRight, cBottom, line, hairW)
 	}
 	// Concave feet in the slash cells, convex shoulders carving the
 	// body's outer corners, joined by the straight edge segments into
@@ -719,32 +757,32 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	// the bar side of the arc while the shoulders' runs on the tab
 	// side, and the offset makes the two land in the same column at
 	// the tangent point.
-	hline(0, leadX+cw-rSmall+hairW, barEdgeY)
-	arc(leadX+cw-rSmall+hairW, footY, rSmall, false, !top, tab)
-	arc(bodyLeft, shoY, rBig, true, top, bar)
+	hline(0, leadX+cw-rSmallX+hairW, barEdgeY)
+	arc(leadX+cw-rSmallX+hairW, footY, rSmallX, rSmallY, false, !top, tab)
+	arc(bodyLeft, shoY, rBigX, rBigY, true, top, bar)
 	// Straight vertical run on the tab's side where the two radii
 	// don't span the full row height.
-	gapLen := rowH - rSmall - rBig
-	gapY := rowY + rSmall
+	gapLen := rowH - rSmallY - rBigY
+	gapY := rowY + rSmallY
 	if top {
-		gapY = rowY + rBig
+		gapY = rowY + rBigY
 	}
 	if gapLen > 0 {
 		p.FillRect(core.UnitRect{X: bodyLeft, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
 	}
 	if hasTrail {
-		hline(bodyLeft+rBig, bodyRight-rBig, tabEdgeY)
-		arc(bodyRight-rBig, shoY, rBig, false, top, bar)
-		arc(bodyRight-hairW, footY, rSmall, true, !top, tab)
+		hline(bodyLeft+rBigX, bodyRight-rBigX, tabEdgeY)
+		arc(bodyRight-rBigX, shoY, rBigX, rBigY, false, top, bar)
+		arc(bodyRight-hairW, footY, rSmallX, rSmallY, true, !top, tab)
 		if gapLen > 0 {
 			p.FillRect(core.UnitRect{X: bodyRight - hairW, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
 		}
-		hline(bodyRight+rSmall-hairW, stripW, barEdgeY)
+		hline(bodyRight+rSmallX-hairW, stripW, barEdgeY)
 		return
 	}
 	// Partial tab cut off before its trailing slash: sudden color
 	// transition, with the edge line dropping straight down the cut.
-	hline(bodyLeft+rBig, endX, tabEdgeY)
+	hline(bodyLeft+rBigX, endX, tabEdgeY)
 	p.FillRect(core.UnitRect{X: endX - hairW, Y: rowY, Width: hairW, Height: rowH}, ' ', line)
 	hline(endX, stripW, barEdgeY)
 }
