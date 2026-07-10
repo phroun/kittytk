@@ -225,34 +225,35 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	ppu := p.PxPerUnitF()
 	baseCW, baseCH := t.cellDims()
 
-	// Cache the mouse-hit scale factors: the outer system converts a click
-	// at the widget's snapped device-pixel rate, but cells render at ppu, so
-	// scaling a click's unit coordinate by (snapped px-rate / ppu) puts it
-	// back in the terminal's own render-unit space - otherwise hits drift
-	// the further in the pointer is. 1 at integer ppu (default 12pt).
+	// The terminal's native-pixel viewport: the widget's FULL device-pixel
+	// extent (snapped, as the outer system places it). Everything inside is
+	// laid out in these pixels. Using bounds.Width*ppu instead would fall
+	// short of the widget edge at fractional ppu, leaving a strip unpainted.
+	vpFullWpx := p.UnitSpanPxX(0, bounds.Width)
+	vpFullHpx := p.UnitSpanPxY(0, bounds.Height)
+
+	// Mouse-hit scale: outer clicks arrive at the snapped rate, cells render
+	// at ppu, so scale a click by (snapped px-rate / ppu) into render-unit
+	// space or hits drift the deeper in the pointer is. 1 at integer ppu.
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 	if bounds.Width > 0 && ppu > 0 {
-		t.gfx.hitKX = float64(p.UnitSpanPxX(0, bounds.Width)) / (float64(bounds.Width) * ppu)
+		t.gfx.hitKX = float64(vpFullWpx) / (float64(bounds.Width) * ppu)
 	}
 	if bounds.Height > 0 && ppu > 0 {
-		t.gfx.hitKY = float64(p.UnitSpanPxY(0, bounds.Height)) / (float64(bounds.Height) * ppu)
+		t.gfx.hitKY = float64(vpFullHpx) / (float64(bounds.Height) * ppu)
 	}
 
-	// Size the terminal to the whole cells that actually fit its native
-	// pixel viewport. updateTerminalSize divides in units (the unsnapped
-	// rate) and undercounts: the widget's device-pixel extent uses the
-	// snapped cell size while cells render at ppu, so a strip of columns
-	// (and a row) went unused. Deriving cols/rows straight from the pixel
-	// viewport and the pixel cell size fills the space exactly.
+	// Content pixel width (viewport minus the scrollbar lane) drives how
+	// many whole cells fit; size the terminal to that so the grid fills its
+	// space (updateTerminalSize's unit division undercounts at fractional
+	// ppu). The yellow scrollback line and text span this content width.
+	contentWpx := vpFullWpx
+	if t.gfxInputActive() {
+		contentWpx = p.UnitSpanPxX(0, bounds.Width-gfxScrollbarLane)
+	}
 	if baseCW > 0 && baseCH > 0 {
-		wUnits := bounds.Width
-		if t.gfxInputActive() {
-			wUnits -= gfxScrollbarLane // reserve the scrollbar lane
-		}
-		vpWpx := p.UnitSpanPxX(0, wUnits)
-		vpHpx := p.UnitSpanPxY(0, bounds.Height)
-		fitCols := int(float64(vpWpx) / (float64(baseCW) * ppu))
-		fitRows := int(float64(vpHpx) / (float64(baseCH) * ppu))
+		fitCols := int(float64(contentWpx) / (float64(baseCW) * ppu))
+		fitRows := int(float64(vpFullHpx) / (float64(baseCH) * ppu))
 		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
 			t.cols, t.rows = fitCols, fitRows
 			t.terminal.Resize(fitCols, fitRows)
@@ -278,7 +279,10 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	chh := float64(baseCH) * vertScale // scaled cell height in units
 
 	// Whole-trinket background.
-	fillPixels(p, 0, 0, float64(bounds.Width), float64(bounds.Height), ppu, scheme.Background(isDark))
+	// Backdrop covers the whole device-pixel viewport (the scrollbar paints
+	// over its lane afterward), so no strip of the widget shows through at
+	// fractional ppu.
+	p.FillRectPixels(0, 0, 0, 0, vpFullWpx, vpFullHpx, pcStyle(scheme.Background(isDark)))
 
 	// Screen crop clip (crop values in sprite units).
 	widthCrop, heightCrop := buf.GetScreenCrop()
@@ -430,7 +434,10 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	if boundaryRow := buf.GetScrollbackBoundaryVisibleRow(); boundaryRow > 0 {
 		rowY := float64(boundaryRow) * chh
 		yellow := purfecterm.TrueColor(255, 200, 0)
-		for x := 0.0; x < float64(bounds.Width); x += 8 {
+		// Dash across the full content width (in render-units), so the line
+		// reaches the rightmost column instead of stopping at bounds.Width*ppu.
+		endU := float64(contentWpx) / ppu
+		for x := 0.0; x < endU; x += 8 {
 			fillPixels(p, x, rowY, x+4, rowY+1, ppu, yellow)
 		}
 	}
