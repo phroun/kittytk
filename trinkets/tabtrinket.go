@@ -702,6 +702,16 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	if hairH < 1 {
 		hairH = 1
 	}
+	// The arc strokes are a device-pixel weight (pxLen of a one-unit
+	// strokeW); draw the straight edge lines at the SAME pixel weight so the
+	// flat top/bottom don't come out thinner than the curves where the
+	// unit-height fill's cell snapping rounds differently (visible as a thin
+	// top line at fractional / re-denominated sizes). Cell surfaces fall
+	// back to the whole-unit fill.
+	edgePxH := p.UnitsToPx(hairH)
+	if edgePxH < 1 {
+		edgePxH = 1
+	}
 	barEdgeY := rowY + rowH - hairH // content side of a top bar
 	tabEdgeY := rowY                // selected tab's outer side
 	if !top {
@@ -709,7 +719,10 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 		tabEdgeY = rowY + rowH - hairH
 	}
 	hline := func(x0, x1, y core.Unit) {
-		if x1 > x0 {
+		if x1 <= x0 {
+			return
+		}
+		if !p.FillRectPixels(x0, y, 0, 0, p.UnitSpanPxX(x0, x1), edgePxH, line) {
 			p.FillRect(core.UnitRect{X: x0, Y: y, Width: x1 - x0, Height: hairH}, ' ', line)
 		}
 	}
