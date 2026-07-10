@@ -82,6 +82,12 @@ func init() {
 					WithInt("cols", cols).
 					WithInt("rows", rows))
 			})
+			// The size is emitted once, when the grid first fits its paint.
+			// A client that subscribes after that (the build reply must round
+			// -trip before it can) would miss it and leave its PTY at the
+			// default, mis-wrapping the shell's prompt. Re-emit the current
+			// size on subscribe so a late subscriber still gets it.
+			ctx.OnSubscribe(id, "resize", func() { t.emitResize(t.cols, t.rows) })
 		},
 	)
 }

@@ -30,7 +30,8 @@ type BindContext struct {
 
 	mu       sync.Mutex
 	actions  map[uint64]string
-	subs     map[uint64]map[string]bool // trinketID -> event types ("" = all; ID 0 = all trinkets)
+	subs     map[uint64]map[string]bool   // trinketID -> event types ("" = all; ID 0 = all trinkets)
+	onSub    map[uint64]map[string][]func() // trinketID -> event type -> on-subscribe hooks
 	suppress int
 	stash    map[string]any
 }
@@ -91,6 +92,25 @@ func (c *BindContext) subscribedLocked(ev *Event) bool {
 	return false
 }
 
+// OnSubscribe registers fn to run each time a client subscribes to
+// (trinketID, eventType). It lets a trinket push its current state to a
+// late-subscribing client - e.g. a terminal re-emitting its grid size, so a
+// client whose subscription arrives after the one-shot paint-time emit still
+// learns the real size (its PTY would otherwise stay at the default and the
+// shell would mis-wrap its prompt). fn runs after the subscription is
+// recorded and without c.mu held, so it may call EmitEvent.
+func (c *BindContext) OnSubscribe(trinketID uint64, eventType string, fn func()) {
+	c.mu.Lock()
+	if c.onSub == nil {
+		c.onSub = make(map[uint64]map[string][]func())
+	}
+	if c.onSub[trinketID] == nil {
+		c.onSub[trinketID] = make(map[string][]func())
+	}
+	c.onSub[trinketID][eventType] = append(c.onSub[trinketID][eventType], fn)
+	c.mu.Unlock()
+}
+
 // Subscribe opens event flow for (trinketID, eventType). trinketID 0
 // means all trinkets; eventType "" means all types.
 func (c *BindContext) Subscribe(trinketID uint64, eventType string) {
@@ -102,7 +122,21 @@ func (c *BindContext) Subscribe(trinketID uint64, eventType string) {
 		c.subs[trinketID] = make(map[string]bool)
 	}
 	c.subs[trinketID][eventType] = true
+	// Collect on-subscribe hooks for this exact type (and, when a specific
+	// type is named, the type-agnostic "" registrations too).
+	var fire []func()
+	if c.onSub != nil {
+		if m, ok := c.onSub[trinketID]; ok {
+			fire = append(fire, m[eventType]...)
+			if eventType != "" {
+				fire = append(fire, m[""]...)
+			}
+		}
+	}
 	c.mu.Unlock()
+	for _, fn := range fire {
+		fn()
+	}
 }
 
 // Unsubscribe removes subscriptions. eventType "" removes all of the

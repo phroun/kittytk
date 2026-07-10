@@ -151,14 +151,12 @@ kt_pty *kt_pty_attach(kt_conn *c, uint64_t term_id, const char *shell) {
     pid_t pid = forkpty(&master, NULL, NULL, &ws);
     if (pid < 0) return NULL;
     if (pid == 0) {
-        /* Child: advertise a modern terminal and exec the shell as a login
-         * shell (argv[0] prefixed with '-'). */
+        /* Child: advertise a modern terminal and exec the shell. argv[0] is
+         * the shell path (a plain interactive shell, not a login shell),
+         * matching the previous server-side spawn. */
         setenv("TERM", "xterm-256color", 1);
         setenv("COLORTERM", "truecolor", 1);
-        const char *base = strrchr(shell, '/');
-        char arg0[256];
-        snprintf(arg0, sizeof arg0, "-%s", base ? base + 1 : shell);
-        execl(shell, arg0, (char *)NULL);
+        execl(shell, shell, (char *)NULL);
         _exit(127);
     }
 
