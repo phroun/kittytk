@@ -146,3 +146,35 @@ func TestMenuBarItemHover(t *testing.T) {
 		t.Errorf("hoverIndex = %d after leaving the bar, want -1", m.hoverIndex)
 	}
 }
+
+// With a dropdown already open, hovering (button up) over a different
+// top-level menu drops that one down instead of merely highlighting it.
+func TestMenuBarHoverSwitchesOpenMenu(t *testing.T) {
+	m := NewMenuBar()
+	m.SetBounds(core.UnitRect{Width: 400, Height: 30})
+	file := NewMenu("File")
+	file.AddItem(NewMenuItem("New"))
+	edit := NewMenu("Edit")
+	edit.AddItem(NewMenuItem("Copy"))
+	m.AddMenu(file)
+	m.AddMenu(edit)
+
+	m.OpenMenu(0)
+	if m.ActiveMenu() != file {
+		t.Fatalf("precondition: File menu should be open")
+	}
+
+	// Hover (no button held) over the Edit title.
+	editX := m.leftInset() + m.menuTitleWidth("File") + m.menuTitleWidth("Edit")/2
+	m.HandleMouseMove(core.MouseMoveEvent{X: editX, Y: 0})
+	if m.ActiveMenu() != edit {
+		t.Errorf("hovering Edit with File open should drop down Edit, got %v", m.ActiveMenu())
+	}
+
+	// Hovering back over the same open menu doesn't churn it closed/reopened.
+	fileX := m.leftInset() + m.menuTitleWidth("File")/2
+	m.HandleMouseMove(core.MouseMoveEvent{X: fileX, Y: 0})
+	if m.ActiveMenu() != file {
+		t.Errorf("hovering File should switch back to File, got %v", m.ActiveMenu())
+	}
+}

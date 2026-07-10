@@ -2972,6 +2972,14 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Even when not dragging, forward to menu for hover scroll handling
 	if !m.mouseDown {
+		// A dropdown is already open, so hovering a different top-level menu
+		// drops it down instead of merely highlighting it - the same
+		// menu-to-menu switch the drag path performs, but without needing the
+		// button held. (Only graphical surfaces deliver bare hover moves.)
+		if m.hoverIndex >= 0 && m.hoverIndex < len(m.menus) && m.menus[m.hoverIndex] != m.activeMenu {
+			m.OpenMenu(m.hoverIndex)
+			return true
+		}
 		// Just forward to menu for hover-based scrolling
 		m.activeMenu.HandleMouseMove(event)
 		return false // Don't consume - we're not in drag mode
