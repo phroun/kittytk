@@ -30,8 +30,10 @@ endif
 .PHONY: all clean test
 all: demoapp counter
 
-demoapp: demoapp.c kittytk.c scripts.c kittytk.h scripts.h
-	$(CC) $(CFLAGS) -o $@ demoapp.c kittytk.c scripts.c $(LDLIBS)
+# demoapp bridges its terminals to real client-side PTYs (ptydriver.c),
+# which needs forkpty from libutil on Linux (harmless elsewhere).
+demoapp: demoapp.c kittytk.c scripts.c ptydriver.c kittytk.h scripts.h ptydriver.h
+	$(CC) $(CFLAGS) -o $@ demoapp.c kittytk.c scripts.c ptydriver.c $(LDLIBS) -lutil
 
 # The smallest useful app: a label + a button that increments it.
 counter: counter.c kittytk.c kittytk.h

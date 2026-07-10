@@ -12,6 +12,7 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #include "kittytk.h"
+#include "ptydriver.h"
 #include "scripts.h"
 
 #include <pthread.h>
@@ -105,7 +106,14 @@ static void open_terminal_window(void *ud) {
     char *s = demo_terminal_script(n);
     kt_ui *ui = kt_build(a->conn, s);
     free(s);
-    if (ui) kt_ui_free(ui);  /* Close button wiring omitted in this port */
+    if (ui) {
+        /* The child process runs client-side: spawn a PTY and bridge it to
+         * the terminal (feed in, input/resize out). The driver lives for the
+         * process lifetime in this port (Close-button wiring omitted). */
+        uint64_t term = kt_ui_id(ui, "dterm");
+        if (term) kt_pty_attach(a->conn, term, NULL);
+        kt_ui_free(ui);
+    }
 }
 
 static void open_secondary(App *a);
@@ -177,7 +185,11 @@ static void open_secondary(App *a) {
     free(s);
     /* The secondary runs on its own connection until its window closes;
      * for this port we let it live for the process lifetime. */
-    if (ui) kt_ui_free(ui);
+    if (ui) {
+        uint64_t term = kt_ui_id(ui, "term");
+        if (term) kt_pty_attach(c, term, NULL);
+        kt_ui_free(ui);
+    }
 }
 
 /* command handler table entry */
