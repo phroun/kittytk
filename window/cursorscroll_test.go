@@ -56,3 +56,55 @@ func TestCursorShapeFollowsScroll(t *testing.T) {
 		t.Errorf("scrolled: cursor = %v, want I-beam (offset must be added)", got)
 	}
 }
+
+// plainContainer is a minimal container whose ChildAt returns its single
+// child (no special coordinate transform).
+type plainContainer struct {
+	*core.TrinketBase
+	child core.Trinket
+}
+
+func (m *plainContainer) Children() []core.Trinket            { return []core.Trinket{m.child} }
+func (m *plainContainer) AddChild(core.Trinket)               {}
+func (m *plainContainer) RemoveChild(core.Trinket)            {}
+func (m *plainContainer) ChildAt(core.UnitPoint) core.Trinket { return m.child }
+func (m *plainContainer) Layout()                             {}
+func (m *plainContainer) LayoutManager() core.LayoutManager   { return nil }
+func (m *plainContainer) SetLayoutManager(core.LayoutManager) {}
+
+// shaperMock is a container that answers the cursor query itself
+// (core.CursorShaper), like a nested window or MDI pane.
+type shaperMock struct {
+	*core.TrinketBase
+	gotX, gotY core.Unit
+	called     bool
+}
+
+func (m *shaperMock) CursorShapeAt(x, y core.Unit) core.CursorShape {
+	m.called = true
+	m.gotX, m.gotY = x, y
+	return core.CursorText
+}
+
+// When the descent reaches a container that routes events specially
+// (a nested window, an MDI pane), it must delegate the cursor query to
+// that container's own CursorShapeAt with the child-local coordinate,
+// rather than continue the generic descent (which can't reproduce the
+// window/pane coordinate transform).
+func TestCursorShapeDelegatesToShaper(t *testing.T) {
+	sh := &shaperMock{TrinketBase: core.NewTrinketBase()}
+	sh.SetBounds(core.UnitRect{X: 20, Y: 10, Width: 100, Height: 50})
+	root := &plainContainer{TrinketBase: core.NewTrinketBase(), child: sh}
+
+	got := cursorShapeAtTrinket(root, core.UnitPoint{X: 30, Y: 14})
+	if !sh.called {
+		t.Fatal("descent did not delegate to the CursorShaper child")
+	}
+	if got != core.CursorText {
+		t.Errorf("cursor = %v, want the shaper's I-beam", got)
+	}
+	// The shaper received the point in ITS local space (minus its bounds).
+	if sh.gotX != 10 || sh.gotY != 4 {
+		t.Errorf("shaper got (%d,%d), want (10,4) (child-local)", sh.gotX, sh.gotY)
+	}
+}

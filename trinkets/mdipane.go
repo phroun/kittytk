@@ -1045,6 +1045,39 @@ func (m *MDIPane) ChildAt(pos core.UnitPoint) core.Trinket {
 	return nil
 }
 
+// CursorShapeAt implements core.CursorShaper: resolve the mouse cursor
+// through the SAME coordinate transform the MDI pane routes events with
+// (outer -> interior, then the topmost child window's displayBounds), so
+// a text field's I-beam inside an MDI child lands where clicks do. The
+// generic ChildAt+Bounds cursor descent can't reproduce this - it would
+// subtract the window's raw Bounds off the un-toInterior'd point.
+func (m *MDIPane) CursorShapeAt(localX, localY core.Unit) core.CursorShape {
+	ix, iy := m.toInterior(localX, localY)
+	pos := core.UnitPoint{X: ix, Y: iy}
+
+	m.mu.RLock()
+	windows := m.windows
+	content := m.content
+	m.mu.RUnlock()
+
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		if !win.IsVisible() || win.IsMinimized() {
+			continue
+		}
+		b := m.displayBounds(win)
+		if b.Contains(pos) {
+			return win.CursorShapeAt(pos.X-b.X, pos.Y-b.Y)
+		}
+	}
+	if content != nil && content.Bounds().Contains(pos) {
+		if cp, ok := content.(core.CursorProvider); ok {
+			return cp.CursorShape()
+		}
+	}
+	return core.CursorDefault
+}
+
 // Layout arranges children within the MDI pane.
 // This also triggers layout on all child windows since font changes
 // propagate via Layout calls from parent containers.
