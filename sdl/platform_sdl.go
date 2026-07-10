@@ -390,6 +390,22 @@ func (p *Platform) pumpEvents() bool {
 			}
 			text := e.GetText()
 			for _, ch := range text {
+				// On macOS the Option key composes text (Option+a -> "å"),
+				// so meta shortcuts arrive here as accented characters rather
+				// than as KEYDOWN modifier combos. Decode them back to their
+				// "M-key" notation - matching the TUI backend - and dispatch
+				// as a key event instead of typing the composed character.
+				if runtime.GOOS == "darwin" {
+					if decoded, ok := decodeMacOSOptionChar(ch); ok {
+						mods, name := core.ParseKeyModifiers(decoded)
+						t := ""
+						if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
+							t = name
+						}
+						s.handler.Event(core.KeyPressEvent{Key: decoded, Modifiers: mods, Text: t})
+						continue
+					}
+				}
 				s.handler.Event(core.KeyPressEvent{
 					Key:  string(ch),
 					Text: string(ch),
@@ -668,6 +684,14 @@ func translateKey(sym sdl2.Keysym) string {
 			}
 			return prefix + string(ch)
 		case alt:
+			// On macOS a bare Option+printable composes a character that
+			// SDL also delivers via TextInput, where we decode it back to
+			// M-key (see the TextInputEvent handler). Defer to that path so
+			// the shortcut fires exactly once; elsewhere Alt is a plain Meta
+			// modifier and TextInput carries nothing, so emit M-key here.
+			if runtime.GOOS == "darwin" {
+				return ""
+			}
 			return "M-" + string(ch)
 		case gui:
 			// Command-modified printables never arrive via TextInput;
