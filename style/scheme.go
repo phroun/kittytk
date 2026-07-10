@@ -44,9 +44,9 @@ type Scheme struct {
 	FocusBG        *CellStyle // normal cyan (BG only, used as default for many)
 	FocusFG        *CellStyle // normal black (FG only, used as default for many)
 	FocusTextFG    *CellStyle // bright cyan (FG only, used as default for many)
-	HoverBG        *CellStyle // bright cyan (BG only, used as default for many Hovered* values)
-	HoverFG        *CellStyle // black (FG only, used as default for many Hovered* values)
-	HoverTextFG    *CellStyle // bright white (FG only, hover analog of FocusTextFG for text-only highlights)
+	HoverBG        *CellStyle // purple (BG only, used as default for many Hovered* values)
+	HoverFG        *CellStyle // bright yellow (FG only, used as default for many Hovered* values)
+	HoverTextFG    *CellStyle // bright yellow (FG only, hover analog of FocusTextFG for text-only highlights)
 	DisabledTextFG *CellStyle // FG only
 	Selection      *CellStyle // bright white on blue
 	Normal         *CellStyle // nil = WindowFG on WindowBG
@@ -351,9 +351,9 @@ func DefaultScheme() *Scheme {
 		FocusBG:        ptr(DefaultStyle().WithBg(ColorCyan)),
 		FocusFG:        ptr(DefaultStyle().WithFg(ColorBlack)),
 		FocusTextFG:    ptr(DefaultStyle().WithFg(ColorBrightCyan)),
-		HoverBG:        ptr(DefaultStyle().WithBg(ColorBrightCyan)),
-		HoverFG:        ptr(DefaultStyle().WithFg(ColorBlack)),
-		HoverTextFG:    ptr(DefaultStyle().WithFg(ColorBrightWhite)),
+		HoverBG:        ptr(DefaultStyle().WithBg(ColorMagenta)),
+		HoverFG:        ptr(DefaultStyle().WithFg(ColorBrightYellow)),
+		HoverTextFG:    ptr(DefaultStyle().WithFg(ColorBrightYellow)),
 		DisabledTextFG: ptr(DefaultStyle().WithFg(ColorBrightBlack)),
 		Selection:      ptr(DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorBlue)),
 		Normal:         nil, // nil = WindowFG on WindowBG

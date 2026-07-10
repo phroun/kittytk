@@ -30,6 +30,9 @@ type DockRow struct {
 	// Keyboard navigation
 	selectedIndex int // Currently selected entry when focused (-1 = none)
 
+	// Pointer hover
+	hoverIndex int // Entry currently under the pointer (-1 = none)
+
 	// Focus transfer callback (called when Tab falls off either end)
 	onFocusMenuBar func()
 }
@@ -39,6 +42,7 @@ func NewDockRow() *DockRow {
 	d := &DockRow{
 		entryWidth:    16, // Default 16 chars per entry
 		selectedIndex: -1,
+		hoverIndex:    -1,
 	}
 	d.TrinketBase = *core.NewTrinketBase()
 	d.Init(d)
@@ -202,9 +206,8 @@ func (d *DockRow) Paint(p *core.Painter) {
 	focused := d.HasFocus()
 	scheme := d.GetScheme()
 
-	// Dock styles
+	// Dock background style (item resting style)
 	dockStyle := scheme.GetDockItem()
-	selectedStyle := scheme.GetFocusedDockItem()
 
 	// Draw background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', dockStyle)
@@ -224,11 +227,8 @@ func (d *DockRow) Paint(p *core.Painter) {
 		x := core.Unit(col) * entryWidthUnits
 		y := core.Unit(row) * metrics.CellHeight
 
-		// Choose style based on selection
-		entryStyle := dockStyle
-		if focused && i == d.selectedIndex {
-			entryStyle = selectedStyle
-		}
+		// Choose style based on state; focus takes priority over hover.
+		entryStyle := scheme.GetDockItemState(focused && i == d.selectedIndex, i == d.hoverIndex)
 
 		// Draw entry background (button-like)
 		entryRect := core.UnitRect{
@@ -417,5 +417,44 @@ func (d *DockRow) HandleMousePress(event core.MousePressEvent) bool {
 		return true
 	}
 
+	return false
+}
+
+// entryAt maps a pointer position to the entry index under it, or -1 when
+// the pointer is over dock background or a dead slot past the last column.
+func (d *DockRow) entryAt(x, y core.Unit) int {
+	if len(d.entries) == 0 {
+		return -1
+	}
+	metrics := d.EffectiveCellMetrics()
+	bounds := d.Bounds()
+	if x < 0 || y < 0 || x >= bounds.Width || y >= bounds.Height {
+		return -1
+	}
+	entryWidthUnits := core.Unit(d.entryWidth) * metrics.CellWidth
+	entriesPerRow := int(bounds.Width / entryWidthUnits)
+	if entriesPerRow < 1 {
+		entriesPerRow = 1
+	}
+	row := int(y / metrics.CellHeight)
+	col := int(x / entryWidthUnits)
+	if col >= entriesPerRow {
+		return -1 // dead space past the last column of a row
+	}
+	index := row*entriesPerRow + col
+	if index < 0 || index >= len(d.entries) {
+		return -1
+	}
+	return index
+}
+
+// HandleMouseMove tracks which entry the pointer is hovering over so the
+// dock can highlight it.
+func (d *DockRow) HandleMouseMove(event core.MouseMoveEvent) bool {
+	idx := d.entryAt(event.X, event.Y)
+	if idx != d.hoverIndex {
+		d.hoverIndex = idx
+		d.Update()
+	}
 	return false
 }

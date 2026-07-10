@@ -1585,6 +1585,7 @@ type MenuBar struct {
 	menus        []*Menu
 	currentIndex int
 	activeMenu   *Menu
+	hoverIndex   int // Top-level item under the pointer (-1 = none)
 
 	// Appearance
 	showShortcuts bool
@@ -1642,6 +1643,7 @@ func (m *MenuBar) SetRequestUpdate(fn func()) {
 func NewMenuBar() *MenuBar {
 	m := &MenuBar{
 		currentIndex:  -1,
+		hoverIndex:    -1,
 		showShortcuts: true,
 	}
 	m.TrinketBase = *core.NewTrinketBase()
@@ -2351,30 +2353,26 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			// Menu doesn't fit fully
 			remainingWidth := availableWidth - x
 
-			// Determine style for this menu
+			// Determine style for this menu. Selection (focus/active)
+			// takes priority over hover.
 			var s style.CellStyle
+			var accelStyle style.CellStyle
 			isSelected := i == m.currentIndex
 			if isSelected {
 				// Use Active style when dropdown is open with item selected,
 				// Focused style when dropdown not open or has no selection
 				if m.activeMenu != nil && m.activeMenu.currentIndex != -1 {
 					s = scheme.GetActiveMenuBarItem()
-				} else {
-					s = scheme.GetFocusedMenuBarItem()
-				}
-			} else {
-				s = menuBarStyle
-			}
-
-			// Calculate accelerator style for this menu
-			var accelStyle style.CellStyle
-			if isSelected {
-				if m.activeMenu != nil && m.activeMenu.currentIndex != -1 {
 					accelStyle = scheme.GetActiveMenuBarMeta()
 				} else {
+					s = scheme.GetFocusedMenuBarItem()
 					accelStyle = scheme.GetFocusedMenuBarMeta()
 				}
+			} else if i == m.hoverIndex {
+				s = scheme.GetHoveredMenuBar()
+				accelStyle = scheme.GetHoveredMenuBarMeta()
 			} else {
+				s = menuBarStyle
 				accelStyle = scheme.GetMenuBarMeta()
 			}
 			showAccel := m.ShouldShowAccelerator(menu)
@@ -2443,19 +2441,27 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			break
 		}
 
-		// Determine style
+		// Determine style. Selection (focus/active) takes priority over
+		// hover.
 		var s style.CellStyle
+		var accelStyle style.CellStyle
 		isSelected := i == m.currentIndex
 		if isSelected {
 			// Use Active style when dropdown is open with item selected,
 			// Focused style when dropdown not open or has no selection
 			if m.activeMenu != nil && m.activeMenu.currentIndex != -1 {
 				s = scheme.GetActiveMenuBarItem()
+				accelStyle = scheme.GetActiveMenuBarMeta()
 			} else {
 				s = scheme.GetFocusedMenuBarItem()
+				accelStyle = scheme.GetFocusedMenuBarMeta()
 			}
+		} else if i == m.hoverIndex {
+			s = scheme.GetHoveredMenuBar()
+			accelStyle = scheme.GetHoveredMenuBarMeta()
 		} else {
 			s = menuBarStyle
+			accelStyle = scheme.GetMenuBarMeta()
 		}
 
 		// Draw background
@@ -2468,17 +2474,6 @@ func (m *MenuBar) Paint(p *core.Painter) {
 
 		// Draw title with accelerator highlighting using font-aware rendering
 		textX := x + metrics.CellWidth // Start after leading space
-		// Accelerator style depends on whether menu is selected
-		var accelStyle style.CellStyle
-		if isSelected {
-			if m.activeMenu != nil && m.activeMenu.currentIndex != -1 {
-				accelStyle = scheme.GetActiveMenuBarMeta()
-			} else {
-				accelStyle = scheme.GetFocusedMenuBarMeta()
-			}
-		} else {
-			accelStyle = scheme.GetMenuBarMeta()
-		}
 		showAccel := m.ShouldShowAccelerator(menu)
 
 		// Draw text in parts: before accel, accel char, after accel
@@ -2836,9 +2831,45 @@ func (m *MenuBar) HandleFocusOut() {
 	m.Update()
 }
 
+// menuItemAt maps a pointer position to the top-level menu index under
+// it, or -1 when the pointer is not over a menu title within the bar row.
+func (m *MenuBar) menuItemAt(px, py core.Unit) int {
+	metrics := m.EffectiveCellMetrics()
+	if py < 0 || py >= metrics.CellHeight {
+		return -1
+	}
+	x := m.leftInset()
+	if m.scrollOffset > 0 {
+		x += m.ellipsisWidth()
+	}
+	for i := m.scrollOffset; i < len(m.menus); i++ {
+		menu := m.menus[i]
+		menuWidth := m.menuTitleWidth(menu.title)
+		// Fitts's law: the first item's hit area reaches the left edge
+		// (matches HandleMousePress) when nothing is scrolled off.
+		left := x
+		if i == m.scrollOffset && m.scrollOffset == 0 {
+			left = 0
+		}
+		if px >= left && px < x+menuWidth {
+			return i
+		}
+		x += menuWidth
+	}
+	return -1
+}
+
 // HandleMouseMove handles mouse movement during drag.
 func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
-	// If no active menu, nothing to do
+	// Track pointer hover over top-level items so the bar highlights the
+	// item under the cursor even when no dropdown is open. Selection
+	// (focus/active) still wins in Paint.
+	if hi := m.menuItemAt(event.X, event.Y); hi != m.hoverIndex {
+		m.hoverIndex = hi
+		m.Update()
+	}
+
+	// If no active menu, nothing more to do
 	if m.activeMenu == nil {
 		return false
 	}

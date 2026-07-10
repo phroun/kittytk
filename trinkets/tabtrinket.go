@@ -33,11 +33,12 @@ type TabTrinket struct {
 	scrollButtonPressed int  // 0=none, -1=left, 1=right
 
 	// Tab scrolling for vertical tabs
-	vertScrollOffset    int  // First visible tab index for vertical tabs
-	scrollbarDragging   bool // Whether scrollbar thumb is being dragged
-	scrollbarDragStart  int  // Row where drag started
-	scrollbarDragOffset int  // Scroll offset when drag started
-	vertTabDragging     bool // Whether dragging over vertical tabs (sweep selection)
+	vertScrollOffset      int  // First visible tab index for vertical tabs
+	scrollbarDragging     bool // Whether scrollbar thumb is being dragged
+	scrollbarThumbHovered bool // Whether the pointer is over the thumb
+	scrollbarDragStart    int  // Row where drag started
+	scrollbarDragOffset   int  // Scroll offset when drag started
+	vertTabDragging       bool // Whether dragging over vertical tabs (sweep selection)
 
 	// Smooth (pixel-surface) vertical tab scrollbar drag: the thumb
 	// follows the pointer at unit granularity while the first visible
@@ -1087,7 +1088,7 @@ func (t *TabTrinket) paintVertScrollbar(p *core.Painter, scrollbarX core.Unit) {
 	scheme := t.GetScheme()
 	metrics := t.EffectiveCellMetrics()
 	trackStyle := scheme.GetScrollbar()
-	thumbStyle := scheme.GetScrollbarThumb()
+	thumbStyle := scheme.GetScrollbarThumbState(t.scrollbarThumbHovered)
 
 	// Pixel surfaces: a single hairline stripe blended at 50%
 	// opacity behind, and one solid full-opacity rectangle for the
@@ -3377,8 +3378,41 @@ func (t *TabTrinket) HandleFocusOut() {
 	t.Update()
 }
 
+// overVertScrollbarThumb reports whether a widget-local point lies on the
+// vertical tab scrollbar thumb.
+func (t *TabTrinket) overVertScrollbarThumb(x, y core.Unit) bool {
+	if t.tabPosition != TabsLeft && t.tabPosition != TabsRight {
+		return false
+	}
+	if len(t.tabs) <= t.vertVisibleCount() {
+		return false
+	}
+	metrics := t.EffectiveCellMetrics()
+	scrollbarX, thumbStart, thumbHeight, _ := t.vertScrollbarGeometry()
+	if x < scrollbarX || x >= scrollbarX+metrics.CellWidth {
+		return false
+	}
+	bounds := t.Bounds()
+	if y < 0 || y >= bounds.Height {
+		return false
+	}
+	if core.FindSmoothPositioning(t.Self()) {
+		_, thumbU, posU := t.vertScrollbarUnits()
+		pos := float64(y)
+		return pos >= posU && pos < posU+thumbU
+	}
+	row := int(y / metrics.CellHeight)
+	return row >= thumbStart && row < thumbStart+thumbHeight
+}
+
 // HandleMouseMove handles mouse movement.
 func (t *TabTrinket) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Track scrollbar-thumb hover regardless of drag state.
+	if over := t.scrollbarDragging || t.overVertScrollbarThumb(event.X, event.Y); over != t.scrollbarThumbHovered {
+		t.scrollbarThumbHovered = over
+		t.Update()
+	}
+
 	// Handle vertical scrollbar thumb drag
 	if t.scrollbarDragging {
 		// Smooth drag: the thumb follows the pointer in units, the

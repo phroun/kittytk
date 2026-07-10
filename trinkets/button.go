@@ -13,13 +13,14 @@ type Button struct {
 	core.TrinketBase
 	core.AccessibleTrinket
 
-	text      string
-	icon      *style.Icon
-	iconSize  style.IconSize
-	checkable bool
-	checked   bool
+	text           string
+	icon           *style.Icon
+	iconSize       style.IconSize
+	checkable      bool
+	checked        bool
 	pressed        bool
 	hovered        bool // Mouse is over button while pressed
+	mouseOver      bool // Pointer is hovering over the button (not pressed)
 	spacePressed   bool // Space key is being held down
 	animatingPress bool // Showing press animation (250ms visual feedback)
 	flat           bool // No border when not focused/hovered
@@ -252,19 +253,18 @@ func (b *Button) Paint(p *core.Painter) {
 	inheritedBg := b.EffectiveBackgroundColor()
 	paneType := style.GetPaneType(inheritedBg)
 
-	// Determine style - always apply inherited background
+	// Determine style - always apply inherited background. GetButtonState
+	// bakes in the precedence pressed > focus > hover > normal.
 	var s style.CellStyle
 	if !b.IsEnabled() {
 		s = style.DefaultStyle().WithFg(scheme.GetDisabledButtonFG()).WithBg(inheritedBg)
-	} else if showPressed {
-		s = scheme.GetPressedButton(true) // TODO: pass actual window active state
-	} else if focused {
-		s = scheme.GetFocusedButton()
-	} else if b.isDefault {
-		// Default button gets bold text when not focused
-		s = scheme.GetButton().WithAttrs(style.StyleBold)
 	} else {
-		s = scheme.GetButton()
+		// TODO: pass actual window active state instead of true.
+		s = scheme.GetButtonState(true, focused, b.mouseOver, showPressed)
+		if b.isDefault && !showPressed && !focused && !b.mouseOver {
+			// Default button gets bold text in its resting state.
+			s = s.WithAttrs(style.StyleBold)
+		}
 	}
 
 	// Use custom style if set
@@ -471,22 +471,28 @@ func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
-// HandleMouseMove handles mouse movement during press.
+// HandleMouseMove handles mouse movement: it tracks a plain pointer-hover
+// highlight when the button is idle, and the pressed-and-over state during
+// a press.
 func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Check if mouse is inside the button area (first row, not the shadow).
+	bounds := b.Bounds()
+	metrics := b.EffectiveCellMetrics()
+	inside := event.X >= 0 && event.X < bounds.Width &&
+		event.Y >= 0 && event.Y < metrics.CellHeight
+
 	if !b.pressed {
+		// Plain hover. Don't consume the move, so sibling widgets can
+		// still clear their own hover as the pointer leaves them.
+		if b.IsEnabled() && inside != b.mouseOver {
+			b.mouseOver = inside
+			b.Update()
+		}
 		return false
 	}
 
-	// Check if mouse is still inside button area
-	bounds := b.Bounds()
-	metrics := b.EffectiveCellMetrics()
-
-	// Simple bounds check for first row (button area, not shadow)
-	newHovered := event.X >= 0 && event.X < bounds.Width &&
-		event.Y >= 0 && event.Y < metrics.CellHeight
-
-	if newHovered != b.hovered {
-		b.hovered = newHovered
+	if inside != b.hovered {
+		b.hovered = inside
 		b.Update()
 	}
 
@@ -519,6 +525,7 @@ func (b *Button) HandleFocusIn() {
 func (b *Button) HandleFocusOut() {
 	b.pressed = false
 	b.hovered = false
+	b.mouseOver = false
 	b.spacePressed = false
 	b.animatingPress = false
 	b.Update()

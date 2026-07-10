@@ -42,10 +42,11 @@ type ListView struct {
 	showIcons          bool
 
 	// Mouse state
-	isDragging         bool
-	scrollbarDragging  bool    // Whether scrollbar thumb is being dragged
-	scrollbarDragStart int     // Y position where drag started
-	scrollbarDragOffset int    // Scroll offset when drag started
+	isDragging            bool
+	scrollbarDragging     bool // Whether scrollbar thumb is being dragged
+	scrollbarThumbHovered bool // Whether the pointer is over the thumb
+	scrollbarDragStart    int  // Y position where drag started
+	scrollbarDragOffset   int  // Scroll offset when drag started
 
 	// Smooth (pixel-surface) scrollbar drag: the thumb follows the
 	// pointer at unit granularity while scrollOffset snaps to whole
@@ -59,8 +60,8 @@ type ListView struct {
 	wheelAccum float64
 
 	// Callbacks
-	onCurrentChanged  func(index int)
-	onItemActivated   func(index int)
+	onCurrentChanged   func(index int)
+	onItemActivated    func(index int)
 	onSelectionChanged func()
 }
 
@@ -385,7 +386,7 @@ func (l *ListView) SizeHint() core.UnitSize {
 	metrics := l.EffectiveCellMetrics()
 	font := l.EffectiveFont()
 	return core.UnitSize{
-		Width:  font.MeasureRunes(30), // Default width for 30 chars
+		Width:  font.MeasureRunes(30),  // Default width for 30 chars
 		Height: metrics.TextHeight(10), // 10 items visible
 	}
 }
@@ -557,7 +558,7 @@ func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 	scheme := l.GetScheme()
 	metrics := l.EffectiveCellMetrics()
 	trackStyle := scheme.GetScrollbar()
-	thumbStyle := scheme.GetScrollbarThumb()
+	thumbStyle := scheme.GetScrollbarThumbState(l.scrollbarThumbHovered)
 
 	// Pixel surfaces: a single hairline stripe blended at 50%
 	// opacity behind, and one solid full-opacity rectangle for the
@@ -810,8 +811,40 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
+// overScrollbarThumb reports whether a widget-local point lies on the
+// vertical scrollbar thumb.
+func (l *ListView) overScrollbarThumb(x, y core.Unit) bool {
+	visibleCount := l.visibleCount()
+	if len(l.items) <= visibleCount {
+		return false
+	}
+	bounds := l.Bounds()
+	if x < 0 || y < 0 || x >= bounds.Width || y >= bounds.Height {
+		return false
+	}
+	scrollbarX, thumbStart, thumbHeight, _ := l.scrollbarGeometry(visibleCount)
+	if x < scrollbarX {
+		return false
+	}
+	if core.FindSmoothPositioning(l.Self()) {
+		_, thumbU, posU := l.scrollbarUnits(visibleCount)
+		pos := float64(y)
+		return pos >= posU && pos < posU+thumbU
+	}
+	row := int(y / l.EffectiveCellMetrics().CellHeight)
+	return row >= thumbStart && row < thumbStart+thumbHeight
+}
+
 // HandleMouseMove handles mouse drag to sweep selection.
 func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Track scrollbar-thumb hover regardless of focus/drag state. The
+	// thumb stays lit while a drag is in progress even if the pointer
+	// slips off it.
+	if over := l.scrollbarDragging || l.overScrollbarThumb(event.X, event.Y); over != l.scrollbarThumbHovered {
+		l.scrollbarThumbHovered = over
+		l.Update()
+	}
+
 	// If we don't have focus, we shouldn't be processing drags
 	// (another trinket got the click and we have stale drag state)
 	if !l.HasFocus() {

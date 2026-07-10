@@ -182,6 +182,7 @@ type Window struct {
 	// Button press tracking
 	pressedButton TitleButton // Currently pressed titlebar button
 	buttonHovered bool        // Whether mouse is still over the pressed button
+	hoveredButton TitleButton // Titlebar button under the pointer (plain hover)
 
 	// Title bar keyboard focus
 	titleFocus        TitleFocus    // Which title bar element has keyboard focus
@@ -1593,6 +1594,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	state := w.state
 	pressedButton := w.pressedButton
 	buttonHovered := w.buttonHovered
+	hoveredButton := w.hoveredButton
 	titleFocus := w.titleFocus
 	w.mu.RUnlock()
 
@@ -1634,7 +1636,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	if flags&WindowFlagNoClose == 0 {
 		isFocused := titleFocus == TitleFocusClose
 		isPressed := pressedButton == TitleButtonClose && buttonHovered
-		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
+		isHovered := hoveredButton == TitleButtonClose && !isPressed
+		btnStyle := scheme.GetTitleBarButtonState(focused, isFocused, isHovered, isPressed)
 		p.DrawCell(controlX, 0, '[', btnStyle)
 		p.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
 		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
@@ -1643,7 +1646,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	if flags&WindowFlagNoMinimize == 0 {
 		isFocused := titleFocus == TitleFocusMinimize
 		isPressed := pressedButton == TitleButtonMinimize && buttonHovered
-		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
+		isHovered := hoveredButton == TitleButtonMinimize && !isPressed
+		btnStyle := scheme.GetTitleBarButtonState(focused, isFocused, isHovered, isPressed)
 		p.DrawCell(controlX, 0, '[', btnStyle)
 		p.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
 		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
@@ -1652,7 +1656,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	if canMaximize(flags) {
 		isFocused := titleFocus == TitleFocusMaximize
 		isPressed := pressedButton == TitleButtonMaximize && buttonHovered
-		btnStyle := scheme.GetTitleBarButton(focused, isFocused, isPressed)
+		isHovered := hoveredButton == TitleButtonMaximize && !isPressed
+		btnStyle := scheme.GetTitleBarButtonState(focused, isFocused, isHovered, isPressed)
 		var icon rune
 		if state == WindowStateMaximized {
 			icon = 'o' // Restore icon
@@ -1711,6 +1716,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	state := w.state
 	pressedButton := w.pressedButton
 	buttonHovered := w.buttonHovered
+	hoveredButton := w.hoveredButton
 	titleFocus := w.titleFocus
 	w.mu.RUnlock()
 
@@ -1830,7 +1836,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		if flags&WindowFlagNoClose == 0 {
 			isFocused := titleFocus == TitleFocusClose
 			isPressed := pressedButton == TitleButtonClose && buttonHovered
-			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
+			isHovered := hoveredButton == TitleButtonClose && !isPressed
+			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
 			tp.DrawCell(controlX, 0, '[', btnStyle)
 			tp.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
 			tp.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
@@ -1839,7 +1846,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		if flags&WindowFlagNoMinimize == 0 {
 			isFocused := titleFocus == TitleFocusMinimize
 			isPressed := pressedButton == TitleButtonMinimize && buttonHovered
-			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
+			isHovered := hoveredButton == TitleButtonMinimize && !isPressed
+			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
 			tp.DrawCell(controlX, 0, '[', btnStyle)
 			tp.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
 			tp.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
@@ -1848,7 +1856,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		if canMaximize(flags) {
 			isFocused := titleFocus == TitleFocusMaximize
 			isPressed := pressedButton == TitleButtonMaximize && buttonHovered
-			btnStyle := scheme.GetTitleBarButton(buttonFocused, isFocused, isPressed)
+			isHovered := hoveredButton == TitleButtonMaximize && !isPressed
+			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
 			var icon rune
 			if state == WindowStateMaximized {
 				icon = 'o' // Restore icon
@@ -2980,6 +2989,20 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 			w.mu.Unlock()
 		}
 		return true // Capture mouse while button is pressed
+	}
+
+	// Plain hover over a titlebar button (no press in progress). Update()
+	// schedules the repaint; don't consume the move so chrome/content
+	// under the pointer still gets it.
+	newHovered := w.buttonAtPosition(event.X, event.Y)
+	w.mu.Lock()
+	hoverChanged := w.hoveredButton != newHovered
+	if hoverChanged {
+		w.hoveredButton = newHovered
+	}
+	w.mu.Unlock()
+	if hoverChanged {
+		w.Update()
 	}
 
 	// Chrome (open-menu drag-select / hover) before content.

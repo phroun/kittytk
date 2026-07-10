@@ -26,6 +26,8 @@ type Splitter struct {
 
 	// Divider dragging state
 	dragging bool
+	// Whether the pointer is currently hovering over the divider band.
+	hoveringDivider bool
 	// Offset of the press point within the divider band, so the
 	// divider tracks the grab position instead of jumping its
 	// leading edge to the pointer.
@@ -350,15 +352,15 @@ func (sp *Splitter) Paint(p *core.Painter) {
 		sp.first.Paint(firstPainter)
 	}
 
-	// Divider style with middot drag handle styling
+	// Divider style with middot drag handle styling. The state resolvers
+	// bake in the precedence pressed(dragging) > focus > hover > normal;
+	// by default the handle and title fall back to the plain divider body,
+	// so only an explicitly-set hover style changes anything on hover.
 	divider := sp.dividerBounds()
 	focused := sp.HasFocus()
-	dividerStyle := scheme.GetSplitter()
-	if sp.dragging {
-		dividerStyle = scheme.GetPressedSplitter()
-	} else if focused {
-		dividerStyle = scheme.GetFocusedSplitter()
-	}
+	hovered := sp.hoveringDivider && !sp.dragging
+	dividerStyle := scheme.GetSplitterHandleState(focused, hovered, sp.dragging)
+	titleStyle := scheme.GetSplitterTitleState(focused, hovered, sp.dragging)
 
 	if !p.Graphical() {
 		if sp.orientation == core.Horizontal {
@@ -402,14 +404,16 @@ func (sp *Splitter) Paint(p *core.Painter) {
 				for xi := 0; xi < width; xi++ {
 					x := metrics.CellToUnitsX(xi)
 					var ch rune
+					chStyle := dividerStyle
 					if xi < startMiddle {
 						ch = '─'
 					} else if xi < startMiddle+middleLen {
 						ch = middleRunes[xi-startMiddle]
+						chStyle = titleStyle
 					} else {
 						ch = '─'
 					}
-					p.DrawCell(x, divider.Y, ch, dividerStyle)
+					p.DrawCell(x, divider.Y, ch, chStyle)
 				}
 			}
 		}
@@ -426,7 +430,7 @@ func (sp *Splitter) Paint(p *core.Painter) {
 	// Pixel surfaces draw the divider last: its caption box may
 	// overhang a band thinner than the caption face.
 	if p.Graphical() {
-		sp.paintDividerGraphical(p, divider, dividerStyle)
+		sp.paintDividerGraphical(p, divider, dividerStyle, titleStyle)
 	}
 }
 
@@ -442,7 +446,7 @@ func atLeast(v, floor core.Unit) core.Unit {
 	return v
 }
 
-func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect, dividerStyle style.CellStyle) {
+func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect, dividerStyle, titleStyle style.CellStyle) {
 	line := dividerStyle.WithBg(dividerStyle.Fg)
 	p.FillRect(divider, ' ', dividerStyle)
 
@@ -500,8 +504,8 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 	// Caption box on the band background, text exactly centered on
 	// the band's centerline.
 	boxY := divider.Y + (divider.Height-h)/2
-	p.FillRect(core.UnitRect{X: boxX, Y: boxY, Width: boxW, Height: h}, ' ', dividerStyle)
-	p.DrawText(boxX+pad, boxY, label, dividerStyle, font)
+	p.FillRect(core.UnitRect{X: boxX, Y: boxY, Width: boxW, Height: h}, ' ', titleStyle)
+	p.DrawText(boxX+pad, boxY, label, titleStyle, font)
 }
 
 // HandleMousePress handles mouse button presses.
@@ -634,6 +638,14 @@ func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 		}
 
 		return true
+	}
+
+	// Track pointer hover over the divider band (highlights the grab
+	// handle). Don't consume the move so children still receive it.
+	over := s.dividerBounds().Contains(core.UnitPoint{X: event.X, Y: event.Y})
+	if over != s.hoveringDivider {
+		s.hoveringDivider = over
+		s.Update()
 	}
 
 	// Forward to children (needed for drag operations within children)

@@ -84,10 +84,11 @@ type TreeView struct {
 	lastClickIndex int
 
 	// Mouse state
-	isDragging          bool
-	scrollbarDragging   bool // Whether scrollbar thumb is being dragged
-	scrollbarDragStart  int  // Y position where drag started
-	scrollbarDragOffset int  // Scroll offset when drag started
+	isDragging            bool
+	scrollbarDragging     bool // Whether scrollbar thumb is being dragged
+	scrollbarThumbHovered bool // Whether the pointer is over the thumb
+	scrollbarDragStart    int  // Y position where drag started
+	scrollbarDragOffset   int  // Scroll offset when drag started
 
 	// Smooth (pixel-surface) scrollbar drag: the thumb follows the
 	// pointer at unit granularity while scrollOffset snaps to whole
@@ -101,10 +102,10 @@ type TreeView struct {
 	wheelAccum float64
 
 	// Callbacks
-	onCurrentChanged  func(item *TreeItem)
-	onItemActivated   func(item *TreeItem)
-	onItemExpanded    func(item *TreeItem)
-	onItemCollapsed   func(item *TreeItem)
+	onCurrentChanged func(item *TreeItem)
+	onItemActivated  func(item *TreeItem)
+	onItemExpanded   func(item *TreeItem)
+	onItemCollapsed  func(item *TreeItem)
 }
 
 // NewTreeView creates a new tree view.
@@ -477,7 +478,7 @@ func (t *TreeView) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
 	font := t.EffectiveFont()
 	return core.UnitSize{
-		Width:  font.MeasureRunes(40), // Default width for 40 chars
+		Width:  font.MeasureRunes(40),  // Default width for 40 chars
 		Height: metrics.TextHeight(15), // 15 items visible
 	}
 }
@@ -659,7 +660,7 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 	scheme := t.GetScheme()
 	metrics := t.EffectiveCellMetrics()
 	trackStyle := scheme.GetScrollbar()
-	thumbStyle := scheme.GetScrollbarThumb()
+	thumbStyle := scheme.GetScrollbarThumbState(t.scrollbarThumbHovered)
 
 	// Pixel surfaces: a single hairline stripe blended at 50%
 	// opacity behind, and one solid full-opacity rectangle for the
@@ -981,8 +982,38 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
+// overScrollbarThumb reports whether a widget-local point lies on the
+// vertical scrollbar thumb.
+func (t *TreeView) overScrollbarThumb(x, y core.Unit) bool {
+	visibleCount := t.visibleCount()
+	if len(t.flatList) <= visibleCount {
+		return false
+	}
+	bounds := t.Bounds()
+	if x < 0 || y < 0 || x >= bounds.Width || y >= bounds.Height {
+		return false
+	}
+	scrollbarX, thumbStart, thumbHeight, _ := t.scrollbarGeometry(visibleCount)
+	if x < scrollbarX {
+		return false
+	}
+	if core.FindSmoothPositioning(t.Self()) {
+		_, thumbU, posU := t.scrollbarUnits(visibleCount)
+		pos := float64(y)
+		return pos >= posU && pos < posU+thumbU
+	}
+	row := int(y / t.EffectiveCellMetrics().CellHeight)
+	return row >= thumbStart && row < thumbStart+thumbHeight
+}
+
 // HandleMouseMove handles mouse drag to sweep selection.
 func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// Track scrollbar-thumb hover regardless of focus/drag state.
+	if over := t.scrollbarDragging || t.overScrollbarThumb(event.X, event.Y); over != t.scrollbarThumbHovered {
+		t.scrollbarThumbHovered = over
+		t.Update()
+	}
+
 	// If we don't have focus, we shouldn't be processing drags
 	// (another trinket got the click and we have stale drag state)
 	if !t.HasFocus() {

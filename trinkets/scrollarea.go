@@ -28,6 +28,9 @@ type ScrollBar struct {
 	dragging   bool
 	dragOffset int
 
+	// Whether the pointer is hovering over the thumb.
+	thumbHovered bool
+
 	// Smooth (pixel-surface) drag state: the thumb follows the
 	// pointer at unit granularity while the value still snaps to
 	// whole steps. grabOff is where the press landed within the
@@ -228,6 +231,65 @@ func (s *ScrollBar) thumbSpanUnits(bounds core.UnitRect, metrics core.CellMetric
 	return trackU, thumbU, posU, true
 }
 
+// overThumb reports whether a scrollbar-local point lies on the thumb.
+func (s *ScrollBar) overThumb(x, y core.Unit) bool {
+	bounds := s.Bounds()
+	if x < 0 || y < 0 || x >= bounds.Width || y >= bounds.Height {
+		return false
+	}
+	metrics := s.EffectiveCellMetrics()
+	if core.FindSmoothPositioning(s.Self()) {
+		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
+			pos := float64(y)
+			if s.orientation == core.Horizontal {
+				pos = float64(x)
+			}
+			return pos >= posU && pos < posU+thumbU
+		}
+		return false
+	}
+	if s.maximum <= s.minimum {
+		return false
+	}
+	var clickPos, trackCells int
+	if s.orientation == core.Horizontal {
+		clickPos = metrics.UnitsToCellX(x)
+		trackCells = metrics.CharsForWidth(bounds.Width)
+	} else {
+		clickPos = int(y / metrics.CellHeight)
+		trackCells = int(bounds.Height / metrics.CellHeight)
+	}
+	totalItems := s.maximum - s.minimum + trackCells
+	if totalItems <= 0 {
+		return false
+	}
+	thumbSize := trackCells * trackCells / totalItems
+	if thumbSize < 1 {
+		thumbSize = 1
+	}
+	scrollableTrack := trackCells - thumbSize
+	maxScroll := s.maximum - s.minimum
+	thumbPos := 0
+	if maxScroll > 0 && scrollableTrack > 0 {
+		thumbPos = (s.value - s.minimum) * scrollableTrack / maxScroll
+	}
+	return clickPos >= thumbPos && clickPos < thumbPos+thumbSize
+}
+
+// UpdateThumbHover sets the thumb-hover state from a scrollbar-local
+// point, repainting only on change. Containers that own a scrollbar and
+// don't forward plain moves to it (they only forward while dragging) call
+// this so the thumb still lights up on hover. Returns true on a change.
+func (s *ScrollBar) UpdateThumbHover(x, y core.Unit) bool {
+	over := s.overThumb(x, y)
+	if over != s.thumbHovered {
+		s.thumbHovered = over
+		s.Update()
+		return true
+	}
+	return false
+}
+
 // Paint renders the scrollbar.
 func (s *ScrollBar) Paint(p *core.Painter) {
 	bounds := s.Bounds()
@@ -250,7 +312,7 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, schem
 	// sit (and move) between cell boundaries.
 	if p.Graphical() {
 		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
-			thumbStyle := scheme.GetScrollbarThumb()
+			thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered)
 			p.FillRect(core.UnitRect{
 				X:      core.Unit(posU + 0.5),
 				Width:  core.Unit(thumbU + 0.5),
@@ -287,7 +349,7 @@ func (s *ScrollBar) paintHorizontal(p *core.Painter, bounds core.UnitRect, schem
 		}
 
 		// Draw thumb
-		thumbStyle := scheme.GetScrollbarThumb()
+		thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered)
 		for i := 0; i < thumbSize; i++ {
 			x := core.Unit(thumbPos+i) * metrics.CellWidth
 			p.DrawCell(x, 0, '█', thumbStyle)
@@ -304,7 +366,7 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme 
 	// sit (and move) between cell boundaries.
 	if p.Graphical() {
 		if _, thumbU, posU, ok := s.thumbSpanUnits(bounds, metrics); ok {
-			thumbStyle := scheme.GetScrollbarThumb()
+			thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered)
 			p.FillRect(core.UnitRect{
 				Y:      core.Unit(posU + 0.5),
 				Width:  bounds.Width,
@@ -341,7 +403,7 @@ func (s *ScrollBar) paintVertical(p *core.Painter, bounds core.UnitRect, scheme 
 		}
 
 		// Draw thumb
-		thumbStyle := scheme.GetScrollbarThumb()
+		thumbStyle := scheme.GetScrollbarThumbState(s.thumbHovered)
 		for i := 0; i < thumbSize; i++ {
 			y := core.Unit(thumbPos+i) * metrics.CellHeight
 			p.FillRect(core.UnitRect{Y: y, Width: bounds.Width, Height: metrics.CellHeight}, '█', thumbStyle)
@@ -443,6 +505,8 @@ func (s *ScrollBar) HandleMousePress(event core.MousePressEvent) bool {
 // HandleMouseMove handles mouse move/drag events.
 func (s *ScrollBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if !s.dragging {
+		// Plain hover over the thumb. Don't consume the move.
+		s.UpdateThumbHover(event.X, event.Y)
 		return false
 	}
 
@@ -1280,6 +1344,11 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 			Y: event.Y - viewport.Height,
 		})
 	}
+
+	// Not dragging: keep each bar's thumb-hover state in sync (the area
+	// only forwards drags to the bars, so hover would never reach them).
+	s.vScrollBar.UpdateThumbHover(event.X-viewport.Width, event.Y)
+	s.hScrollBar.UpdateThumbHover(event.X, event.Y-viewport.Height)
 
 	// Forward to content trinket. Copy the event so Buttons and
 	// Modifiers survive - a drag-select needs Buttons&LeftButton set, and
