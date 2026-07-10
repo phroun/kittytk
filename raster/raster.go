@@ -42,6 +42,10 @@ type Backend struct {
 
 	clip    core.UnitRect
 	hasClip bool
+	// Device-pixel bounds of clip, cached by SetClip so pointVisible does
+	// not re-snap the clip through pxX/pxY (and snapAxis) for every pixel -
+	// that per-pixel recompute dominated fill time.
+	clipPxX0, clipPxY0, clipPxX1, clipPxY1 int
 
 	// snapOX/Y and snapOPxX/Y anchor cell snapping at a window's origin
 	// (see SetSnapOrigin): the origin maps to a fixed whole device pixel
@@ -57,6 +61,9 @@ type Backend struct {
 	roundClip       core.UnitRect
 	roundClipRadius core.Unit
 	hasRoundClip    bool
+	// Device-pixel bounds + radius of the rounded clip, cached by
+	// SetRoundedClip (same reason as the rectangular clip above).
+	roundPxX0, roundPxY0, roundPxX1, roundPxY1, roundPxRad int
 
 	// pxClip is a transient device-pixel X clip [pxClipX0, pxClipX1),
 	// applied only for the duration of a single clipped blit (selection
@@ -285,6 +292,10 @@ func (b *Backend) SetClip(clip core.UnitRect) {
 	// client area vanishes must not spill its content); "unclipped"
 	// is only ever the state before the first SetClip.
 	b.hasClip = true
+	// Snap the clip to device pixels once here (see clipPxX0) rather than
+	// per pixel in pointVisible.
+	b.clipPxX0, b.clipPxY0 = b.pxX(clip.X), b.pxY(clip.Y)
+	b.clipPxX1, b.clipPxY1 = b.pxX(clip.X+clip.Width), b.pxY(clip.Y+clip.Height)
 }
 
 // SetRoundedClip implements core.RoundedClipper: a zero rect clears
@@ -293,6 +304,16 @@ func (b *Backend) SetRoundedClip(r core.UnitRect, radius core.Unit) {
 	b.roundClip = r
 	b.roundClipRadius = radius
 	b.hasRoundClip = !r.IsEmpty()
+	if !b.hasRoundClip {
+		return
+	}
+	b.roundPxX0, b.roundPxY0 = b.pxX(r.X), b.pxY(r.Y)
+	b.roundPxX1, b.roundPxY1 = b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height)
+	rad := b.pxLen(radius)
+	if m := min(b.roundPxX1-b.roundPxX0, b.roundPxY1-b.roundPxY0) / 2; rad > m {
+		rad = m
+	}
+	b.roundPxRad = rad
 }
 
 // pointVisible applies every active clip constraint to a device
@@ -306,21 +327,16 @@ func (b *Backend) pointVisible(x, y int) bool {
 		return false
 	}
 	if b.hasClip {
-		if x < b.pxX(b.clip.X) || y < b.pxY(b.clip.Y) ||
-			x >= b.pxX(b.clip.X+b.clip.Width) || y >= b.pxY(b.clip.Y+b.clip.Height) {
+		if x < b.clipPxX0 || y < b.clipPxY0 || x >= b.clipPxX1 || y >= b.clipPxY1 {
 			return false
 		}
 	}
 	if b.hasRoundClip {
-		rx0, ry0 := b.pxX(b.roundClip.X), b.pxY(b.roundClip.Y)
-		rx1, ry1 := b.pxX(b.roundClip.X+b.roundClip.Width), b.pxY(b.roundClip.Y+b.roundClip.Height)
+		rx0, ry0, rx1, ry1 := b.roundPxX0, b.roundPxY0, b.roundPxX1, b.roundPxY1
 		if x < rx0 || y < ry0 || x >= rx1 || y >= ry1 {
 			return false
 		}
-		rad := b.pxLen(b.roundClipRadius)
-		if m := min(rx1-rx0, ry1-ry0) / 2; rad > m {
-			rad = m
-		}
+		rad := b.roundPxRad
 		if rad > 0 {
 			// Inside a corner box: require the pixel center within
 			// the corner arc.
@@ -390,19 +406,17 @@ func (b *Backend) styleColors(s style.CellStyle) (fg, bg color.RGBA) {
 
 func (b *Backend) fillPx(x0, y0, x1, y1 int, c color.RGBA) {
 	if b.hasClip {
-		cx0, cy0 := b.pxX(b.clip.X), b.pxY(b.clip.Y)
-		cx1, cy1 := b.pxX(b.clip.X+b.clip.Width), b.pxY(b.clip.Y+b.clip.Height)
-		if x0 < cx0 {
-			x0 = cx0
+		if x0 < b.clipPxX0 {
+			x0 = b.clipPxX0
 		}
-		if y0 < cy0 {
-			y0 = cy0
+		if y0 < b.clipPxY0 {
+			y0 = b.clipPxY0
 		}
-		if x1 > cx1 {
-			x1 = cx1
+		if x1 > b.clipPxX1 {
+			x1 = b.clipPxX1
 		}
-		if y1 > cy1 {
-			y1 = cy1
+		if y1 > b.clipPxY1 {
+			y1 = b.clipPxY1
 		}
 	}
 	if x0 < 0 {
@@ -417,21 +431,55 @@ func (b *Backend) fillPx(x0, y0, x1, y1 int, c color.RGBA) {
 	if y1 > b.h {
 		y1 = b.h
 	}
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
 	if b.hasRoundClip {
-		// Rounded clip active: per-pixel test (corner arcs).
+		// The rounded clip only carves the four corners; clamp X to its
+		// rect once, then per-pixel-test just the corner-band rows and fill
+		// the interior rows straight.
+		if x0 < b.roundPxX0 {
+			x0 = b.roundPxX0
+		}
+		if x1 > b.roundPxX1 {
+			x1 = b.roundPxX1
+		}
+		rad := b.roundPxRad
 		for y := y0; y < y1; y++ {
-			for x := x0; x < x1; x++ {
-				if b.pointVisible(x, y) {
-					b.img.SetRGBA(x, y, c)
+			if y < b.roundPxY0 || y >= b.roundPxY1 {
+				continue
+			}
+			if rad > 0 && (y < b.roundPxY0+rad || y >= b.roundPxY1-rad) {
+				for x := x0; x < x1; x++ {
+					if b.pointVisible(x, y) {
+						b.img.SetRGBA(x, y, c)
+					}
 				}
+			} else {
+				b.fillRowPx(y, x0, x1, c)
 			}
 		}
 		return
 	}
 	for y := y0; y < y1; y++ {
-		for x := x0; x < x1; x++ {
-			b.img.SetRGBA(x, y, c)
-		}
+		b.fillRowPx(y, x0, x1, c)
+	}
+}
+
+// fillRowPx paints a solid horizontal run [x0, x1) at row y straight into
+// the framebuffer (no per-pixel bounds check - the caller has clamped),
+// growing the run by copy-doubling. The caller guarantees the span is in
+// bounds and passes every active clip.
+func (b *Backend) fillRowPx(y, x0, x1 int, c color.RGBA) {
+	if x1 <= x0 {
+		return
+	}
+	pix := b.img.Pix
+	o := b.img.PixOffset(x0, y)
+	end := o + (x1-x0)*4
+	pix[o], pix[o+1], pix[o+2], pix[o+3] = c.R, c.G, c.B, c.A
+	for filled := o + 4; filled < end; {
+		filled += copy(pix[filled:end], pix[o:filled])
 	}
 }
 
