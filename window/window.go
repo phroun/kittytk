@@ -1491,8 +1491,13 @@ func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
 	}
 	rp := p.WithRoundedClipRegion(localBounds, windowCornerRadius)
 	for _, r := range rects {
+		// Size the fill by the cell-snapped SPAN between the rect's edges,
+		// not round(width*ppu): the fill is anchored at the snapped pixel of
+		// (r.X, r.Y), so a raw width can leave the far end short of the
+		// snapped opposite edge. UnitSpanPxX/Y snap both ends to the grid
+		// the geometry paints on, so the band reaches exactly the far edge.
 		rp.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
-			p.UnitsToPx(r.Width), p.UnitsToPx(r.Height),
+			p.UnitSpanPxX(r.X, r.X+r.Width), p.UnitSpanPxY(r.Y, r.Y+r.Height),
 			255, 255, 255, resizeHoverAlpha)
 	}
 }
