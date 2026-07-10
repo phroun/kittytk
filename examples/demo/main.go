@@ -519,7 +519,7 @@ func protocolMessageBox(application *app.Application, script string) {
 }
 
 func showAboutDialog(desktop *trinkets.Desktop, application *app.Application) {
-	protocolMessageBox(application, `
-dlg=new messagebox title="About KittyTK" icon=information ok text="KittyTK Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion 0.1.0"
-`)
+	protocolMessageBox(application, fmt.Sprintf(`
+dlg=new messagebox title="About %s" icon=information ok text="%s Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion %s"
+`, core.Name, core.Name, core.Version))
 }

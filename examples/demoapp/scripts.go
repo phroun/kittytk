@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/phroun/kittytk/core"
 )
 
 // This file holds the display-protocol scripts that BUILD the demo's
@@ -494,10 +496,11 @@ set dterm feed="\e[1;36mThis banner arrived as protocol text.\e[0m\r\n\r\n"
 `, n, 40+n*16, 40+n*16, n, n, n)
 }
 
-// aboutDialogScript is the About message box.
-const aboutDialogScript = `
-dlg=new messagebox title="About KittyTK" icon=information ok text="KittyTK Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion 0.1.0"
-`
+// aboutDialogScript is the About message box. The name and version come from
+// the core package's single source of truth.
+var aboutDialogScript = fmt.Sprintf(`
+dlg=new messagebox title="About %s" icon=information ok text="%s Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion %s"
+`, core.Name, core.Name, core.Version)
 
 // secondaryBuildScript is a whole secondary application: a window with a
 // control panel over a PurfecTerm, its own menu bar and status bar.

@@ -42,6 +42,44 @@ func (a *mockApp) PassNextKeyToTrinket() bool        { return false }
 func (a *mockApp) ActivatePassNextKeyToTrinket()     {}
 func (a *mockApp) ClearPassNextKeyToTrinket()        {}
 
+// The Ψ menu's About Desktop item opens the About KittyTK dialog, whose
+// text carries the recursive name, version, and copyright.
+func TestAboutDesktopDialog(t *testing.T) {
+	txt := aboutDesktopText()
+	for _, want := range []string{
+		"image/tty Trinket Kit",
+		"Version " + core.Version,
+		"Jeffrey R. Day",
+		"All rights reserved",
+	} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("about text missing %q:\n%s", want, txt)
+		}
+	}
+
+	d := NewDesktop()
+	d.windowManager = window.NewWindowManager()
+
+	var about *MenuItem
+	for _, it := range d.systemMenu.Items() {
+		if strings.Contains(it.Text, "About Desktop") {
+			about = it
+		}
+	}
+	if about == nil || about.OnTriggered == nil {
+		t.Fatal("About Desktop menu item not found or not wired")
+	}
+
+	about.OnTriggered()
+	wins := d.windowManager.Windows()
+	if len(wins) != 1 {
+		t.Fatalf("About Desktop opened %d windows, want 1", len(wins))
+	}
+	if got := wins[0].Title(); got != "About KittyTK" {
+		t.Errorf("about dialog title = %q, want About KittyTK", got)
+	}
+}
+
 func menuTitles(mb *MenuBar) []string {
 	var out []string
 	for _, m := range mb.Menus() {

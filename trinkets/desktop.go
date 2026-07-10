@@ -291,8 +291,7 @@ func NewDesktop() *Desktop {
 func (d *Desktop) createSystemMenu() *Menu {
 	menu := NewMenu("Ψ")
 	menu.AddItem(NewMenuItem("&About Desktop").SetOnTriggered(func() {
-		// Show about dialog
-		// TODO: Implement about dialog
+		d.showAboutDesktop()
 	}))
 	menu.AddItem(NewSeparator())
 	menu.AddItem(NewMenuItem("Desktop &Accessories").SetEnabled(false)) // Placeholder
@@ -309,6 +308,26 @@ func (d *Desktop) createSystemMenu() *Menu {
 	menu.AddItem(exitItem)
 
 	return menu
+}
+
+// aboutDesktopText is the body of the About KittyTK dialog: the recursive
+// name, a one-line description, the version, and the copyright. The name and
+// version come from the core package's single source of truth.
+func aboutDesktopText() string {
+	return core.Name + " — " + core.Tagline + "\n\n" +
+		"A cross-surface UI toolkit in Go.\n\n" +
+		"Version " + core.Version + "\n\n" +
+		"© 2026 Jeffrey R. Day. All rights reserved."
+}
+
+// showAboutDesktop opens the About KittyTK dialog - the About entry in the
+// system (Ψ) menu - as a modal message box on the desktop.
+func (d *Desktop) showAboutDesktop() {
+	mb := NewMessageBox("About KittyTK", aboutDesktopText(), ButtonOK)
+	mb.SetIcon(IconInformation)
+	if wm := d.WindowManager(); wm != nil {
+		wm.AddWindow(&mb.Window)
+	}
 }
 
 // SetBackend sets the render backend and initializes related components.
