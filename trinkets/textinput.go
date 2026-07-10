@@ -332,12 +332,19 @@ func (t *TextInput) ensureCursorVisible() {
 	// Calculate width of text from scrollOffset to cursor using font metrics
 	displayText := t.getDisplayText()
 
-	// Calculate cursor character width (space if at end, otherwise char under cursor)
+	// Room the caret needs to stay visible past the text before it. At the
+	// end of the text only the thin caret bar shows, so reserve a sliver,
+	// not a whole cell - reserving a full cell made the field scroll a
+	// character early, looking full while a cell of space still remained.
+	// Mid-text, keep the character the caret sits on visible.
 	var cursorWidth core.Unit
 	if t.cursorPos < len(displayText) {
 		cursorWidth = font.MeasureText(string(displayText[t.cursorPos]))
 	} else {
-		cursorWidth = metrics.CellWidth // Space for cursor at end of text
+		cursorWidth = metrics.CellWidth / 4
+		if cursorWidth < 1 {
+			cursorWidth = 1
+		}
 	}
 
 	for t.cursorPos > t.scrollOffset {
