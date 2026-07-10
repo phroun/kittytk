@@ -623,31 +623,19 @@ func (m *MDIPane) TileWindows() {
 	}
 
 	clientArea := m.ClientArea()
-	metrics := m.EffectiveCellMetrics()
 
-	// Calculate grid dimensions
-	cols := 1
-	rows := len(visibleWindows)
-	for cols*cols < len(visibleWindows) {
-		cols++
+	items := make([]window.TileItem, len(visibleWindows))
+	for i, w := range visibleWindows {
+		items[i] = window.TileItem{
+			Resizable: w.Flags()&window.WindowFlagNoResize == 0,
+			Size:      core.UnitSize{Width: w.Bounds().Width, Height: w.Bounds().Height},
+		}
 	}
-	rows = (len(visibleWindows) + cols - 1) / cols
-
-	// Align tile sizes to cell boundaries
-	cellWidth := metrics.RoundDownToCellX(clientArea.Width / core.Unit(cols))
-	cellHeight := metrics.RoundDownToCellY(clientArea.Height / core.Unit(rows))
+	cells := window.TileLayout(clientArea, items)
 
 	for i, win := range visibleWindows {
-		col := i % cols
-		row := i / cols
-
-		win.SetBounds(core.UnitRect{
-			X:      clientArea.X + core.Unit(col)*cellWidth,
-			Y:      clientArea.Y + core.Unit(row)*cellHeight,
-			Width:  cellWidth,
-			Height: cellHeight,
-		})
 		win.Restore()
+		window.PlaceInCell(win, cells[i], items[i].Resizable)
 	}
 
 	m.Update()

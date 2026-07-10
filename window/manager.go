@@ -1304,32 +1304,32 @@ func (m *WindowManager) TileWindows() {
 	}
 
 	clientArea := m.ClientArea()
-	metrics := core.DefaultCellMetrics()
 
-	// Calculate grid dimensions
-	cols := 1
-	rows := len(windows)
-	for cols*cols < len(windows) {
-		cols++
+	items := make([]TileItem, len(windows))
+	for i, w := range windows {
+		items[i] = TileItem{
+			Resizable: w.Flags()&WindowFlagNoResize == 0,
+			Size:      core.UnitSize{Width: w.Bounds().Width, Height: w.Bounds().Height},
+		}
 	}
-	rows = (len(windows) + cols - 1) / cols
-
-	// Align tile sizes to cell boundaries
-	cellWidth := metrics.RoundDownToCellX(clientArea.Width / core.Unit(cols))
-	cellHeight := metrics.RoundDownToCellY(clientArea.Height / core.Unit(rows))
+	cells := TileLayout(clientArea, items)
 
 	for i, win := range windows {
-		col := i % cols
-		row := i / cols
-
-		win.SetBounds(core.UnitRect{
-			X:      clientArea.X + core.Unit(col)*cellWidth,
-			Y:      clientArea.Y + core.Unit(row)*cellHeight,
-			Width:  cellWidth,
-			Height: cellHeight,
-		})
 		win.Restore()
+		PlaceInCell(win, cells[i], items[i].Resizable)
 	}
+}
+
+// PlaceInCell moves win into cell: a resizable window fills it, a
+// non-resizable window keeps its own size at the cell's top-left.
+func PlaceInCell(win *Window, cell core.UnitRect, resizable bool) {
+	if resizable {
+		win.SetBounds(cell)
+		return
+	}
+	b := win.Bounds()
+	b.X, b.Y = cell.X, cell.Y
+	win.SetBounds(b)
 }
 
 // CascadeWindows arranges windows in a cascade.

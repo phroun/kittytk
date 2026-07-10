@@ -1581,21 +1581,30 @@ func (d *Desktop) arrangeTornAppWindows(app ApplicationProvider, cascade bool) {
 		return
 	}
 
-	// Grid tile: the main window fills the first (upper-left) cell.
-	n := len(wins)
-	cols := int(math.Ceil(math.Sqrt(float64(n))))
-	if cols < 1 {
-		cols = 1
-	}
-	rows := int(math.Ceil(float64(n) / float64(cols)))
-	cellW, cellH := ww/cols, wh/rows
+	// Grid tile via the shared balanced layout: rows fill from the bottom,
+	// each row splits its own width, non-resizable windows are fit into
+	// suitable cells, and the main window is pinned to the upper-left.
+	main := app.MainWindow()
+	items := make([]window.TileItem, len(wins))
 	for i, w := range wins {
-		ns := native(w)
-		if ns == nil {
+		pw, ph := native(w).ScreenSizePx()
+		items[i] = window.TileItem{
+			Resizable: w.Flags()&window.WindowFlagNoResize == 0,
+			Size:      core.UnitSize{Width: core.Unit(pw), Height: core.Unit(ph)},
+			First:     w == main,
+		}
+	}
+	cells := window.TileLayout(
+		core.UnitRect{X: core.Unit(wx), Y: core.Unit(wy), Width: core.Unit(ww), Height: core.Unit(wh)},
+		items,
+	)
+	for i, w := range wins {
+		n := native(w)
+		if n == nil {
 			continue
 		}
-		c, r := i%cols, i/cols
-		place(w, ns, wx+c*cellW, wy+r*cellH, cellW, cellH)
+		c := cells[i]
+		place(w, n, int(c.X), int(c.Y), int(c.Width), int(c.Height))
 	}
 }
 
