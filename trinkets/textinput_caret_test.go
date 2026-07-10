@@ -130,8 +130,10 @@ func TestTextInputTextStableAsCaretMoves(t *testing.T) {
 }
 
 // Dragging a selection (anchor fixed, caret moving) must keep the base text
-// drawn as one stable run and pin the anchor end of the highlight, so the
-// already-selected material does not shift as the selection grows.
+// drawn as one stable run and pin the ANCHOR edge of the highlight, whether
+// the caret is right of the anchor (anchor edge on the left) or left of it
+// (anchor edge on the right - the case that still jittered when the selected
+// text was re-shaped instead of clipped from the stable run).
 func TestTextInputSelectionAnchorStable(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	b, err := raster.NewScaled(600, 40, 2)
@@ -146,41 +148,50 @@ func TestTextInputSelectionAnchorStable(t *testing.T) {
 	font := ti.EffectiveFont()
 	ti.SetBounds(core.UnitRect{Width: 400, Height: b.LineHeight(font)})
 	ti.SetFocus()
+	pnt := core.NewPainter(b)
 
-	// Anchor the selection at index 2 and sweep the caret rightward.
-	anchorPx := core.NewPainter(b).UnitsToPx(font.MeasureText("He"))
+	// anchorEdge returns the device-pixel X of the highlight edge on the
+	// anchor's side (its left edge when the anchor is left of the caret, its
+	// right edge when the anchor is right of it).
+	check := func(name string, anchor int, carets []int) {
+		anchorPx := pnt.UnitsToPx(font.MeasureText(string([]rune("Hello World.")[:anchor])))
+		var baseRun *recText
+		for _, caret := range carets {
+			rec := &recBackend{Backend: b}
+			ti.selStart = anchor
+			ti.selEnd = caret
+			ti.cursorPos = caret
+			b.Clear(style.DefaultStyle())
+			ti.Paint(core.NewPainter(rec))
 
-	var baseRun *recText
-	for _, caret := range []int{5, 8, 11} {
-		rec := &recBackend{Backend: b}
-		ti.selStart = 2
-		ti.selEnd = caret
-		ti.cursorPos = caret
-		b.Clear(style.DefaultStyle())
-		ti.Paint(core.NewPainter(rec))
-
-		// The full text is always drawn as one un-split base run at pixel 0.
-		var base *recText
-		for i := range rec.texts {
-			if rec.texts[i].s == "Hello World." {
-				base = &rec.texts[i]
+			var base *recText
+			for i := range rec.texts {
+				if rec.texts[i].s == "Hello World." {
+					base = &rec.texts[i]
+				}
+			}
+			if base == nil || base.xPx != 0 {
+				t.Fatalf("%s caret %d: base run not drawn at xPx=0; got %+v", name, caret, rec.texts)
+			}
+			if baseRun == nil {
+				baseRun = base
+			} else if *base != *baseRun {
+				t.Errorf("%s caret %d: base run = %+v, want stable %+v", name, caret, *base, *baseRun)
+			}
+			if len(rec.fills) == 0 {
+				t.Fatalf("%s caret %d: no selection highlight drawn", name, caret)
+			}
+			h := rec.fills[0]
+			edge := h.xPx // anchor on the left
+			if caret < anchor {
+				edge = h.xPx + h.wPx // anchor on the right
+			}
+			if edge != anchorPx {
+				t.Errorf("%s caret %d: highlight anchor edge=%dpx, want %dpx (anchor drifted)",
+					name, caret, edge, anchorPx)
 			}
 		}
-		if base == nil || base.xPx != 0 {
-			t.Fatalf("caret %d: base run \"Hello World.\" not drawn at xPx=0; got %+v", caret, rec.texts)
-		}
-		if baseRun == nil {
-			baseRun = base
-		} else if *base != *baseRun {
-			t.Errorf("caret %d: base run = %+v, want stable %+v", caret, *base, *baseRun)
-		}
-		// The highlight's left edge (the anchor side) stays pinned.
-		if len(rec.fills) == 0 {
-			t.Fatalf("caret %d: no selection highlight drawn", caret)
-		}
-		if got := rec.fills[0].xPx; got != anchorPx {
-			t.Errorf("caret %d: highlight left edge=%dpx, want anchor %dpx (anchor drifted)",
-				caret, got, anchorPx)
-		}
 	}
+	check("caret-right-of-anchor", 2, []int{5, 8, 11})
+	check("caret-left-of-anchor", 10, []int{7, 4, 1})
 }

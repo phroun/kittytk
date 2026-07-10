@@ -510,25 +510,24 @@ func (t *TextInput) Paint(p *core.Painter) {
 	caretX, caretXPx := prefixWidth(cursorDisp)
 
 	// 2. Overstrike the selection: a highlight over the whole span, then the
-	// selected text re-struck in the selection style, ANCHORED at the fixed
-	// end - left-aligned when the anchor is on the left, right-aligned when it
-	// is on the right. Pinning the re-strike to the stationary end keeps the
-	// already-selected text from shifting as the caret end grows the span.
+	// selected text re-colored. On a pixel surface the re-color draws the SAME
+	// whole run (identical glyph rasters as the base text) and reveals only
+	// the selected columns with a pixel-precise clip, so the selected glyphs
+	// never move - only the clip edge does - and neither the fixed anchor end
+	// nor the interior jitters as the caret end grows the span. (Re-drawing a
+	// re-shaped substring, right-aligned to the anchor, still jittered: the
+	// substring re-shapes and its rounded left edge shifts every glyph.) On a
+	// cell surface the substring path is exact (cell-aligned) and used as-is.
 	if selLo >= 0 && selHi > selLo {
 		loX, loPx := prefixWidth(selLo)
 		hiX, hiPx := prefixWidth(selHi)
-		_, anchorPx := prefixWidth(anchorDisp)
-		selText := string(displayText[selLo:selHi])
 		if usePx {
 			p.FillRectPixels(0, 0, loPx, 0, hiPx-loPx, p.UnitsToPx(font.LineHeight()), selStyle)
-			startPx := anchorPx // anchor on the left: left-align
-			if cursorDisp < anchorDisp {
-				startPx = anchorPx - p.UnitsToPx(font.MeasureText(selText)) // right-align
-			}
-			p.DrawTextOffset(0, 0, startPx, 0, selText, selStyle, font)
+			selFg := selStyle.WithBg(style.ColorTransparent) // glyphs over the highlight
+			p.DrawTextOffsetClipped(0, 0, 0, loPx, hiPx, string(displayText), selFg, font)
 		} else {
 			p.FillRect(core.UnitRect{X: loX, Width: hiX - loX, Height: bounds.Height}, ' ', selStyle)
-			p.DrawText(loX, 0, selText, selStyle, font)
+			p.DrawText(loX, 0, string(displayText[selLo:selHi]), selStyle, font)
 		}
 	}
 

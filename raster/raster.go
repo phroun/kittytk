@@ -58,6 +58,14 @@ type Backend struct {
 	roundClipRadius core.Unit
 	hasRoundClip    bool
 
+	// pxClip is a transient device-pixel X clip [pxClipX0, pxClipX1),
+	// applied only for the duration of a single clipped blit (selection
+	// text drawn from the whole run and revealed only over the selected
+	// columns). It is pixel-precise, unlike the cell-snapped unit clip.
+	pxClipActive bool
+	pxClipX0     int
+	pxClipX1     int
+
 	// clipboard holds the local clipboard for headless use; SDL and
 	// other substrates may sync it with the system clipboard.
 	clipboard string
@@ -292,6 +300,9 @@ func (b *Backend) SetRoundedClip(r core.UnitRect, radius core.Unit) {
 // clip's rect and corner arcs (hard-edged, pixel centers).
 func (b *Backend) pointVisible(x, y int) bool {
 	if x < 0 || y < 0 || x >= b.w || y >= b.h {
+		return false
+	}
+	if b.pxClipActive && (x < b.pxClipX0 || x >= b.pxClipX1) {
 		return false
 	}
 	if b.hasClip {
@@ -745,7 +756,7 @@ func (b *Backend) blitRGBA(xPx, yPx int, src *image.RGBA) {
 	if sw <= 0 || sh <= 0 {
 		return
 	}
-	fullyVisible := !b.hasRoundClip &&
+	fullyVisible := !b.hasRoundClip && !b.pxClipActive &&
 		b.pointVisible(xPx, yPx) && b.pointVisible(xPx+sw-1, yPx) &&
 		b.pointVisible(xPx, yPx+sh-1) && b.pointVisible(xPx+sw-1, yPx+sh-1)
 	if fullyVisible {
@@ -810,6 +821,31 @@ func (b *Backend) DrawTextPx(xPx, yPx int, s string, st style.CellStyle, f *core
 	} else {
 		b.compositeRGBA(xPx, yPx, ti.img)
 	}
+	return ti.img.Bounds().Dx()
+}
+
+// DrawTextPxClipped implements core.ClippedTextPixelDrawer: draw a string
+// at an absolute device pixel but reveal only the columns in [clipX0,
+// clipX1). The selection colors its text this way - drawing the WHOLE
+// stable run and clipping to the selected columns - so the selected glyphs
+// are the exact same rasters as the base run (never re-shaped or re-placed)
+// and don't jitter as the selection grows; only the clip edge moves.
+func (b *Backend) DrawTextPxClipped(xPx, yPx int, s string, st style.CellStyle, f *core.Font, clipX0, clipX1 int) int {
+	if s == "" || clipX1 <= clipX0 {
+		return 0
+	}
+	fg, bg := b.styleColors(st)
+	underline := st.Attrs&style.StyleUnderline != 0
+	opaque := st.Bg != style.ColorTransparent
+	ti := b.cachedTextImage(f, s, fg, bg, underline, opaque)
+
+	b.pxClipActive, b.pxClipX0, b.pxClipX1 = true, clipX0, clipX1
+	if ti.opaque {
+		b.blitRGBA(xPx, yPx, ti.img)
+	} else {
+		b.compositeRGBA(xPx, yPx, ti.img)
+	}
+	b.pxClipActive = false
 	return ti.img.Bounds().Dx()
 }
 

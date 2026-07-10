@@ -381,6 +381,15 @@ type TextPixelDrawer interface {
 	DrawTextPx(xPx, yPx int, s string, st style.CellStyle, f *Font) int
 }
 
+// ClippedTextPixelDrawer is an optional RenderBackend capability: like
+// DrawTextPx, but only the device-pixel columns in [clipX0, clipX1) are
+// painted. It lets a caller draw one shaped run and reveal only part of it
+// with pixel precision (the selection re-colors its text this way, from the
+// same run as the base text, so the glyphs never move). Cell surfaces omit it.
+type ClippedTextPixelDrawer interface {
+	DrawTextPxClipped(xPx, yPx int, s string, st style.CellStyle, f *Font, clipX0, clipX1 int) int
+}
+
 // FindSmoothPositioning walks up the trinket tree for a
 // SmoothPositioningProvider. Default (no provider found): false -
 // snap to cells, the only always-safe answer.
@@ -689,6 +698,23 @@ func (p *Painter) DrawTextOffset(x, y Unit, offXPx, offYPx int, text string, s s
 	ax, ay := p.deviceAnchor(sx, sy)
 	p.applyClip()
 	return td.DrawTextPx(ax+offXPx, ay+offYPx, text, s, font), true
+}
+
+// DrawTextOffsetClipped draws a string at unit (x, y) plus a device-pixel
+// offset, but reveals only the columns in [clipX0Px, clipX1Px) - both given
+// as device-pixel offsets from the same unit anchor. Draw the whole run at
+// offXPx and clip to the wanted span to re-color a slice of it (the
+// selection) without re-shaping or re-placing the glyphs, so they don't
+// jitter as the span grows. Returns 0, false on cell surfaces.
+func (p *Painter) DrawTextOffsetClipped(x, y Unit, offXPx, clipX0Px, clipX1Px int, text string, s style.CellStyle, font *Font) (int, bool) {
+	td, ok := p.backend.(ClippedTextPixelDrawer)
+	if !ok {
+		return 0, false
+	}
+	sx, sy := p.toScreen(x, y)
+	ax, ay := p.deviceAnchor(sx, sy)
+	p.applyClip()
+	return td.DrawTextPxClipped(ax+offXPx, ay, text, s, font, ax+clipX0Px, ax+clipX1Px), true
 }
 
 // FillRectPixels fills, in device pixels, a rectangle anchored at unit
