@@ -593,6 +593,40 @@ func (w *Window) renderActive() bool {
 	return w.isActive || w.quasiActive
 }
 
+// nearestAncestorWindow returns the closest Window enclosing this one (its
+// MDI parent, or that parent's parent, and so on), or nil for a top-level
+// window that isn't nested inside another window.
+func (w *Window) nearestAncestorWindow() *Window {
+	for p := w.Parent(); p != nil; p = p.Parent() {
+		if win, ok := p.(*Window); ok {
+			return win
+		}
+	}
+	return nil
+}
+
+// isLit reports whether the window paints with a lit border - active,
+// quasi-active, or passive (menu-remembered) - AND its whole ancestor
+// lineage is lit. A nested MDI child is only lit while every window above
+// it is lit, so a dimmed parent dims its children.
+func (w *Window) isLit() bool {
+	lit := w.renderActive()
+	if !lit {
+		if parent := w.Parent(); parent != nil {
+			if provider, ok := parent.(core.PassiveWindowProvider); ok {
+				lit = provider.IsWindowPassive(w)
+			}
+		}
+	}
+	if !lit {
+		return false
+	}
+	if aw := w.nearestAncestorWindow(); aw != nil {
+		return aw.isLit()
+	}
+	return true
+}
+
 // SetActive sets the window's active state. This is called by WindowManager
 // or MDIPane when the window becomes the active (selected) window.
 func (w *Window) SetActive(active bool) {
@@ -1361,6 +1395,15 @@ func (w *Window) Paint(p *core.Painter) {
 		}
 	}
 
+	// An MDI child only lights up while its ancestor window lineage is lit.
+	// If a containing window has gone inactive (another top-level window took
+	// focus), the child follows it to the inactive style regardless of its
+	// own internal focus. Top-level windows have no ancestor and are exempt.
+	if aw := w.nearestAncestorWindow(); aw != nil && !aw.isLit() {
+		focused = false
+		isPassive = false
+	}
+
 	// Get styles from scheme based on focus state
 	// Passive windows use active colors (same as focused)
 	titleStyle := scheme.GetWindowTitle(focused || isPassive)
@@ -1905,14 +1948,6 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		p.StrokeRoundedRect(localBounds, windowCornerRadius, border, roundedStyle)
 	}
 
-	// Single-border (active, not focused): the outer band is window-background
-	// colored (drawn above), so add the thin inner line in the active border
-	// color. Drawn here so it shows even when there is no edge-to-edge content
-	// re-stroke; that path re-adds it over the content.
-	if rounded && border == style.BorderHeavy {
-		w.paintSingleBorderInner(p, localBounds)
-	}
-
 	scheme := w.GetScheme()
 	// Derive visual focus: active AND (parent has focus OR window has internal focus)
 	// When blur item is focused, buttons stay in active color but title bar text uses inactive
@@ -1933,11 +1968,17 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			}
 		}
 	}
+	// A nested MDI child dims with its ancestor lineage (see Paint): if a
+	// containing window is inactive, the child's chrome is inactive too.
+	if aw := w.nearestAncestorWindow(); aw != nil && !aw.isLit() {
+		focused = false
+	}
 
 	// For button styling, use active appearance even when blur is focused -
 	// except on the graphical path, where a blur-focused bar renders fully
-	// inactive (the other buttons dim; only the blur button stays lit).
-	buttonFocused := focused || titleFocus == TitleFocusBlur
+	// inactive (the other buttons dim; only the blur button stays lit). The
+	// single-border (heavy) state is lit, so its icons paint active too.
+	buttonFocused := focused || titleFocus == TitleFocusBlur || border == style.BorderHeavy
 	if rounded && titleFocus == TitleFocusBlur {
 		buttonFocused = false
 	}
@@ -2014,7 +2055,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			// the tear/redock handle and the space around it take the inactive
 			// title colors too (matching a real inactive window frame).
 			tearStyle := titleStyle
-			tearActive := focused
+			tearActive := buttonFocused
 			if rounded && titleFocus == TitleFocusBlur {
 				tearStyle = scheme.GetWindowTitle(false)
 				tearActive = false
@@ -2050,6 +2091,15 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			tp.DrawCell(blurX+metrics.CellWidth, 0, '~', blurBtnStyle)
 			tp.DrawCell(blurX+metrics.CellWidth*2, 0, ']', blurBtnStyle)
 		}
+	}
+
+	// Single-border (active, not focused): the outer band is window-background
+	// colored (drawn above), so add the thin inner line in the active border
+	// color. Drawn last - after the titlebar icons and title - so it slightly
+	// overlays them. The after-content re-stroke re-adds it over edge-to-edge
+	// content.
+	if rounded && border == style.BorderHeavy {
+		w.paintSingleBorderInner(p, localBounds)
 	}
 
 	// Fill content area with background. Skipped when the rounded

@@ -670,6 +670,37 @@ func (d *Desktop) findApplicationForWindow(w *window.Window) ApplicationProvider
 	return nil
 }
 
+// quasiActivateExclusive makes owner quasi-active (lit, single/heavy
+// border) and returns every OTHER top-level window - torn or in-surface -
+// to the inactive style, so only one top-level window is lit while the
+// desktop menu bar holds focus. MDI children live inside their parent
+// window (not top-level), so they follow their parent's lineage separately.
+func (d *Desktop) quasiActivateExclusive(owner *window.Window) {
+	d.mu.RLock()
+	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
+	wm := d.windowManager
+	d.mu.RUnlock()
+
+	clear := func(w *window.Window) {
+		if w == nil || w == owner {
+			return
+		}
+		// SetActive short-circuits when already inactive, so clear the quasi
+		// flag explicitly - a window stuck quasi has isActive == false.
+		w.SetActive(false)
+		w.SetQuasiActive(false)
+	}
+	for _, th := range hosts {
+		clear(th.Window())
+	}
+	if wm != nil {
+		for _, w := range wm.Windows() {
+			clear(w)
+		}
+	}
+	owner.SetQuasiActive(true)
+}
+
 // windowFocusChanged is called when window focus changes.
 func (d *Desktop) windowFocusChanged(w *window.Window) {
 	// When w is nil, it means the window was deactivated (e.g., menu bar took focus).
@@ -2039,8 +2070,9 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 			// Its OS surface dimmed it on FOCUS_LOST, so re-light it here -
 			// but as quasi-active (lit, single/heavy border) rather than a
 			// full double-bordered focus, since focus really is on the
-			// desktop, not the torn window.
-			owner.SetQuasiActive(true)
+			// desktop, not the torn window. Exclusive: any other top-level
+			// window still carrying a lit/heavy style goes inactive.
+			d.quasiActivateExclusive(owner)
 		}
 		return true
 
@@ -2569,6 +2601,15 @@ func (d *Desktop) PerformKeyboardBlur() {
 // 2. It's active but contains an MDIPane with an active descendant window
 func (d *Desktop) IsWindowPassive(win core.Trinket) bool {
 	if d.windowManager == nil {
+		return false
+	}
+
+	// A detached window lives on its own OS surface: its lit/heavy state is
+	// driven by that surface's focus (SetActive/SetQuasiActive), not by the
+	// desktop's menu-bar/previous-window bookkeeping. Without this it would
+	// read as the desktop's remembered previous window and always paint
+	// passive (single/heavy) even while focused and interacted with.
+	if w, ok := win.(*window.Window); ok && w.IsDetached() {
 		return false
 	}
 
