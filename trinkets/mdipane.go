@@ -1411,64 +1411,9 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle resize
 	if resizing != nil {
-		metrics := m.EffectiveCellMetrics()
-
-		deltaX := event.X - resizeStartX
-		deltaY := event.Y - resizeStartY
-
-		newBounds := resizeOriginal
-
-		if resizeEdge&window.ResizeEdgeLeft != 0 {
-			newBounds.X = resizeOriginal.X + deltaX
-			newBounds.Width = resizeOriginal.Width - deltaX
-		}
-		if resizeEdge&window.ResizeEdgeRight != 0 {
-			newBounds.Width = resizeOriginal.Width + deltaX
-		}
-		if resizeEdge&window.ResizeEdgeTop != 0 {
-			newBounds.Y = resizeOriginal.Y + deltaY
-			newBounds.Height = resizeOriginal.Height - deltaY
-		}
-		if resizeEdge&window.ResizeEdgeBottom != 0 {
-			newBounds.Height = resizeOriginal.Height + deltaY
-		}
-
-		// Snap to cell boundaries unless the surface supports smooth
-		// (unit-granular) positioning, as pixel surfaces do
-		if !core.FindSmoothPositioning(m.Self()) {
-			newBounds = metrics.AlignRect(newBounds)
-		}
-
-		// Enforce minimum size
-		minWidth := metrics.CellWidth * 3
-		minHeight := metrics.CellHeight * 2
-		if newBounds.Width < minWidth {
-			if resizeEdge&window.ResizeEdgeLeft != 0 {
-				newBounds.X = resizeOriginal.X + resizeOriginal.Width - minWidth
-			}
-			newBounds.Width = minWidth
-		}
-		if newBounds.Height < minHeight {
-			if resizeEdge&window.ResizeEdgeTop != 0 {
-				newBounds.Y = resizeOriginal.Y + resizeOriginal.Height - minHeight
-			}
-			newBounds.Height = minHeight
-		}
-
-		// Keep on screen
-		clientArea := m.ClientArea()
-		if newBounds.X < clientArea.X {
-			if resizeEdge&window.ResizeEdgeLeft != 0 {
-				newBounds.Width = resizeOriginal.X + resizeOriginal.Width - clientArea.X
-			}
-			newBounds.X = clientArea.X
-		}
-		if newBounds.Y < clientArea.Y {
-			if resizeEdge&window.ResizeEdgeTop != 0 {
-				newBounds.Height = resizeOriginal.Y + resizeOriginal.Height - clientArea.Y
-			}
-			newBounds.Y = clientArea.Y
-		}
+		newBounds := window.ApplyResize(resizeOriginal, resizeEdge,
+			event.X-resizeStartX, event.Y-resizeStartY,
+			m.EffectiveCellMetrics(), !core.FindSmoothPositioning(m.Self()), m.ClientArea())
 
 		resizing.SetBounds(newBounds)
 		m.Update()

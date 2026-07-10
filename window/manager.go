@@ -279,6 +279,70 @@ func EffectiveResizeGrip(win *Window, baseGrip core.Unit) core.Unit {
 	return baseGrip + core.FindFrameBorderUnits(win)
 }
 
+// ApplyResize computes the new bounds for a window resized from `original`
+// by dragging edge bits `edge` a delta of (deltaX, deltaY). It enforces a
+// minimum size (3x2 cells), optionally snaps to cell boundaries
+// (snapToCells - false on smooth/pixel surfaces), keeps the window's
+// top/left within `clientArea` (the far edge absorbs the clamp when
+// resizing from that side), and limits the height to the client area. It
+// is the single resize-geometry rule shared by the desktop WindowManager
+// drag-resize and the embedded MDIPane.
+func ApplyResize(original core.UnitRect, edge int, deltaX, deltaY core.Unit, metrics core.CellMetrics, snapToCells bool, clientArea core.UnitRect) core.UnitRect {
+	nb := original
+	if edge&ResizeEdgeLeft != 0 {
+		nb.X = original.X + deltaX
+		nb.Width = original.Width - deltaX
+	}
+	if edge&ResizeEdgeRight != 0 {
+		nb.Width = original.Width + deltaX
+	}
+	if edge&ResizeEdgeTop != 0 {
+		nb.Y = original.Y + deltaY
+		nb.Height = original.Height - deltaY
+	}
+	if edge&ResizeEdgeBottom != 0 {
+		nb.Height = original.Height + deltaY
+	}
+
+	if snapToCells {
+		nb = metrics.AlignRect(nb)
+	}
+
+	minWidth := metrics.CellWidth * 3
+	minHeight := metrics.CellHeight * 2
+	if nb.Width < minWidth {
+		if edge&ResizeEdgeLeft != 0 {
+			nb.X = original.X + original.Width - minWidth
+		}
+		nb.Width = minWidth
+	}
+	if nb.Height < minHeight {
+		if edge&ResizeEdgeTop != 0 {
+			nb.Y = original.Y + original.Height - minHeight
+		}
+		nb.Height = minHeight
+	}
+
+	// Keep the top/left within the client area; when resizing from that
+	// side, the opposite (anchored) edge absorbs the clamp so it stays put.
+	if nb.X < clientArea.X {
+		if edge&ResizeEdgeLeft != 0 {
+			nb.Width = original.X + original.Width - clientArea.X
+		}
+		nb.X = clientArea.X
+	}
+	if nb.Y < clientArea.Y {
+		if edge&ResizeEdgeTop != 0 {
+			nb.Height = original.Y + original.Height - clientArea.Y
+		}
+		nb.Y = clientArea.Y
+	}
+	if nb.Height > clientArea.Height {
+		nb.Height = clientArea.Height
+	}
+	return nb
+}
+
 // detectResizeEdge determines which window edge(s) the mouse is near.
 // Returns a combination of ResizeEdge constants.
 func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
@@ -1563,72 +1627,9 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Handle resize
 	if resizing != nil {
-		metrics := core.DefaultCellMetrics()
-
-		deltaX := event.X - resizeStartX
-		deltaY := event.Y - resizeStartY
-
-		newBounds := resizeOriginal
-
-		// Apply resize based on which edges are being dragged
-		if resizeEdge&ResizeEdgeLeft != 0 {
-			newBounds.X = resizeOriginal.X + deltaX
-			newBounds.Width = resizeOriginal.Width - deltaX
-		}
-		if resizeEdge&ResizeEdgeRight != 0 {
-			newBounds.Width = resizeOriginal.Width + deltaX
-		}
-		if resizeEdge&ResizeEdgeTop != 0 {
-			newBounds.Y = resizeOriginal.Y + deltaY
-			newBounds.Height = resizeOriginal.Height - deltaY
-		}
-		if resizeEdge&ResizeEdgeBottom != 0 {
-			newBounds.Height = resizeOriginal.Height + deltaY
-		}
-
-		// Align to cell boundaries (skipped on pixel surfaces, where
-		// windows resize smoothly at unit granularity)
-		if !m.SmoothPositioning() {
-			newBounds = metrics.AlignRect(newBounds)
-		}
-
-		// Enforce minimum window size (at least 3 cells wide, 2 cells tall)
-		minWidth := metrics.CellWidth * 3
-		minHeight := metrics.CellHeight * 2
-		if newBounds.Width < minWidth {
-			if resizeEdge&ResizeEdgeLeft != 0 {
-				newBounds.X = resizeOriginal.X + resizeOriginal.Width - minWidth
-			}
-			newBounds.Width = minWidth
-		}
-		if newBounds.Height < minHeight {
-			if resizeEdge&ResizeEdgeTop != 0 {
-				newBounds.Y = resizeOriginal.Y + resizeOriginal.Height - minHeight
-			}
-			newBounds.Height = minHeight
-		}
-
-		// Keep window on screen (don't allow left edge or top to go off screen)
-		clientArea := m.ClientArea()
-		if newBounds.X < clientArea.X {
-			if resizeEdge&ResizeEdgeLeft != 0 {
-				// Resizing from left - adjust width instead
-				newBounds.Width = resizeOriginal.X + resizeOriginal.Width - clientArea.X
-			}
-			newBounds.X = clientArea.X
-		}
-		if newBounds.Y < clientArea.Y {
-			if resizeEdge&ResizeEdgeTop != 0 {
-				// Resizing from top - adjust height instead
-				newBounds.Height = resizeOriginal.Y + resizeOriginal.Height - clientArea.Y
-			}
-			newBounds.Y = clientArea.Y
-		}
-
-		// Limit height to client area height (windows can be wider but not taller)
-		if newBounds.Height > clientArea.Height {
-			newBounds.Height = clientArea.Height
-		}
+		newBounds := ApplyResize(resizeOriginal, resizeEdge,
+			event.X-resizeStartX, event.Y-resizeStartY,
+			core.DefaultCellMetrics(), !m.SmoothPositioning(), m.ClientArea())
 
 		resizing.SetBounds(newBounds)
 		// Keep the edge highlight on the edge being dragged, tracking the
