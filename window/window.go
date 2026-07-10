@@ -1557,6 +1557,25 @@ func (w *Window) chromeMouseTarget(x, y core.Unit) (core.Trinket, core.UnitRect,
 	return nil, core.UnitRect{}, false
 }
 
+// paintFocusedTitleDecoration draws the keyboard-focused title as
+// "< title >" centered in innerWidth over a highlight foundation. It
+// shapes the whole thing as ONE run rather than cell brackets abutting a
+// proportional title: at a fractional font size the two rates diverge, so
+// placing the closing bracket at the title's re-snapped unit end left it
+// drifting right of where the glyphs actually finish. A single run ends
+// the bracket exactly on the title. On a cell surface each character still
+// occupies its own cell, so the classic look is unchanged.
+func (w *Window) paintFocusedTitleDecoration(p *core.Painter, innerWidth core.Unit, title string, s style.CellStyle, font *core.Font, cellHeight core.Unit) {
+	decorated := "< " + title + " >"
+	totalWidth := font.MeasureText(decorated)
+	startX := (innerWidth - totalWidth) / 2
+	if startX < 0 {
+		startX = 0
+	}
+	p.FillRect(core.UnitRect{X: startX, Width: totalWidth, Height: cellHeight}, ' ', s)
+	p.DrawText(startX, 0, decorated, s, font)
+}
+
 // paintMaximizedFrame draws the title bar only (no side borders).
 func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metrics core.CellMetrics,
 	title string, titleStyle, frameStyle style.CellStyle, border style.BorderStyle) {
@@ -1649,37 +1668,9 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 
 	// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 	if titleFocus == TitleFocusTitle {
-		// Title has focus - draw with decorative angle brackets
+		// Title has focus - draw with decorative angle brackets, as one run.
 		titleDisplayStyle := scheme.GetTitleBarButton(focused, true, false)
-
-		// Calculate total width: "< " (2 cells) + title (font) + " >" (2 cells)
-		bracketWidth := metrics.CellWidth * 2 // Each side: bracket + space
-		titleTextWidth := font.MeasureText(title)
-		totalWidth := bracketWidth + titleTextWidth + bracketWidth
-
-		// Center the total width in the title area
-		startX := (titleRect.Width - totalWidth) / 2
-		x := startX
-
-		// Foundation fill: paint the decoration's highlight background as one
-		// rectangle first, so the sub-pixel seams between the cell brackets
-		// and the proportional title (two pixel rates at a fractional font
-		// size) can't show the title-bar background through. This mirrors the
-		// button, whose rectangle foundation is why it has no such gap.
-		p.FillRect(core.UnitRect{X: startX, Width: totalWidth, Height: metrics.CellHeight}, ' ', titleDisplayStyle)
-
-		// Draw left bracket and space (decorative)
-		p.DrawCell(x, 0, '<', titleDisplayStyle)
-		p.DrawCell(x+metrics.CellWidth, 0, ' ', titleDisplayStyle)
-		x += bracketWidth
-
-		// Draw title text (font-based)
-		p.DrawText(x, 0, title, titleDisplayStyle, font)
-		x += titleTextWidth
-
-		// Draw space and right bracket (decorative)
-		p.DrawCell(x, 0, ' ', titleDisplayStyle)
-		p.DrawCell(x+metrics.CellWidth, 0, '>', titleDisplayStyle)
+		w.paintFocusedTitleDecoration(p, titleRect.Width, title, titleDisplayStyle, font, metrics.CellHeight)
 	} else {
 		rightLimit := bounds.Width
 		if titleFocus == TitleFocusBlur {
@@ -1881,35 +1872,9 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 
 		// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 		if titleFocus == TitleFocusTitle {
-			// Title has focus - draw with decorative angle brackets
+			// Title has focus - draw with decorative angle brackets, as one run.
 			titleDisplayStyle := scheme.GetTitleBarButton(focused, true, false)
-
-			// Calculate total width: "< " (2 cells) + title (font) + " >" (2 cells)
-			bracketWidth := metrics.CellWidth * 2 // Each side: bracket + space
-			titleTextWidth := font.MeasureText(title)
-			totalWidth := bracketWidth + titleTextWidth + bracketWidth
-
-			// Center the total width in the title area
-			startX := (titleRect.Width - totalWidth) / 2
-			x := startX
-
-			// Foundation fill (see the non-torn path): the decoration's
-			// highlight as one rectangle, so the cell/proportional seams do
-			// not leak the title-bar background at a fractional font size.
-			tp.FillRect(core.UnitRect{X: startX, Width: totalWidth, Height: metrics.CellHeight}, ' ', titleDisplayStyle)
-
-			// Draw left bracket and space (decorative)
-			tp.DrawCell(x, 0, '<', titleDisplayStyle)
-			tp.DrawCell(x+metrics.CellWidth, 0, ' ', titleDisplayStyle)
-			x += bracketWidth
-
-			// Draw title text (font-based)
-			tp.DrawText(x, 0, title, titleDisplayStyle, font)
-			x += titleTextWidth
-
-			// Draw space and right bracket (decorative)
-			tp.DrawCell(x, 0, ' ', titleDisplayStyle)
-			tp.DrawCell(x+metrics.CellWidth, 0, '>', titleDisplayStyle)
+			w.paintFocusedTitleDecoration(tp, titleRect.Width, title, titleDisplayStyle, font, metrics.CellHeight)
 		} else {
 			// Normal title or blur focused
 			titleDisplayStyle := titleStyle
