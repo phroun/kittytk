@@ -2158,12 +2158,29 @@ func (m *MenuBar) CloseMenuWithoutRestore() {
 }
 
 // calculateMenuX calculates the x position of a menu (accounting for scroll offset).
+// menuBarLeftInset is the small left indent applied to the menu items on
+// graphical surfaces, so the outline stroke drawn around the active item
+// has its left edge clear of the very left pixel column. Clicks anywhere
+// in this indent still activate the first item (Fitts's law - see
+// HandleMousePress), so nothing on the left edge is dead. Zero on cell
+// surfaces, where there is no stroke and a sub-cell indent can't render.
+const menuBarLeftInset core.Unit = 2
+
+// leftInset returns the item indent for the surface of the last paint:
+// menuBarLeftInset on graphical surfaces, 0 on cell surfaces.
+func (m *MenuBar) leftInset() core.Unit {
+	if m.graphicalCached {
+		return menuBarLeftInset
+	}
+	return 0
+}
+
 func (m *MenuBar) calculateMenuX(index int) core.Unit {
 
-	// Start after left ellipsis if scrolled
-	x := core.Unit(0)
+	// Start past the left indent, and the left ellipsis if scrolled.
+	x := m.leftInset()
 	if m.scrollOffset > 0 {
-		x = m.ellipsisWidth() // "..."
+		x += m.ellipsisWidth() // "..."
 	}
 
 	// Calculate position from scroll offset using font-aware width
@@ -2283,17 +2300,12 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// Available width for menus
 	availableWidth := dateTimeX - scrollButtonsWidth
 
-	// Inset the menu items (and their subsequent siblings) by one device
-	// pixel on graphical surfaces so the first item is not flush against
-	// the very left pixel column. The background fill and the item hit
-	// zones stay at unit 0 - only the drawing shifts - so the leftmost
-	// pixel still clicks the first item. Restored right after the loop.
-	itemsNudged := p.ShiftDeviceOrigin(1, 0)
-
-	// Draw left ellipsis if scrolled
-	x := core.Unit(0)
+	// Items begin past a small left indent on graphical surfaces (so the
+	// active item's outline stroke clears the left edge); the left
+	// ellipsis, when scrolled, sits in that same indented origin.
+	x := m.leftInset()
 	if m.scrollOffset > 0 {
-		x = m.drawEllipsis(p, 0, menuBarStyle)
+		x += m.drawEllipsis(p, x, menuBarStyle)
 	}
 
 	// Draw visible menus
@@ -2471,13 +2483,6 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		x += menuWidth
 	}
 
-	// End of the one-pixel item inset: restore the origin so the
-	// right-aligned clock and any popped-item outline paint on the true
-	// grid.
-	if itemsNudged {
-		p.ShiftDeviceOrigin(-1, 0)
-	}
-
 	// Draw date/time background and text (unless the calendar is hidden).
 	// The background always fills the full bar height; on graphical
 	// surfaces the clock text renders in a compact 80% monospace face
@@ -2517,13 +2522,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			Height: metrics.CellHeight,
 		}
 		lineStyle := style.DefaultStyle().WithBg(scheme.GetMenuSeparator().Fg)
-		// The framed bar item is drawn with the one-pixel item inset, so
-		// stroke its outline through the same nudge to stay aligned.
-		outlineNudged := p.ShiftDeviceOrigin(1, 0)
 		paintPopupOuterStroke(p, itemRect, p.DeviceScale(), lineStyle, 0, 0, false)
-		if outlineNudged {
-			p.ShiftDeviceOrigin(-1, 0)
-		}
 	}
 }
 
@@ -2722,10 +2721,11 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 			}
 		}
 
-		// Check for click on left ellipsis ("...") to scroll left and open that menu
+		// Check for click on left ellipsis ("...") to scroll left and open
+		// that menu. When scrolled it is the leftmost element, so its hit
+		// area reaches the very left edge (through the item indent too).
 		if m.scrollOffset > 0 {
-			ellipsisWidth := m.ellipsisWidth() // "..."
-			if event.X >= 0 && event.X < ellipsisWidth {
+			if event.X >= 0 && event.X < m.leftInset()+m.ellipsisWidth() {
 				// Track mouse down for potential drag (same as clicking a menu)
 				m.mouseDown = true
 				m.mouseDownX = event.X
@@ -2739,16 +2739,24 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 			}
 		}
 
-		// Find which menu was clicked (accounting for scroll offset)
-		x := core.Unit(0)
+		// Find which menu was clicked (past the left indent, and the
+		// ellipsis when scrolled).
+		x := m.leftInset()
 		if m.scrollOffset > 0 {
-			x = m.ellipsisWidth() // "..."
+			x += m.ellipsisWidth() // "..."
 		}
 
 		for i := m.scrollOffset; i < len(m.menus); i++ {
 			menu := m.menus[i]
 			menuWidth := m.menuTitleWidth(menu.title)
-			if event.X >= x && event.X < x+menuWidth {
+			// Fitts's law: with nothing scrolled off to its left, the first
+			// item's hit area reaches the very left edge, so a click in the
+			// indent (or the top-left corner) still activates it.
+			left := x
+			if i == m.scrollOffset && m.scrollOffset == 0 {
+				left = 0
+			}
+			if event.X >= left && event.X < x+menuWidth {
 				// Track mouse down for potential drag
 				m.mouseDown = true
 				m.mouseDownX = event.X
@@ -2852,16 +2860,23 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 			m.activeMenu.Update()
 		}
 
-		// Find which menu the mouse is over (accounting for scroll offset)
-		x := core.Unit(0)
+		// Find which menu the mouse is over (past the left indent, and the
+		// ellipsis when scrolled).
+		x := m.leftInset()
 		if m.scrollOffset > 0 {
-			x = m.ellipsisWidth() // "..."
+			x += m.ellipsisWidth() // "..."
 		}
 
 		for i := m.scrollOffset; i < len(m.menus); i++ {
 			menu := m.menus[i]
 			menuWidth := m.menuTitleWidth(menu.title)
-			if event.X >= x && event.X < x+menuWidth {
+			// Fitts's law: the first item's hit area reaches the left edge
+			// (matches HandleMousePress) when nothing is scrolled off.
+			left := x
+			if i == m.scrollOffset && m.scrollOffset == 0 {
+				left = 0
+			}
+			if event.X >= left && event.X < x+menuWidth {
 				if m.activeMenu != menu {
 					m.OpenMenu(i)
 				}
