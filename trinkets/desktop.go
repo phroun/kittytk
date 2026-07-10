@@ -1950,14 +1950,23 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// that would silently steal focus from the detached window. Only
 		// an actual click on an in-surface window changes the focus.
 		d.mu.RLock()
-		tornOwns := d.tornFocusOwner != nil
+		owner := d.tornFocusOwner
 		d.mu.RUnlock()
+		tornOwns := owner != nil
 		if aw := wm.ActiveWindow(); aw != nil {
 			if e.Focused && tornOwns {
 				// Don't relight; leave the detached window as the owner.
 			} else {
 				aw.SetActive(e.Focused)
 			}
+		}
+		if e.Focused && owner != nil {
+			// The torn window whose focus "lives" on the desktop menu bar
+			// stays quasi-active (border lit) while the desktop holds OS
+			// focus, mirroring the in-surface blur: you can pick menu items
+			// that apply to it. Its OS surface dimmed it on FOCUS_LOST, so
+			// re-light it here.
+			owner.SetActive(true)
 		}
 		return true
 
