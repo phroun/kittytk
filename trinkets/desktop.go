@@ -196,6 +196,16 @@ type Desktop struct {
 	timers     []*DesktopTimer
 	timerMutex sync.Mutex
 
+	// Passive status-bar notifications (see NotifyPassive): a transient
+	// message that overlays the status bar's normal content for a couple of
+	// seconds, then reverts. notifyBase holds the content to restore;
+	// notifyGen invalidates the timer of a superseded notice.
+	notifyMu     sync.Mutex
+	notifyActive bool
+	notifyBase   []StatusSection
+	notifyTimer  *DesktopTimer
+	notifyGen    int
+
 	// Callbacks
 	onStartup  func()
 	onShutdown func()
@@ -1676,6 +1686,23 @@ type cutEnabler interface {
 	CutEnabled() bool
 }
 
+// selectionReporter lets an edit target report whether it currently holds a
+// selection, so the Edit menu can raise a passive "nothing selected" notice
+// when Cut or Copy would otherwise be a silent no-op. An edit target that
+// does not implement it is assumed to have a selection (no notice).
+type selectionReporter interface {
+	HasSelection() bool
+}
+
+// hasSelection reports whether ea currently has a selection, defaulting to
+// true for targets that do not advertise their selection state.
+func hasSelection(ea editActor) bool {
+	if sr, ok := ea.(selectionReporter); ok {
+		return sr.HasSelection()
+	}
+	return true
+}
+
 // focusedEditActor returns the focused trinket as an editActor, if it is one.
 func (d *Desktop) focusedEditActor() (editActor, bool) {
 	if fw := d.FocusedTrinket(); fw != nil {
@@ -1705,7 +1732,11 @@ func (d *Desktop) appendStandardEditItems(menu *Menu) func() {
 	shortcut(cut, core.ActionCut)
 	cut.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
-			ea.Cut()
+			if hasSelection(ea) {
+				ea.Cut()
+			} else {
+				d.NotifyPassive("Nothing was selected to cut.")
+			}
 		}
 	})
 	menu.AddItem(cut)
@@ -1714,7 +1745,11 @@ func (d *Desktop) appendStandardEditItems(menu *Menu) func() {
 	shortcut(copyIt, core.ActionCopy)
 	copyIt.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
-			ea.Copy()
+			if hasSelection(ea) {
+				ea.Copy()
+			} else {
+				d.NotifyPassive("Nothing was selected to copy.")
+			}
 		}
 	})
 	menu.AddItem(copyIt)
@@ -2851,6 +2886,76 @@ func (d *Desktop) startTimerInternal(interval time.Duration, repeat bool, callba
 func (d *Desktop) StopTimer(timer *DesktopTimer) {
 	if timer != nil {
 		timer.stopped = true
+	}
+}
+
+// passiveNotificationDuration is how long a passive status-bar notification
+// stays up before the bar reverts to its normal content.
+const passiveNotificationDuration = 2 * time.Second
+
+// NotifyPassive flashes a transient message across the status bar for a
+// couple of seconds, then reverts to whatever the bar was showing. It is the
+// general channel for passive notifications: the newest one shows
+// immediately and restarts the timer, so a rapid series collapses to the
+// latest message plus one countdown. The message is also routed through the
+// accessibility announce system, so when the user has enabled speech it is
+// read aloud.
+func (d *Desktop) NotifyPassive(message string) {
+	sb := d.StatusBar()
+	if sb == nil {
+		return
+	}
+
+	d.notifyMu.Lock()
+	if !d.notifyActive {
+		// First notice of a run: remember the normal content to restore.
+		// Copy the slice so the upcoming SetText (which mutates section 0
+		// in place) doesn't disturb the saved baseline.
+		d.notifyBase = append([]StatusSection(nil), sb.Sections()...)
+		d.notifyActive = true
+	}
+	d.notifyGen++
+	gen := d.notifyGen
+	if d.notifyTimer != nil {
+		d.StopTimer(d.notifyTimer)
+		d.notifyTimer = nil
+	}
+	d.notifyMu.Unlock()
+
+	// Speak it (when speech is enabled) via the accessibility channel. Done
+	// before SetText so any visual-announcement echo can't clobber the clean
+	// notification text we set next.
+	if am := d.AccessibilityManager(); am != nil {
+		am.AnnounceAssertive(message)
+	}
+
+	sb.SetText(message)
+
+	timer := d.StartTimer(passiveNotificationDuration, func() {
+		d.clearPassiveNotification(gen)
+	})
+	d.notifyMu.Lock()
+	d.notifyTimer = timer
+	d.notifyMu.Unlock()
+}
+
+// clearPassiveNotification restores the status bar's normal content once a
+// passive notice expires, unless a newer notice (a higher generation) has
+// taken over in the meantime.
+func (d *Desktop) clearPassiveNotification(gen int) {
+	d.notifyMu.Lock()
+	if gen != d.notifyGen {
+		d.notifyMu.Unlock()
+		return
+	}
+	base := d.notifyBase
+	d.notifyActive = false
+	d.notifyBase = nil
+	d.notifyTimer = nil
+	d.notifyMu.Unlock()
+
+	if sb := d.StatusBar(); sb != nil {
+		sb.SetSections(base)
 	}
 }
 

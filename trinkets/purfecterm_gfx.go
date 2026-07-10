@@ -1895,6 +1895,13 @@ func (t *PurfecTerm) PasteClipboard() {
 	t.toChild([]byte(s))
 }
 
+// HasSelection reports whether the terminal buffer currently has selected
+// text, so the Edit menu can surface a passive notice when Copy would be a
+// no-op.
+func (t *PurfecTerm) HasSelection() bool {
+	return t.terminal != nil && t.terminal.Buffer().GetSelectedText() != ""
+}
+
 // SelectAll selects the whole buffer.
 func (t *PurfecTerm) SelectAll() {
 	if t.terminal != nil {
