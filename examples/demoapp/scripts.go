@@ -497,7 +497,6 @@ dwin=dw%d
 dcloser=dw%d.dsp.dtp.dclose
 dterm=dw%d.dsp.dterm
 set dterm feed="\e[1;36mThis banner arrived as protocol text.\e[0m\r\n\r\n"
-set dterm shell
 `, n, 40+n*16, 40+n*16, n, n, n)
 }
 
@@ -526,7 +525,6 @@ w=new window title="App %d Window" x=%d y=%d width=480 height=320 tearable main 
 }
 closer=w.sp.tp.closebtn
 term=w.sp.term
-set term shell
 mb=new menubar children={
 	new menu caption="&App %d" children={
 		new menuitem caption="&Close Window" shortcut="^W" action=demo.app.close

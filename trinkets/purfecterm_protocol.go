@@ -1,8 +1,6 @@
 package trinkets
 
 import (
-	"fmt"
-
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/protocol"
 )
@@ -20,10 +18,16 @@ import (
 // the O6 bulk frame arrives with the transport phase as a more
 // efficient encoding of the same statement.
 //
-// shell is an in-process convenience: it starts the trinket's own
-// local shell (what the demo uses). Under the display-protocol split
-// the PTY belongs to the APP, which pumps bytes through feed= - the
-// flag exists because in-process apps may still want the shortcut.
+// The child process runs on the CLIENT, never here on the render server:
+// the terminal is a pure display+input surface. The client pumps its
+// child's output in through feed=, and receives the user's input back out
+// as events:
+//
+//   - input data="..."      bytes the user typed / mouse-reported / pasted,
+//     to write to the client's PTY. Arbitrary bytes ride the \xNN escape.
+//   - resize cols=N rows=M   the grid size whenever it changes, so the
+//     client can set its PTY winsize. Fires once on bind with the current
+//     size.
 func init() {
 	regTrinket("terminal",
 		func() core.Trinket { return NewPurfecTerm() },
@@ -34,24 +38,11 @@ func init() {
 					return err
 				}
 				// Display direction: parsed into the screen buffer
-				// like program output. (Terminal.Write would be
-				// keyboard input to the child process - and silently
-				// dropped with no PTY running.)
+				// like program output. (Input travels the other way,
+				// out through the input event.)
 				t.Feed([]byte(s))
 				return nil
 			})).Tip("Append bytes to the terminal display"),
-			"shell": protocol.NewProperty("flag", wprop("shell", func(_ *protocol.BindContext, t *PurfecTerm, v *protocol.Value, f protocol.FlagState) error {
-				b, err := protocol.AsBool("shell", v, f)
-				if err != nil {
-					return err
-				}
-				if b {
-					if err := t.Start(); err != nil {
-						return fmt.Errorf("shell: %w", err)
-					}
-				}
-				return nil
-			})).Tip("Start the built-in local shell").Def("false"),
 			// font / font-size pick the monospace face and point size the
 			// terminal's cell grid derives from on graphical targets. Text
 			// mode ignores them (cells are cells).
@@ -73,6 +64,24 @@ func init() {
 			})).Tip("Font point size for the grid").Def("12"),
 		},
 		nil,
-		nil,
+		func(ctx *protocol.BindContext, w core.Trinket) {
+			t := w.(*PurfecTerm)
+			id := trinketID(t)
+			// Relay user input (keystrokes, mouse reports, paste) upstream
+			// so the client can write it to its child's PTY. Bytes carry as
+			// a quoted string; the wire's \xNN escape preserves them.
+			t.SetInputSink(func(b []byte) {
+				ctx.EmitEvent(protocol.NewEvent("input").
+					WithUint("trinket", id).
+					WithString("data", string(b)))
+			})
+			// Relay grid-size changes so the client matches its PTY winsize.
+			t.SetResizeSink(func(cols, rows int) {
+				ctx.EmitEvent(protocol.NewEvent("resize").
+					WithUint("trinket", id).
+					WithInt("cols", cols).
+					WithInt("rows", rows))
+			})
+		},
 	)
 }

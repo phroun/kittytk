@@ -10,6 +10,7 @@ import (
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/layout"
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/ptydriver"
 	"github.com/phroun/kittytk/style"
 	"github.com/phroun/kittytk/trinkets"
 	"github.com/phroun/kittytk/window"
@@ -288,7 +289,6 @@ closer=w.sp.tp.closebtn
 term=w.sp.term
 
 set term feed="\e[1;36mThis banner arrived as protocol text:\e[0m set term feed=\"...\"\r\n\r\n"
-set term shell
 
 sub closer click
 `
@@ -314,6 +314,14 @@ func createDemoWindow(desktop *trinkets.Desktop, application *app.Application) *
 	}
 
 	w := factory.byID[reply.IDs["w"]].(*window.Window)
+	// The terminal's child process runs client-side: spawn a PTY and
+	// bridge it to the built terminal surface (feed in, input/resize out).
+	if term, ok := factory.byID[reply.IDs["term"]].(*trinkets.PurfecTerm); ok {
+		if drv, err := ptydriver.Start("", term.Feed); err == nil {
+			term.SetInputSink(drv.Input)
+			term.SetResizeSink(drv.Resize)
+		}
+	}
 	// Main demo windows can be torn off (the %/# title handle);
 	// dialogs deliberately can't, so the difference is visible.
 	w.SetTearable(true)
@@ -444,8 +452,13 @@ sb=new statusbar children={new section children={new span text="Secondary Applic
 
 	splitter.SetSecond(terminal)
 
-	// Start the terminal shell
-	terminal.Start()
+	// The child process runs client-side: spawn a PTY here and bridge it
+	// to the terminal surface - its output is fed in, and the user's input
+	// and grid resizes are written back to the PTY.
+	if drv, err := ptydriver.Start("", terminal.Feed); err == nil {
+		terminal.SetInputSink(drv.Input)
+		terminal.SetResizeSink(drv.Resize)
+	}
 
 	w.SetContent(splitter)
 

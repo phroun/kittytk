@@ -349,8 +349,7 @@ char *demo_terminal_script(int n) {
         "dwin=dw%d\n"
         "dcloser=dw%d.dsp.dtp.dclose\n"
         "dterm=dw%d.dsp.dterm\n"
-        "set dterm feed=\"\\e[1;36mThis banner arrived as protocol text.\\e[0m\\r\\n\\r\\n\"\n"
-        "set dterm shell\n",
+        "set dterm feed=\"\\e[1;36mThis banner arrived as protocol text.\\e[0m\\r\\n\\r\\n\"\n",
         n, off, off, n, n, n);
     return b.p;
 }
@@ -378,7 +377,6 @@ char *secondary_build_script(int n) {
         "}\n"
         "closer=w.sp.tp.closebtn\n"
         "term=w.sp.term\n"
-        "set term shell\n"
         "mb=new menubar children={\n"
         "  new menu caption=\"&App %d\" children={ new menuitem caption=\"&Close Window\" shortcut=\"^W\" action=demo.app.close }\n"
         "  new menu caption=\"&Help\" children={ new menuitem caption=\"&About\" action=demo.app.about }\n"

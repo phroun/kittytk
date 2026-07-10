@@ -257,6 +257,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
 			t.cols, t.rows = fitCols, fitRows
 			t.terminal.Resize(fitCols, fitRows)
+			t.emitResize(fitCols, fitRows)
 		}
 	}
 
@@ -1513,7 +1514,7 @@ func (t *PurfecTerm) sendMouseEventGfx(button, cellX, cellY int, press bool) boo
 	if data == nil {
 		return false
 	}
-	t.terminal.Write(data)
+	t.toChild(data)
 	return true
 }
 
@@ -1850,7 +1851,7 @@ func (t *PurfecTerm) PasteClipboard() {
 		s = "\x1b[200~" + s + "\x1b[201~"
 	}
 	t.resetCursorBlink()
-	t.terminal.Write([]byte(s))
+	t.toChild([]byte(s))
 }
 
 // SelectAll selects the whole buffer.

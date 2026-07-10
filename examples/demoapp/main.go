@@ -21,6 +21,7 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/ptydriver"
 )
 
 // soloMode, set by -solo, makes the primary app the whole display: its
@@ -58,6 +59,10 @@ type app struct {
 	// MDI bookkeeping (primary only): document and dock-entry counters.
 	mdiCount int
 	dockSeq  int
+
+	// Client-side PTYs backing this app's terminal surfaces, closed when
+	// the app quits.
+	drivers []*ptydriver.Driver
 
 	quit     chan struct{}
 	quitOnce sync.Once
@@ -114,6 +119,9 @@ func (a *app) wait() {
 	select {
 	case <-a.quit:
 	case <-a.conn.Closed():
+	}
+	for _, d := range a.drivers {
+		d.Close()
 	}
 	a.conn.Close()
 }

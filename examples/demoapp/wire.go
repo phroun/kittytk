@@ -5,7 +5,34 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/ptydriver"
 )
+
+// wireTerminal drives a terminal surface's child process from the client
+// side: it spawns a PTY, streams the child's output in through feed=, and
+// writes the terminal's input/resize events back to the PTY. The driver is
+// registered for cleanup when the app quits.
+func (a *app) wireTerminal(term client.Handle) {
+	drv, err := ptydriver.Start("", func(b []byte) {
+		_ = term.Set("feed=" + protocol.Quote(string(b)))
+	})
+	if err != nil {
+		return
+	}
+	a.drivers = append(a.drivers, drv)
+	term.On("input", func(ev *protocol.Event) {
+		if s, ok := ev.Text("data"); ok {
+			drv.Input([]byte(s))
+		}
+	})
+	term.On("resize", func(ev *protocol.Event) {
+		cols, okc := ev.Int("cols")
+		rows, okr := ev.Int("rows")
+		if okc && okr {
+			drv.Resize(cols, rows)
+		}
+	})
+}
 
 // wireMainWindow subscribes the demo window's interactive trinkets:
 // the basic-trinket narration, the font/denomination toggles (window
@@ -226,6 +253,7 @@ func (a *app) openTerminalWindow() {
 	}
 	win := ui.Window("dwin")
 	ui.Button("dcloser").OnClick(func() { _ = win.Close() })
+	a.wireTerminal(ui.Object("dterm"))
 }
 
 // showAbout opens the About message box.
@@ -261,6 +289,7 @@ func (a *app) wireSecondary(n int) {
 	c := a.conn
 
 	ui.Button("closer").OnClick(func() { _ = ui.Window("w").Close() })
+	a.wireTerminal(ui.Object("term"))
 
 	c.OnCommand("demo.app.close", func() { _ = ui.Window("w").Close() })
 	c.OnCommand("demo.app.cut", func() { _, _ = c.Exec("cut") })

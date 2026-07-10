@@ -35,6 +35,17 @@ type PurfecTerm struct {
 	// Debug callback for cell inspection
 	onCellClicked func(info CellDebugInfo)
 
+	// The child process lives on the CLIENT, never on the render server:
+	// the terminal is a pure display+input surface. inputSink receives
+	// every byte the user produces (keystrokes, mouse reports, paste) so
+	// the client can write it to its own PTY; resizeSink receives the grid
+	// dimensions whenever they change so the client can set the PTY
+	// winsize. Display output flows the other way, in through Feed. When
+	// no sink is installed the input is simply dropped - there is nothing
+	// to type to.
+	inputSink  func([]byte)
+	resizeSink func(cols, rows int)
+
 	// Graphical-path state (rendering caches, blink animation,
 	// selection drag, scrollbars, context menu).
 	gfx purfecTermGfx
@@ -88,7 +99,52 @@ func NewPurfecTerm() *PurfecTerm {
 		// Could trigger a visual bell or notification
 	})
 
+	// The emulator produces PTY-bound bytes from keyboard input; there is
+	// no local PTY, so intercept them and hand them to the input sink
+	// (which relays to the client's child process). Returning true
+	// consumes the byte so the emulator never tries to write it locally.
+	t.terminal.SetInputCallback(func(b []byte) bool {
+		t.toChild(b)
+		return true
+	})
+
 	return t
+}
+
+// SetInputSink installs the callback that receives bytes destined for the
+// client's child process (keystrokes, mouse reports, paste). Passing nil
+// detaches it, after which input is dropped.
+func (t *PurfecTerm) SetInputSink(fn func([]byte)) { t.inputSink = fn }
+
+// SetResizeSink installs the callback that receives the terminal grid size
+// (columns, rows) whenever it changes, so the client can match its PTY
+// winsize. It fires once immediately with the current size so a freshly
+// attached client sizes its PTY without waiting for the next relayout.
+func (t *PurfecTerm) SetResizeSink(fn func(cols, rows int)) {
+	t.resizeSink = fn
+	if fn != nil && t.cols > 0 && t.rows > 0 {
+		fn(t.cols, t.rows)
+	}
+}
+
+// toChild routes user-produced input to the child process. With a sink
+// installed (the normal case) it relays upstream to the client; with none
+// it is dropped - the render server has no PTY of its own.
+func (t *PurfecTerm) toChild(b []byte) {
+	if len(b) == 0 {
+		return
+	}
+	if t.inputSink != nil {
+		t.inputSink(b)
+	}
+}
+
+// emitResize notifies the sink of a new grid size (deduplication is the
+// caller's - it only fires when cols/rows actually change).
+func (t *PurfecTerm) emitResize(cols, rows int) {
+	if t.resizeSink != nil && cols > 0 && rows > 0 {
+		t.resizeSink(cols, rows)
+	}
 }
 
 // CursorShape implements core.CursorProvider: the terminal shows the
@@ -111,26 +167,10 @@ func (t *PurfecTerm) SetDarkTheme(dark bool) {
 	t.Update()
 }
 
-// Start starts the terminal with a shell.
-func (t *PurfecTerm) Start() error {
-	if t.terminal == nil {
-		return nil
-	}
-	return t.terminal.RunShell()
-}
-
 // SetOnCellClicked sets a callback for cell debug inspection.
 // The callback receives detailed info about the clicked cell.
 func (t *PurfecTerm) SetOnCellClicked(callback func(info CellDebugInfo)) {
 	t.onCellClicked = callback
-}
-
-// StartCommand starts the terminal with a specific command.
-func (t *PurfecTerm) StartCommand(name string, args ...string) error {
-	if t.terminal == nil {
-		return nil
-	}
-	return t.terminal.RunCommand(name, args...)
 }
 
 // Terminal returns the underlying cli.Terminal for advanced usage.
@@ -290,6 +330,7 @@ func (t *PurfecTerm) updateTerminalSize() {
 		t.cols = newCols
 		t.rows = newRows
 		t.terminal.Resize(t.cols, t.rows)
+		t.emitResize(t.cols, t.rows)
 	}
 }
 
@@ -445,6 +486,14 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Ensure terminal knows it's focused before handling input
 	t.terminal.SetFocused(true)
 
+	// Scrollback navigation is handled locally and never reaches the
+	// child: since input is consumed by the sink callback the emulator's
+	// own local-key path no longer runs, so honour the Shift+nav keys here.
+	if t.handleScrollbackKey(event.Key) {
+		t.Update()
+		return true
+	}
+
 	// Typing must never happen behind an invisible cursor: restart
 	// the blink phase so the cursor shows immediately.
 	t.resetCursorBlink()
@@ -452,6 +501,33 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Forward the key to the terminal
 	t.terminal.HandleKeyString(event.Key)
 	t.Update()
+	return true
+}
+
+// handleScrollbackKey processes the Shift-modified scrollback navigation
+// keys locally (they scroll the view, they are not sent to the child).
+// Returns true if the key was one of them.
+func (t *PurfecTerm) handleScrollbackKey(key string) bool {
+	page := t.rows - 1
+	if page < 1 {
+		page = 1
+	}
+	switch key {
+	case "S-PageUp":
+		t.ScrollUp(page)
+	case "S-PageDown":
+		t.ScrollDown(page)
+	case "S-Up":
+		t.ScrollUp(1)
+	case "S-Down":
+		t.ScrollDown(1)
+	case "S-Home":
+		t.ScrollToTop()
+	case "S-End":
+		t.ScrollToBottom()
+	default:
+		return false
+	}
 	return true
 }
 
@@ -666,12 +742,12 @@ func (t *PurfecTerm) HandleFocusOut() {
 	t.Update()
 }
 
-// Write sends data directly to the terminal.
+// Write sends data to the child process as if typed. It routes through
+// the input sink to the client that owns the PTY (there is no server-side
+// PTY); with no sink installed the bytes are dropped.
 func (t *PurfecTerm) Write(data []byte) (int, error) {
-	if t.terminal == nil {
-		return 0, nil
-	}
-	return t.terminal.Write(data)
+	t.toChild(data)
+	return len(data), nil
 }
 
 // Feed writes bytes directly to the terminal DISPLAY (parsed into the
