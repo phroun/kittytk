@@ -790,6 +790,29 @@ func (b *Backend) DrawText(x, y core.Unit, s string, st style.CellStyle, f *core
 	return ti.width
 }
 
+// DrawTextPx implements core.TextPixelDrawer: draw a string with its
+// top-left at an absolute device pixel and return the advance in device
+// pixels. The image is the same cached raster DrawText blits, so its pixel
+// width equals pxLen(Measure(s)) - accumulating that advance places the
+// next segment (or a caret) exactly on the following glyph, at any font
+// size, without re-snapping through the cell rate.
+func (b *Backend) DrawTextPx(xPx, yPx int, s string, st style.CellStyle, f *core.Font) int {
+	if s == "" {
+		return 0
+	}
+	fg, bg := b.styleColors(st)
+	underline := st.Attrs&style.StyleUnderline != 0
+	opaque := st.Bg != style.ColorTransparent
+
+	ti := b.cachedTextImage(f, s, fg, bg, underline, opaque)
+	if ti.opaque {
+		b.blitRGBA(xPx, yPx, ti.img)
+	} else {
+		b.compositeRGBA(xPx, yPx, ti.img)
+	}
+	return ti.img.Bounds().Dx()
+}
+
 func (b *Backend) DrawTextAligned(bounds core.UnitRect, s string, hAlign, vAlign core.Alignment, st style.CellStyle, f *core.Font) {
 	w := engine().Measure(f, s)
 	h := engine().LineHeight(f)

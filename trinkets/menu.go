@@ -285,6 +285,40 @@ func parseAcceleratorTitle(raw string) (display string, accel rune, pos int) {
 	return
 }
 
+// textSegment is one styled run in a left-to-right sequence drawn by
+// drawTextSegments.
+type textSegment struct {
+	text  string
+	style style.CellStyle
+}
+
+// drawTextSegments draws styled text segments left-to-right starting at
+// unit (x, y). On a pixel surface it accumulates the device-pixel advance
+// from the single anchor at (x, y) - so each successive segment abuts the
+// previous one exactly on the glyphs - instead of re-snapping each
+// intermediate unit position through the cell rate, which at a fractional
+// font size leaves a gap (or overlap) where the two rates diverge. On a
+// cell surface it falls back to whole-unit DrawText advances. Returns the
+// total advance in units.
+func drawTextSegments(p *core.Painter, x, y core.Unit, font *core.Font, segs ...textSegment) core.Unit {
+	_, usePx := p.DrawTextOffset(x, y, 0, 0, "", style.CellStyle{}, font)
+	total := core.Unit(0)
+	xPx := 0
+	for _, seg := range segs {
+		if seg.text == "" {
+			continue
+		}
+		if usePx {
+			adv, _ := p.DrawTextOffset(x, y, xPx, 0, seg.text, seg.style, font)
+			xPx += adv
+		} else {
+			p.DrawText(x+total, y, seg.text, seg.style, font)
+		}
+		total += font.MeasureText(seg.text)
+	}
+	return total
+}
+
 // NewMenu creates a new menu.
 func NewMenu(title string) *Menu {
 	displayTitle, accel, pos := parseAcceleratorTitle(title)
@@ -1136,22 +1170,15 @@ func (m *Menu) Paint(p *core.Painter) {
 		// Draw text in parts: before accel, accel char, after accel
 		textRunes := []rune(item.Text)
 		if item.Enabled && item.acceleratorPos >= 0 && item.acceleratorPos < len(textRunes) {
-			// Draw before accelerator
+			var segs []textSegment
 			if item.acceleratorPos > 0 {
-				beforeAccel := string(textRunes[:item.acceleratorPos])
-				p.DrawText(x, itemY, beforeAccel, contentStyle, font)
-				x += font.MeasureText(beforeAccel)
+				segs = append(segs, textSegment{string(textRunes[:item.acceleratorPos]), contentStyle})
 			}
-			// Draw accelerator char
-			accelChar := string(textRunes[item.acceleratorPos])
-			p.DrawText(x, itemY, accelChar, accelStyle, font)
-			x += font.MeasureText(accelChar)
-			// Draw after accelerator
+			segs = append(segs, textSegment{string(textRunes[item.acceleratorPos]), accelStyle})
 			if item.acceleratorPos < len(textRunes)-1 {
-				afterAccel := string(textRunes[item.acceleratorPos+1:])
-				p.DrawText(x, itemY, afterAccel, contentStyle, font)
-				x += font.MeasureText(afterAccel)
+				segs = append(segs, textSegment{string(textRunes[item.acceleratorPos+1:]), contentStyle})
 			}
+			x += drawTextSegments(p, x, itemY, font, segs...)
 		} else {
 			// No accelerator or disabled - draw entire text
 			p.DrawText(x, itemY, item.Text, contentStyle, font)
@@ -2368,18 +2395,15 @@ func (m *MenuBar) Paint(p *core.Painter) {
 				textX := x + metrics.CellWidth
 				titleRunes := []rune(menu.title)
 				if showAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < len(titleRunes) {
+					var segs []textSegment
 					if menu.acceleratorPos > 0 {
-						beforeAccel := string(titleRunes[:menu.acceleratorPos])
-						p.DrawText(textX, 0, beforeAccel, s, font)
-						textX += font.MeasureText(beforeAccel)
+						segs = append(segs, textSegment{string(titleRunes[:menu.acceleratorPos]), s})
 					}
-					accelChar := string(titleRunes[menu.acceleratorPos])
-					p.DrawText(textX, 0, accelChar, accelStyle, font)
-					textX += font.MeasureText(accelChar)
+					segs = append(segs, textSegment{string(titleRunes[menu.acceleratorPos]), accelStyle})
 					if menu.acceleratorPos < len(titleRunes)-1 {
-						afterAccel := string(titleRunes[menu.acceleratorPos+1:])
-						p.DrawText(textX, 0, afterAccel, s, font)
+						segs = append(segs, textSegment{string(titleRunes[menu.acceleratorPos+1:]), s})
 					}
+					drawTextSegments(p, textX, 0, font, segs...)
 				} else {
 					p.DrawText(textX, 0, menu.title, s, font)
 				}
@@ -2460,21 +2484,15 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		// Draw text in parts: before accel, accel char, after accel
 		titleRunes := []rune(menu.title)
 		if showAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < len(titleRunes) {
-			// Draw before accelerator
+			var segs []textSegment
 			if menu.acceleratorPos > 0 {
-				beforeAccel := string(titleRunes[:menu.acceleratorPos])
-				p.DrawText(textX, 0, beforeAccel, s, font)
-				textX += font.MeasureText(beforeAccel)
+				segs = append(segs, textSegment{string(titleRunes[:menu.acceleratorPos]), s})
 			}
-			// Draw accelerator char
-			accelChar := string(titleRunes[menu.acceleratorPos])
-			p.DrawText(textX, 0, accelChar, accelStyle, font)
-			textX += font.MeasureText(accelChar)
-			// Draw after accelerator
+			segs = append(segs, textSegment{string(titleRunes[menu.acceleratorPos]), accelStyle})
 			if menu.acceleratorPos < len(titleRunes)-1 {
-				afterAccel := string(titleRunes[menu.acceleratorPos+1:])
-				p.DrawText(textX, 0, afterAccel, s, font)
+				segs = append(segs, textSegment{string(titleRunes[menu.acceleratorPos+1:]), s})
 			}
+			drawTextSegments(p, textX, 0, font, segs...)
 		} else {
 			// No accelerator - draw entire text
 			p.DrawText(textX, 0, menu.title, s, font)

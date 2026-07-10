@@ -496,21 +496,40 @@ func (t *TextInput) Paint(p *core.Painter) {
 	cuts = append(cuts, n) // the last segment ends at n
 
 	selStyle := scheme.GetEditBoxSelection(focused && t.IsEnabled(), paneType)
+
+	// On a pixel surface the glyphs rasterize at the unsnapped
+	// pixels-per-unit, so lay each chunk out - and site the caret - by
+	// accumulating the device-pixel advance from a single anchor at unit 0
+	// (DrawTextOffset), never re-snapping an intermediate unit position
+	// through the cell rate. At a fractional font size the two rates
+	// diverge, and re-snapping is what drifted the caret further right the
+	// deeper into the text it sat. On a cell surface (no TextPixelDrawer)
+	// fall back to the whole-unit DrawText advance.
+	_, usePx := p.DrawTextOffset(0, 0, 0, 0, "", s, font)
 	x := core.Unit(0)
+	xPx := 0
 	caretX := core.Unit(0) // stays 0 when the cursor is at the start
+	caretXPx := 0
 	prev := 0
 	for _, b := range cuts {
 		if b <= prev {
 			continue
 		}
-		chunk := displayText[prev:b]
+		chunk := string(displayText[prev:b])
 		chStyle := s
 		if selLo >= 0 && prev >= selLo && b <= selHi {
 			chStyle = selStyle
 		}
-		x += p.DrawText(x, 0, string(chunk), chStyle, font)
+		if usePx {
+			adv, _ := p.DrawTextOffset(0, 0, xPx, 0, chunk, chStyle, font)
+			xPx += adv
+			x += font.MeasureText(chunk)
+		} else {
+			x += p.DrawText(x, 0, chunk, chStyle, font)
+		}
 		if b == cursorDisp {
 			caretX = x
+			caretXPx = xPx
 		}
 		prev = b
 	}
@@ -535,9 +554,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// focus while its window is in the background, but showing the caret
 	// there would put two carets on screen.
 	if showCaret {
-		cursorX := caretX
-
-		if cursorX >= 0 && cursorX < bounds.Width {
+		if caretX >= 0 && caretX < bounds.Width {
 			// The graphical bar caret uses a brighter white than the cell
 			// block cursor, for contrast; the block fallback keeps the
 			// regular (silver) white.
@@ -549,15 +566,23 @@ func (t *TextInput) Paint(p *core.Painter) {
 				t.ensureCaretTimer()
 			}
 			if !p.Graphical() || t.caretVisible() {
-				// Pixel surfaces draw a vertical bar at the left edge
-				// of the glyph box; cell surfaces fall back to the block.
-				if !p.DrawCaret(cursorX, 0, font.LineHeight(), barStyle) {
-					var cursorChar rune = ' '
-					if t.cursorPos < len(t.getDisplayText()) {
-						cursorChar = t.getDisplayText()[t.cursorPos]
+				drawn := false
+				if usePx {
+					// Site the bar at the same accumulated pixel advance the
+					// glyphs painted at, so it sits exactly on the boundary
+					// before the cursor's character.
+					drawn = p.FillRectPixels(0, 0, caretXPx, 0,
+						p.DeviceScale(), p.UnitsToPx(font.LineHeight()), barStyle)
+				}
+				if !drawn {
+					// Cell surfaces fall back to the reverse-video block.
+					if !p.DrawCaret(caretX, 0, font.LineHeight(), barStyle) {
+						var cursorChar rune = ' '
+						if t.cursorPos < len(t.getDisplayText()) {
+							cursorChar = t.getDisplayText()[t.cursorPos]
+						}
+						p.DrawText(caretX, 0, string(cursorChar), cursorStyle, font)
 					}
-					// Draw cursor character using DrawText for consistency
-					p.DrawText(cursorX, 0, string(cursorChar), cursorStyle, font)
 				}
 			}
 		}

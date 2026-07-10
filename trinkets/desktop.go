@@ -2920,15 +2920,20 @@ func (s *StatusBar) Paint(p *core.Painter) {
 		slot := p.WithClip(core.UnitRect{X: x, Y: 0, Width: sectionWidth, Height: bounds.Height})
 
 		if len(section.Spans) > 0 {
-			// Draw styled spans, advancing by each span's measured width.
+			// Draw styled spans, advancing each by the device-pixel width the
+			// glyphs painted (drawTextSegments) so a run that switches style
+			// mid-word stays glyph-tight at a fractional font size, where
+			// re-snapping each span's unit start through the cell rate opens a
+			// gap.
+			segs := make([]textSegment, 0, len(section.Spans))
 			for _, span := range section.Spans {
 				spanStyle := statusBarStyle
 				if span.Style != nil {
 					spanStyle = *span.Style
 				}
-				slot.DrawText(textX, 0, span.Text, spanStyle, font)
-				textX += font.MeasureText(span.Text)
+				segs = append(segs, textSegment{span.Text, spanStyle})
 			}
+			drawTextSegments(slot, textX, 0, font, segs...)
 		} else {
 			// Draw plain text
 			slot.DrawText(textX, 0, section.Text, statusBarStyle, font)

@@ -370,6 +370,17 @@ type PixelRectFiller interface {
 	FillRectPx(xPx, yPx, wPx, hPx int, s style.CellStyle)
 }
 
+// TextPixelDrawer is an optional RenderBackend capability: draw a string
+// with its top-left at a device pixel (not a unit that re-snaps to the cell
+// grid), returning the advance in device pixels. Proportional glyphs
+// rasterize at the unsnapped pixels-per-unit; laying successive segments and
+// the caret out by this pixel advance - instead of re-snapping each unit
+// position through the cell rate - keeps them exactly on the glyphs at a
+// fractional font size, where the two rates diverge. Cell surfaces omit it.
+type TextPixelDrawer interface {
+	DrawTextPx(xPx, yPx int, s string, st style.CellStyle, f *Font) int
+}
+
 // FindSmoothPositioning walks up the trinket tree for a
 // SmoothPositioningProvider. Default (no provider found): false -
 // snap to cells, the only always-safe answer.
@@ -660,6 +671,24 @@ func (p *Painter) DrawImageOffset(x, y Unit, offXPx, offYPx int, img image.Image
 	p.applyClip()
 	id.DrawImagePx(ax+offXPx, ay+offYPx, img)
 	return true
+}
+
+// DrawTextOffset draws a string with its top-left at unit (x, y) plus a
+// device-pixel offset, returning the advance in device pixels. Proportional
+// glyphs rasterize at the unsnapped pixels-per-unit, so laying successive
+// segments out by accumulating this pixel advance - instead of re-snapping
+// each unit position through the cell rate - keeps them exactly on the
+// glyphs at a fractional font size, where the two rates diverge. Returns 0,
+// false on cell surfaces (the caller falls back to whole-unit DrawText).
+func (p *Painter) DrawTextOffset(x, y Unit, offXPx, offYPx int, text string, s style.CellStyle, font *Font) (int, bool) {
+	td, ok := p.backend.(TextPixelDrawer)
+	if !ok {
+		return 0, false
+	}
+	sx, sy := p.toScreen(x, y)
+	ax, ay := p.deviceAnchor(sx, sy)
+	p.applyClip()
+	return td.DrawTextPx(ax+offXPx, ay+offYPx, text, s, font), true
 }
 
 // FillRectPixels fills, in device pixels, a rectangle anchored at unit
