@@ -86,6 +86,10 @@ type Application struct {
 	// window. See SetMultiWindow.
 	multiWindow bool
 
+	// contextOnly suppresses the automatic graphical Edit menu. See
+	// SetContextOnly.
+	contextOnly bool
+
 	// Menu bar content for this application
 	menuBarContent []*trinkets.Menu
 
@@ -889,6 +893,25 @@ func (app *Application) MultiWindow() bool {
 func (app *Application) SetMultiWindow(multi bool) {
 	app.mu.Lock()
 	app.multiWindow = multi
+	app.mu.Unlock()
+}
+
+// ContextOnly reports whether the app opts out of the automatic graphical
+// Edit menu.
+func (app *Application) ContextOnly() bool {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	return app.contextOnly
+}
+
+// SetContextOnly, when true, suppresses the automatic Edit menu on graphical
+// surfaces: the standard Cut/Copy/Paste/Select All items are not injected,
+// and no Edit menu is created unless the app declares one itself (in which
+// case only the app's own items appear). It is ignored in the text/TUI
+// version, where the Edit menu is always present with the standard items.
+func (app *Application) SetContextOnly(contextOnly bool) {
+	app.mu.Lock()
+	app.contextOnly = contextOnly
 	app.mu.Unlock()
 }
 

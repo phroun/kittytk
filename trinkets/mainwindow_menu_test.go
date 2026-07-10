@@ -17,10 +17,12 @@ type mockApp struct {
 	menus       []*Menu
 	windows     []*window.Window
 	multiWindow bool
+	contextOnly bool
 }
 
 func (a *mockApp) Name() string      { return a.name }
 func (a *mockApp) MultiWindow() bool { return a.multiWindow }
+func (a *mockApp) ContextOnly() bool { return a.contextOnly }
 func (a *mockApp) MenuName() string {
 	if a.menuName == "" {
 		return "≡"
@@ -59,26 +61,33 @@ func menuHasItem(m *Menu, substr string) bool {
 
 func TestDesktopMenuBarFullVsReduced(t *testing.T) {
 	d := NewDesktop()
-	file := NewMenu("&File")
-	file.AddItem(NewMenuItem("New"))
-	app := &mockApp{name: "Demo", menus: []*Menu{file}}
+	appDecl := NewMenu("&Demo").SetWellKnownID(MenuIDApp)
+	appDecl.AddItem(NewMenuItem("New"))
+	app := &mockApp{name: "Demo", menus: []*Menu{appDecl}}
 	d.activeApp = app
 
-	// Full bar (no main window): system Psi menu + the app's first menu
-	// carrying the merged Hide + Quit sections.
+	// Full bar (no main window): system Psi menu, the app menu carrying the
+	// merged Hide + Quit sections, and the mandatory system Edit menu (Edit
+	// is always present in the text/TUI version).
 	d.updateMenuBarContent()
-	if got := menuTitles(d.menuBar); len(got) != 2 || got[0] != "Ψ" || got[1] != "File" {
-		t.Fatalf("full bar titles = %v, want [Ψ File]", got)
+	if got := menuTitles(d.menuBar); len(got) != 3 || got[0] != "Ψ" || got[1] != "Demo" || got[2] != "Edit" {
+		t.Fatalf("full bar titles = %v, want [Ψ Demo Edit]", got)
 	}
 	appMenu := d.menuBar.Menus()[1]
 	if !menuHasItem(appMenu, "Hide Demo") || !menuHasItem(appMenu, "Quit Demo") {
 		t.Errorf("full app menu missing Hide/Quit: %v", itemTexts(appMenu))
 	}
+	editMenu := d.menuBar.Menus()[2]
+	for _, want := range []string{"Cut", "Copy", "Paste", "Select All"} {
+		if !menuHasItem(editMenu, want) {
+			t.Errorf("system Edit menu missing %q: %v", want, itemTexts(editMenu))
+		}
+	}
 
 	// Reduced bar (main window detached): the real system Psi menu, an
 	// app-named menu carrying only the Hide section, and a Window menu
 	// (Tile/Cascade). The real Psi keeps its own items (Exit Desktop);
-	// the app's file menu moves to the detached window's own bar.
+	// the app's menus move to the detached window's own bar.
 	main := window.NewWindow("main")
 	main.SetDetached(true)
 	app.main = main
@@ -211,21 +220,21 @@ func titlesEqual(got, want []string) bool {
 }
 
 // A multi-window app gets a system Window menu on the desktop bar without
-// declaring one; it is the final menu, but a Help menu comes after it.
+// declaring one; it is the final menu, but a Help menu comes after it. The
+// mandatory app and Edit menus lead.
 func TestMultiWindowGetsWindowMenuBeforeHelp(t *testing.T) {
 	d := NewDesktop()
 	d.windowManager = window.NewWindowManager()
 
-	file := NewMenu("&File")
-	file.AddItem(NewMenuItem("New"))
+	appDecl := NewMenu("&Demo").SetWellKnownID(MenuIDApp)
 	help := NewMenu("&Help").SetWellKnownID(MenuIDHelp)
 	help.AddItem(NewMenuItem("About"))
-	app := &mockApp{name: "Demo", multiWindow: true, menus: []*Menu{file, help}}
+	app := &mockApp{name: "Demo", multiWindow: true, menus: []*Menu{appDecl, help}}
 	d.activeApp = app
 
 	d.updateMenuBarContent()
 	got := menuTitles(d.menuBar)
-	if want := []string{"Ψ", "File", "Window", "Help"}; !titlesEqual(got, want) {
+	if want := []string{"Ψ", "Demo", "Edit", "Window", "Help"}; !titlesEqual(got, want) {
 		t.Fatalf("multi-window bar = %v, want %v", got, want)
 	}
 }
@@ -235,15 +244,14 @@ func TestSingleWindowHasNoWindowMenu(t *testing.T) {
 	d := NewDesktop()
 	d.windowManager = window.NewWindowManager()
 
-	file := NewMenu("&File")
-	file.AddItem(NewMenuItem("New"))
+	appDecl := NewMenu("&Demo").SetWellKnownID(MenuIDApp)
 	help := NewMenu("&Help").SetWellKnownID(MenuIDHelp)
-	app := &mockApp{name: "Demo", multiWindow: false, menus: []*Menu{file, help}}
+	app := &mockApp{name: "Demo", multiWindow: false, menus: []*Menu{appDecl, help}}
 	d.activeApp = app
 
 	d.updateMenuBarContent()
 	got := menuTitles(d.menuBar)
-	if want := []string{"Ψ", "File", "Help"}; !titlesEqual(got, want) {
+	if want := []string{"Ψ", "Demo", "Edit", "Help"}; !titlesEqual(got, want) {
 		t.Fatalf("single-window bar = %v, want %v", got, want)
 	}
 }
@@ -254,24 +262,88 @@ func TestAppWindowMenuCustomizesTitleAndMerges(t *testing.T) {
 	d := NewDesktop()
 	d.windowManager = window.NewWindowManager()
 
-	file := NewMenu("&File")
-	file.AddItem(NewMenuItem("New"))
+	appDecl := NewMenu("&Demo").SetWellKnownID(MenuIDApp)
 	win := NewMenu("&Windows").SetWellKnownID(MenuIDWindow) // custom title + tag
 	win.AddItem(NewMenuItem("Zoom"))
-	app := &mockApp{name: "Demo", multiWindow: true, menus: []*Menu{file, win}}
+	app := &mockApp{name: "Demo", multiWindow: true, menus: []*Menu{appDecl, win}}
 	d.activeApp = app
 
 	d.updateMenuBarContent()
 	got := menuTitles(d.menuBar)
-	if want := []string{"Ψ", "File", "Windows"}; !titlesEqual(got, want) {
+	if want := []string{"Ψ", "Demo", "Edit", "Windows"}; !titlesEqual(got, want) {
 		t.Fatalf("bar = %v, want the custom-titled Windows menu last", got)
 	}
-	wm := d.menuBar.Menus()[2]
+	wm := d.menuBar.Menus()[3]
 	texts := itemTexts(wm)
 	if len(texts) < 2 || texts[0] != "Tile" || texts[1] != "Cascade" {
 		t.Fatalf("Window menu should lead with Tile/Cascade: %v", texts)
 	}
 	if !menuHasItem(wm, "Zoom") {
 		t.Errorf("app's custom Window item not merged: %v", texts)
+	}
+}
+
+// Menus are laid out in the canonical order regardless of the order the app
+// declares them: app, file, edit, select, format, view, custom..., window,
+// help. Detection is by well-known tag only.
+func TestCanonicalMenuOrdering(t *testing.T) {
+	d := NewDesktop()
+	d.windowManager = window.NewWindowManager()
+
+	mk := func(title, id string) *Menu { return NewMenu(title).SetWellKnownID(id) }
+	// Declared deliberately out of order, with a custom (untagged) menu.
+	menus := []*Menu{
+		mk("&Help", MenuIDHelp),
+		mk("&View", MenuIDView),
+		NewMenu("&Tools"), // custom, untagged
+		mk("&Format", MenuIDFormat),
+		mk("&Select", MenuIDSelect),
+		mk("&File", MenuIDFile),
+		mk("&Demo", MenuIDApp),
+	}
+	app := &mockApp{name: "Demo", multiWindow: true, menus: menus}
+	d.activeApp = app
+
+	d.updateMenuBarContent()
+	got := menuTitles(d.menuBar)
+	want := []string{"Ψ", "Demo", "File", "Edit", "Select", "Format", "View", "Tools", "Window", "Help"}
+	if !titlesEqual(got, want) {
+		t.Fatalf("canonical order = %v, want %v", got, want)
+	}
+}
+
+// On a graphical surface a ContextOnly app has no automatic Edit menu when it
+// declared none; when it does declare one, the auto Cut/Copy/Paste/Select All
+// items are omitted and only its own items remain.
+func TestContextOnlySuppressesAutoEditMenu(t *testing.T) {
+	// No declared Edit menu -> no Edit menu at all on a graphical surface.
+	d := NewDesktop()
+	d.graphicalFrames = true
+	appDecl := NewMenu("&Demo").SetWellKnownID(MenuIDApp)
+	app := &mockApp{name: "Demo", contextOnly: true, menus: []*Menu{appDecl}}
+	d.activeApp = app
+	d.updateMenuBarContent()
+	if got := menuTitles(d.menuBar); !titlesEqual(got, []string{"Ψ", "Demo"}) {
+		t.Fatalf("context-only bar = %v, want [Ψ Demo] (no Edit menu)", got)
+	}
+
+	// A declared Edit menu shows, but without the automatic items.
+	d2 := NewDesktop()
+	d2.graphicalFrames = true
+	appDecl2 := NewMenu("&Demo").SetWellKnownID(MenuIDApp)
+	edit := NewMenu("&Edit").SetWellKnownID(MenuIDEdit)
+	edit.AddItem(NewMenuItem("&Raw Key Input"))
+	app2 := &mockApp{name: "Demo", contextOnly: true, menus: []*Menu{appDecl2, edit}}
+	d2.activeApp = app2
+	d2.updateMenuBarContent()
+	if got := menuTitles(d2.menuBar); !titlesEqual(got, []string{"Ψ", "Demo", "Edit"}) {
+		t.Fatalf("context-only bar = %v, want [Ψ Demo Edit]", got)
+	}
+	em := d2.menuBar.Menus()[2]
+	if menuHasItem(em, "Cut") || menuHasItem(em, "Paste") {
+		t.Errorf("context-only Edit menu should omit auto items: %v", itemTexts(em))
+	}
+	if !menuHasItem(em, "Raw Key Input") {
+		t.Errorf("context-only Edit menu dropped the app's own item: %v", itemTexts(em))
 	}
 }

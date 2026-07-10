@@ -18,8 +18,10 @@ func TestEmptyDesktopShowsOnlyPsiMenu(t *testing.T) {
 	d.SetBackend(px)
 
 	// The host app, as kittytk-sdl creates it: a name, but no windows and
-	// no menu-bar content.
-	host := &mockApp{name: "SDL Desktop"}
+	// no menu-bar content. It is context-only - the desktop host has no
+	// editing surface of its own - so the graphical surface adds no
+	// automatic Edit menu for it.
+	host := &mockApp{name: "SDL Desktop", contextOnly: true}
 	d.AddApplication(host)
 
 	menus := d.MenuBar().Menus()

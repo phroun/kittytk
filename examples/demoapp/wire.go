@@ -98,11 +98,9 @@ func (a *app) wireMenus() {
 	// Demo menu.
 	c.OnCommand("demo.file.new", func() { a.openTerminalWindow() })
 
-	// Edit menu: the display performs these on the focused trinket.
-	c.OnCommand("demo.edit.cut", func() { _, _ = c.Exec("cut") })
-	c.OnCommand("demo.edit.copy", func() { _, _ = c.Exec("copy") })
-	c.OnCommand("demo.edit.paste", func() { _, _ = c.Exec("paste") })
-	c.OnCommand("demo.edit.selectall", func() { _, _ = c.Exec("selectall") })
+	// Edit menu: Cut/Copy/Paste/Select All are supplied by the host's
+	// system Edit menu and act on the focused trinket directly; the client
+	// only contributes the custom Raw Key Input item.
 	c.OnCommand("demo.edit.rawkey", func() { _, _ = c.Exec("rawkey") })
 
 	// View menu.
@@ -117,8 +115,6 @@ func (a *app) wireMenus() {
 	// goroutine - blocking here would starve all further events for this
 	// connection until it returns.
 	c.OnCommand("demo.window.new", func() { go openSecondary(a.path) })
-	c.OnCommand("demo.window.tile", func() { _, _ = c.Exec("tile") })
-	c.OnCommand("demo.window.cascade", func() { _, _ = c.Exec("cascade") })
 
 	// Basic Trinkets buttons narrate to the status bar.
 	c.OnCommand("demo.basic.ok", func() { a.setStatus("OK button clicked!") })
@@ -292,10 +288,8 @@ func (a *app) wireSecondary(n int) {
 	a.wireTerminal(ui.Object("term"))
 
 	c.OnCommand("demo.app.close", func() { _ = ui.Window("w").Close() })
-	c.OnCommand("demo.app.cut", func() { _, _ = c.Exec("cut") })
-	c.OnCommand("demo.app.copy", func() { _, _ = c.Exec("copy") })
-	c.OnCommand("demo.app.paste", func() { _, _ = c.Exec("paste") })
-	c.OnCommand("demo.app.selectall", func() { _, _ = c.Exec("selectall") })
+	// Cut/Copy/Paste/Select All come from the host's system Edit menu; the
+	// client only wires the custom Raw Key Input item.
 	c.OnCommand("demo.app.rawkey", func() { _, _ = c.Exec("rawkey") })
 	c.OnCommand("demo.app.info", func() {
 		_, _ = c.Exec(fmt.Sprintf(

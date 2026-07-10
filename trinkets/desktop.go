@@ -32,6 +32,12 @@ type ApplicationProvider interface {
 	// See Application.SetMultiWindow for the window-creation contract.
 	MultiWindow() bool
 
+	// ContextOnly, on a graphical surface, suppresses the automatic Edit
+	// menu and its standard Cut/Copy/Paste/Select All items (the app relies
+	// on context menus instead). It is ignored in the text/TUI version, where
+	// the Edit menu is always present. See Application.SetContextOnly.
+	ContextOnly() bool
+
 	// Windows returns all windows owned by this application.
 	Windows() []*window.Window
 
@@ -1192,40 +1198,41 @@ func (d *Desktop) updateMenuBarContent() {
 		d.menuBar.AddMenu(d.systemMenu)
 	}
 
-	// Add active app's menus with standard items injected into the first one
+	// Add the active app's menus in the canonical order: app, file, edit,
+	// select, format, view, custom..., window, help. Well-known tags place
+	// the app/window/help menus and drive the system Edit menu; everything
+	// else follows its declared order.
 	if activeApp != nil {
 		appName := activeApp.Name()
-		// The app's Window and Help menus are placed by the system, not left
-		// wherever the app declared them: Window (when multi-window) is the
-		// final menu, and any Help menu comes after it.
-		ordered, appWin, helpMenu := partitionAppMenus(activeApp.MenuBarContent())
+		b := bucketMenus(activeApp.MenuBarContent())
 
-		if len(ordered) > 0 {
-			// The leading menu gets the standard Hide/Quit sections merged in.
-			d.menuBar.AddMenu(d.createAppMenuWithStandardItems(ordered[0], appName))
-			for _, m := range ordered[1:] {
-				d.menuBar.AddMenu(m)
-			}
-		} else if len(activeApp.Windows()) > 0 || activeApp.MultiWindow() {
-			// App has windows/menus of its own only through the system - give
-			// it a standard app menu (Hide/Quit act on its windows).
-			d.menuBar.AddMenu(d.createStandardAppMenu(appName))
-		}
-
-		// System-managed Window menu for multi-window apps (enforced, and
-		// always the final menu before Help). A single-window app that still
-		// tagged a Window menu gets it shown as-is, without augmentation.
-		if activeApp.MultiWindow() {
-			d.menuBar.AddMenu(d.buildDesktopWindowMenu(appWin, activeApp))
-		} else if appWin != nil {
-			d.menuBar.AddMenu(appWin)
-		}
-		if helpMenu != nil {
-			d.menuBar.AddMenu(helpMenu)
-		}
 		// A windowless, menuless, single-window application - the empty
 		// desktop host at boot, before any client app connects - contributes
-		// no menu at all, so only the Psi menu shows.
+		// no menu at all, so only the Psi menu shows. Any real app gets the
+		// mandatory app/edit menus even when it declared neither.
+		if b.declaredAny() || len(activeApp.Windows()) > 0 || activeApp.MultiWindow() {
+			// App menu (mandatory), leading, with the Hide/Quit sections merged
+			// in. Synthesized when the app declared no app-tagged menu.
+			if b.app != nil {
+				d.menuBar.AddMenu(d.createAppMenuWithStandardItems(b.app, appName))
+			} else {
+				d.menuBar.AddMenu(d.createStandardAppMenu(appName))
+			}
+
+			d.appendAppBody(d.menuBar.AddMenu, activeApp, b)
+
+			// System-managed Window menu for multi-window apps (enforced, and
+			// always the final menu before Help). A single-window app that
+			// still tagged a Window menu gets it shown as-is.
+			if activeApp.MultiWindow() {
+				d.menuBar.AddMenu(d.buildDesktopWindowMenu(b.window, activeApp))
+			} else if b.window != nil {
+				d.menuBar.AddMenu(b.window)
+			}
+			if b.help != nil {
+				d.menuBar.AddMenu(b.help)
+			}
+		}
 	}
 }
 
@@ -1357,29 +1364,31 @@ func (d *Desktop) buildDetachedMenuBar(app ApplicationProvider) *MenuBar {
 
 	appName := app.Name()
 	menuName := app.MenuName()
-	ordered, appWin, helpMenu := partitionAppMenus(app.MenuBarContent())
+	b := bucketMenus(app.MenuBarContent())
 
-	if len(ordered) > 0 {
-		mb.AddMenu(d.createAppMenuWithQuitOnly(ordered[0], menuName, appName))
-		for _, m := range ordered[1:] {
-			mb.AddMenu(m)
-		}
+	// App menu (mandatory), leading, titled with the app's menu name and
+	// carrying only the Quit section. Synthesized when the app declared no
+	// app-tagged menu.
+	if b.app != nil {
+		mb.AddMenu(d.createAppMenuWithQuitOnly(b.app, menuName, appName))
 	} else {
 		m := NewMenu(menuName)
 		d.appendQuitSection(m, appName)
 		mb.AddMenu(m)
 	}
 
+	d.appendAppBody(mb.AddMenu, app, b)
+
 	// A multi-window app's detached bar gets the system Window menu too
 	// (listing the app's windows, Tile/Cascade its OS windows), always before
 	// any Help menu.
 	if app.MultiWindow() {
-		mb.AddMenu(d.buildDetachedWindowMenu(appWin, app))
-	} else if appWin != nil {
-		mb.AddMenu(appWin)
+		mb.AddMenu(d.buildDetachedWindowMenu(b.window, app))
+	} else if b.window != nil {
+		mb.AddMenu(b.window)
 	}
-	if helpMenu != nil {
-		mb.AddMenu(helpMenu)
+	if b.help != nil {
+		mb.AddMenu(b.help)
 	}
 	return mb
 }
@@ -1544,24 +1553,256 @@ func (d *Desktop) buildDesktopWindowMenu(appWin *Menu, app ApplicationProvider) 
 	return menu
 }
 
-// partitionAppMenus splits an app's menus into the ordered "other" menus,
-// the app's own Window menu (MenuIDWindow, or an untagged menu literally
-// titled "Window"), and its Help menu (MenuIDHelp) - so the system can place
-// the Window and Help menus itself.
-func partitionAppMenus(menus []*Menu) (ordered []*Menu, windowMenu, helpMenu *Menu) {
+// menuBuckets holds an app's declared menus sorted into their well-known
+// roles. Detection is by well-known tag ONLY - there is no title-based
+// fallback. Untagged menus (and menus carrying an unrecognized or duplicate
+// tag) collect in custom, preserving their declared order.
+type menuBuckets struct {
+	app    *Menu
+	file   *Menu
+	edit   *Menu
+	sel    *Menu
+	format *Menu
+	view   *Menu
+	custom []*Menu
+	window *Menu
+	help   *Menu
+}
+
+// declaredAny reports whether the app contributed any menu at all.
+func (b menuBuckets) declaredAny() bool {
+	return b.app != nil || b.file != nil || b.edit != nil || b.sel != nil ||
+		b.format != nil || b.view != nil || b.window != nil || b.help != nil ||
+		len(b.custom) > 0
+}
+
+// bucketMenus sorts an app's declared menus into their well-known roles so
+// the system can lay them out in the canonical order (app, file, edit,
+// select, format, view, custom..., window, help). The first menu seen for a
+// role wins; any later duplicate falls through to custom.
+func bucketMenus(menus []*Menu) menuBuckets {
+	var b menuBuckets
 	for _, m := range menus {
-		id := m.WellKnownID()
-		if id == MenuIDWindow || (id == "" && windowMenu == nil && strings.EqualFold(m.Title(), "Window")) {
-			windowMenu = m
-			continue
+		switch m.WellKnownID() {
+		case MenuIDApp:
+			if b.app == nil {
+				b.app = m
+				continue
+			}
+		case MenuIDFile:
+			if b.file == nil {
+				b.file = m
+				continue
+			}
+		case MenuIDEdit:
+			if b.edit == nil {
+				b.edit = m
+				continue
+			}
+		case MenuIDSelect:
+			if b.sel == nil {
+				b.sel = m
+				continue
+			}
+		case MenuIDFormat:
+			if b.format == nil {
+				b.format = m
+				continue
+			}
+		case MenuIDView:
+			if b.view == nil {
+				b.view = m
+				continue
+			}
+		case MenuIDWindow:
+			if b.window == nil {
+				b.window = m
+				continue
+			}
+		case MenuIDHelp:
+			if b.help == nil {
+				b.help = m
+				continue
+			}
 		}
-		if id == MenuIDHelp {
-			helpMenu = m
-			continue
-		}
-		ordered = append(ordered, m)
+		b.custom = append(b.custom, m)
 	}
-	return
+	return b
+}
+
+// appendAppBody adds, via add, the middle of the canonical menu bar: the
+// app's File menu, the system Edit menu (see systemEditMenu), then the app's
+// Select/Format/View menus and any custom menus, all in canonical order. The
+// leading app menu and the trailing Window/Help menus are placed by the
+// caller (they differ between the docked and detached bars).
+func (d *Desktop) appendAppBody(add func(*Menu), app ApplicationProvider, b menuBuckets) {
+	if b.file != nil {
+		add(b.file)
+	}
+	if em := d.systemEditMenu(app, b.edit); em != nil {
+		add(em)
+	}
+	if b.sel != nil {
+		add(b.sel)
+	}
+	if b.format != nil {
+		add(b.format)
+	}
+	if b.view != nil {
+		add(b.view)
+	}
+	for _, m := range b.custom {
+		add(m)
+	}
+}
+
+// editActor is the capability a focused trinket advertises to take part in
+// the standard Edit menu. A focused trinket that implements all four methods
+// is an active edit target: Copy, Paste, and Select All operate on it and
+// show enabled. Cut is additionally gated by cutEnabler. A focused trinket
+// that does not implement editActor leaves every standard Edit item disabled.
+// New editable trinkets opt in simply by implementing this interface.
+type editActor interface {
+	Cut()
+	Copy()
+	Paste()
+	SelectAll()
+}
+
+// cutEnabler lets an edit target report that Cut does not apply to it even
+// though the other actions do - a terminal's scrollback can be copied but not
+// cut. Absent this interface, an editActor's Cut is enabled.
+type cutEnabler interface {
+	CutEnabled() bool
+}
+
+// focusedEditActor returns the focused trinket as an editActor, if it is one.
+func (d *Desktop) focusedEditActor() (editActor, bool) {
+	if fw := d.FocusedTrinket(); fw != nil {
+		if ea, ok := fw.(editActor); ok {
+			return ea, true
+		}
+	}
+	return nil, false
+}
+
+// appendStandardEditItems adds the system Edit items - Cut, Copy, Paste,
+// separator, Select All - each wired to whatever trinket holds focus when it
+// fires. It returns a closure that recomputes their enabled state from the
+// currently focused trinket: Copy/Paste/Select All (and Cut) enable only when
+// the focused trinket is an editActor, and Cut additionally disables when the
+// target reports CutEnabled()==false. Callers wire the closure to the menu's
+// OnAboutToShow so the state tracks focus (which rests on the previous active
+// window while the menu is open).
+func (d *Desktop) appendStandardEditItems(menu *Menu) func() {
+	shortcut := func(it *MenuItem, action string) {
+		if keys := core.DefaultKeyBindings.Keys(action); len(keys) > 0 {
+			it.SetShortcut(core.NewShortcut(keys[0]))
+		}
+	}
+
+	cut := NewMenuItem("Cu&t")
+	shortcut(cut, core.ActionCut)
+	cut.SetOnTriggered(func() {
+		if ea, ok := d.focusedEditActor(); ok {
+			ea.Cut()
+		}
+	})
+	menu.AddItem(cut)
+
+	copyIt := NewMenuItem("&Copy")
+	shortcut(copyIt, core.ActionCopy)
+	copyIt.SetOnTriggered(func() {
+		if ea, ok := d.focusedEditActor(); ok {
+			ea.Copy()
+		}
+	})
+	menu.AddItem(copyIt)
+
+	pasteIt := NewMenuItem("&Paste")
+	shortcut(pasteIt, core.ActionPaste)
+	pasteIt.SetOnTriggered(func() {
+		if ea, ok := d.focusedEditActor(); ok {
+			ea.Paste()
+		}
+	})
+	menu.AddItem(pasteIt)
+
+	menu.AddSeparator()
+
+	selectAll := NewMenuItem("Select &All")
+	shortcut(selectAll, core.ActionSelectAll)
+	selectAll.SetOnTriggered(func() {
+		if ea, ok := d.focusedEditActor(); ok {
+			ea.SelectAll()
+		}
+	})
+	menu.AddItem(selectAll)
+
+	update := func() {
+		ea, editable := d.focusedEditActor()
+		copyIt.SetEnabled(editable)
+		pasteIt.SetEnabled(editable)
+		selectAll.SetEnabled(editable)
+
+		cutOK := editable
+		if editable {
+			if ce, ok := ea.(cutEnabler); ok {
+				cutOK = ce.CutEnabled()
+			}
+		}
+		cut.SetEnabled(cutOK)
+	}
+	update()
+	return update
+}
+
+// systemEditMenu builds the Edit menu the system supplies. On a text/TUI
+// surface, and on a graphical surface unless the app opted into ContextOnly,
+// it leads with the standard Cut/Copy/Paste/Select All items (wired to the
+// focused trinket, enabled per its advertised capability). Any Edit menu the
+// app declared (declared != nil) contributes its own items after those,
+// behind a separator. The declared menu's title customizes the menu; a blank
+// or absent declaration falls back to "&Edit".
+//
+// It returns nil only when there is nothing to show: a ContextOnly graphical
+// app that declared no Edit menu of its own.
+func (d *Desktop) systemEditMenu(app ApplicationProvider, declared *Menu) *Menu {
+	auto := true
+	if d.graphicalFrames && app != nil && app.ContextOnly() {
+		auto = false
+	}
+	if !auto && declared == nil {
+		return nil
+	}
+
+	title := "&Edit"
+	if declared != nil && declared.RawTitle() != "" {
+		title = declared.RawTitle()
+	}
+	menu := NewMenu(title)
+	menu.SetWellKnownID(MenuIDEdit)
+
+	var custom []*MenuItem
+	if declared != nil {
+		custom = declared.Items()
+	}
+
+	if auto {
+		update := d.appendStandardEditItems(menu)
+		if len(custom) > 0 {
+			menu.AddSeparator()
+			for _, it := range custom {
+				menu.AddItem(it)
+			}
+		}
+		menu.SetOnAboutToShow(update)
+	} else {
+		for _, it := range custom {
+			menu.AddItem(it)
+		}
+	}
+	return menu
 }
 
 // hostForWindow returns the tear-off host currently hosting win, or nil.

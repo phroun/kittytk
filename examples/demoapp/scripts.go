@@ -400,21 +400,15 @@ func mainMenuScript() string {
 	var b strings.Builder
 	b.WriteString(`
 mb=new menubar children={
-	new menu caption="&Demo" children={
+	new menu caption="&Demo" wellknown="app" children={
 		new menuitem caption="&New" shortcut="^N" action=demo.file.new
 		new menuitem caption="&Open..." shortcut="^O"
 		new menuitem caption="&Save" shortcut="^S"
 	}
-	new menu caption="&Edit" children={
-		new menuitem caption="Cu&t" shortcut="^X" action=demo.edit.cut
-		new menuitem caption="&Copy" shortcut="^C" action=demo.edit.copy
-		new menuitem caption="&Paste" shortcut="^V" action=demo.edit.paste
-		new menuitem separator
-		new menuitem caption="Select &All" action=demo.edit.selectall
-		new menuitem separator
+	new menu caption="&Edit" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.edit.rawkey
 	}
-	new menu caption="&View" children={
+	new menu caption="&View" wellknown="view" children={
 		new menuitem caption="&Toolbar" checkable checked
 		new menuitem caption="&Status Bar" checkable checked
 		new menuitem separator
@@ -526,16 +520,10 @@ w=new window title="App %d Window" x=%d y=%d width=480 height=320 tearable main 
 closer=w.sp.tp.closebtn
 term=w.sp.term
 mb=new menubar children={
-	new menu caption="&App %d" children={
+	new menu caption="&App %d" wellknown="app" children={
 		new menuitem caption="&Close Window" shortcut="^W" action=demo.app.close
 	}
-	new menu caption="&Edit" children={
-		new menuitem caption="Cu&t" shortcut="^X" action=demo.app.cut
-		new menuitem caption="&Copy" shortcut="^C" action=demo.app.copy
-		new menuitem caption="&Paste" shortcut="^V" action=demo.app.paste
-		new menuitem separator
-		new menuitem caption="Select &All" action=demo.app.selectall
-		new menuitem separator
+	new menu caption="&Edit" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.app.rawkey
 	}
 	new menu caption="&Info" children={

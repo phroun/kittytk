@@ -60,9 +60,11 @@ func main() {
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})
 
 	// The desktop's own (windowless) application owns the base menu bar
-	// until a client dials in.
+	// until a client dials in. It is context-only: the host has no editing
+	// surface of its own, so no automatic Edit menu is added for it.
 	application := app.New(nil)
 	application.SetName("KittyTK (SDL)")
+	application.SetContextOnly(true)
 	desktop.AddApplication(application)
 
 	// Start the display service: applications appear as they connect.

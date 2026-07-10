@@ -205,7 +205,8 @@ func (menu *Menu) BindCommands(reg *core.CommandRegistry) {
 const (
 	MenuIDApp    = "app"    // the app's leading menu (≡/application menu)
 	MenuIDFile   = "file"   // File
-	MenuIDEdit   = "edit"   // Edit
+	MenuIDEdit   = "edit"   // Edit (the system supplies Cut/Copy/Paste/Select All)
+	MenuIDSelect = "select" // Select
 	MenuIDFormat = "format" // Format
 	MenuIDView   = "view"   // View
 	MenuIDWindow = "window" // Window (the system manages its window list)
