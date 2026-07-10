@@ -1439,12 +1439,15 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				}
 
 				// Draw full text using font-aware rendering (with a tab-color
-				// foundation on pixel surfaces so the label/separator seam can't
-				// show the bar color - see the normal path below).
+				// foundation on pixel surfaces + transparent glyphs so the
+				// label/separator seam can't show the bar color - see the
+				// normal path below).
+				graceStyle := s
 				if p.Graphical() && isSelected {
 					p.FillRect(core.UnitRect{X: x, Y: 0, Width: font.MeasureText(tab.Text) + metrics.CellWidth, Height: tabHeight}, ' ', s)
+					graceStyle = s.WithBg(style.ColorTransparent)
 				}
-				p.DrawText(x, 0, tab.Text, s, font)
+				p.DrawText(x, 0, tab.Text, graceStyle, font)
 				x += font.MeasureText(tab.Text)
 				lastTextEndX = x // Track where text ends
 				lastSlashX = -1  // Reset slash tracking
@@ -1574,12 +1577,14 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				// Draw partial text using font-aware rendering
 				if charsToShow > 0 {
 					partialText := string(textRunes[:charsToShow])
-					// Tab-color foundation under the label so the seam to the
+					// Tab-color foundation + transparent glyphs so the seam to the
 					// ellipsis/separator can't leak the bar color (pixel surfaces).
+					partStyle := s
 					if p.Graphical() && isSelected {
 						p.FillRect(core.UnitRect{X: x, Y: 0, Width: font.MeasureText(partialText) + metrics.CellWidth, Height: tabHeight}, ' ', s)
+						partStyle = s.WithBg(style.ColorTransparent)
 					}
-					p.DrawText(x, 0, partialText, s, font)
+					p.DrawText(x, 0, partialText, partStyle, font)
 					x += font.MeasureText(partialText)
 					lastTextEndX = x
 					lastSlashX = -1 // Reset - no separator drawn in truncation path
@@ -1681,11 +1686,15 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		// Solid tab-color foundation under the label and its trailing cell, so
 		// the sub-pixel seam between the proportional label (unsnapped rate)
 		// and the cell-based separator (cell rate) can't show the bar color
-		// through at a fractional font size.
+		// through at a fractional font size. With the foundation carrying the
+		// background, draw the glyphs transparent so the label's own bg box
+		// (a line-height raster) can't nibble the edge stripe above or below.
+		textStyle := s
 		if p.Graphical() && isSelected {
 			p.FillRect(core.UnitRect{X: x, Y: 0, Width: textWidth + metrics.CellWidth, Height: tabHeight}, ' ', s)
+			textStyle = s.WithBg(style.ColorTransparent)
 		}
-		p.DrawText(x, 0, tab.Text, s, font)
+		p.DrawText(x, 0, tab.Text, textStyle, font)
 		x += textWidth
 
 		// Draw close button if closable (at end of text, before separator)
@@ -2155,10 +2164,16 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 					charsToShow = j + 1
 				}
 
-				// Draw partial text using font-aware rendering
+				// Draw partial text using font-aware rendering (tab-color
+				// foundation + transparent glyphs on pixel surfaces).
 				if charsToShow > 0 {
 					partialText := string(textRunes[:charsToShow])
-					p.DrawText(x, tabY, partialText, s, font)
+					bpartStyle := s
+					if p.Graphical() && isSelected {
+						p.FillRect(core.UnitRect{X: x, Y: tabY, Width: font.MeasureText(partialText) + metrics.CellWidth, Height: tabHeight}, ' ', s)
+						bpartStyle = s.WithBg(style.ColorTransparent)
+					}
+					p.DrawText(x, tabY, partialText, bpartStyle, font)
 					x += font.MeasureText(partialText)
 					lastTextEndX = x
 					lastSlashX = -1 // Reset - no separator drawn in truncation path
@@ -2256,8 +2271,16 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			}
 		}
 
-		// Draw tab text using font-aware rendering
-		p.DrawText(x, tabY, tab.Text, s, font)
+		// Draw tab text using font-aware rendering. Solid tab-color foundation
+		// under the label + its trailing cell, glyphs transparent, so the
+		// label/separator seam can't leak the bar color at a fractional font
+		// size (mirrors the top-tab path).
+		btextStyle := s
+		if p.Graphical() && isSelected {
+			p.FillRect(core.UnitRect{X: x, Y: tabY, Width: font.MeasureText(tab.Text) + metrics.CellWidth, Height: tabHeight}, ' ', s)
+			btextStyle = s.WithBg(style.ColorTransparent)
+		}
+		p.DrawText(x, tabY, tab.Text, btextStyle, font)
 		x += font.MeasureText(tab.Text)
 		lastTextEndX = x // Track where text ends
 		lastSlashX = -1  // Reset slash tracking
