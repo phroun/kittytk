@@ -3,6 +3,7 @@ package trinkets
 
 import (
 	"fmt"
+	"sort"
 	"time"
 	"unicode/utf8"
 
@@ -434,57 +435,107 @@ func (t *TextInput) Paint(p *core.Painter) {
 	visibleText := t.truncateToWidth(displayText, bounds.Width, font)
 	displayText = []rune(visibleText)
 
-	// Draw text using font-aware rendering
-	// For text without selection, use DrawText for proper font rendering
-	if !t.HasSelection() || isPlaceholder {
-		p.DrawText(0, 0, string(displayText), s, font)
-	} else {
-		// With selection, draw character by character to apply selection style
-		x := core.Unit(0)
-		start, end := t.selStart, t.selEnd
-		if start > end {
-			start, end = end, start
-		}
+	// Draw the text as chunks split at the selection bounds and (when the
+	// caret shows) the cursor, so every position the caret can sit on is a
+	// real segment edge. Each chunk advances x by its OWN rendered width
+	// (DrawText returns the advance it painted), and the caret is placed at
+	// the accumulated width of the chunks to its left. Measuring per segment
+	// and summing - the same structure the render walks - keeps the caret
+	// exactly where the glyphs paint instead of drifting from a separate
+	// whole-string measurement. Chunk drawing also replaces the old
+	// character-by-character selection path, whose per-glyph re-quantization
+	// loosened the letter spacing.
+	n := len(displayText)
+	showCaret := focused && !t.readOnly && core.FocusChainActive(t.Self())
 
-		selStyle := scheme.GetEditBoxSelection(focused && t.IsEnabled(), paneType)
-		for i, r := range displayText {
-			charStyle := s
-			textPos := t.scrollOffset + i
-			if textPos >= start && textPos < end {
-				charStyle = selStyle
+	cursorDisp := t.cursorPos - t.scrollOffset
+	if cursorDisp < 0 {
+		cursorDisp = 0
+	}
+	if cursorDisp > n {
+		cursorDisp = n
+	}
+
+	selLo, selHi := -1, -1
+	if t.HasSelection() && !isPlaceholder {
+		lo, hi := t.selStart, t.selEnd
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		selLo, selHi = lo-t.scrollOffset, hi-t.scrollOffset
+		if selLo < 0 {
+			selLo = 0
+		}
+		if selHi > n {
+			selHi = n
+		}
+	}
+
+	// Interior segment boundaries (0 < b < n): selection edges, and the
+	// cursor when its caret is visible.
+	var cuts []int
+	addCut := func(b int) {
+		if b <= 0 || b >= n {
+			return
+		}
+		for _, e := range cuts {
+			if e == b {
+				return
 			}
-
-			// Draw single character using DrawText for font rendering
-			p.DrawText(x, 0, string(r), charStyle, font)
-			x += font.MeasureText(string(r))
 		}
+		cuts = append(cuts, b)
+	}
+	if selLo >= 0 {
+		addCut(selLo)
+		addCut(selHi)
+	}
+	if showCaret {
+		addCut(cursorDisp)
+	}
+	sort.Ints(cuts)
+	cuts = append(cuts, n) // the last segment ends at n
 
-		// The selection can extend past the last visible glyph while
-		// more selected text is scrolled off the right (proportional
-		// fonts leave a sliver of the box unfilled where a cell grid
-		// would not). Color that trailing gap as selection so the
-		// highlight reaches the edge. No-op on cell surfaces, where
-		// the text fills the box exactly.
-		lastVisiblePos := t.scrollOffset + len(displayText)
-		if x < bounds.Width && start <= lastVisiblePos && end > lastVisiblePos {
+	selStyle := scheme.GetEditBoxSelection(focused && t.IsEnabled(), paneType)
+	x := core.Unit(0)
+	caretX := core.Unit(0) // stays 0 when the cursor is at the start
+	prev := 0
+	for _, b := range cuts {
+		if b <= prev {
+			continue
+		}
+		chunk := displayText[prev:b]
+		chStyle := s
+		if selLo >= 0 && prev >= selLo && b <= selHi {
+			chStyle = selStyle
+		}
+		x += p.DrawText(x, 0, string(chunk), chStyle, font)
+		if b == cursorDisp {
+			caretX = x
+		}
+		prev = b
+	}
+
+	// The selection can extend past the last visible glyph while more
+	// selected text is scrolled off the right (proportional fonts leave a
+	// sliver of the box unfilled where a cell grid would not). Color that
+	// trailing gap as selection so the highlight reaches the edge. No-op on
+	// cell surfaces, where the text fills the box exactly.
+	if selLo >= 0 {
+		lo, hi := t.selStart, t.selEnd
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		lastVisiblePos := t.scrollOffset + n
+		if x < bounds.Width && lo <= lastVisiblePos && hi > lastVisiblePos {
 			p.FillRect(core.UnitRect{X: x, Width: bounds.Width - x, Height: bounds.Height}, ' ', selStyle)
 		}
 	}
 
-	// Draw cursor - cursor position is still cell-based for consistency.
-	// Only in the active window chain: a trinket keeps local focus while
-	// its window is in the background, but showing the caret there
-	// would put two carets on screen.
-	if focused && !t.readOnly && core.FocusChainActive(t.Self()) {
-		// Calculate cursor X position based on font metrics of text before cursor
-		cursorTextPos := t.cursorPos - t.scrollOffset
-		if cursorTextPos < 0 {
-			cursorTextPos = 0
-		}
-		var cursorX core.Unit
-		if cursorTextPos > 0 && cursorTextPos <= len(displayText) {
-			cursorX = font.MeasureText(string(displayText[:cursorTextPos]))
-		}
+	// Draw cursor - only in the active window chain: a trinket keeps local
+	// focus while its window is in the background, but showing the caret
+	// there would put two carets on screen.
+	if showCaret {
+		cursorX := caretX
 
 		if cursorX >= 0 && cursorX < bounds.Width {
 			// The graphical bar caret uses a brighter white than the cell
