@@ -1306,8 +1306,19 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 				return true
 			}
 
-			// Check for title bar interaction - titlebar operations raise immediately
-			if event.Y < bounds.Y+metrics.CellHeight &&
+			// Check for title bar interaction - titlebar operations raise
+			// immediately. On a graphical frame the titlebar sits INSIDE the
+			// top border (client-area math in window.go), so the draggable
+			// row runs from the border down a full cell; without the border
+			// offset the region ended a border-thickness short of the
+			// titlebar's bottom (the top border above it is a resize edge,
+			// handled first). Cell frames draw the title on the top row, so
+			// no offset.
+			titleBottom := metrics.CellHeight
+			if core.FindGraphicalFrames(win) {
+				titleBottom += core.FindFrameBorderUnits(win)
+			}
+			if event.Y < bounds.Y+titleBottom &&
 				win.Flags()&window.WindowFlagNoTitle == 0 {
 
 				m.ActivateWindow(win)
