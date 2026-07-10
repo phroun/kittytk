@@ -125,7 +125,10 @@ t=new tabs children={
 b=new tab caption="Basic Trinkets" children={
 	bw=new panel layout=vbox spacing=0 children={
 		new label caption="This is a demo of basic trinkets:"
-		input=new textinput placeholder="Enter text here..."
+		brow=new panel layout=hbox spacing=8 children={
+			input=new textinput placeholder="Enter text here..." stretch=1
+			new button caption="Browse..."
+		}
 		new spacer
 		new panel layout=hbox spacing=8 children={
 			new button caption="OK" action=demo.basic.ok
@@ -381,7 +384,7 @@ new tab caption="Vertical Tabs" children={
 # Surface what the app-side handlers address, then open the event
 # flows they listen to (D20 default-closed; command flows regardless).
 tabs=w.t
-binput=w.t.b.bw.input
+binput=w.t.b.bw.brow.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont
 grid=w.t.s.o.sp.c.grid
