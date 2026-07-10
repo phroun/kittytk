@@ -641,43 +641,48 @@ func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 
 	// Track pointer hover over the divider band (highlights the grab
-	// handle). Don't consume the move so children still receive it.
-	over := s.dividerBounds().Contains(core.UnitPoint{X: event.X, Y: event.Y})
+	// handle).
+	pos := core.UnitPoint{X: event.X, Y: event.Y}
+	over := s.dividerBounds().Contains(pos)
 	if over != s.hoveringDivider {
 		s.hoveringDivider = over
 		s.Update()
 	}
 
-	// Forward to children (needed for drag operations within children)
 	firstBounds, secondBounds := s.childBounds()
 
+	// A held button means a drag/selection in a child: forward the real
+	// move to both panes so a gesture that leaves its pane keeps tracking.
+	// A plain hover move goes only to the pane that actually contains the
+	// pointer; the other pane (and both, when the pointer is on the
+	// divider) get an out-of-bounds move so obscured/clipped content or the
+	// far pane doesn't also highlight.
+	hovering := event.Buttons == 0
+	forward := func(child core.Trinket, cb core.UnitRect) bool {
+		handler, ok := child.(interface {
+			HandleMouseMove(core.MouseMoveEvent) bool
+		})
+		if !ok {
+			return false
+		}
+		fx, fy := event.X, event.Y
+		if hovering && (over || !cb.Contains(pos)) {
+			fx, fy = -1, -1
+		}
+		le := event
+		le.X = fx - cb.X
+		le.Y = fy - cb.Y
+		return handler.HandleMouseMove(le)
+	}
+
+	r1, r2 := false, false
 	if s.first != nil {
-		if handler, ok := s.first.(interface {
-			HandleMouseMove(core.MouseMoveEvent) bool
-		}); ok {
-			localEvent := event
-			localEvent.X -= firstBounds.X
-			localEvent.Y -= firstBounds.Y
-			if handler.HandleMouseMove(localEvent) {
-				return true
-			}
-		}
+		r1 = forward(s.first, firstBounds)
 	}
-
 	if s.second != nil {
-		if handler, ok := s.second.(interface {
-			HandleMouseMove(core.MouseMoveEvent) bool
-		}); ok {
-			localEvent := event
-			localEvent.X -= secondBounds.X
-			localEvent.Y -= secondBounds.Y
-			if handler.HandleMouseMove(localEvent) {
-				return true
-			}
-		}
+		r2 = forward(s.second, secondBounds)
 	}
-
-	return false
+	return r1 || r2
 }
 
 // HandleMouseWheel forwards a wheel event to the pane under the

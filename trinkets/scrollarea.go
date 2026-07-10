@@ -1355,10 +1355,19 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// dropping it left text controls unable to extend a selection while
 	// scrolled (the move handler bailed on the missing button).
 	if s.content != nil {
-		scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
 		le := event
-		le.X = event.X + scrollOffsetX
-		le.Y = event.Y + scrollOffsetY
+		inViewport := event.X >= 0 && event.Y >= 0 &&
+			event.X < viewport.Width && event.Y < viewport.Height
+		if inViewport {
+			scrollOffsetX, scrollOffsetY := s.scrollOffsetUnits()
+			le.X = event.X + scrollOffsetX
+			le.Y = event.Y + scrollOffsetY
+		} else {
+			// Over a scrollbar lane (or outside the viewport): the content
+			// under it must not hover, so send an out-of-bounds move to
+			// clear its hover instead of a valid content coordinate.
+			le.X, le.Y = -1, -1
+		}
 		return s.content.HandleMouseMove(le)
 	}
 

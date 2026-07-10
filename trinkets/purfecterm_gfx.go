@@ -73,6 +73,8 @@ type purfecTermGfx struct {
 	// thumb; thumb pos is the unsnapped thumb origin along the track.
 	vDragging bool
 	hDragging bool
+	vHover    bool // pointer over the vertical thumb
+	hHover    bool // pointer over the horizontal thumb
 	vGrabOff  core.Unit
 	hGrabOff  core.Unit
 	vThumbPos float64
@@ -1352,13 +1354,43 @@ func (t *PurfecTerm) hScrollGeometry(bounds core.UnitRect) (track, thumb core.Un
 func (t *PurfecTerm) paintScrollbarsGfx(p *core.Painter, bounds core.UnitRect, buf *purfecterm.Buffer, chh float64) {
 	trackStyle := style.DefaultStyle().WithFg(style.RGB(128, 128, 128)).WithBg(style.ColorTransparent)
 	thumbStyle := style.DefaultStyle().WithBg(style.RGB(168, 168, 168))
+	// Hovered thumb uses the scheme hover colour (fill = its FG), matching
+	// the rest of the toolkit's scrollbars.
+	hs := t.GetScheme().GetHoveredScrollbarThumb()
+	hoverThumb := hs.WithBg(hs.Fg)
 	if track, thumb, _, _, _, ok := t.vScrollGeometry(bounds); ok {
 		p.FillRect(track, '░', trackStyle)
-		p.FillRect(thumb, ' ', thumbStyle)
+		ts := thumbStyle
+		if t.gfx.vHover {
+			ts = hoverThumb
+		}
+		p.FillRect(thumb, ' ', ts)
 	}
 	if track, thumb, _, _, _, ok := t.hScrollGeometry(bounds); ok {
 		p.FillRect(track, '░', trackStyle)
-		p.FillRect(thumb, ' ', thumbStyle)
+		ts := thumbStyle
+		if t.gfx.hHover {
+			ts = hoverThumb
+		}
+		p.FillRect(thumb, ' ', ts)
+	}
+}
+
+// updateScrollbarHoverGfx tracks whether the pointer is over either
+// scrollbar thumb, repainting only on change.
+func (t *PurfecTerm) updateScrollbarHoverGfx(x, y core.Unit) {
+	bounds := t.Bounds()
+	vh, hh := false, false
+	if _, thumb, _, _, _, ok := t.vScrollGeometry(bounds); ok {
+		vh = x >= thumb.X && x < thumb.X+thumb.Width && y >= thumb.Y && y < thumb.Y+thumb.Height
+	}
+	if _, thumb, _, _, _, ok := t.hScrollGeometry(bounds); ok {
+		hh = x >= thumb.X && x < thumb.X+thumb.Width && y >= thumb.Y && y < thumb.Y+thumb.Height
+	}
+	if vh != t.gfx.vHover || hh != t.gfx.hHover {
+		t.gfx.vHover = vh
+		t.gfx.hHover = hh
+		t.Update()
 	}
 }
 
@@ -1578,6 +1610,9 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
 		t.scrollbarDragTo(event.X, event.Y)
 		return true
 	}
+	// Track scrollbar-thumb hover on plain moves (also clears on the
+	// out-of-bounds move the pane sends when the pointer leaves).
+	t.updateScrollbarHoverGfx(event.X, event.Y)
 	buf := t.terminal.Buffer()
 	cellX, cellY := t.screenToCellGfx(event.X, event.Y)
 	hasShift := event.Modifiers&core.ShiftModifier != 0

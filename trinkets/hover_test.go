@@ -69,6 +69,44 @@ func TestSplitterDividerHover(t *testing.T) {
 	}
 }
 
+// A widget in a splitter pane must not hover when the pointer is on the
+// divider itself (the splitter chrome wins), nor when the pointer is in the
+// other pane (obscured/clipped content must not light up).
+func TestSplitterDividerSuppressesChildHover(t *testing.T) {
+	sp := NewSplitter(core.Horizontal)
+	sp.SetBounds(core.UnitRect{Width: 300, Height: 200})
+
+	btn := NewButton("ok")
+	sp.SetFirst(btn)
+	sp.SetSecond(NewButton("other"))
+	sp.Layout()
+
+	firstBounds, secondBounds := sp.childBounds()
+	// Grow the first button so it overhangs its pane (its full bounds reach
+	// past the divider), mimicking clipped content.
+	btn.SetBounds(core.UnitRect{Width: 300, Height: 40})
+
+	// Over the first pane: the button hovers.
+	sp.HandleMouseMove(core.MouseMoveEvent{X: firstBounds.X + 10, Y: 8})
+	if !btn.mouseOver {
+		t.Fatal("button did not hover when the pointer was over its pane")
+	}
+
+	// On the divider: the button must clear even though its bounds overhang
+	// under the divider.
+	div := sp.dividerBounds()
+	sp.HandleMouseMove(core.MouseMoveEvent{X: div.X + div.Width/2, Y: 8})
+	if btn.mouseOver {
+		t.Error("button hovered while the pointer was on the divider")
+	}
+
+	// In the second pane: the (clipped) first button must not hover.
+	sp.HandleMouseMove(core.MouseMoveEvent{X: secondBounds.X + 10, Y: 8})
+	if btn.mouseOver {
+		t.Error("clipped first-pane button hovered from the second pane")
+	}
+}
+
 // The menu bar highlights the top-level item under the pointer even when
 // no dropdown is open.
 func TestMenuBarItemHover(t *testing.T) {
