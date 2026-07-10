@@ -74,3 +74,31 @@ func TestWindowMenuChecksCurrentWindow(t *testing.T) {
 		t.Errorf("checkmark = %v, want [Doc A]", checked)
 	}
 }
+
+// A torn-out window that hosts an active MDI child paints thick/single (the
+// focus lives in the child, which shows the double focused border), even
+// though a plain focused torn window paints double.
+func TestDetachedWindowPassiveWithActiveMDIChild(t *testing.T) {
+	d := NewDesktop()
+	d.windowManager = window.NewWindowManager()
+
+	parent := window.NewWindow("Torn Parent")
+	parent.SetDetached(true)
+	parent.SetActive(true)
+
+	// Plain detached window with no MDI child: not passive -> double.
+	if d.IsWindowPassive(parent) {
+		t.Fatal("plain detached window should not be passive")
+	}
+
+	// Give it an MDIPane with an active child.
+	mdi := NewMDIPane()
+	parent.SetContent(mdi)
+	child := window.NewWindow("Child")
+	mdi.AddWindow(child)
+	mdi.ActivateWindow(child)
+
+	if !d.IsWindowPassive(parent) {
+		t.Error("torn parent hosting an active MDI child should be passive (thick)")
+	}
+}

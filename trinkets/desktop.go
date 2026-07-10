@@ -2626,11 +2626,13 @@ func (d *Desktop) IsWindowPassive(win core.Trinket) bool {
 
 	// A detached window lives on its own OS surface: its lit/heavy state is
 	// driven by that surface's focus (SetActive/SetQuasiActive), not by the
-	// desktop's menu-bar/previous-window bookkeeping. Without this it would
-	// read as the desktop's remembered previous window and always paint
-	// passive (single/heavy) even while focused and interacted with.
+	// desktop's menu-bar/previous-window bookkeeping - otherwise it would read
+	// as the desktop's remembered previous window and always paint passive
+	// (single/heavy) even while focused. It DOES still go passive when focus
+	// lives in one of its own MDI children, so the torn parent shows thick
+	// while the active child shows the double focused border.
 	if w, ok := win.(*window.Window); ok && w.IsDetached() {
-		return false
+		return hasActiveDescendantWindow(win)
 	}
 
 	activeWin := d.windowManager.ActiveWindow()
