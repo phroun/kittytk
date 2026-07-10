@@ -13,9 +13,9 @@ import (
 	"testing"
 
 	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/objects/trinkets"
+	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/protocol"
-	"github.com/phroun/kittytk/trinkets"
-	"github.com/phroun/kittytk/window"
 )
 
 func TestMDIDockChoreographyNoDuplicateEntries(t *testing.T) {

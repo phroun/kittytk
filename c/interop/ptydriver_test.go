@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 // buildCPty compiles the ptydriver smoke: kittytk.c + scripts.c +

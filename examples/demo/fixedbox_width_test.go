@@ -6,8 +6,8 @@ import (
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/layout"
-	"github.com/phroun/kittytk/trinkets"
-	"github.com/phroun/kittytk/window"
+	"github.com/phroun/kittytk/objects/trinkets"
+	"github.com/phroun/kittytk/objects/window"
 )
 
 // A fixedWidthBox pins a raw UNIT width, so the column is the same unit

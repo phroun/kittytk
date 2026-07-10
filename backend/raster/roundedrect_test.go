@@ -6,8 +6,8 @@ import (
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/style"
-	"github.com/phroun/kittytk/window"
 )
 
 func TestDrawRoundedRect(t *testing.T) {

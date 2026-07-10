@@ -7,11 +7,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/phroun/kittytk/app"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/app"
+	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/protocol"
 	"github.com/phroun/kittytk/style"
-	"github.com/phroun/kittytk/trinkets"
 )
 
 // applyTerminalTheme walks a trinket subtree and puts every PurfecTerm

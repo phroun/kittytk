@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/phroun/kittytk/display"
-	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 // startServiceCfg boots a headless desktop serving cfg and returns the

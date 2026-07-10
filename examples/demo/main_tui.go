@@ -4,7 +4,7 @@ package main
 
 import (
 	"github.com/phroun/kittytk/backend/tui"
-	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 // The text-mode demo: the classic TUI desktop in your terminal.

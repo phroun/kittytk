@@ -12,7 +12,7 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/display"
-	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 func TestSecondTLSConnectionFromCommandHandler(t *testing.T) {

@@ -7,10 +7,10 @@ import (
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/trinkets"
+	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/protocol"
 	"github.com/phroun/kittytk/style"
-	"github.com/phroun/kittytk/trinkets"
-	"github.com/phroun/kittytk/window"
 )
 
 // buildDemoWindow parses the shared main-window script onto a fresh

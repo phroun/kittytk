@@ -13,7 +13,7 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/display"
-	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 // TestMain redirects every per-user store (client identity, host

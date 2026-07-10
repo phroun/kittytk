@@ -13,11 +13,11 @@ package main
 import (
 	"os"
 
-	"github.com/phroun/kittytk/app"
 	"github.com/phroun/kittytk/backend/tui"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
-	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/objects/app"
+	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 func main() {

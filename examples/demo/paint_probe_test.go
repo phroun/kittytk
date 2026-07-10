@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/protocol"
 	"github.com/phroun/kittytk/style"
-	"github.com/phroun/kittytk/window"
 )
 
 // gridBackend is a throwaway RenderBackend that records runes so we

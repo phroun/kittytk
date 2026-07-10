@@ -8,8 +8,8 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/protocol"
-	"github.com/phroun/kittytk/trinkets"
 )
 
 func build(t *testing.T, dispatch func(string), src string) (*client.Conn, *client.UI) {

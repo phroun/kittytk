@@ -22,8 +22,8 @@ import (
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
+	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/style"
-	"github.com/phroun/kittytk/trinkets"
 )
 
 // nullBackend is a headless RenderBackend.

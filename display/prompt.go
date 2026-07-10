@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/phroun/kittytk/objects/trinkets"
+	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/protocol"
-	"github.com/phroun/kittytk/trinkets"
-	"github.com/phroun/kittytk/window"
 )
 
 // DefaultConfig builds a desktop host's Config: the given endpoint, an

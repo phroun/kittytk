@@ -16,12 +16,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/phroun/kittytk/app"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
+	"github.com/phroun/kittytk/objects/app"
+	"github.com/phroun/kittytk/objects/trinkets"
 	sdlplat "github.com/phroun/kittytk/sdl"
-	"github.com/phroun/kittytk/trinkets"
 )
 
 func main() {

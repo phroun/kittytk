@@ -7,7 +7,7 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/display"
-	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 // A window and its menubar arrive in one build batch, window first. Adopting

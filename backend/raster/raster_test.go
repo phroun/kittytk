@@ -9,9 +9,9 @@ import (
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/core"
+	_ "github.com/phroun/kittytk/objects/trinkets" // wire vocabulary registrations
+	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/style"
-	_ "github.com/phroun/kittytk/trinkets" // wire vocabulary registrations
-	"github.com/phroun/kittytk/window"
 )
 
 // The D23 proof: a protocol-built window rendered through the PIXEL

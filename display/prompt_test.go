@@ -10,7 +10,7 @@ import (
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
-	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 func findButtons(root core.Trinket, out *[]*trinkets.Button) {
