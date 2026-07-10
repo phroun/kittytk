@@ -51,6 +51,10 @@ type WindowManager struct {
 	// Previously active window (remembered when menu bar activates)
 	previousActiveWindow *Window
 
+	// Topmost window under the pointer on the last plain (no-button) move,
+	// so its hover states can be cleared when the pointer moves off it.
+	lastHoverWindow *Window
+
 	// Modal window stack
 	modalStack []*Window
 
@@ -398,6 +402,16 @@ func ResizeEdgeRects(win *Window, edge int, grip core.Unit) []core.UnitRect {
 		rects = append(rects, core.UnitRect{Y: b.Height - bottomBand, Width: b.Width, Height: bottomBand})
 	}
 	return rects
+}
+
+// clearWindowHover clears any lingering per-widget hover on the window we
+// last forwarded a hover move to, so nothing stays highlighted while a
+// window is dragged or resized.
+func (m *WindowManager) clearWindowHover() {
+	if m.lastHoverWindow != nil {
+		m.lastHoverWindow.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
+		m.lastHoverWindow = nil
+	}
 }
 
 // updateResizeHover highlights the size-sensitive edge(s) of the topmost
@@ -1618,6 +1632,12 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 	popups := m.popups
 	m.mu.Unlock()
 
+	// While a window is being dragged or resized, nothing should show a
+	// hover highlight: clear whatever was hovered when the gesture began.
+	if dragging != nil || resizing != nil {
+		m.clearWindowHover()
+	}
+
 	// Check popups first (highest z-order) - only when not window dragging/resizing
 	if dragging == nil && resizing == nil {
 		for i := len(popups) - 1; i >= 0; i-- {
@@ -1788,6 +1808,8 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 	m.mu.RLock()
 	desktop := m.desktop
 	active := m.activeWindow
+	windows := make([]*Window, len(m.windows))
+	copy(windows, m.windows)
 	m.mu.RUnlock()
 
 	if desktop != nil {
@@ -1800,17 +1822,55 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		}
 	}
 
-	// Forward to active window (for splitter/trinket dragging, but not if minimized)
-	if active != nil && !active.IsMinimized() {
-		bounds := m.displayBounds(active)
+	// A held button means a drag/selection: keep routing to the active
+	// window (drag capture). A plain move is hover: route it to the topmost
+	// window under the pointer so its widgets highlight even when it isn't
+	// active, clearing the window we last hovered when the pointer leaves.
+	if event.Buttons != 0 {
+		if active != nil && !active.IsMinimized() {
+			bounds := m.displayBounds(active)
+			localEvent := event
+			localEvent.X -= bounds.X
+			localEvent.Y -= bounds.Y
+			if active.HandleMouseMove(localEvent) {
+				m.RequestRepaint()
+				return true
+			}
+		}
+		return false
+	}
+
+	pos := core.UnitPoint{X: event.X, Y: event.Y}
+	var hoverTarget *Window
+	for i := len(windows) - 1; i >= 0; i-- {
+		win := windows[i]
+		// Use displayBounds (the on-screen, corral-clamped rectangle) so
+		// detection matches the offset used to forward the local move.
+		if win.IsVisible() && !win.IsMinimized() && m.displayBounds(win).Contains(pos) {
+			hoverTarget = win
+			break
+		}
+	}
+	if m.lastHoverWindow != nil && m.lastHoverWindow != hoverTarget {
+		m.lastHoverWindow.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
+	}
+	m.lastHoverWindow = hoverTarget
+	if hoverTarget != nil {
+		bounds := m.displayBounds(hoverTarget)
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
-		if active.HandleMouseMove(localEvent) {
-			// Request repaint since trinket state may have changed
-			m.RequestRepaint()
-			return true
+		// Over a resize edge a press resizes, so no widget under the
+		// pointer would fire: send an out-of-bounds move to clear all hover
+		// in the window (titlebar buttons and edge-adjacent content).
+		if m.detectResizeEdge(hoverTarget, event.X, event.Y) != ResizeEdgeNone {
+			localEvent.X, localEvent.Y = -1, -1
 		}
+		hoverTarget.HandleMouseMove(localEvent)
+		// The pointer is over this window: consume the move so the hover
+		// can't leak to windows stacked underneath.
+		m.RequestRepaint()
+		return true
 	}
 
 	return false

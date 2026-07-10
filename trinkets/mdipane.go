@@ -73,6 +73,11 @@ type MDIPane struct {
 	// Focus-without-raise: track pressed window for conditional raise on release
 	pressedWindow *window.Window
 
+	// Topmost window under the pointer on the last plain (no-button) move,
+	// so its hover states can be cleared when the pointer moves to another
+	// window. Lets inactive windows highlight their hoverable widgets.
+	lastHoverWindow *window.Window
+
 	// Callbacks
 	onWindowAdded         func(*window.Window)
 	onWindowRemoved       func(*window.Window)
@@ -946,6 +951,16 @@ func (m *MDIPane) setResizeHover(win *window.Window, edge int) {
 	win.SetResizeHoverRects(window.ResizeEdgeRects(win, edge, m.resizeGripFor(win)))
 }
 
+// clearWindowHover clears any lingering per-widget hover on the window we
+// last forwarded a hover move to (titlebar buttons and content), so nothing
+// stays highlighted while a window is dragged or resized.
+func (m *MDIPane) clearWindowHover() {
+	if m.lastHoverWindow != nil {
+		m.lastHoverWindow.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
+		m.lastHoverWindow = nil
+	}
+}
+
 // updateResizeHover highlights the size-sensitive edge under the pointer on
 // the topmost child window and clears it on the others - the MDI equivalent
 // of WindowManager.updateResizeHover, called on plain moves (no drag). It
@@ -1472,6 +1487,13 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 	resizeOriginal := m.resizeOriginal
 	m.mu.Unlock()
 
+	// While a window is being dragged or resized, nothing should show a
+	// hover highlight: clear whatever was hovered when the gesture began so
+	// it doesn't linger under the moving window.
+	if resizing != nil || dragging != nil {
+		m.clearWindowHover()
+	}
+
 	// Handle resize
 	if resizing != nil {
 		newBounds := window.ApplyResize(resizeOriginal, resizeEdge,
@@ -1546,18 +1568,61 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// sync with the pointer (like desktop windows).
 	m.updateResizeHover(event.X, event.Y)
 
-	// Forward to active window
 	m.mu.RLock()
 	active := m.activeWindow
 	content := m.content
+	windows := m.windows
 	m.mu.RUnlock()
 
-	if active != nil && !active.IsMinimized() {
-		bounds := m.displayBounds(active)
-		localEvent := event
-		localEvent.X -= bounds.X
-		localEvent.Y -= bounds.Y
-		if active.HandleMouseMove(localEvent) {
+	// A held button means a drag/selection in progress: keep routing to the
+	// active window (drag capture) so the gesture doesn't jump windows.
+	// A plain move is hover: route it to the topmost window under the
+	// pointer so its widgets (titlebar buttons, splitters, ...) highlight
+	// even when it isn't the active window, and clear the window we last
+	// hovered when the pointer leaves it.
+	if event.Buttons != 0 {
+		if active != nil && !active.IsMinimized() {
+			bounds := m.displayBounds(active)
+			localEvent := event
+			localEvent.X -= bounds.X
+			localEvent.Y -= bounds.Y
+			if active.HandleMouseMove(localEvent) {
+				m.Update()
+				return true
+			}
+		}
+	} else {
+		pos := core.UnitPoint{X: event.X, Y: event.Y}
+		var hoverTarget *window.Window
+		for i := len(windows) - 1; i >= 0; i-- {
+			win := windows[i]
+			if win.IsVisible() && !win.IsMinimized() && m.displayBounds(win).Contains(pos) {
+				hoverTarget = win
+				break
+			}
+		}
+		if m.lastHoverWindow != nil && m.lastHoverWindow != hoverTarget {
+			// Send an out-of-bounds move so the previously-hovered window
+			// clears its widgets' hover states.
+			m.lastHoverWindow.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
+		}
+		m.lastHoverWindow = hoverTarget
+		if hoverTarget != nil {
+			bounds := m.displayBounds(hoverTarget)
+			localEvent := event
+			localEvent.X -= bounds.X
+			localEvent.Y -= bounds.Y
+			// Over a resize edge a press resizes, so no widget under the
+			// pointer would fire: send an out-of-bounds move to clear all
+			// hover in the window (titlebar buttons and edge-adjacent
+			// content like a scrollbar tucked against the frame).
+			if m.detectResizeEdge(hoverTarget, event.X, event.Y) != window.ResizeEdgeNone {
+				localEvent.X, localEvent.Y = -1, -1
+			}
+			hoverTarget.HandleMouseMove(localEvent)
+			// The pointer is over this window: consume the move so the
+			// hover can't leak to windows stacked underneath or the
+			// background content.
 			m.Update()
 			return true
 		}

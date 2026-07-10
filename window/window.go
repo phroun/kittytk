@@ -2991,9 +2991,13 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return true // Capture mouse while button is pressed
 	}
 
-	// Plain hover over a titlebar button (no press in progress). Update()
-	// schedules the repaint; don't consume the move so chrome/content
-	// under the pointer still gets it.
+	// Plain hover over a titlebar button (no press in progress). The
+	// manager/pane forward plain moves to the topmost window under the
+	// pointer (and send an out-of-bounds move when the pointer is over a
+	// resize edge, so nothing here hovers where a press would resize), so
+	// this runs for inactive windows too. Update() schedules the repaint;
+	// don't consume the move so chrome/content under the pointer still gets
+	// it.
 	newHovered := w.buttonAtPosition(event.X, event.Y)
 	w.mu.Lock()
 	hoverChanged := w.hoveredButton != newHovered

@@ -16,8 +16,10 @@ type Scheme struct {
 	StatusBarShortcut *CellStyle
 	Dock              *CellStyle
 	DockItem          *CellStyle
-	FocusedDockItem   *CellStyle
-	HoveredDockItem   *CellStyle // nil = HoverBG + HoverFG
+	FocusedDockItemFG *CellStyle // FG only
+	FocusedDockItemBG *CellStyle // BG only
+	HoveredDockItemFG *CellStyle // nil = HoverFG (FG only)
+	HoveredDockItemBG *CellStyle // nil = HoverBG (BG only)
 
 	// =========================================================================
 	// Window Frame Related Colors
@@ -329,8 +331,10 @@ func DefaultScheme() *Scheme {
 		StatusBarShortcut: ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorWhite)),
 		Dock:              ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
 		DockItem:          ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
-		FocusedDockItem:   ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightCyan)),
-		HoveredDockItem:   nil, // HoverBG + HoverFG
+		FocusedDockItemFG: ptr(DefaultStyle().WithFg(ColorBlack)),
+		FocusedDockItemBG: ptr(DefaultStyle().WithBg(ColorBrightCyan)),
+		HoveredDockItemFG: nil, // HoverFG
+		HoveredDockItemBG: nil, // HoverBG
 
 		// Window Frame Related Colors
 		ActiveWindowBorder:     ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
@@ -560,13 +564,15 @@ func (s *Scheme) GetStatusBar() CellStyle         { return or(s.StatusBar) }
 func (s *Scheme) GetStatusBarShortcut() CellStyle { return or(s.StatusBarShortcut) }
 func (s *Scheme) GetDock() CellStyle              { return or(s.Dock) }
 func (s *Scheme) GetDockItem() CellStyle          { return or(s.DockItem) }
-func (s *Scheme) GetFocusedDockItem() CellStyle   { return or(s.FocusedDockItem) }
+
+func (s *Scheme) GetFocusedDockItem() CellStyle {
+	return DefaultStyle().WithFg(orFG(s.FocusedDockItemFG)).WithBg(orBG(s.FocusedDockItemBG))
+}
 
 func (s *Scheme) GetHoveredDockItem() CellStyle {
-	if s.HoveredDockItem != nil {
-		return *s.HoveredDockItem
-	}
-	return s.hover()
+	return DefaultStyle().
+		WithFg(orFG(s.HoveredDockItemFG, s.HoverFG)).
+		WithBg(orBG(s.HoveredDockItemBG, s.HoverBG))
 }
 
 // GetDockItemState resolves a dock item's style, with focus taking
@@ -718,8 +724,8 @@ func (s *Scheme) GetHoveredMenuBarMeta() CellStyle {
 	if s.HoveredMenuBarMeta != nil {
 		return *s.HoveredMenuBarMeta
 	}
-	// Keep the accelerator's semantic FG (red) but on the hover background.
-	return DefaultStyle().WithFg(orFG(s.MenuBarMeta)).WithBg(s.GetHoverBG())
+	// Bright green accelerator on the hover background.
+	return DefaultStyle().WithFg(ColorBrightGreen).WithBg(s.GetHoverBG())
 }
 func (s *Scheme) GetDisabledMenuGutter() CellStyle     { return or(s.DisabledMenuGutter) }
 func (s *Scheme) GetDisabledMenuItem() CellStyle       { return or(s.DisabledMenuItem) }

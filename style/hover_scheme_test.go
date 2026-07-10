@@ -59,13 +59,13 @@ func TestFocusBeatsHover(t *testing.T) {
 	}
 }
 
-// The hovered accelerator on the menu bar keeps its semantic red
-// foreground but sits on the hover background.
-func TestHoveredMenuBarMetaKeepsAccentFG(t *testing.T) {
+// The hovered accelerator on the menu bar is bright green on the hover
+// background.
+func TestHoveredMenuBarMetaAccent(t *testing.T) {
 	s := DefaultScheme()
 	got := s.GetHoveredMenuBarMeta()
-	if got.Fg != ColorRed {
-		t.Errorf("hovered menu-bar meta Fg = %v, want red", got.Fg)
+	if got.Fg != ColorBrightGreen {
+		t.Errorf("hovered menu-bar meta Fg = %v, want bright green", got.Fg)
 	}
 	if got.Bg != ColorMagenta {
 		t.Errorf("hovered menu-bar meta Bg = %v, want magenta", got.Bg)

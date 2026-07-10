@@ -2776,6 +2776,22 @@ func (d *Desktop) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 	}
+
+	// Forward to the dock for hover highlighting. The dock self-clears when
+	// the pointer isn't over an entry, so this can run unconditionally; the
+	// Y offset matches the press path.
+	if d.dockVisible() {
+		bounds := d.Bounds()
+		metrics := d.EffectiveCellMetrics()
+		dockHeight := d.dockRow.RequiredHeight()
+		dockY := bounds.Height - metrics.CellHeight - dockHeight
+		if d.statusBar == nil {
+			dockY = bounds.Height - dockHeight
+		}
+		localEvent := event
+		localEvent.Y -= dockY
+		d.dockRow.HandleMouseMove(localEvent)
+	}
 	return false
 }
 

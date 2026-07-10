@@ -1582,10 +1582,11 @@ type MenuBar struct {
 	core.TrinketBase
 	core.AccessibleTrinket
 
-	menus        []*Menu
-	currentIndex int
-	activeMenu   *Menu
-	hoverIndex   int // Top-level item under the pointer (-1 = none)
+	menus          []*Menu
+	currentIndex   int
+	activeMenu     *Menu
+	hoverIndex     int // Top-level item under the pointer (-1 = none)
+	hoverScrollBtn int // Overflow scroll button under the pointer (-1 left, +1 right, 0 none)
 
 	// Appearance
 	showShortcuts bool
@@ -2304,9 +2305,13 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		// Draw left button: [<] when active, " < " when inactive
 		leftButtonX := dateTimeX - scrollButtonsWidth
 		if m.canScrollLeft() {
-			p.DrawCell(leftButtonX, 0, '[', activeButtonStyle)
-			p.DrawCell(leftButtonX+metrics.CellWidth, 0, '<', activeButtonStyle)
-			p.DrawCell(leftButtonX+2*metrics.CellWidth, 0, ']', activeButtonStyle)
+			leftStyle := activeButtonStyle
+			if m.hoverScrollBtn == -1 {
+				leftStyle = scheme.GetHoveredMenuBarButton()
+			}
+			p.DrawCell(leftButtonX, 0, '[', leftStyle)
+			p.DrawCell(leftButtonX+metrics.CellWidth, 0, '<', leftStyle)
+			p.DrawCell(leftButtonX+2*metrics.CellWidth, 0, ']', leftStyle)
 		} else {
 			p.DrawCell(leftButtonX, 0, ' ', inactiveButtonStyle)
 			p.DrawCell(leftButtonX+metrics.CellWidth, 0, '<', inactiveButtonStyle)
@@ -2316,9 +2321,13 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		// Draw right button: [>] when active, " > " when inactive
 		rightButtonX := leftButtonX + 3*metrics.CellWidth
 		if m.canScrollRight() {
-			p.DrawCell(rightButtonX, 0, '[', activeButtonStyle)
-			p.DrawCell(rightButtonX+metrics.CellWidth, 0, '>', activeButtonStyle)
-			p.DrawCell(rightButtonX+2*metrics.CellWidth, 0, ']', activeButtonStyle)
+			rightStyle := activeButtonStyle
+			if m.hoverScrollBtn == 1 {
+				rightStyle = scheme.GetHoveredMenuBarButton()
+			}
+			p.DrawCell(rightButtonX, 0, '[', rightStyle)
+			p.DrawCell(rightButtonX+metrics.CellWidth, 0, '>', rightStyle)
+			p.DrawCell(rightButtonX+2*metrics.CellWidth, 0, ']', rightStyle)
 		} else {
 			p.DrawCell(rightButtonX, 0, ' ', inactiveButtonStyle)
 			p.DrawCell(rightButtonX+metrics.CellWidth, 0, '>', inactiveButtonStyle)
@@ -2859,6 +2868,29 @@ func (m *MenuBar) menuItemAt(px, py core.Unit) int {
 	return -1
 }
 
+// scrollButtonAt maps a pointer position to an overflow scroll button:
+// -1 for [<], +1 for [>], 0 for neither.
+func (m *MenuBar) scrollButtonAt(px, py core.Unit) int {
+	if !m.menusNeedScrolling() {
+		return 0
+	}
+	metrics := m.EffectiveCellMetrics()
+	if py < 0 || py >= metrics.CellHeight {
+		return 0
+	}
+	bounds := m.Bounds()
+	dateTimeX := bounds.Width - m.dateTimeWidth()
+	leftButtonX := dateTimeX - m.scrollButtonWidth()*2
+	if px >= leftButtonX && px < leftButtonX+3*metrics.CellWidth {
+		return -1
+	}
+	rightButtonX := leftButtonX + 3*metrics.CellWidth
+	if px >= rightButtonX && px < rightButtonX+3*metrics.CellWidth {
+		return 1
+	}
+	return 0
+}
+
 // HandleMouseMove handles mouse movement during drag.
 func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Track pointer hover over top-level items so the bar highlights the
@@ -2866,6 +2898,10 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// (focus/active) still wins in Paint.
 	if hi := m.menuItemAt(event.X, event.Y); hi != m.hoverIndex {
 		m.hoverIndex = hi
+		m.Update()
+	}
+	if sb := m.scrollButtonAt(event.X, event.Y); sb != m.hoverScrollBtn {
+		m.hoverScrollBtn = sb
 		m.Update()
 	}
 
