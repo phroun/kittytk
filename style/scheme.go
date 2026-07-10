@@ -347,7 +347,7 @@ func DefaultScheme() *Scheme {
 		PressedTitleBarButton:  ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
 		InactiveWindowFG:       ptr(DefaultStyle().WithFg(ColorWhite)),
 		ActiveWindowFG:         ptr(DefaultStyle().WithFg(ColorWhite)),
-		InactiveWindowBG:       ptr(DefaultStyle().WithBg(ColorBlue)),
+		InactiveWindowBG:       ptr(DefaultStyle().WithBg(ColorBlack)), // distinct from active for testing
 		ActiveWindowBG:         ptr(DefaultStyle().WithBg(ColorBlue)),
 
 		// State Related Colors

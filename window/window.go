@@ -1046,8 +1046,7 @@ func (w *Window) BackgroundColor() *style.Color {
 // This is the color the window paints its content area with, based on its scheme.
 func (w *Window) SchemeBackgroundColor() *style.Color {
 	scheme := w.GetScheme()
-	focused := w.HasFocus()
-	bgColor := scheme.GetWindowBG(focused)
+	bgColor := scheme.GetWindowBG(w.IsActive())
 	return &bgColor
 }
 
@@ -1359,6 +1358,9 @@ func (w *Window) Paint(p *core.Painter) {
 		// Content reaches the window edges, so the hairline border is
 		// re-stroked over it - the frame stays visible on all sides.
 		frameStyle := w.GetScheme().GetWindowBorder(focused || isPassive)
+		if frameBorder == style.BorderHeavy {
+			frameStyle = frameStyle.WithFg(style.ColorYellow)
+		}
 		p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle)
 	}
 
@@ -1706,10 +1708,10 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		p.DrawCell(blurX+metrics.CellWidth*2, 0, ']', blurBtnStyle)
 	}
 
-	// Fill content area with background (same as normal frame)
+	// Fill content area with background (same as normal frame).
+	// Honor active/inactive window background from the scheme.
 	contentBounds := w.contentBounds()
-	theme := w.Theme()
-	p.FillRect(contentBounds, ' ', theme.WindowBackground)
+	p.FillRect(contentBounds, ' ', scheme.GetNormal(w.IsActive()))
 }
 
 // paintNormalFrame draws the full window frame with borders.
@@ -1732,7 +1734,16 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// border color (2 device px for double, 1 for single). Title,
 	// buttons, and content then draw over it as usual. Cell surfaces
 	// return false and take the box-drawing path below.
-	roundedStyle := frameStyle.WithBg(w.Theme().WindowBackground.Bg)
+	// Honor the active/inactive window background from the scheme so the
+	// interior distinguishes active (blue) from inactive (black).
+	windowBG := w.GetScheme().GetWindowBG(w.IsActive())
+	roundedStyle := frameStyle.WithBg(windowBG)
+	// Single-border state (active but not focused - MDI child/menu bar holds
+	// focus) is drawn with BorderHeavy. Paint its stroke yellow so it reads
+	// distinctly from the normal double border on the graphical path.
+	if border == style.BorderHeavy {
+		roundedStyle = roundedStyle.WithFg(style.ColorYellow)
+	}
 	rounded := p.DrawRoundedRect(localBounds, windowCornerRadius, border, roundedStyle)
 	if rounded {
 		// Frame painted; fall through to title/buttons/content.
@@ -1927,8 +1938,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// pixels back outside the bottom corner arcs.
 	if !rounded {
 		contentBounds := w.contentBounds()
-		theme := w.Theme()
-		p.FillRect(contentBounds, ' ', theme.WindowBackground)
+		p.FillRect(contentBounds, ' ', w.GetScheme().GetNormal(w.IsActive()))
 	}
 }
 
