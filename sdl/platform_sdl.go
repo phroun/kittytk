@@ -143,6 +143,13 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	}
 	defer sdl2.Quit()
 
+	// Deliver the click that activates a background window to the app, so a
+	// press on a non-focused SDL window (a torn-off window or the desktop
+	// window, brought forward from another of ours or from another macOS
+	// app) still hits the control under the pointer instead of only raising
+	// the window. Off by default on macOS; read live at event time.
+	_ = sdl2.SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1")
+
 	win, err := p.createWindow(p.title, sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED,
 		p.wPx, p.hPx, sdl2.WINDOW_SHOWN|sdl2.WINDOW_RESIZABLE, 0)
 	if err != nil {
