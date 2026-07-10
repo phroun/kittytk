@@ -1008,8 +1008,10 @@ func (t *TreeView) overScrollbarThumb(x, y core.Unit) bool {
 
 // HandleMouseMove handles mouse drag to sweep selection.
 func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
-	// Track scrollbar-thumb hover regardless of focus/drag state.
-	if over := t.scrollbarDragging || t.overScrollbarThumb(event.X, event.Y); over != t.scrollbarThumbHovered {
+	// Track scrollbar-thumb hover. Hover is a no-button affordance: while a
+	// button is held (a drag begun elsewhere passing over) don't light the
+	// thumb - unless this tree owns the scrollbar drag.
+	if over := t.scrollbarDragging || (event.Buttons == 0 && t.overScrollbarThumb(event.X, event.Y)); over != t.scrollbarThumbHovered {
 		t.scrollbarThumbHovered = over
 		t.Update()
 	}

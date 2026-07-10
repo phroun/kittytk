@@ -1807,8 +1807,15 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return true
 	}
 
-	// Not dragging or resizing: highlight the resize edge under the pointer.
-	m.updateResizeHover(event.X, event.Y)
+	// Not dragging or resizing in this manager. A held button means a gesture
+	// began elsewhere (a menu scrub, a selection drag) and is passing through:
+	// the resize-edge highlight is a hover affordance, so suppress it and drop
+	// any lingering band. A plain move (no button) previews the edge.
+	if event.Buttons == 0 {
+		m.updateResizeHover(event.X, event.Y)
+	} else {
+		m.ClearResizeHover()
+	}
 
 	// Forward to desktop first (for menu bar drag navigation)
 	m.mu.RLock()

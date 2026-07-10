@@ -478,7 +478,11 @@ func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Check if mouse is inside the button area (first row, not the shadow).
 	bounds := b.Bounds()
 	metrics := b.EffectiveCellMetrics()
-	inside := event.X >= 0 && event.X < bounds.Width &&
+	// Hover is a no-button affordance: while any button is held, a drag begun
+	// elsewhere is passing over, so treat the pointer as "not inside" - this
+	// both suppresses new hover and clears any set before the button went down.
+	inside := event.Buttons == 0 &&
+		event.X >= 0 && event.X < bounds.Width &&
 		event.Y >= 0 && event.Y < metrics.CellHeight
 
 	if !b.pressed {

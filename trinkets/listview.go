@@ -840,7 +840,10 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// Track scrollbar-thumb hover regardless of focus/drag state. The
 	// thumb stays lit while a drag is in progress even if the pointer
 	// slips off it.
-	if over := l.scrollbarDragging || l.overScrollbarThumb(event.X, event.Y); over != l.scrollbarThumbHovered {
+	// Hover is a no-button affordance: while a button is held (a drag begun
+	// elsewhere passing over) don't light the thumb - unless this list owns
+	// the scrollbar drag.
+	if over := l.scrollbarDragging || (event.Buttons == 0 && l.overScrollbarThumb(event.X, event.Y)); over != l.scrollbarThumbHovered {
 		l.scrollbarThumbHovered = over
 		l.Update()
 	}

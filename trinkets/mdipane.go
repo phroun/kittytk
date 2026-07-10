@@ -1571,8 +1571,15 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 
 	// No drag or resize in progress: keep the resize-edge hover overlay in
-	// sync with the pointer (like desktop windows).
-	m.updateResizeHover(event.X, event.Y)
+	// sync with the pointer (like desktop windows). A held button means a
+	// gesture began elsewhere and is passing through - the edge highlight is a
+	// hover affordance, so suppress it and clear any lingering band.
+	if event.Buttons == 0 {
+		m.updateResizeHover(event.X, event.Y)
+	} else {
+		// Off-surface point clears every window's edge overlay.
+		m.updateResizeHover(-1, -1)
+	}
 
 	m.mu.RLock()
 	active := m.activeWindow

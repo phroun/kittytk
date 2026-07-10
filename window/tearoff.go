@@ -566,7 +566,14 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			handled = h.dragMove()
 		} else {
 			handled = h.win.HandleMouseMove(e)
-			h.updateHoverAndCursor(e.X, e.Y)
+			// The resize-edge highlight and cursor are hover affordances; skip
+			// them while a button is held (a drag begun elsewhere passing over
+			// the frame), dropping any lingering band.
+			if e.Buttons == 0 {
+				h.updateHoverAndCursor(e.X, e.Y)
+			} else {
+				h.win.SetResizeHoverRects(nil)
+			}
 		}
 	case core.MouseReleaseEvent:
 		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {

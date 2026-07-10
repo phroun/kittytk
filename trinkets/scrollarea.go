@@ -505,8 +505,14 @@ func (s *ScrollBar) HandleMousePress(event core.MousePressEvent) bool {
 // HandleMouseMove handles mouse move/drag events.
 func (s *ScrollBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if !s.dragging {
-		// Plain hover over the thumb. Don't consume the move.
-		s.UpdateThumbHover(event.X, event.Y)
+		// Plain hover over the thumb. Don't consume the move. Hover is a
+		// no-button affordance: a held button means a drag begun elsewhere is
+		// passing over, so clear rather than highlight (off-point clears).
+		if event.Buttons == 0 {
+			s.UpdateThumbHover(event.X, event.Y)
+		} else {
+			s.UpdateThumbHover(-1, -1)
+		}
 		return false
 	}
 
@@ -1347,8 +1353,15 @@ func (s *ScrollArea) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Not dragging: keep each bar's thumb-hover state in sync (the area
 	// only forwards drags to the bars, so hover would never reach them).
-	s.vScrollBar.UpdateThumbHover(event.X-viewport.Width, event.Y)
-	s.hScrollBar.UpdateThumbHover(event.X, event.Y-viewport.Height)
+	// Hover is a no-button affordance: while a button is held (a drag begun
+	// elsewhere passing over), clear rather than highlight (off-point clears).
+	if event.Buttons == 0 {
+		s.vScrollBar.UpdateThumbHover(event.X-viewport.Width, event.Y)
+		s.hScrollBar.UpdateThumbHover(event.X, event.Y-viewport.Height)
+	} else {
+		s.vScrollBar.UpdateThumbHover(-1, -1)
+		s.hScrollBar.UpdateThumbHover(-1, -1)
+	}
 
 	// Forward to content trinket. Copy the event so Buttons and
 	// Modifiers survive - a drag-select needs Buttons&LeftButton set, and

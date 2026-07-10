@@ -1611,8 +1611,14 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
 		return true
 	}
 	// Track scrollbar-thumb hover on plain moves (also clears on the
-	// out-of-bounds move the pane sends when the pointer leaves).
-	t.updateScrollbarHoverGfx(event.X, event.Y)
+	// out-of-bounds move the pane sends when the pointer leaves). Hover is a
+	// no-button affordance: while a button is held (a drag begun elsewhere
+	// passing over) clear rather than light the thumb (off-point clears).
+	if event.Buttons == 0 {
+		t.updateScrollbarHoverGfx(event.X, event.Y)
+	} else {
+		t.updateScrollbarHoverGfx(-1, -1)
+	}
 	buf := t.terminal.Buffer()
 	cellX, cellY := t.screenToCellGfx(event.X, event.Y)
 	hasShift := event.Modifiers&core.ShiftModifier != 0

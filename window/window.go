@@ -1970,7 +1970,16 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		// the next Tab / Shift+Tab focus change.
 		if titleFocus != TitleFocusTitle {
 			tearTitleW := font.MeasureText(title)
-			controlX = w.paintTearHandle(tp, scheme, titleStyle, metrics, controlX, innerW, tearTitleW, focused, titleFocus)
+			// On the graphical path a blur-focused bar reads fully inactive, so
+			// the tear/redock handle and the space around it take the inactive
+			// title colors too (matching a real inactive window frame).
+			tearStyle := titleStyle
+			tearActive := focused
+			if rounded && titleFocus == TitleFocusBlur {
+				tearStyle = scheme.GetWindowTitle(false)
+				tearActive = false
+			}
+			controlX = w.paintTearHandle(tp, scheme, tearStyle, metrics, controlX, innerW, tearTitleW, tearActive, titleFocus)
 		}
 
 		// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
@@ -3083,7 +3092,13 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// this runs for inactive windows too. Update() schedules the repaint;
 	// don't consume the move so chrome/content under the pointer still gets
 	// it.
-	newHovered := w.buttonAtPosition(event.X, event.Y)
+	// Hover is a no-button affordance: while a button is held (a drag begun
+	// elsewhere passing over the title bar) don't light a button; clear any
+	// set before the button went down.
+	newHovered := TitleButtonNone
+	if event.Buttons == 0 {
+		newHovered = w.buttonAtPosition(event.X, event.Y)
+	}
 	w.mu.Lock()
 	hoverChanged := w.hoveredButton != newHovered
 	if hoverChanged {

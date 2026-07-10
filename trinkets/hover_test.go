@@ -26,6 +26,24 @@ func TestButtonPointerHover(t *testing.T) {
 	}
 }
 
+// A move with a button held (a drag begun elsewhere passing over) must not
+// set hover, and must clear hover set before the button went down.
+func TestButtonHoverSuppressedWhileButtonHeld(t *testing.T) {
+	b := NewButton("ok")
+	b.SetBounds(core.UnitRect{Width: 200, Height: 40})
+
+	// Hover set on a plain move.
+	b.HandleMouseMove(core.MouseMoveEvent{X: 50, Y: 0})
+	if !b.mouseOver {
+		t.Fatal("plain move should set hover")
+	}
+	// A held-button move over the same spot clears it.
+	b.HandleMouseMove(core.MouseMoveEvent{X: 50, Y: 0, Buttons: core.LeftButton})
+	if b.mouseOver {
+		t.Error("held-button move should not keep hover")
+	}
+}
+
 // The dock highlights the entry under the pointer and clears it when the
 // pointer moves to background.
 func TestDockItemHover(t *testing.T) {

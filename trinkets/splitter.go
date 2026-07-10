@@ -641,9 +641,10 @@ func (s *Splitter) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 
 	// Track pointer hover over the divider band (highlights the grab
-	// handle).
+	// handle). Hover is a no-button affordance: a held button means a drag
+	// begun elsewhere is passing over, so don't highlight (and clear any set).
 	pos := core.UnitPoint{X: event.X, Y: event.Y}
-	over := s.dividerBounds().Contains(pos)
+	over := event.Buttons == 0 && s.dividerBounds().Contains(pos)
 	if over != s.hoveringDivider {
 		s.hoveringDivider = over
 		s.Update()

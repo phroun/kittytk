@@ -451,7 +451,12 @@ func (d *DockRow) entryAt(x, y core.Unit) int {
 // HandleMouseMove tracks which entry the pointer is hovering over so the
 // dock can highlight it.
 func (d *DockRow) HandleMouseMove(event core.MouseMoveEvent) bool {
-	idx := d.entryAt(event.X, event.Y)
+	// Hover is a no-button affordance: a held button means a drag begun
+	// elsewhere is passing over, so clear rather than highlight an entry.
+	idx := -1
+	if event.Buttons == 0 {
+		idx = d.entryAt(event.X, event.Y)
+	}
 	if idx != d.hoverIndex {
 		d.hoverIndex = idx
 		d.Update()

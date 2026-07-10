@@ -3407,8 +3407,10 @@ func (t *TabTrinket) overVertScrollbarThumb(x, y core.Unit) bool {
 
 // HandleMouseMove handles mouse movement.
 func (t *TabTrinket) HandleMouseMove(event core.MouseMoveEvent) bool {
-	// Track scrollbar-thumb hover regardless of drag state.
-	if over := t.scrollbarDragging || t.overVertScrollbarThumb(event.X, event.Y); over != t.scrollbarThumbHovered {
+	// Track scrollbar-thumb hover. Hover is a no-button affordance: while a
+	// button is held (a drag begun elsewhere passing over) don't light the
+	// thumb - unless this tab strip owns the scrollbar drag.
+	if over := t.scrollbarDragging || (event.Buttons == 0 && t.overVertScrollbarThumb(event.X, event.Y)); over != t.scrollbarThumbHovered {
 		t.scrollbarThumbHovered = over
 		t.Update()
 	}

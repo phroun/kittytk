@@ -2050,7 +2050,14 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 	case core.MouseMoveEvent:
 		core.WheelPointerMoved()
 		handled := wm.HandleMouseMove(e)
-		d.updateCursor(e.X, e.Y)
+		// The resize cursor over a window edge is a hover affordance. While a
+		// button is held, a drag begun elsewhere is in progress: leave the
+		// cursor as the gesture set it (a real resize keeps its cursor because
+		// it was set on the pre-press hover) rather than flipping to a resize
+		// shape as the pointer crosses an edge.
+		if e.Buttons == 0 {
+			d.updateCursor(e.X, e.Y)
+		}
 		return handled
 
 	case core.MouseLeaveEvent:
