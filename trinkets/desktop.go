@@ -1382,7 +1382,17 @@ func (d *Desktop) buildDetachedWindowMenu(orig *Menu, app ApplicationProvider) *
 	populate := func() {
 		menu.Clear()
 		for _, it := range base {
-			menu.AddItem(it)
+			// On a detached bar, Tile/Cascade arrange the app's own torn-off
+			// windows across the OS desktop rather than the desktop's
+			// in-surface windows, so give those items a fresh action.
+			switch {
+			case !it.Separator && strings.EqualFold(it.Text, "Tile"):
+				menu.AddItem(d.tornArrangeItem(it, app, false))
+			case !it.Separator && strings.EqualFold(it.Text, "Cascade"):
+				menu.AddItem(d.tornArrangeItem(it, app, true))
+			default:
+				menu.AddItem(it)
+			}
 		}
 		wins := app.Windows()
 		if len(wins) > 0 {
@@ -1463,6 +1473,120 @@ func (d *Desktop) buildDesktopWindowMenu(orig *Menu, app ApplicationProvider) *M
 	populate()
 	menu.SetOnAboutToShow(populate)
 	return menu
+}
+
+// tornArrangeItem clones a Tile/Cascade menu item (keeping its caption and
+// shortcut) but points it at arrangeTornAppWindows, so a detached window's
+// Window menu tiles/cascades the app's OS windows instead of the desktop's.
+func (d *Desktop) tornArrangeItem(orig *MenuItem, app ApplicationProvider, cascade bool) *MenuItem {
+	it := NewMenuItem(orig.rawText)
+	it.Shortcut = orig.Shortcut
+	it.SetOnTriggered(func() { d.arrangeTornAppWindows(app, cascade) })
+	return it
+}
+
+// hostForWindow returns the tear-off host currently hosting win, or nil.
+func (d *Desktop) hostForWindow(win *window.Window) *window.TearOffHost {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for _, th := range d.tornHosts {
+		if th.Window() == win {
+			return th
+		}
+	}
+	return nil
+}
+
+// arrangeTornAppWindows tiles or cascades the application's torn-off,
+// non-MDI windows across the OS desktop, placing the main window as the
+// upper-left window of the arrangement. MDI children live inside their
+// parent window, so they are not arranged. Called from a detached window's
+// own Window menu.
+func (d *Desktop) arrangeTornAppWindows(app ApplicationProvider, cascade bool) {
+	if app == nil {
+		return
+	}
+
+	native := func(w *window.Window) platform.NativeSurface {
+		h := d.hostForWindow(w)
+		if h == nil {
+			return nil
+		}
+		n, _ := h.Surface().(platform.NativeSurface)
+		return n
+	}
+
+	// Ordered list: the main window first (it lands upper-left), then the
+	// app's other torn, non-minimized windows.
+	var wins []*window.Window
+	seen := map[*window.Window]bool{}
+	add := func(w *window.Window) {
+		if w == nil || seen[w] {
+			return
+		}
+		if n := native(w); n == nil || n.Minimized() {
+			return
+		}
+		seen[w] = true
+		wins = append(wins, w)
+	}
+	add(app.MainWindow())
+	for _, w := range app.Windows() {
+		add(w)
+	}
+	if len(wins) == 0 {
+		return
+	}
+
+	wx, wy, ww, wh := native(wins[0]).WorkAreaPx()
+	if ww <= 0 || wh <= 0 {
+		return
+	}
+
+	if cascade {
+		// Uniform size, staggered from the top-left; the main window is least
+		// offset so it sits at the upper-left, later windows stacked over it.
+		step := wh / 16
+		if step < 24 {
+			step = 24
+		}
+		cw, ch := ww*2/3, wh*2/3
+		for i, w := range wins {
+			n := native(w)
+			if n == nil {
+				continue
+			}
+			ox, oy := wx+i*step, wy+i*step
+			if ox+cw > wx+ww {
+				ox = wx + ww - cw
+			}
+			if oy+ch > wy+wh {
+				oy = wy + wh - ch
+			}
+			n.SetScreenSizePx(cw, ch)
+			n.SetScreenPositionPx(ox, oy)
+			n.Raise()
+		}
+		return
+	}
+
+	// Grid tile: the main window fills the first (upper-left) cell.
+	n := len(wins)
+	cols := int(math.Ceil(math.Sqrt(float64(n))))
+	if cols < 1 {
+		cols = 1
+	}
+	rows := int(math.Ceil(float64(n) / float64(cols)))
+	cellW, cellH := ww/cols, wh/rows
+	for i, w := range wins {
+		ns := native(w)
+		if ns == nil {
+			continue
+		}
+		c, r := i%cols, i/cols
+		ns.SetScreenSizePx(cellW, cellH)
+		ns.SetScreenPositionPx(wx+c*cellW, wy+r*cellH)
+	}
 }
 
 // buildDetachedStatusBar builds the status bar a detached main window
