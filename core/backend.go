@@ -339,6 +339,16 @@ func FindFrameBorderUnits(w Trinket) Unit {
 	return 0
 }
 
+// SnapOriginSetter is an optional RenderBackend capability: anchor cell
+// snapping at a unit origin so content snaps relative to it (a window's
+// interior stays pixel-identical wherever the window sits). Cell surfaces
+// omit it, so setting an origin there is a no-op.
+type SnapOriginSetter interface {
+	// SetSnapOrigin anchors snapping at (ux, uy) and returns the previous
+	// origin for restore. (0,0) is the global default.
+	SetSnapOrigin(ux, uy Unit) (Unit, Unit)
+}
+
 // CaretDrawer is an optional RenderBackend capability: pixel surfaces
 // draw the text-insertion caret as a thin vertical bar sitting at the
 // left edge of the glyph box at (x, y) - where the next character
@@ -755,6 +765,19 @@ func (p *Painter) deviceAnchor(sx, sy Unit) (int, int) {
 	}
 	scale := p.DeviceScale()
 	return int(sx) * scale, int(sy) * scale
+}
+
+// SetSnapOrigin anchors the backend's cell snapping at unit (ux, uy) when
+// the backend supports it (graphical surfaces), returning the previous
+// origin (both 0 on cell surfaces). A window paints its subtree with the
+// origin set to its top-left, so its interior is pixel-stable as the
+// window moves, then restores the previous origin. Because paints are
+// synchronous, save the return and restore it right after the subtree.
+func (p *Painter) SetSnapOrigin(ux, uy Unit) (Unit, Unit) {
+	if s, ok := p.backend.(SnapOriginSetter); ok {
+		return s.SetSnapOrigin(ux, uy)
+	}
+	return 0, 0
 }
 
 // Graphical reports whether the target paints pixels rather than

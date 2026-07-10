@@ -2132,7 +2132,12 @@ func (m *WindowManager) Paint(p *core.Painter) {
 
 			windowPainter := p.WithOffset(bounds.X, bounds.Y).
 				WithClip(localClip)
+			// Anchor cell snapping at the window's origin so its interior is
+			// pixel-stable as it moves (no sub-cell jitter at fractional
+			// pixels-per-unit); restore the previous origin after.
+			psx, psy := windowPainter.SetSnapOrigin(bounds.X, bounds.Y)
 			win.Paint(windowPainter)
+			windowPainter.SetSnapOrigin(psx, psy)
 		}
 	}
 

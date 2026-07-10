@@ -43,6 +43,14 @@ type Backend struct {
 	clip    core.UnitRect
 	hasClip bool
 
+	// snapOX/Y and snapOPxX/Y anchor cell snapping at a window's origin
+	// (see SetSnapOrigin): the origin maps to a fixed whole device pixel
+	// and content snaps RELATIVE to it, so a window's interior is
+	// pixel-identical wherever the window sits (no sub-cell jitter as it
+	// moves). Default (0,0)/(0,0) = the historical global snapping.
+	snapOX, snapOY     core.Unit
+	snapOPxX, snapOPxY int
+
 	// Rounded clip (core.RoundedClipper): an additional constraint on
 	// top of the rectangular clip. Window frames confine their
 	// edge-to-edge content with it.
@@ -123,8 +131,31 @@ func snapAxis(u core.Unit, denom, cellPx int) int {
 
 // pxX / pxY are the cell-snapped unit-to-pixel conversions for the two
 // axes. Positions and cell-aligned rect edges go through these.
-func (b *Backend) pxX(u core.Unit) int { return snapAxis(u, int(b.metrics.CellWidth), b.cellWPx()) }
-func (b *Backend) pxY(u core.Unit) int { return snapAxis(u, int(b.metrics.CellHeight), b.cellHPx()) }
+func (b *Backend) pxX(u core.Unit) int {
+	return b.snapOPxX + snapAxis(u-b.snapOX, int(b.metrics.CellWidth), b.cellWPx())
+}
+func (b *Backend) pxY(u core.Unit) int {
+	return b.snapOPxY + snapAxis(u-b.snapOY, int(b.metrics.CellHeight), b.cellHPx())
+}
+
+// SetSnapOrigin anchors cell snapping at unit (ux, uy): that point keeps
+// its whole-pixel position and everything else snaps RELATIVE to it, so a
+// window painted with its origin set here has a pixel-identical interior
+// no matter where the window sits - eliminating the sub-cell jitter that
+// absolute snapping produces at fractional pixels-per-unit. Returns the
+// previous origin so the caller can restore it after the subtree paints.
+// (0,0) restores the global default.
+//
+// The pixel anchor is computed from the raw (origin-0) mapping, so this is
+// exact for a top-level window whose surface origin is 0; nested snap
+// origins are not composed.
+func (b *Backend) SetSnapOrigin(ux, uy core.Unit) (core.Unit, core.Unit) {
+	prevX, prevY := b.snapOX, b.snapOY
+	b.snapOX, b.snapOY = ux, uy
+	b.snapOPxX = snapAxis(ux, int(b.metrics.CellWidth), b.cellWPx())
+	b.snapOPxY = snapAxis(uy, int(b.metrics.CellHeight), b.cellHPx())
+	return prevX, prevY
+}
 
 // pxPerUnit is the unsnapped device pixels covered by one unit, equal on
 // both axes (cellPx/denomination = font_size/12 * zoom). Proportional
