@@ -1,6 +1,7 @@
 package trinkets
 
 import (
+	"math"
 	"time"
 
 	"github.com/phroun/kittytk/core"
@@ -46,7 +47,9 @@ func (d *Desktop) setupTearOff(p platform.Platform, surf platform.Surface) {
 	d.windowManager.SetTearOffHandler(d.tearOffWindow)
 }
 
-// deviceScale is the desktop surface's pixels-per-unit.
+// deviceScale is the desktop surface's device zoom (integer pixels per
+// unit at the base font). For unit<->pixel geometry that must track
+// font_size use pxPerUnit / unitToPx / pxToUnit instead.
 func (d *Desktop) deviceScale() int {
 	d.mu.RLock()
 	backend := d.backend
@@ -57,6 +60,35 @@ func (d *Desktop) deviceScale() int {
 		}
 	}
 	return 1
+}
+
+// pxPerUnit is the desktop surface's fractional pixels-per-unit (device
+// zoom times the font_size ratio). Torn surfaces are sized/placed with
+// it so they match the pixel size the window content actually paints at.
+func (d *Desktop) pxPerUnit() float64 {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+	if m, ok := backend.(core.UnitPixelMapper); ok {
+		if ppu := m.PxPerUnit(); ppu > 0 {
+			return ppu
+		}
+	}
+	return float64(d.deviceScale())
+}
+
+// unitToPx / pxToUnit convert between unit lengths and device pixels at
+// the desktop surface's font_size-aware scale.
+func (d *Desktop) unitToPx(u core.Unit) int {
+	return int(math.Round(float64(u) * d.pxPerUnit()))
+}
+
+func (d *Desktop) pxToUnit(px int) core.Unit {
+	ppu := d.pxPerUnit()
+	if ppu <= 0 {
+		ppu = 1
+	}
+	return core.Unit(math.Round(float64(px) / ppu))
 }
 
 // tearOffWindow implements the WindowManager tear-off policy: lift
@@ -121,17 +153,16 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 		return nil
 	}
 
-	scale := d.deviceScale()
 	deskX, deskY := native.ScreenPositionPx()
 	b := win.Bounds()
 	newSurf, err := plat.CreateSurface(platform.SurfaceOptions{
 		Title:          win.Title(),
 		Borderless:     true,
-		CornerRadiusPx: int(window.FrameCornerRadius()) * scale,
-		XPx:            deskX + int(deskUnitX)*scale,
-		YPx:            deskY + int(deskUnitY)*scale,
-		WidthPx:        int(b.Width) * scale,
-		HeightPx:       int(b.Height) * scale,
+		CornerRadiusPx: d.unitToPx(window.FrameCornerRadius()),
+		XPx:            deskX + d.unitToPx(deskUnitX),
+		YPx:            deskY + d.unitToPx(deskUnitY),
+		WidthPx:        d.unitToPx(b.Width),
+		HeightPx:       d.unitToPx(b.Height),
 	})
 	if err != nil {
 		return nil
@@ -154,7 +185,7 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	// A detached window re-docks by dragging its '#' handle back over
 	// the desktop, or by clicking it. The host only calls this during
 	// a HANDLE drag - a plain title drag just moves the OS window.
-	host = window.NewTearOffHost(win, newSurf, scale, gp.GlobalPointerPx,
+	host = window.NewTearOffHost(win, newSurf, d.pxPerUnit(), gp.GlobalPointerPx,
 		func(gx, gy int, grabX, grabY core.Unit) bool {
 			return d.redockAt(host, gx, gy, grabX, grabY)
 		})
@@ -286,10 +317,9 @@ func (d *Desktop) mainTornUnitOrigin(main *window.Window) (core.Unit, core.Unit,
 	if mainNative == nil {
 		return 0, 0, false
 	}
-	scale := d.deviceScale()
 	deskX, deskY := deskNative.ScreenPositionPx()
 	mx, my := mainNative.ScreenPositionPx()
-	return core.Unit((mx - deskX) / scale), core.Unit((my - deskY) / scale), true
+	return d.pxToUnit(mx - deskX), d.pxToUnit(my - deskY), true
 }
 
 // positionRelativeToMain returns the desktop-unit top-left that keeps
@@ -417,11 +447,10 @@ func (d *Desktop) redockInPlace(host *window.TearOffHost) {
 	if !ok {
 		return
 	}
-	scale := d.deviceScale()
 	deskX, deskY := deskNative.ScreenPositionPx()
 	tx, ty := tornNative.ScreenPositionPx()
-	ux := core.Unit((tx - deskX) / scale)
-	uy := core.Unit((ty - deskY) / scale)
+	ux := d.pxToUnit(tx - deskX)
+	uy := d.pxToUnit(ty - deskY)
 	d.adoptTornWindow(host, ux, uy, false)
 }
 
@@ -482,14 +511,13 @@ func (d *Desktop) handleTornDrag(event core.Event) bool {
 			return true
 		}
 		if native, ok := td.surf.(platform.NativeSurface); ok {
-			scale := d.deviceScale()
 			if haveGlobal {
-				native.SetScreenPositionPx(gx-int(td.offX)*scale, gy-int(td.offY)*scale)
+				native.SetScreenPositionPx(gx-d.unitToPx(td.offX), gy-d.unitToPx(td.offY))
 			} else if deskNative, ok := surf.(platform.NativeSurface); ok {
 				deskX, deskY := deskNative.ScreenPositionPx()
 				native.SetScreenPositionPx(
-					deskX+int(e.X-td.offX)*scale,
-					deskY+int(e.Y-td.offY)*scale)
+					deskX+d.unitToPx(e.X-td.offX),
+					deskY+d.unitToPx(e.Y-td.offY))
 			}
 		}
 		return true
@@ -527,11 +555,10 @@ func (d *Desktop) redockAt(host *window.TearOffHost, gx, gy int, grabX, grabY co
 	if !ok || native.Minimized() {
 		return false
 	}
-	scale := d.deviceScale()
 	deskX, deskY := native.ScreenPositionPx()
 	size := surf.Size()
-	ux := core.Unit((gx - deskX) / scale)
-	uy := core.Unit((gy - deskY) / scale)
+	ux := d.pxToUnit(gx - deskX)
+	uy := d.pxToUnit(gy - deskY)
 	if ux < 0 || uy < 0 || ux >= size.Width || uy >= size.Height {
 		return false
 	}
@@ -585,9 +612,8 @@ func (d *Desktop) globalToDesktopUnits(gx, gy int) (core.Unit, core.Unit) {
 	if !ok {
 		return 0, 0
 	}
-	scale := d.deviceScale()
 	deskX, deskY := native.ScreenPositionPx()
-	return core.Unit((gx - deskX) / scale), core.Unit((gy - deskY) / scale)
+	return d.pxToUnit(gx - deskX), d.pxToUnit(gy - deskY)
 }
 
 // invalidateSurface requests a desktop repaint.

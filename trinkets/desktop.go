@@ -922,7 +922,7 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 	// Host it on the primary surface. No redock: there is no desktop to
 	// dock back to.
 	var host *window.TearOffHost
-	host = window.NewTearOffHost(win, surf, d.deviceScale(), gp.GlobalPointerPx,
+	host = window.NewTearOffHost(win, surf, d.pxPerUnit(), gp.GlobalPointerPx,
 		func(int, int, core.Unit, core.Unit) bool { return false })
 	host.SetOnClosed(func() { d.dropTornHost(host) })
 	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)
@@ -1062,12 +1062,11 @@ func (d *Desktop) promoteToPrimary(peer *window.TearOffHost, reposition bool) {
 	if s, ok := psurf.(platform.NativeSurface); ok {
 		if reposition {
 			x, y := s.ScreenPositionPx()
-			scale := d.deviceScale()
-			sz := psurf.Size() // units; screen pixels = units * scale
+			sz := psurf.Size() // units; screen pixels track font_size
 			target = &screenRect{
 				x: x, y: y,
-				w: int(sz.Width) * scale,
-				h: int(sz.Height) * scale,
+				w: d.unitToPx(sz.Width),
+				h: d.unitToPx(sz.Height),
 			}
 		}
 		s.Close()

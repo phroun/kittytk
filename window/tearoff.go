@@ -1,6 +1,7 @@
 package window
 
 import (
+	"math"
 	"time"
 
 	"github.com/phroun/kittytk/core"
@@ -18,7 +19,7 @@ type TearOffHost struct {
 	win    *Window
 	surf   platform.Surface
 	native platform.NativeSurface
-	scale  int // device pixels per unit
+	ppu    float64 // device pixels per unit (font_size-aware, may be fractional)
 	global func() (int, int)
 
 	// onRedock runs during a title drag with the pointer at the given
@@ -124,13 +125,13 @@ const tearResizeGrip core.Unit = 6
 // SurfaceHost no chrome is suppressed; maximize/minimize make no
 // sense without a managing desktop and are masked until re-dock.
 // Call on the platform thread.
-func NewTearOffHost(win *Window, surf platform.Surface, scale int,
+func NewTearOffHost(win *Window, surf platform.Surface, ppu float64,
 	global func() (int, int),
 	onRedock func(globalX, globalY int, grabX, grabY core.Unit) bool) *TearOffHost {
-	h := &TearOffHost{win: win, surf: surf, scale: scale, global: global, onRedock: onRedock, resizeGrip: tearResizeGrip}
+	h := &TearOffHost{win: win, surf: surf, ppu: ppu, global: global, onRedock: onRedock, resizeGrip: tearResizeGrip}
 	h.native, _ = surf.(platform.NativeSurface)
-	if h.scale < 1 {
-		h.scale = 1
+	if h.ppu <= 0 {
+		h.ppu = 1
 	}
 
 	// Popups from the torn window's trinkets open on this surface.
@@ -634,7 +635,7 @@ func (h *TearOffHost) dragMove() bool {
 		// A zoomed window doesn't slide; dragging its title below the
 		// work area's top restores it, with the grab point staying
 		// proportionally placed on the narrower title bar.
-		if gy-int(h.grabY)*h.scale >= way {
+		if gy-h.px(h.grabY) >= way {
 			if ww > 0 {
 				h.grabX = core.Unit(float64(h.grabX) * float64(h.zoomSaved[2]) / float64(ww))
 			}
@@ -642,11 +643,11 @@ func (h *TearOffHost) dragMove() bool {
 			h.dragRestored = true
 			h.win.Restore()
 			h.native.SetScreenSizePx(h.zoomSaved[2], h.zoomSaved[3])
-			h.native.SetScreenPositionPx(gx-int(h.grabX)*h.scale, gy-int(h.grabY)*h.scale)
+			h.native.SetScreenPositionPx(gx-h.px(h.grabX), gy-h.px(h.grabY))
 		}
 		return true
 	}
-	if h.dragRestored && gy >= way+int(core.DefaultCellMetrics().CellHeight)*h.scale {
+	if h.dragRestored && gy >= way+h.px(core.DefaultCellMetrics().CellHeight) {
 		// Pointer clearly below the top strip: re-arm the snap.
 		h.dragRestored = false
 	}
@@ -659,7 +660,7 @@ func (h *TearOffHost) dragMove() bool {
 		h.zoomToWorkArea()
 		return true
 	}
-	h.native.SetScreenPositionPx(gx-int(h.grabX)*h.scale, gy-int(h.grabY)*h.scale)
+	h.native.SetScreenPositionPx(gx-h.px(h.grabX), gy-h.px(h.grabY))
 	return true
 }
 
@@ -682,20 +683,26 @@ func (h *TearOffHost) beginResize(x, y core.Unit) bool {
 	h.startGX, h.startGY = h.global()
 	h.startX, h.startY = h.native.ScreenPositionPx()
 	size := h.surf.Size()
-	h.startW = int(size.Width) * h.scale
-	h.startH = int(size.Height) * h.scale
+	h.startW = h.px(size.Width)
+	h.startH = h.px(size.Height)
 	return true
 }
 
 // resizeMove applies the pointer delta to the armed edges, moving and
 // resizing the OS window; the size change reports back through
 // Resized and the window re-lays out to the surface.
+// px converts a unit length to device pixels for this surface, tracking
+// font_size (the surface backend renders at the same pixels-per-unit).
+func (h *TearOffHost) px(u core.Unit) int {
+	return int(math.Round(float64(u) * h.ppu))
+}
+
 func (h *TearOffHost) resizeMove() bool {
 	gx, gy := h.global()
 	dx, dy := gx-h.startGX, gy-h.startGY
 	metrics := core.DefaultCellMetrics()
-	minW := int(metrics.CellWidth) * 12 * h.scale
-	minH := int(metrics.CellHeight) * 4 * h.scale
+	minW := h.px(metrics.CellWidth * 12)
+	minH := h.px(metrics.CellHeight * 4)
 
 	x, y, w, ht := h.startX, h.startY, h.startW, h.startH
 	if h.resizeEdges&resizeLeft != 0 {
@@ -773,7 +780,7 @@ func (h *TearOffHost) zoomToWorkArea() {
 	}
 	x, y := h.native.ScreenPositionPx()
 	size := h.surf.Size()
-	h.zoomSaved = [4]int{x, y, int(size.Width) * h.scale, int(size.Height) * h.scale}
+	h.zoomSaved = [4]int{x, y, h.px(size.Width), h.px(size.Height)}
 	h.zoomed = true
 	h.win.Maximize()
 	h.native.SetScreenPositionPx(wx, wy)
@@ -790,17 +797,17 @@ func (h *TearOffHost) applyKeyboardBounds(b core.UnitRect) bool {
 		return h.zoomed // zoomed: swallow, geometry is the work area's
 	}
 	cur := h.win.Bounds()
-	dx := int(b.X-cur.X) * h.scale
-	dy := int(b.Y-cur.Y) * h.scale
-	dw := int(b.Width-cur.Width) * h.scale
-	dh := int(b.Height-cur.Height) * h.scale
+	dx := h.px(b.X - cur.X)
+	dy := h.px(b.Y - cur.Y)
+	dw := h.px(b.Width - cur.Width)
+	dh := h.px(b.Height - cur.Height)
 	if dx != 0 || dy != 0 {
 		x, y := h.native.ScreenPositionPx()
 		h.native.SetScreenPositionPx(x+dx, y+dy)
 	}
 	if (dw != 0 || dh != 0) && h.win.Flags()&WindowFlagNoResize == 0 {
 		size := h.surf.Size()
-		h.native.SetScreenSizePx(int(size.Width)*h.scale+dw, int(size.Height)*h.scale+dh)
+		h.native.SetScreenSizePx(h.px(size.Width)+dw, h.px(size.Height)+dh)
 	}
 	return true
 }
