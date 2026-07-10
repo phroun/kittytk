@@ -475,6 +475,58 @@ func (w *Window) Restore() {
 	}
 }
 
+// keyboardTopSnapMaximize maximizes an in-surface window through its
+// maximize-request handler when it is already pressed against the top of
+// its client area - the keyboard equivalent of dragging the titlebar up
+// into the menu bar. It returns true if it consumed the gesture by
+// maximizing, false if the window should just move.
+//
+// Torn-off windows (which manage their own OS geometry via a bounds
+// delegate), windows with no client area to snap into, and windows that
+// cannot be maximized all fall through to a normal move.
+func (w *Window) keyboardTopSnapMaximize(bounds core.UnitRect) bool {
+	w.mu.RLock()
+	getBounds := w.getConstrainingBounds
+	delegate := w.onBoundsRequest
+	maxHandler := w.onMaximizeRequest
+	flags := w.flags
+	w.mu.RUnlock()
+
+	if delegate != nil || getBounds == nil || maxHandler == nil {
+		return false
+	}
+	if !canMaximize(flags) || w.IsMaximized() {
+		return false
+	}
+	if bounds.Y <= getBounds().Y {
+		maxHandler()
+		return true
+	}
+	return false
+}
+
+// unmaximizeInPlace leaves the maximized state without changing the
+// window's on-screen bounds: the current (full-screen) bounds become the
+// floating size. Used by the keyboard resize path so shrinking a
+// maximized window snaps it off maximized and then continues resizing
+// from the large size, rather than jumping back to the pre-maximize size
+// the way Restore does.
+func (w *Window) unmaximizeInPlace() {
+	w.mu.Lock()
+	if w.state != WindowStateMaximized {
+		w.mu.Unlock()
+		return
+	}
+	w.state = WindowStateNormal
+	w.normalBounds = w.Bounds()
+	handler := w.onStateChange
+	w.mu.Unlock()
+
+	if handler != nil {
+		handler(WindowStateNormal)
+	}
+}
+
 // IsMaximized returns true if the window is maximized.
 func (w *Window) IsMaximized() bool {
 	w.mu.RLock()
@@ -2267,17 +2319,38 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			vertStep = metrics.CellHeight * 4
 		}
 
-		// Normalize key names - handle both "Left" and "S-Left" etc.
+		// Normalize key names. Modifier prefixes can arrive in any order
+		// and in combination - the SDL backend emits arrows as e.g.
+		// "M-S-Left" (Alt+Shift), so stripping only the single leading
+		// prefix would leave "S-Left" and lose the resize. Peel every
+		// recognized prefix, whatever the order.
 		key := event.Key
-		if strings.HasPrefix(key, "S-") {
-			hasShift = true
-			key = key[2:]
+		for {
+			switch {
+			case strings.HasPrefix(key, "S-"):
+				hasShift = true
+				key = key[2:]
+			case strings.HasPrefix(key, "M-"), strings.HasPrefix(key, "A-"):
+				hasMeta = true
+				hasAlt = true
+				key = key[2:]
+			case strings.HasPrefix(key, "C-"):
+				hasCtrl = true
+				key = key[2:]
+			case strings.HasPrefix(key, "s-"):
+				hasMeta = true
+				key = key[2:]
+			default:
+			}
+			if !strings.HasPrefix(key, "S-") && !strings.HasPrefix(key, "M-") &&
+				!strings.HasPrefix(key, "A-") && !strings.HasPrefix(key, "C-") &&
+				!strings.HasPrefix(key, "s-") {
+				break
+			}
 		}
-		if strings.HasPrefix(key, "M-") || strings.HasPrefix(key, "A-") || strings.HasPrefix(key, "C-") {
-			hasMeta = true
-			hasAlt = true
-			hasCtrl = true
-			key = key[2:]
+		// Any large-step modifier (Alt/Meta/Ctrl) makes moves and resizes
+		// chunky.
+		if hasMeta || hasAlt || hasCtrl {
 			horizStep = metrics.CellWidth * 10
 			vertStep = metrics.CellHeight * 4
 		}
@@ -2288,6 +2361,44 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			switch key {
 			case "Left", "Right", "Up", "Down":
 				return true
+			}
+		}
+
+		// A maximized window is already at its maximum size, so keyboard
+		// geometry from the titlebar snaps it off the maximized state:
+		//   - a MOVE (plain arrow) restores to the pre-maximize size and
+		//     then moves, like dragging the titlebar off the top;
+		//   - a RESIZE (Shift+arrow) can only make it smaller, so the first
+		//     key defaults to shrinking the edge OPPOSITE the arrow
+		//     (Shift+Left pulls the right edge in) while un-maximizing in
+		//     place, so the window keeps its full-screen size as the
+		//     starting point and just narrows from there.
+		if w.IsMaximized() {
+			switch key {
+			case "Left", "Right", "Up", "Down":
+				if hasShift {
+					var edge int
+					switch key {
+					case "Left":
+						edge = ResizeEdgeRight
+					case "Right":
+						edge = ResizeEdgeLeft
+					case "Up":
+						edge = ResizeEdgeBottom
+					case "Down":
+						edge = ResizeEdgeTop
+					}
+					w.mu.Lock()
+					w.resizeStartBounds = w.Bounds()
+					w.resizeEdges = edge
+					w.mu.Unlock()
+					w.unmaximizeInPlace()
+					bounds = w.Bounds()
+					resizeEdges = edge
+				} else {
+					w.Restore()
+					bounds = w.Bounds()
+				}
 			}
 		}
 
@@ -2395,10 +2506,14 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 					w.requestKeyboardBounds(newBounds, false)
 				}
 			} else {
-				// Move window up
-				newBounds := bounds
-				newBounds.Y -= vertStep
-				w.requestKeyboardBounds(newBounds, true)
+				// Move window up - or, if it is already pressed against the
+				// top of the client area, snap it maximized (the keyboard
+				// equivalent of dragging the titlebar into the menu bar).
+				if !w.keyboardTopSnapMaximize(bounds) {
+					newBounds := bounds
+					newBounds.Y -= vertStep
+					w.requestKeyboardBounds(newBounds, true)
+				}
 			}
 			return true
 

@@ -246,11 +246,10 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	m.mu.RLock()
 	grip := m.resizeGrip
 	m.mu.RUnlock()
-	// The frame border is the grab zone: a thicker border makes a thicker
-	// resize edge (and the content is inset by it, so they never overlap).
-	if fb := core.FindFrameBorderUnits(win); fb > grip {
-		grip = fb
-	}
+	// The grab zone spans the whole frame border PLUS the original grip
+	// sliver, so it still reaches a little (~1/4 cell) into the content
+	// past the border.
+	grip += core.FindFrameBorderUnits(win)
 	if grip > 0 {
 		edgeThreshold = grip
 		cornerThreshold = grip * 2
@@ -311,11 +310,10 @@ func (m *WindowManager) resizeEdgeRects(win *Window, edge int) []core.UnitRect {
 	m.mu.RLock()
 	grip := m.resizeGrip
 	m.mu.RUnlock()
-	// Match detectResizeEdge: the highlight covers the border-thick grab
-	// band so the outer frame border is included in the visual.
-	if fb := core.FindFrameBorderUnits(win); fb > grip {
-		grip = fb
-	}
+	// Match detectResizeEdge: border width plus the grip sliver, so the
+	// highlight covers the whole outer border and the small overlap into
+	// the content.
+	grip += core.FindFrameBorderUnits(win)
 	if grip > 0 {
 		edgeThreshold = grip
 		bottomBand = grip
