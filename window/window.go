@@ -195,6 +195,13 @@ type Window struct {
 
 	// Active state (set by WindowManager/MDIPane, separate from focus)
 	isActive bool
+
+	// quasiActive marks a torn-off window that has yielded OS focus to the
+	// desktop but stays "quasi-active": its border remains lit (active
+	// colors) yet single (heavy) instead of the focused double border,
+	// mirroring an in-surface window that is active but not focused. A real
+	// SetActive (either direction) clears it.
+	quasiActive bool
 }
 
 // NewWindow creates a new window with the given title.
@@ -555,6 +562,37 @@ func (w *Window) IsActive() bool {
 	return w.isActive
 }
 
+// IsQuasiActive reports whether the window is quasi-active: lit but drawn
+// with a single (heavy) border because OS focus lives elsewhere (the
+// desktop menu bar) while this torn-off window remains the owner.
+func (w *Window) IsQuasiActive() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.quasiActive
+}
+
+// SetQuasiActive sets the quasi-active state. A subsequent SetActive (in
+// either direction) clears it, so callers set it only after the window has
+// gone inactive on its own OS surface.
+func (w *Window) SetQuasiActive(q bool) {
+	w.mu.Lock()
+	if w.quasiActive == q {
+		w.mu.Unlock()
+		return
+	}
+	w.quasiActive = q
+	w.mu.Unlock()
+	w.Update()
+}
+
+// renderActive reports whether the window should paint with active
+// (as opposed to inactive) colors: either genuinely active or quasi-active.
+func (w *Window) renderActive() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.isActive || w.quasiActive
+}
+
 // SetActive sets the window's active state. This is called by WindowManager
 // or MDIPane when the window becomes the active (selected) window.
 func (w *Window) SetActive(active bool) {
@@ -564,6 +602,7 @@ func (w *Window) SetActive(active bool) {
 		return
 	}
 	w.isActive = active
+	w.quasiActive = false
 	handler := w.onActivate
 	title := w.title
 	w.mu.Unlock()
@@ -1046,7 +1085,7 @@ func (w *Window) BackgroundColor() *style.Color {
 // This is the color the window paints its content area with, based on its scheme.
 func (w *Window) SchemeBackgroundColor() *style.Color {
 	scheme := w.GetScheme()
-	bgColor := scheme.GetWindowBG(w.IsActive())
+	bgColor := scheme.GetWindowBG(w.renderActive())
 	return &bgColor
 }
 
@@ -1278,6 +1317,7 @@ func (w *Window) Paint(p *core.Painter) {
 	border := w.borderStyle
 	content := w.content
 	isActive := w.isActive
+	quasiActive := w.quasiActive
 	w.mu.RUnlock()
 
 	bounds := w.Bounds()
@@ -1308,11 +1348,16 @@ func (w *Window) Paint(p *core.Painter) {
 		}
 	}
 
-	// Check for passive state: window is remembered by menu bar while no window is active
-	isPassive := false
+	// Check for passive state: window is remembered by menu bar while no
+	// window is active, OR the window is a quasi-active torn window (lit but
+	// single-bordered because OS focus lives on the desktop menu bar). Both
+	// render with active colors and a heavy (single) border.
+	isPassive := quasiActive
 	if parent := w.Parent(); parent != nil {
 		if provider, ok := parent.(core.PassiveWindowProvider); ok {
-			isPassive = provider.IsWindowPassive(w)
+			if provider.IsWindowPassive(w) {
+				isPassive = true
+			}
 		}
 	}
 
@@ -1711,7 +1756,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	// Fill content area with background (same as normal frame).
 	// Honor active/inactive window background from the scheme.
 	contentBounds := w.contentBounds()
-	p.FillRect(contentBounds, ' ', scheme.GetNormal(w.IsActive()))
+	p.FillRect(contentBounds, ' ', scheme.GetNormal(w.renderActive()))
 }
 
 // paintNormalFrame draws the full window frame with borders.
@@ -1736,7 +1781,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// return false and take the box-drawing path below.
 	// Honor the active/inactive window background from the scheme so the
 	// interior distinguishes active (blue) from inactive (black).
-	windowBG := w.GetScheme().GetWindowBG(w.IsActive())
+	windowBG := w.GetScheme().GetWindowBG(w.renderActive())
 	roundedStyle := frameStyle.WithBg(windowBG)
 	// Single-border state (active but not focused - MDI child/menu bar holds
 	// focus) is drawn with BorderHeavy. Paint its stroke yellow so it reads
@@ -1938,7 +1983,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// pixels back outside the bottom corner arcs.
 	if !rounded {
 		contentBounds := w.contentBounds()
-		p.FillRect(contentBounds, ' ', w.GetScheme().GetNormal(w.IsActive()))
+		p.FillRect(contentBounds, ' ', w.GetScheme().GetNormal(w.renderActive()))
 	}
 }
 

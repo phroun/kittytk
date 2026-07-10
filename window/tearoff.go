@@ -601,6 +601,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		// pointer, so leave its highlight alone.
 		if !h.resizing && !h.dragging {
 			h.win.SetResizeHoverRects(nil)
+			h.win.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
 			h.applyCursor(core.CursorDefault)
 		}
 		handled = true

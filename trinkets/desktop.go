@@ -693,13 +693,21 @@ func (d *Desktop) windowFocusChanged(w *window.Window) {
 	}
 	// Remember when a detached window owns focus, so the desktop's own
 	// surface regaining focus won't re-light an in-surface window over
-	// it. Activating an in-surface window clears the reference.
+	// it. Activating an in-surface window clears the reference - and any
+	// quasi-active torn window it named must go fully inactive, since the
+	// desktop now has a real active window rather than merely holding
+	// focus on the torn window's behalf.
+	prevTorn := d.tornFocusOwner
 	if w.IsDetached() {
 		d.tornFocusOwner = w
 	} else {
 		d.tornFocusOwner = nil
 	}
 	d.mu.Unlock()
+
+	if prevTorn != nil && prevTorn != w && !w.IsDetached() {
+		prevTorn.SetActive(false)
+	}
 
 	d.updateMenuBarContent()
 	d.updateStatusBarContent()
@@ -1962,11 +1970,13 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		}
 		if e.Focused && owner != nil {
 			// The torn window whose focus "lives" on the desktop menu bar
-			// stays quasi-active (border lit) while the desktop holds OS
-			// focus, mirroring the in-surface blur: you can pick menu items
-			// that apply to it. Its OS surface dimmed it on FOCUS_LOST, so
-			// re-light it here.
-			owner.SetActive(true)
+			// stays quasi-active while the desktop holds OS focus, mirroring
+			// the in-surface blur: you can pick menu items that apply to it.
+			// Its OS surface dimmed it on FOCUS_LOST, so re-light it here -
+			// but as quasi-active (lit, single/heavy border) rather than a
+			// full double-bordered focus, since focus really is on the
+			// desktop, not the torn window.
+			owner.SetQuasiActive(true)
 		}
 		return true
 
@@ -1980,9 +1990,17 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		return handled
 
 	case core.MouseLeaveEvent:
-		// Pointer left the desktop surface: drop any resize-edge highlight
-		// and reset the cursor to the arrow.
+		// Pointer left the desktop surface: drop any resize-edge highlight,
+		// clear per-widget hover in windows and the desktop chrome, and reset
+		// the cursor to the arrow.
 		wm.ClearResizeHover()
+		wm.ClearHover()
+		if d.menuBar != nil {
+			d.menuBar.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
+		}
+		if d.dockRow != nil {
+			d.dockRow.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
+		}
 		if cc, ok := d.platform.(platform.CursorController); ok {
 			cc.SetCursor(core.CursorDefault)
 		}

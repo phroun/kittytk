@@ -414,6 +414,12 @@ func (m *WindowManager) clearWindowHover() {
 	}
 }
 
+// ClearHover drops any lingering per-widget hover highlight. Called when
+// the pointer leaves the surface entirely so nothing stays highlighted.
+func (m *WindowManager) ClearHover() {
+	m.clearWindowHover()
+}
+
 // updateResizeHover highlights the size-sensitive edge(s) of the topmost
 // window under the pointer, clearing the highlight on every other window.
 // Called on mouse move when no drag or resize is in progress.
