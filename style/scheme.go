@@ -17,6 +17,7 @@ type Scheme struct {
 	Dock              *CellStyle
 	DockItem          *CellStyle
 	FocusedDockItem   *CellStyle
+	HoveredDockItem   *CellStyle // nil = HoverBG + HoverFG
 
 	// =========================================================================
 	// Window Frame Related Colors
@@ -29,6 +30,7 @@ type Scheme struct {
 	ActiveTitleBarButton   *CellStyle
 	InactiveTitleBarButton *CellStyle
 	FocusedTitleBarButton  *CellStyle
+	HoveredTitleBarButton  *CellStyle // nil = HoverBG + HoverFG
 	PressedTitleBarButton  *CellStyle
 	InactiveWindowFG       *CellStyle // FG only
 	ActiveWindowFG         *CellStyle // FG only
@@ -42,6 +44,9 @@ type Scheme struct {
 	FocusBG        *CellStyle // normal cyan (BG only, used as default for many)
 	FocusFG        *CellStyle // normal black (FG only, used as default for many)
 	FocusTextFG    *CellStyle // bright cyan (FG only, used as default for many)
+	HoverBG        *CellStyle // bright cyan (BG only, used as default for many Hovered* values)
+	HoverFG        *CellStyle // black (FG only, used as default for many Hovered* values)
+	HoverTextFG    *CellStyle // bright white (FG only, hover analog of FocusTextFG for text-only highlights)
 	DisabledTextFG *CellStyle // FG only
 	Selection      *CellStyle // bright white on blue
 	Normal         *CellStyle // nil = WindowFG on WindowBG
@@ -50,31 +55,37 @@ type Scheme struct {
 	// Menu Related Colors
 	// =========================================================================
 
-	MenuBar                *CellStyle
-	MenuBarMeta            *CellStyle // accelerator keys on menu bar
-	MenuBarInfo            *CellStyle // clock, etc.
-	ActiveMenuBarItem      *CellStyle
-	ActiveMenuBarMeta      *CellStyle // accelerator keys on active menu
-	FocusedMenuBarItem     *CellStyle // menu bar has focus but dropdown not shown, or dropdown has no selection
-	FocusedMenuBarMeta     *CellStyle // accelerator keys on focused menu bar item
-	MenuGutter             *CellStyle
-	MenuCheckIcon          *CellStyle
-	MenuRadioIcon          *CellStyle
-	MenuItemText           *CellStyle
-	MenuAccelerator        *CellStyle
-	MenuShortcut           *CellStyle
-	MenuSeparator          *CellStyle
-	MenuSeparatorGutter    *CellStyle
-	MenuBarButton          *CellStyle // for [<][>]
-	DisabledMenuBarButton  *CellStyle
-	DisabledMenuGutter     *CellStyle
-	DisabledMenuItem       *CellStyle // applies to Text, Shortcut and Accelerator
-	DisabledMenuIcon       *CellStyle // applies to Check and Radio
-	FocusedMenuCheckIcon   *CellStyle
-	FocusedMenuRadioIcon   *CellStyle
-	FocusedMenuItemText    *CellStyle
-	FocusedMenuAccelerator *CellStyle
-	FocusedMenuShortcut    *CellStyle
+	MenuBar                 *CellStyle
+	MenuBarMeta             *CellStyle // accelerator keys on menu bar
+	MenuBarInfo             *CellStyle // clock, etc.
+	HoveredMenuBar          *CellStyle // menu bar item under the pointer; nil = HoverBG + HoverFG
+	HoveredMenuBarMeta      *CellStyle // accelerator on hovered menu bar item; nil = MenuBarMeta FG on HoverBG
+	ActiveMenuBarItem       *CellStyle
+	ActiveMenuBarMeta       *CellStyle // accelerator keys on active menu
+	FocusedMenuBarItem      *CellStyle // menu bar has focus but dropdown not shown, or dropdown has no selection
+	FocusedMenuBarMeta      *CellStyle // accelerator keys on focused menu bar item
+	MenuGutter              *CellStyle
+	MenuCheckIcon           *CellStyle
+	MenuRadioIcon           *CellStyle
+	MenuItemText            *CellStyle
+	MenuAccelerator         *CellStyle
+	MenuShortcut            *CellStyle
+	MenuSeparator           *CellStyle
+	MenuSeparatorGutter     *CellStyle
+	MenuBarButtonFG         *CellStyle // for [<][>] scroll buttons (FG only)
+	MenuBarButtonBG         *CellStyle // for [<][>] scroll buttons (BG only)
+	HoveredMenuBarButtonFG  *CellStyle // nil = HoverFG (FG only)
+	HoveredMenuBarButtonBG  *CellStyle // nil = HoverBG (BG only)
+	DisabledMenuBarButtonFG *CellStyle // FG only
+	DisabledMenuBarButtonBG *CellStyle // BG only
+	DisabledMenuGutter      *CellStyle
+	DisabledMenuItem        *CellStyle // applies to Text, Shortcut and Accelerator
+	DisabledMenuIcon        *CellStyle // applies to Check and Radio
+	FocusedMenuCheckIcon    *CellStyle
+	FocusedMenuRadioIcon    *CellStyle
+	FocusedMenuItemText     *CellStyle
+	FocusedMenuAccelerator  *CellStyle
+	FocusedMenuShortcut     *CellStyle
 
 	// =========================================================================
 	// Trinket Group Colors (used as defaults for other things)
@@ -100,6 +111,7 @@ type Scheme struct {
 	DisabledButtonFG          *CellStyle // nil = DisabledTextFG
 	DisabledButtonBG          *CellStyle // nil = inherit
 	FocusedButton             *CellStyle // nil = FocusBG + FocusFG
+	HoveredButton             *CellStyle // nil = HoverBG + HoverFG
 	PressedButton             *CellStyle // nil = WindowBG + WindowFG
 	DefaultPaneButtonShadowFG *CellStyle // dim blue, used when inherited BG is ansi 49 (FG only)
 	DarkPaneButtonShadowFG    *CellStyle // dark gray, used when inherited BG is black (FG only)
@@ -168,6 +180,8 @@ type Scheme struct {
 	FocusedSplitter       *CellStyle // nil = FocusBG + FocusFG
 	FocusedSplitterHandle *CellStyle // nil = FocusedSplitter
 	FocusedSplitterTitle  *CellStyle // nil = FocusedSplitter
+	HoveredSplitterHandle *CellStyle // nil = HoverBG + HoverFG
+	HoveredSplitterTitle  *CellStyle // nil = HoverBG + HoverFG
 	PressedSplitter       *CellStyle // nil = WindowBG + WindowFG (black on white)
 	PressedSplitterHandle *CellStyle // nil = PressedSplitter
 	PressedSplitterTitle  *CellStyle // nil = PressedSplitter
@@ -203,8 +217,9 @@ type Scheme struct {
 	// Scrollbar Colors (ScrollArea, ListView, TreeView)
 	// =========================================================================
 
-	Scrollbar      *CellStyle // dark gray on black
-	ScrollbarThumb *CellStyle // regular white on black
+	Scrollbar             *CellStyle // dark gray on black
+	ScrollbarThumb        *CellStyle // regular white on black
+	HoveredScrollbarThumb *CellStyle // nil = HoverBG + HoverFG
 
 	// =========================================================================
 	// ProgressBar Colors
@@ -315,6 +330,7 @@ func DefaultScheme() *Scheme {
 		Dock:              ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
 		DockItem:          ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
 		FocusedDockItem:   ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightCyan)),
+		HoveredDockItem:   nil, // HoverBG + HoverFG
 
 		// Window Frame Related Colors
 		ActiveWindowBorder:     ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
@@ -324,6 +340,7 @@ func DefaultScheme() *Scheme {
 		ActiveTitleBarButton:   ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
 		InactiveTitleBarButton: ptr(DefaultStyle().WithFg(ColorBrightBlue).WithBg(ColorBlue)),
 		FocusedTitleBarButton:  ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		HoveredTitleBarButton:  nil, // HoverBG + HoverFG
 		PressedTitleBarButton:  ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
 		InactiveWindowFG:       ptr(DefaultStyle().WithFg(ColorWhite)),
 		ActiveWindowFG:         ptr(DefaultStyle().WithFg(ColorWhite)),
@@ -334,36 +351,45 @@ func DefaultScheme() *Scheme {
 		FocusBG:        ptr(DefaultStyle().WithBg(ColorCyan)),
 		FocusFG:        ptr(DefaultStyle().WithFg(ColorBlack)),
 		FocusTextFG:    ptr(DefaultStyle().WithFg(ColorBrightCyan)),
+		HoverBG:        ptr(DefaultStyle().WithBg(ColorBrightCyan)),
+		HoverFG:        ptr(DefaultStyle().WithFg(ColorBlack)),
+		HoverTextFG:    ptr(DefaultStyle().WithFg(ColorBrightWhite)),
 		DisabledTextFG: ptr(DefaultStyle().WithFg(ColorBrightBlack)),
 		Selection:      ptr(DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorBlue)),
 		Normal:         nil, // nil = WindowFG on WindowBG
 
 		// Menu Related Colors
-		MenuBar:                ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		MenuBarMeta:            ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorWhite)),
-		MenuBarInfo:            ptr(DefaultStyle().WithFg(ColorBrightYellow).WithBg(ColorYellow)),
-		ActiveMenuBarItem:      ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue)),
-		ActiveMenuBarMeta:      ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
-		FocusedMenuBarItem:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
-		FocusedMenuBarMeta:     ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
-		MenuGutter:             ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		MenuCheckIcon:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		MenuRadioIcon:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		MenuItemText:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
-		MenuAccelerator:        ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorBrightWhite)),
-		MenuShortcut:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
-		MenuSeparator:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
-		MenuSeparatorGutter:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		MenuBarButton:          ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
-		DisabledMenuBarButton:  ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
-		DisabledMenuGutter:     ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
-		DisabledMenuItem:       ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
-		DisabledMenuIcon:       ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
-		FocusedMenuCheckIcon:   ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
-		FocusedMenuRadioIcon:   ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
-		FocusedMenuItemText:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
-		FocusedMenuAccelerator: ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
-		FocusedMenuShortcut:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		MenuBar:                 ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		MenuBarMeta:             ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorWhite)),
+		MenuBarInfo:             ptr(DefaultStyle().WithFg(ColorBrightYellow).WithBg(ColorYellow)),
+		HoveredMenuBar:          nil, // HoverBG + HoverFG
+		HoveredMenuBarMeta:      nil, // MenuBarMeta FG (red) on HoverBG
+		ActiveMenuBarItem:       ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue)),
+		ActiveMenuBarMeta:       ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
+		FocusedMenuBarItem:      ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		FocusedMenuBarMeta:      ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
+		MenuGutter:              ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		MenuCheckIcon:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		MenuRadioIcon:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		MenuItemText:            ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
+		MenuAccelerator:         ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorBrightWhite)),
+		MenuShortcut:            ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
+		MenuSeparator:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
+		MenuSeparatorGutter:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
+		MenuBarButtonFG:         ptr(DefaultStyle().WithFg(ColorBlack)),
+		MenuBarButtonBG:         ptr(DefaultStyle().WithBg(ColorWhite)),
+		HoveredMenuBarButtonFG:  nil, // HoverFG
+		HoveredMenuBarButtonBG:  nil, // HoverBG
+		DisabledMenuBarButtonFG: ptr(DefaultStyle().WithFg(ColorBrightBlack)),
+		DisabledMenuBarButtonBG: ptr(DefaultStyle().WithBg(ColorWhite)),
+		DisabledMenuGutter:      ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
+		DisabledMenuItem:        ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
+		DisabledMenuIcon:        ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite)),
+		FocusedMenuCheckIcon:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		FocusedMenuRadioIcon:    ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		FocusedMenuItemText:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		FocusedMenuAccelerator:  ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
+		FocusedMenuShortcut:     ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
 
 		// Trinket Group Colors
 		TrinketGroupFG:   ptr(DefaultStyle().WithFg(ColorBrightWhite)),
@@ -382,6 +408,7 @@ func DefaultScheme() *Scheme {
 		DisabledButtonFG:          nil, // DisabledTextFG
 		DisabledButtonBG:          nil, // inherit
 		FocusedButton:             ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
+		HoveredButton:             nil, // HoverBG + HoverFG
 		PressedButton:             nil, // WindowBG + WindowFG
 		DefaultPaneButtonShadowFG: ptr(DefaultStyle().WithFg(ColorBlue).WithAttrs(StyleDim)),
 		DarkPaneButtonShadowFG:    ptr(DefaultStyle().WithFg(ColorBrightBlack)),
@@ -445,6 +472,8 @@ func DefaultScheme() *Scheme {
 		FocusedSplitter:       ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
 		FocusedSplitterHandle: nil, // FocusedSplitter
 		FocusedSplitterTitle:  nil, // FocusedSplitter
+		HoveredSplitterHandle: nil, // HoverBG + HoverFG
+		HoveredSplitterTitle:  nil, // HoverBG + HoverFG
 		PressedSplitter:       nil, // WindowBG + WindowFG (black on white)
 		PressedSplitterHandle: nil, // PressedSplitter
 		PressedSplitterTitle:  nil, // PressedSplitter
@@ -471,8 +500,9 @@ func DefaultScheme() *Scheme {
 		FocusedListItem:  ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan)),
 
 		// Scrollbar
-		Scrollbar:      ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack)),
-		ScrollbarThumb: ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack)),
+		Scrollbar:             ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack)),
+		ScrollbarThumb:        ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack)),
+		HoveredScrollbarThumb: nil, // HoverBG + HoverFG
 
 		// ProgressBar
 		ProgressFull:      ptr(DefaultStyle().WithFg(ColorBrightGreen).WithBg(ColorGreen)),
@@ -532,6 +562,26 @@ func (s *Scheme) GetDock() CellStyle              { return or(s.Dock) }
 func (s *Scheme) GetDockItem() CellStyle          { return or(s.DockItem) }
 func (s *Scheme) GetFocusedDockItem() CellStyle   { return or(s.FocusedDockItem) }
 
+func (s *Scheme) GetHoveredDockItem() CellStyle {
+	if s.HoveredDockItem != nil {
+		return *s.HoveredDockItem
+	}
+	return s.hover()
+}
+
+// GetDockItemState resolves a dock item's style, with focus taking
+// priority over hover.
+func (s *Scheme) GetDockItemState(focused, hovered bool) CellStyle {
+	switch {
+	case focused:
+		return s.GetFocusedDockItem()
+	case hovered:
+		return s.GetHoveredDockItem()
+	default:
+		return s.GetDockItem()
+	}
+}
+
 // --- Window Colors ---
 
 func (s *Scheme) GetWindowBorder(active bool) CellStyle {
@@ -561,6 +611,31 @@ func (s *Scheme) GetTitleBarButton(active, focused, pressed bool) CellStyle {
 	return or(s.InactiveTitleBarButton)
 }
 
+func (s *Scheme) GetHoveredTitleBarButton() CellStyle {
+	if s.HoveredTitleBarButton != nil {
+		return *s.HoveredTitleBarButton
+	}
+	return s.hover()
+}
+
+// GetTitleBarButtonState resolves a title-bar button's style with the
+// precedence pressed > focus > hover > active/inactive.
+func (s *Scheme) GetTitleBarButtonState(active, focused, hovered, pressed bool) CellStyle {
+	if pressed {
+		return or(s.PressedTitleBarButton)
+	}
+	if focused {
+		return or(s.FocusedTitleBarButton)
+	}
+	if hovered {
+		return s.GetHoveredTitleBarButton()
+	}
+	if active {
+		return or(s.ActiveTitleBarButton)
+	}
+	return or(s.InactiveTitleBarButton)
+}
+
 func (s *Scheme) GetWindowFG(active bool) Color {
 	if active {
 		return orFG(s.ActiveWindowFG)
@@ -580,8 +655,18 @@ func (s *Scheme) GetWindowBG(active bool) Color {
 func (s *Scheme) GetFocusBG() Color        { return orBG(s.FocusBG) }
 func (s *Scheme) GetFocusFG() Color        { return orFG(s.FocusFG) }
 func (s *Scheme) GetFocusTextFG() Color    { return orFG(s.FocusTextFG) }
+func (s *Scheme) GetHoverBG() Color        { return orBG(s.HoverBG) }
+func (s *Scheme) GetHoverFG() Color        { return orFG(s.HoverFG) }
+func (s *Scheme) GetHoverTextFG() Color    { return orFG(s.HoverTextFG, s.FocusTextFG) }
 func (s *Scheme) GetDisabledTextFG() Color { return orFG(s.DisabledTextFG) }
 func (s *Scheme) GetSelection() CellStyle  { return or(s.Selection) }
+
+// hover is the default Hovered* style: HoverFG on HoverBG. Trinkets should
+// prefer the more specific Get*State resolvers, which give Focus (and
+// Pressed) priority over hover when an item is in more than one state.
+func (s *Scheme) hover() CellStyle {
+	return DefaultStyle().WithFg(s.GetHoverFG()).WithBg(s.GetHoverBG())
+}
 
 func (s *Scheme) GetNormal(active bool) CellStyle {
 	if s.Normal != nil {
@@ -604,16 +689,38 @@ func (s *Scheme) GetFocusedMenuBarItem() CellStyle {
 func (s *Scheme) GetFocusedMenuBarMeta() CellStyle {
 	return or(s.FocusedMenuBarMeta, s.FocusedMenuAccelerator)
 }
-func (s *Scheme) GetMenuGutter() CellStyle             { return or(s.MenuGutter) }
-func (s *Scheme) GetMenuCheckIcon() CellStyle          { return or(s.MenuCheckIcon) }
-func (s *Scheme) GetMenuRadioIcon() CellStyle          { return or(s.MenuRadioIcon) }
-func (s *Scheme) GetMenuItemText() CellStyle           { return or(s.MenuItemText) }
-func (s *Scheme) GetMenuAccelerator() CellStyle        { return or(s.MenuAccelerator) }
-func (s *Scheme) GetMenuShortcut() CellStyle           { return or(s.MenuShortcut) }
-func (s *Scheme) GetMenuSeparator() CellStyle          { return or(s.MenuSeparator) }
-func (s *Scheme) GetMenuSeparatorGutter() CellStyle    { return or(s.MenuSeparatorGutter) }
-func (s *Scheme) GetMenuBarButton() CellStyle          { return or(s.MenuBarButton) }
-func (s *Scheme) GetDisabledMenuBarButton() CellStyle  { return or(s.DisabledMenuBarButton) }
+func (s *Scheme) GetMenuGutter() CellStyle          { return or(s.MenuGutter) }
+func (s *Scheme) GetMenuCheckIcon() CellStyle       { return or(s.MenuCheckIcon) }
+func (s *Scheme) GetMenuRadioIcon() CellStyle       { return or(s.MenuRadioIcon) }
+func (s *Scheme) GetMenuItemText() CellStyle        { return or(s.MenuItemText) }
+func (s *Scheme) GetMenuAccelerator() CellStyle     { return or(s.MenuAccelerator) }
+func (s *Scheme) GetMenuShortcut() CellStyle        { return or(s.MenuShortcut) }
+func (s *Scheme) GetMenuSeparator() CellStyle       { return or(s.MenuSeparator) }
+func (s *Scheme) GetMenuSeparatorGutter() CellStyle { return or(s.MenuSeparatorGutter) }
+func (s *Scheme) GetMenuBarButton() CellStyle {
+	return DefaultStyle().WithFg(orFG(s.MenuBarButtonFG)).WithBg(orBG(s.MenuBarButtonBG))
+}
+func (s *Scheme) GetDisabledMenuBarButton() CellStyle {
+	return DefaultStyle().WithFg(orFG(s.DisabledMenuBarButtonFG)).WithBg(orBG(s.DisabledMenuBarButtonBG))
+}
+func (s *Scheme) GetHoveredMenuBarButton() CellStyle {
+	return DefaultStyle().
+		WithFg(orFG(s.HoveredMenuBarButtonFG, s.HoverFG)).
+		WithBg(orBG(s.HoveredMenuBarButtonBG, s.HoverBG))
+}
+func (s *Scheme) GetHoveredMenuBar() CellStyle {
+	if s.HoveredMenuBar != nil {
+		return *s.HoveredMenuBar
+	}
+	return s.hover()
+}
+func (s *Scheme) GetHoveredMenuBarMeta() CellStyle {
+	if s.HoveredMenuBarMeta != nil {
+		return *s.HoveredMenuBarMeta
+	}
+	// Keep the accelerator's semantic FG (red) but on the hover background.
+	return DefaultStyle().WithFg(orFG(s.MenuBarMeta)).WithBg(s.GetHoverBG())
+}
 func (s *Scheme) GetDisabledMenuGutter() CellStyle     { return or(s.DisabledMenuGutter) }
 func (s *Scheme) GetDisabledMenuItem() CellStyle       { return or(s.DisabledMenuItem) }
 func (s *Scheme) GetDisabledMenuIcon() CellStyle       { return or(s.DisabledMenuIcon) }
@@ -663,6 +770,28 @@ func (s *Scheme) GetPressedButton(active bool) CellStyle {
 		return *s.PressedButton
 	}
 	return DefaultStyle().WithFg(s.GetWindowFG(active)).WithBg(s.GetWindowBG(active))
+}
+
+func (s *Scheme) GetHoveredButton() CellStyle {
+	if s.HoveredButton != nil {
+		return *s.HoveredButton
+	}
+	return s.hover()
+}
+
+// GetButtonState resolves a button's style with the precedence
+// pressed > focus > hover > normal.
+func (s *Scheme) GetButtonState(active, focused, hovered, pressed bool) CellStyle {
+	switch {
+	case pressed:
+		return s.GetPressedButton(active)
+	case focused:
+		return s.GetFocusedButton()
+	case hovered:
+		return s.GetHoveredButton()
+	default:
+		return s.GetButton()
+	}
 }
 
 // PaneType indicates the type of pane for button shadow selection.
@@ -926,6 +1055,50 @@ func (s *Scheme) GetPressedSplitterTitle() CellStyle {
 	return s.GetPressedSplitter()
 }
 
+func (s *Scheme) GetHoveredSplitterHandle() CellStyle {
+	if s.HoveredSplitterHandle != nil {
+		return *s.HoveredSplitterHandle
+	}
+	return s.hover()
+}
+
+func (s *Scheme) GetHoveredSplitterTitle() CellStyle {
+	if s.HoveredSplitterTitle != nil {
+		return *s.HoveredSplitterTitle
+	}
+	return s.hover()
+}
+
+// GetSplitterHandleState resolves the splitter handle style with the
+// precedence pressed > focus > hover > normal.
+func (s *Scheme) GetSplitterHandleState(focused, hovered, pressed bool) CellStyle {
+	switch {
+	case pressed:
+		return s.GetPressedSplitterHandle()
+	case focused:
+		return s.GetFocusedSplitterHandle()
+	case hovered:
+		return s.GetHoveredSplitterHandle()
+	default:
+		return s.GetSplitterHandle()
+	}
+}
+
+// GetSplitterTitleState resolves the splitter title style with the
+// precedence pressed > focus > hover > normal.
+func (s *Scheme) GetSplitterTitleState(focused, hovered, pressed bool) CellStyle {
+	switch {
+	case pressed:
+		return s.GetPressedSplitterTitle()
+	case focused:
+		return s.GetFocusedSplitterTitle()
+	case hovered:
+		return s.GetHoveredSplitterTitle()
+	default:
+		return s.GetSplitterTitle()
+	}
+}
+
 // --- Tab Trinket Colors ---
 
 func (s *Scheme) GetTabsFG(active bool) Color {
@@ -1043,6 +1216,22 @@ func (s *Scheme) GetFocusedListItem() CellStyle {
 
 func (s *Scheme) GetScrollbar() CellStyle      { return or(s.Scrollbar) }
 func (s *Scheme) GetScrollbarThumb() CellStyle { return or(s.ScrollbarThumb) }
+
+func (s *Scheme) GetHoveredScrollbarThumb() CellStyle {
+	if s.HoveredScrollbarThumb != nil {
+		return *s.HoveredScrollbarThumb
+	}
+	return s.hover()
+}
+
+// GetScrollbarThumbState resolves the scrollbar thumb style; the thumb has
+// no focus state, so hover is the only elevated state.
+func (s *Scheme) GetScrollbarThumbState(hovered bool) CellStyle {
+	if hovered {
+		return s.GetHoveredScrollbarThumb()
+	}
+	return s.GetScrollbarThumb()
+}
 
 // --- ProgressBar Colors ---
 
