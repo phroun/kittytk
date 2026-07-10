@@ -397,12 +397,9 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 
 // cellTextImage rasterizes one cell's text at an exact device-pixel
 // box, applying the gtk stretch/center rules, and caches the result.
-func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA, boxWPx, boxHPx int, ppu float64, wideCell bool, ch rune) *image.RGBA {
+func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA, boxWPx, boxHPx, scale int, wideCell bool, ch rune) *image.RGBA {
 	if boxWPx <= 0 || boxHPx <= 0 {
 		return nil
-	}
-	if ppu <= 0 {
-		ppu = 1
 	}
 	key := fmt.Sprintf("%s|%t|%t|%02x%02x%02x|%d|%d|%t", str, bold, italic, fg.R, fg.G, fg.B, boxWPx, boxHPx, wideCell)
 	if img, ok := t.gfx.textCur[key]; ok {
@@ -417,11 +414,8 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA,
 	if t.termFont != nil {
 		family = t.termFont.Name
 	}
-	// Choose the point size whose line budget fills the box height. The box
-	// is already font_size-scaled (ppu), so dividing it back out yields the
-	// cell height in units and the point size follows the renderer's
-	// font_size (term size 12 == the renderer's font_size).
-	sizeUnits := int(math.Round(float64(boxHPx) / ppu))
+	// Choose the point size whose line budget fills the box height.
+	sizeUnits := boxHPx / scale
 	pt := sizeUnits * 3 / 4
 	if pt < 1 {
 		pt = 1
@@ -437,15 +431,17 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA,
 
 	eng := t.gfxEngine()
 	sp := eng.ShapeRun(f, str)
-	naturalW := int(math.Round(float64(sp.Width()) * ppu))
-	naturalH := int(math.Round(float64(eng.LineHeight(f)) * ppu))
+	naturalW := int(sp.Width()) * scale
+	naturalH := int(eng.LineHeight(f)) * scale
 	if naturalW <= 0 {
 		naturalW = 1
 	}
 	raw := image.NewRGBA(image.Rect(0, 0, naturalW, naturalH))
-	// Rasterize at the renderer's font_size-aware pixels-per-unit so the
-	// glyph fills its (font_size-scaled) cell box.
-	text.Render(raw, sp, 0, 0, ppu, fg)
+	// scale here is the integer device zoom (PurfecTerm renders its own
+	// cells at device pixels); text.Render now takes fractional
+	// pixels-per-unit, so widen it. font_size-aware terminal scaling is
+	// deferred.
+	text.Render(raw, sp, 0, 0, float64(scale), fg)
 
 	// Stretch/center per the gtk rules.
 	out := image.NewRGBA(image.Rect(0, 0, boxWPx, boxHPx))
@@ -493,34 +489,16 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg pur
 	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, scale, yOffPx int, cellVisualWidth float64) {
 
 	str := cell.String()
-	_ = scale
-	// Place and size the glyph on the SAME cell-snapped, font_size-aware
-	// grid the cell fills use (fillUnitsF rounds to units then FillRects,
-	// which the backend snaps by its ceil'd cell pixels). Deriving pixels
-	// from the raw device zoom instead rendered the font at the base 12pt
-	// and let it drift from its cell across the row. UnitSpanPxX/Y give the
-	// exact snapped pixel spans, so glyph and cell box coincide.
-	rx0 := core.Unit(math.Round(cellX))
-	ry0 := core.Unit(math.Round(cellY))
-	rx1 := core.Unit(math.Round(cellX + cellW))
-	ry1 := core.Unit(math.Round(cellY + cellH))
-	boxW := p.UnitSpanPxX(rx0, rx1)
-	contentH := p.UnitSpanPxY(ry0, ry1)
-	xPx := p.UnitSpanPxX(0, rx0)
-	yPx := p.UnitSpanPxY(0, ry0) + yOffPx
-	// Effective pixels-per-unit for rasterizing the glyph into that box, so
-	// the point size follows the renderer's font_size (term size 12 == the
-	// renderer's font_size).
-	ppu := p.PxPerUnitF()
-	if chU := float64(ry1 - ry0); chU > 0 {
-		ppu = float64(contentH) / chU
-	}
+	boxW := int(math.Round(cellW * float64(scale)))
+	contentH := int(math.Round(cellH * float64(scale)))
+	xPx := int(math.Round(cellX * float64(scale)))
+	yPx := int(math.Round(cellY*float64(scale))) + yOffPx
 	wide := cellVisualWidth > 1.0
 
 	switch lineAttr {
 	case purfecterm.LineAttrDoubleTop, purfecterm.LineAttrDoubleBottom:
 		// Rendered at 2x height; only one half shows through the clip.
-		img := t.cellTextImage(str, cell.Bold, cell.Italic, pcRGBA(fg), boxW, contentH*2, ppu, wide, cell.Char)
+		img := t.cellTextImage(str, cell.Bold, cell.Italic, pcRGBA(fg), boxW, contentH*2, scale, wide, cell.Char)
 		if img == nil {
 			return
 		}
@@ -533,7 +511,7 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg pur
 		}
 		clip.DrawImageOffset(0, 0, xPx, yPx, img)
 	default:
-		img := t.cellTextImage(str, cell.Bold, cell.Italic, pcRGBA(fg), boxW, contentH, ppu, wide, cell.Char)
+		img := t.cellTextImage(str, cell.Bold, cell.Italic, pcRGBA(fg), boxW, contentH, scale, wide, cell.Char)
 		if img == nil {
 			return
 		}
