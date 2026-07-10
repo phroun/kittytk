@@ -21,6 +21,7 @@ width = 800
 height = 600
 scale = 1
 font_size = 16
+border_width = 3
 
 [service]
 endpoint = tcp://0.0.0.0:9797
@@ -34,6 +35,13 @@ scale = notanumber
 	}
 	if cfg.FontSize != 16 {
 		t.Errorf("font_size = %d, want 16", cfg.FontSize)
+	}
+	if cfg.BorderWidth != 3 {
+		t.Errorf("border_width = %d, want 3", cfg.BorderWidth)
+	}
+	// Absent border_width keeps the default (0 = built-in hairline).
+	if Defaults().BorderWidth != 0 {
+		t.Errorf("default border_width = %d, want 0", Defaults().BorderWidth)
 	}
 	// An absent/typo'd font_size keeps the default (12).
 	if Defaults().FontSize != 12 {

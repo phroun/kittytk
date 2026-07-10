@@ -16,11 +16,12 @@
 // config:
 //
 //	[window]
-//	title     = KittyTK
-//	width     = 1024
-//	height    = 768
-//	scale     = 2
-//	font_size = 12
+//	title        = KittyTK
+//	width        = 1024
+//	height       = 768
+//	scale        = 2
+//	font_size    = 12
+//	border_width =            ; window frame thickness in device px (blank/0 = default)
 //
 //	[service]
 //	endpoint =            ; blank = default; tcp://host:port, tls://…, or a socket path
@@ -45,11 +46,12 @@ const IniName = "kittytk.ini"
 // Config is the resolved launch configuration. Window fields apply only
 // to graphical hosts (kittytk-sdl); the terminal host ignores them.
 type Config struct {
-	Title    string // window title bar text
-	Width    int    // window width in pixels
-	Height   int    // window height in pixels
-	Scale    int    // pixels per abstract unit (1 = small, 2 = crisp/large)
-	FontSize int    // UI font point size; sizes the desktop cell grid (12 = default)
+	Title       string // window title bar text
+	Width       int    // window width in pixels
+	Height      int    // window height in pixels
+	Scale       int    // pixels per abstract unit (1 = small, 2 = crisp/large)
+	FontSize    int    // UI font point size; sizes the desktop cell grid (12 = default)
+	BorderWidth int    // graphical window-frame border width in device pixels (0 = default hairline)
 
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret
@@ -129,6 +131,10 @@ func apply(data []byte, cfg *Config) {
 		case "font_size":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				cfg.FontSize = n
+			}
+		case "border_width":
+			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+				cfg.BorderWidth = n
 			}
 		case "endpoint":
 			cfg.Endpoint = val
