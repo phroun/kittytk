@@ -387,6 +387,35 @@ func (c *messageBoxContent) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
+// HandleMouseMove forwards pointer motion to the buttons. Without it the
+// buttons never see movement inside the dialog: they can't light up on hover,
+// and - worse - a pressed button never learns the pointer left, so it sticks
+// depressed until release and a click can't be cancelled by dragging off it.
+func (c *messageBoxContent) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A pressed button captures motion: keep feeding it moves even after the
+	// pointer wanders off its bounds, so it can drop its own pressed look.
+	for _, btn := range c.buttonTrinkets {
+		if btn.pressed {
+			b := btn.Bounds()
+			local := event
+			local.X -= b.X
+			local.Y -= b.Y
+			btn.HandleMouseMove(local)
+			return true
+		}
+	}
+	// No press in flight: give every button the translated move so the one
+	// under the pointer hovers and the others clear.
+	for _, btn := range c.buttonTrinkets {
+		b := btn.Bounds()
+		local := event
+		local.X -= b.X
+		local.Y -= b.Y
+		btn.HandleMouseMove(local)
+	}
+	return false
+}
+
 // HandleMouseRelease handles mouse release on buttons.
 func (c *messageBoxContent) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// Forward to all buttons (the pressed one will handle it)
