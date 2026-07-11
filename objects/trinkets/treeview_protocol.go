@@ -61,15 +61,18 @@ func init() {
 					WithUint("item", uint64(item.ID)).
 					WithFlag("expanded", protocol.FlagFalse))
 			})
-			tv.SetOnSortRequested(func(sortedBy int, descending bool) {
-				desc := protocol.FlagFalse
-				if descending {
-					desc = protocol.FlagTrue
+			tv.SetOnSortRequested(func(sorted bool, sortedBy int, descending bool) {
+				flag := func(b bool) protocol.FlagState {
+					if b {
+						return protocol.FlagTrue
+					}
+					return protocol.FlagFalse
 				}
 				ctx.EmitEvent(protocol.NewEvent("sort").
 					WithUint("trinket", id).
+					WithFlag("sorted", flag(sorted)).
 					WithInt("sortedby", sortedBy).
-					WithFlag("descending", desc))
+					WithFlag("descending", flag(descending)))
 			})
 		},
 		Props: treeViewProps(),

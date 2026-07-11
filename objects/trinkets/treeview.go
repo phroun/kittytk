@@ -118,24 +118,41 @@ type TreeView struct {
 	hScroll    int // horizontal scroll offset in cells
 
 	// Divider drag-resize state (nil colDragCol = the key column).
+	// colDragInvert: the divider is sizing the column to its RIGHT
+	// (slack lives to the left), so the delta applies negated.
 	colDragging   bool
 	colDragCol    *TreeColumn
 	colDragStartX core.Unit
 	colDragStartW int
+	colDragInvert bool
 
 	// Horizontal scrollbar (footer row) drag state.
 	hbarDragging    bool
 	hbarDragStartX  core.Unit
 	hbarDragStartHS int
 
-	// Sort state (display) + request callback (the app reorders):
-	// sorted=false means no sort indicator; sortedBy is -1 for the key
-	// (tree) column or a declared data-column index; sortDescending
-	// flips the direction.
+	// Sort state (visual; the trinket reorders its row list, the app's
+	// item order is untouched): sorted=false means unsorted; sortedBy
+	// is -1 for the key (tree) column or a declared data-column index;
+	// sortDescending flips the direction. Activating a header cycles
+	// ascending -> descending -> unsorted.
 	sorted          bool
 	sortedBy        int
 	sortDescending  bool
-	onSortRequested func(sortedBy int, descending bool)
+	onSortRequested func(sorted bool, sortedBy int, descending bool)
+
+	// Column-chooser button/menu state (the [=] in the header corner).
+	chooserHovered bool
+	chooserOpen    bool
+	chooserMenu    *Menu
+
+	// Internal header focus zone: the tree is ONE trinket in the app
+	// tab order, but runs its own focus machine (the window title-bar
+	// pattern): hzBar lights the whole header as one stop, Enter drills
+	// into hzItems (Tab cycles column captions then the chooser), and
+	// tabbing past the chooser lands in hzContent - the tree proper.
+	headerZone     int // hzContent / hzBar / hzItems
+	headerFocusIdx int // index into header stops when hzItems
 
 	// Callbacks
 	onCurrentChanged func(item *TreeItem)
@@ -747,6 +764,17 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 
 // HandleKeyPress handles keyboard input.
 func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
+	// The open column-chooser menu takes keys first (the tree retains
+	// focus and forwards - the menu bar pattern).
+	if t.handleChooserKey(event) {
+		return true
+	}
+	// The internal header focus zone consumes its navigation (including
+	// the content zone's S-Tab back into the bar) before content keys.
+	if t.handleHeaderFocusKey(event) {
+		return true
+	}
+
 	current := t.CurrentItem()
 
 	switch event.Key {
@@ -1022,6 +1050,9 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 			}
 		}
 
+		// A content click re-zones the internal header focus to content.
+		t.headerZone = hzContent
+
 		// Start content drag - clear scrollbar drag flag
 		t.isDragging = true
 		t.scrollbarDragging = false
@@ -1090,6 +1121,8 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		t.scrollbarThumbHovered = over
 		t.Update()
 	}
+	// Chooser-button hover follows the standard convention.
+	t.updateChooserHover(event)
 
 	// If we don't have focus, we shouldn't be processing drags
 	// (another trinket got the click and we have stale drag state)
@@ -1264,6 +1297,14 @@ func (t *TreeView) HandleFocusIn() {
 	if t.currentIndex < 0 && len(t.flatList) > 0 {
 		t.SetCurrentIndex(0)
 	}
+	// With a header, focus lands on the header BAR first (one stop);
+	// Enter drills in, Tab moves on to the content. A content click
+	// re-zones to content immediately (see HandleMousePress).
+	if t.headerHeight() > 0 {
+		t.setHeaderZone(hzBar, 0)
+	} else {
+		t.headerZone = hzContent
+	}
 	t.Update()
 }
 
@@ -1272,6 +1313,8 @@ func (t *TreeView) HandleFocusOut() {
 	// Clear any active drag state when focus is lost
 	t.isDragging = false
 	t.scrollbarDragging = false
+	t.headerZone = hzContent
+	t.closeColumnChooser()
 	t.Update()
 }
 

@@ -113,11 +113,12 @@ func (t *TreeView) ColumnByID(id string) *TreeColumn {
 // the [=] chooser button).
 func (t *TreeView) SetShowHeader(on bool) { t.showHeader = on; t.Update() }
 
-// SetOnSortRequested installs the sort-request callback: a click on a
-// sortable column's header reports the requested sort here (the
-// application reorders its items and updates the tree). sortedBy is
-// -1 for the key column, else the declared data-column index.
-func (t *TreeView) SetOnSortRequested(fn func(sortedBy int, descending bool)) {
+// SetOnSortRequested installs the sort-request observer: activating a
+// sortable header reports the new sort state here (the trinket already
+// reordered its visual rows; this is notification, not a duty).
+// sorted=false reports a return to the app's order; sortedBy is -1 for
+// the key column, else the declared data-column index.
+func (t *TreeView) SetOnSortRequested(fn func(sorted bool, sortedBy int, descending bool)) {
 	t.onSortRequested = fn
 }
 
@@ -221,22 +222,180 @@ func (t *TreeView) sortIndicatorFor(col *TreeColumn) bool {
 	return t.sorted && t.sortedBy == t.columnIndex(col)
 }
 
-// headerSortClick handles a press on a column caption: the key column
-// is always sortable; data columns opt in via Sortable. Clicking the
-// active column toggles direction, a new column starts ascending.
+// headerSortClick handles activating a column header (mouse click or
+// keyboard): the key column is always sortable; data columns opt in
+// via Sortable. Activation CYCLES the sort: ascending -> descending ->
+// unsorted (back to the app's order); a different column starts
+// ascending.
 func (t *TreeView) headerSortClick(col *TreeColumn) {
 	if col != nil && !col.Sortable {
 		return
 	}
 	by := t.columnIndex(col)
-	descending := false
+	sorted, descending := true, false
 	if t.sorted && t.sortedBy == by {
-		descending = !t.sortDescending
+		if !t.sortDescending {
+			descending = true // second activation: reverse
+		} else {
+			sorted = false // third: back to unsorted
+		}
 	}
-	t.SetSorted(true, by, descending)
+	t.SetSorted(sorted, by, descending)
 	if t.onSortRequested != nil {
-		t.onSortRequested(by, descending)
+		t.onSortRequested(sorted, by, descending)
 	}
+}
+
+// --- internal header focus zone ---
+
+// Header focus zones: the tree is one trinket in the app tab order
+// and runs its own focus machine inside (the window title-bar
+// precedent - no changes to the focus manager; the only contract is
+// "consume Tab while moving internally, release it at the ends").
+const (
+	hzContent = iota // the tree rows (the trinket's classic behavior)
+	hzBar            // the whole header bar highlighted as ONE stop
+	hzItems          // drilled in: cycling column captions + chooser
+)
+
+// headerStopCount is the number of drilled-in stops: one per visible
+// column plus the chooser button when present.
+func (t *TreeView) headerStopCount() int {
+	n := len(t.visibleColumns())
+	if _, ok := t.chooserButtonRect(); ok {
+		n++
+	}
+	return n
+}
+
+// setHeaderZone transitions the internal focus zone and announces it
+// for screen readers.
+func (t *TreeView) setHeaderZone(zone, idx int) {
+	t.headerZone, t.headerFocusIdx = zone, idx
+	t.announceHeaderZone()
+	t.Update()
+}
+
+func (t *TreeView) announceHeaderZone() {
+	d, ok := t.desktopAncestor()
+	if !ok || d.AccessibilityManager() == nil {
+		return
+	}
+	am := d.AccessibilityManager()
+	switch t.headerZone {
+	case hzBar:
+		am.AnnounceNavigation(fmt.Sprintf("Column header, %d columns. Press Enter to navigate columns.", len(t.visibleColumns())))
+	case hzItems:
+		am.AnnounceNavigation(t.headerStopLabel(t.headerFocusIdx))
+	case hzContent:
+		am.AnnounceNavigation("Tree content")
+	}
+}
+
+// headerStopLabel describes one drilled-in stop for announcements.
+func (t *TreeView) headerStopLabel(idx int) string {
+	seq := t.visibleColumns()
+	if idx >= len(seq) {
+		return "Show columns, menu button"
+	}
+	col := seq[idx]
+	name := t.keyCaption
+	sortable := true
+	if col != nil {
+		name = col.Caption
+		sortable = col.Sortable
+	}
+	state := "not sorted"
+	if t.sortIndicatorFor(col) {
+		if t.sortDescending {
+			state = "sorted descending"
+		} else {
+			state = "sorted ascending"
+		}
+	} else if !sortable {
+		state = "not sortable"
+	}
+	return fmt.Sprintf("%s column header, %s", name, state)
+}
+
+// isShiftTab matches both spellings of a backward Tab.
+func isShiftTab(event core.KeyPressEvent) bool {
+	return event.Key == "S-Tab" ||
+		(event.Key == "Tab" && event.Modifiers&core.ShiftModifier != 0)
+}
+
+// handleHeaderFocusKey runs the header zones' keyboard model. Returns
+// handled; content-zone keys fall through to the tree's own handling.
+//
+//	bar:    Enter/Space drill in - Tab -> content - S-Tab releases
+//	        backward - Down -> content - Escape -> content
+//	items:  Tab/Right next stop (past the chooser -> content) -
+//	        S-Tab/Left previous (before the first -> bar) -
+//	        Enter/Space activates (sort cycle, or opens the chooser) -
+//	        Escape -> bar
+func (t *TreeView) handleHeaderFocusKey(event core.KeyPressEvent) bool {
+	if t.headerHeight() == 0 {
+		return false
+	}
+	shiftTab := isShiftTab(event)
+	switch t.headerZone {
+	case hzContent:
+		// S-Tab backs into the header bar instead of leaving the
+		// trinket; everything else is the content's business.
+		if shiftTab {
+			t.setHeaderZone(hzBar, 0)
+			return true
+		}
+		return false
+	case hzBar:
+		switch {
+		case shiftTab:
+			t.headerZone = hzContent // release backward out of the trinket
+			return false
+		case event.Key == "Tab":
+			t.setHeaderZone(hzContent, 0)
+			return true
+		case event.Key == "Enter" || event.Key == " " || event.Key == "Space":
+			t.setHeaderZone(hzItems, 0)
+			return true
+		case event.Key == "Down" || event.Key == "Escape":
+			t.setHeaderZone(hzContent, 0)
+			return true
+		}
+		return true // the bar swallows other keys (it is the focus)
+	case hzItems:
+		n := t.headerStopCount()
+		switch {
+		case shiftTab || event.Key == "Left":
+			if t.headerFocusIdx == 0 {
+				t.setHeaderZone(hzBar, 0)
+			} else {
+				t.setHeaderZone(hzItems, t.headerFocusIdx-1)
+			}
+			return true
+		case event.Key == "Tab" || event.Key == "Right":
+			if t.headerFocusIdx+1 >= n {
+				t.setHeaderZone(hzContent, 0)
+			} else {
+				t.setHeaderZone(hzItems, t.headerFocusIdx+1)
+			}
+			return true
+		case event.Key == "Enter" || event.Key == " " || event.Key == "Space":
+			seq := t.visibleColumns()
+			if t.headerFocusIdx >= len(seq) {
+				t.openColumnChooser(true)
+			} else {
+				t.headerSortClick(seq[t.headerFocusIdx])
+				t.announceHeaderZone() // re-announce the new sort state
+			}
+			return true
+		case event.Key == "Escape":
+			t.setHeaderZone(hzBar, 0)
+			return true
+		}
+		return true
+	}
+	return false
 }
 
 // SetShowKey controls whether the tree (key) column - the original
@@ -632,14 +791,19 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
-	// Header row.
+	// Header row. The internal focus zone lights it up: hzBar paints
+	// the WHOLE bar as one focused stop; hzItems highlights just the
+	// focused caption (or the chooser button) below.
 	headerStyle := bgStyle
 	if lay.headerH > 0 {
+		if focused && t.headerZone == hzBar {
+			headerStyle = scheme.GetFocusedListItem()
+		}
 		if !p.Graphical() {
 			headerStyle = headerStyle.Underline()
 		}
 		p.FillRect(core.UnitRect{Width: bounds.Width, Height: lay.headerH}, ' ', headerStyle)
-		for _, sp := range lay.spans {
+		for i, sp := range lay.spans {
 			clip, ok := lay.spanClip(sp, lay.headerH)
 			if !ok {
 				continue
@@ -648,6 +812,16 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			if sp.col != nil {
 				caption = sp.col.Caption
 			}
+			spanStyle := headerStyle
+			if focused && t.headerZone == hzItems && t.headerFocusIdx == i {
+				// Drilled-in focus on this caption.
+				spanStyle = scheme.GetFocusedListItem()
+				if !p.Graphical() {
+					spanStyle = spanStyle.Underline()
+				}
+				p.FillRect(core.UnitRect{X: clip.X, Y: 0, Width: clip.Width, Height: lay.headerH}, ' ', spanStyle)
+			}
+			headerStyle := spanStyle
 			cp := p.WithClip(clip)
 			// Sort indicator on the active sort column - key included.
 			// Same glyph family as the tree's expander ('▼' and its
@@ -808,16 +982,22 @@ func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.
 	p.DrawText(x, y, text, s, font)
 }
 
-// chooserButtonRect is the [=] column-chooser button: the scrollbar
-// lane's header cell (upper-right corner, above the scrollbar).
+// chooserButtonRect is the [=] column-chooser button in the header's
+// upper-right corner, above the scrollbar. On pixel surfaces it is TWO
+// cells wide (a one-cell target is too small to find and fights the
+// window-edge resize band); the TUI keeps the one-cell lane.
 func (t *TreeView) chooserButtonRect() (core.UnitRect, bool) {
 	if t.headerHeight() == 0 || len(t.optionalColumns()) == 0 {
 		return core.UnitRect{}, false
 	}
 	metrics := t.EffectiveCellMetrics()
+	w := metrics.CellWidth
+	if core.FindSmoothPositioning(t.Self()) {
+		w *= 2
+	}
 	return core.UnitRect{
-		X: t.Bounds().Width - metrics.CellWidth, Y: 0,
-		Width: metrics.CellWidth, Height: t.headerHeight(),
+		X: t.Bounds().Width - w, Y: 0,
+		Width: w, Height: t.headerHeight(),
 	}, true
 }
 
@@ -826,11 +1006,21 @@ func (t *TreeView) paintChooserButton(p *core.Painter, lay treeColLayout, header
 	if !ok {
 		return
 	}
+	scheme := t.GetScheme()
+	st := headerStyle
+	keyFocused := t.HasFocus() && t.headerZone == hzItems &&
+		t.headerFocusIdx == len(lay.spans) // the stop after the columns
+	if t.chooserHovered || t.chooserOpen || keyFocused {
+		// The standard hover convention, same as every other button.
+		st = scheme.GetHoveredButton()
+	}
 	if p.Graphical() {
-		// Three short lines - a crisp "≡" at any pixel size.
-		lineW := r.Width * 3 / 5
+		p.FillRect(core.UnitRect{X: r.X, Y: r.Y, Width: r.Width, Height: r.Height}, ' ', st)
+		// Three short lines - a crisp "≡" at any pixel size, in the
+		// style's foreground so hover recolors it too.
+		lineW := r.Width / 2
 		x := r.X + (r.Width-lineW)/2
-		fr, fg, fb := t.GetScheme().GetListFG().RGBComponents()
+		fr, fg, fb := st.Fg.RGBComponents()
 		wPx := p.UnitSpanPxX(x, x+lineW)
 		gapPx := p.UnitsToPx(r.Height) / 5
 		if gapPx < 2 {
@@ -843,7 +1033,21 @@ func (t *TreeView) paintChooserButton(p *core.Painter, lay treeColLayout, header
 		return
 	}
 	// TUI: ASCII '=' per the project's text-mode conventions.
-	p.DrawCell(r.X, r.Y, '=', headerStyle)
+	p.DrawCell(r.X, r.Y, '=', st)
+}
+
+// updateChooserHover tracks pointer presence over the chooser button
+// (no-button affordance, same rule as the scrollbar thumb hover).
+func (t *TreeView) updateChooserHover(event core.MouseMoveEvent) {
+	over := false
+	if r, ok := t.chooserButtonRect(); ok && event.Buttons == 0 {
+		over = event.X >= r.X && event.X < r.X+r.Width &&
+			event.Y >= r.Y && event.Y < r.Y+r.Height
+	}
+	if over != t.chooserHovered {
+		t.chooserHovered = over
+		t.Update()
+	}
 }
 
 // optionalColumns lists the columns the chooser can toggle.
@@ -888,10 +1092,16 @@ func (t *TreeView) chooserPopupID() string {
 	return fmt.Sprintf("treeview-columns-%d", t.ObjectID())
 }
 
-// openColumnChooser drops the [=] checklist: one row per optional
-// column, checked = visible; clicking toggles. Click-away dismisses
-// (unhandled press falls through to the controller's dismiss).
-func (t *TreeView) openColumnChooser() {
+// openColumnChooser drops the [=] checklist as a REAL Menu - the same
+// gutter, checkmark, and focus styling as every menubar dropdown, and
+// the same popup-controller overlay the combobox and context menus
+// use. It always opens DOWN and to the LEFT (its right edge on the
+// button's right edge): it is an upper-right-corner button, so rightward
+// growth would leave the screen. While open the tree keeps focus and
+// forwards keys (the menubar pattern), so Up/Down/Space/Escape work and
+// the menu's accessibility announcements fire. keyboard=true preselects
+// the first item for immediate arrow/space use.
+func (t *TreeView) openColumnChooser(keyboard bool) {
 	pc := t.findTreePopupController()
 	if pc == nil {
 		return
@@ -900,92 +1110,167 @@ func (t *TreeView) openColumnChooser() {
 	if len(cols) == 0 {
 		return
 	}
-	metrics := t.EffectiveCellMetrics()
-	font := t.EffectiveFont()
-	rowH := metrics.CellHeight
-	w := core.Unit(0)
+
+	m := NewMenu("Columns")
+	// Popup menus are not parented into the trinket tree; hand down the
+	// opener's display context (metrics + font), same as the menu bar.
+	m.inheritDisplayContext(t.EffectiveCellMetrics(), t.EffectiveFont())
+	m.setGraphicalHint(core.FindSmoothPositioning(t.Self()))
+	if d, ok := t.desktopAncestor(); ok {
+		m.SetAccessibilityManager(d.AccessibilityManager())
+	}
 	for _, c := range cols {
-		if cw := font.MeasureText(c.Caption); cw > w {
-			w = cw
-		}
+		col := c
+		item := NewMenuItem(col.Caption).SetCheckable(true).SetChecked(!col.Hidden)
+		item.SetOnTriggered(func() {
+			col.Hidden = !col.Hidden
+			t.closeColumnChooser()
+			t.Update()
+		})
+		m.AddItem(item)
 	}
-	w += metrics.TextWidth(4) // "[x] " gutter + padding
-	h := rowH * core.Unit(len(cols))
 
+	// Down-and-left from the button.
 	btn, _ := t.chooserButtonRect()
-	at := pc.MapToScreen(t.Self(), core.UnitPoint{X: btn.X, Y: btn.Y + btn.Height})
+	size := m.calculateSize()
+	at := pc.MapToScreen(t.Self(), core.UnitPoint{X: btn.X + btn.Width, Y: btn.Y + btn.Height})
 	screen := pc.ScreenBounds()
-	if at.X+w > screen.X+screen.Width {
-		at.X = screen.X + screen.Width - w
+	x := at.X - size.Width
+	if x < screen.X {
+		x = screen.X
 	}
-	if at.Y+h > screen.Y+screen.Height {
-		at.Y = screen.Y + screen.Height - h
+	y := at.Y
+	if y+size.Height > screen.Y+screen.Height {
+		y = screen.Y + screen.Height - size.Height
 	}
-	bounds := core.UnitRect{X: at.X, Y: at.Y, Width: w, Height: h}
-	scheme := t.GetScheme()
+	m.Show(x, y)
+	if keyboard {
+		m.SelectFirstItem()
+	}
+	bounds := core.UnitRect{X: x, Y: y, Width: size.Width, Height: size.Height}
 
+	t.chooserMenu = m
+	t.chooserOpen = true
 	pc.RegisterPopup(&core.PopupRequest{
 		ID:     t.chooserPopupID(),
 		Bounds: bounds,
-		Paint: func(p *core.Painter) {
-			bg := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
-			p.FillRect(bounds, ' ', bg)
-			for i, c := range cols {
-				y := bounds.Y + rowH*core.Unit(i)
-				mark := "[ ] "
-				if !c.Hidden {
-					mark = "[x] "
-				}
-				p.DrawText(bounds.X+metrics.CellWidth/2, y, mark+c.Caption, bg, font)
-			}
-		},
+		Paint:  func(p *core.Painter) { m.Paint(p) },
 		HandleMousePress: func(ev core.MousePressEvent) bool {
-			pt := core.UnitPoint{X: ev.X, Y: ev.Y}
-			if !bounds.Contains(pt) {
-				pc.UnregisterPopup(t.chooserPopupID())
+			if !bounds.Contains(core.UnitPoint{X: ev.X, Y: ev.Y}) {
+				t.closeColumnChooser()
 				return false
 			}
-			i := int((ev.Y - bounds.Y) / rowH)
-			if i >= 0 && i < len(cols) {
-				cols[i].Hidden = !cols[i].Hidden
-				t.Update()
+			return m.HandleMousePress(ev)
+		},
+		HandleMouseMove: m.HandleMouseMove,
+		HandleMouseRelease: func(ev core.MouseReleaseEvent) bool {
+			// The press selected; the release triggers (the menu bar's
+			// drag-mode contract, played standalone here).
+			if bounds.Contains(core.UnitPoint{X: ev.X, Y: ev.Y}) {
+				if item := m.CurrentItem(); item != nil && item.Enabled && !item.Separator {
+					item.Trigger()
+				}
 			}
 			return true
 		},
-		HandleMouseMove:    func(core.MouseMoveEvent) bool { return true },
-		HandleMouseRelease: func(core.MouseReleaseEvent) bool { return true },
+		HandleMouseWheel: m.HandleMouseWheel,
 	})
+	t.Update()
+}
+
+// closeColumnChooser dismisses the chooser menu overlay.
+func (t *TreeView) closeColumnChooser() {
+	if !t.chooserOpen {
+		return
+	}
+	t.chooserOpen = false
+	if t.chooserMenu != nil {
+		t.chooserMenu.Hide()
+		t.chooserMenu = nil
+	}
+	if pc := t.findTreePopupController(); pc != nil {
+		pc.UnregisterPopup(t.chooserPopupID())
+	}
+	t.Update()
+}
+
+// desktopAncestor walks up for the owning Desktop (accessibility hookup).
+func (t *TreeView) desktopAncestor() (*Desktop, bool) {
+	for p := core.Container(t.Parent()); p != nil; {
+		if d, ok := p.(*Desktop); ok {
+			return d, true
+		}
+		tr, ok := p.(core.Trinket)
+		if !ok {
+			return nil, false
+		}
+		p = tr.Parent()
+	}
+	return nil, false
+}
+
+// handleChooserKey routes keys to the open chooser menu (the tree
+// retains focus and forwards, exactly like the menu bar): navigation
+// and toggling go to the Menu, Escape dismisses, everything else is
+// swallowed while the menu is up.
+func (t *TreeView) handleChooserKey(event core.KeyPressEvent) bool {
+	if !t.chooserOpen || t.chooserMenu == nil {
+		return false
+	}
+	if event.Key == "Escape" {
+		t.closeColumnChooser()
+		return true
+	}
+	t.chooserMenu.HandleKeyPress(event)
+	return true
 }
 
 // dividerAt returns the column resized by a drag starting at header
-// position x: the span left of the divider cell containing x.
-func (t *TreeView) dividerAt(x core.Unit, lay treeColLayout) (*TreeColumn, int, bool) {
+// position x, and whether the delta INVERTS. Which side a divider
+// sizes depends on where the slack lives: normally it sizes the column
+// to its LEFT (boundary follows the mouse, columns to the right shift
+// into the slack). But when the auto-fill column (the fit-mode key,
+// which absorbs the slack) lies LEFT of the divider, sizing the left
+// column would move a boundary other than the one under the mouse - so
+// the divider sizes the column to its RIGHT instead, with the delta
+// inverted (drag right = that column narrower). Either way the grabbed
+// boundary tracks the mouse and the far edges stay put.
+func (t *TreeView) dividerAt(x core.Unit, lay treeColLayout) (col *TreeColumn, startW int, invert, ok bool) {
 	cw := t.EffectiveCellMetrics().CellWidth
+	slackLeft := t.fitWidth && len(lay.spans) > 0 && lay.spans[0].col == nil
 	for i, sp := range lay.spans {
 		if !lay.divVisible(sp) {
 			continue
 		}
-		if x >= sp.divX && x < sp.divX+cw {
-			if sp.col == nil {
-				// The key column: resizable in scroll mode only (fit
-				// mode sizes it automatically from the leftover).
-				if t.fitWidth {
-					return nil, 0, false
-				}
-				kw := t.keyWidth
-				if kw <= 0 {
-					kw = treeKeyDefaultCells
-				}
-				return nil, kw, true
-			}
-			if !sp.col.Resizable {
-				return nil, 0, false
-			}
-			return sp.col, sp.col.clampWidth(sp.col.Width), true
+		if x < sp.divX || x >= sp.divX+cw {
+			continue
 		}
-		_ = i
+		if slackLeft {
+			// The auto-fill key column is left of every divider: size
+			// the column to the divider's RIGHT, inverted.
+			if i+1 >= len(lay.spans) {
+				return nil, 0, false, false
+			}
+			right := lay.spans[i+1].col
+			if right == nil || !right.Resizable {
+				return nil, 0, false, false
+			}
+			return right, right.clampWidth(right.Width), true, true
+		}
+		if sp.col == nil {
+			// The key column in scroll mode sizes by its own width.
+			kw := t.keyWidth
+			if kw <= 0 {
+				kw = treeKeyDefaultCells
+			}
+			return nil, kw, false, true
+		}
+		if !sp.col.Resizable {
+			return nil, 0, false, false
+		}
+		return sp.col, sp.col.clampWidth(sp.col.Width), false, true
 	}
-	return nil, 0, false
+	return nil, 0, false, false
 }
 
 // handleMultiPress handles presses in the header band (chooser button,
@@ -999,15 +1284,16 @@ func (t *TreeView) handleMultiPress(event core.MousePressEvent) bool {
 		return false
 	}
 	if r, ok := t.chooserButtonRect(); ok && event.X >= r.X && event.X < r.X+r.Width {
-		t.openColumnChooser()
+		t.openColumnChooser(false)
 		return true
 	}
 	lay := t.columnLayout()
-	if col, startW, ok := t.dividerAt(event.X, lay); ok {
+	if col, startW, invert, ok := t.dividerAt(event.X, lay); ok {
 		t.colDragging = true
 		t.colDragCol = col
 		t.colDragStartX = event.X
 		t.colDragStartW = startW
+		t.colDragInvert = invert
 		return true
 	}
 	// A click on a column caption requests a sort (the key column is
@@ -1032,6 +1318,9 @@ func (t *TreeView) handleMultiMove(event core.MouseMoveEvent) bool {
 	}
 	cw := t.EffectiveCellMetrics().CellWidth
 	deltaCells := int((event.X - t.colDragStartX) / cw)
+	if t.colDragInvert {
+		deltaCells = -deltaCells
+	}
 	w := t.colDragStartW + deltaCells
 	if t.colDragCol != nil {
 		if nw := t.colDragCol.clampWidth(w); nw != t.colDragCol.Width {

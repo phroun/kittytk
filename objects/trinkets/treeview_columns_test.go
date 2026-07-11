@@ -245,7 +245,8 @@ func TestTreeColumnHiddenAndChooser(t *testing.T) {
 		t.Errorf("chooser at %v", r)
 	}
 
-	// Press on the button opens the popup on the ancestor's controller.
+	// Press on the button opens the REAL Menu popup on the ancestor's
+	// controller (same overlay path as combobox/context menus).
 	host := &recordingPopupController{}
 	parent := NewPanel()
 	parent.SetPopupController(host)
@@ -253,85 +254,138 @@ func TestTreeColumnHiddenAndChooser(t *testing.T) {
 	if !tv.HandleMousePress(core.MousePressEvent{X: r.X, Y: r.Y, Button: core.LeftButton}) {
 		t.Fatal("chooser press not handled")
 	}
-	if host.popup == nil {
-		t.Fatal("no popup registered")
+	if host.popup == nil || tv.chooserMenu == nil {
+		t.Fatal("no menu popup registered")
 	}
-	// Click the second row (the hidden "kind" column) to re-show it.
-	row1 := core.UnitPoint{X: host.popup.Bounds.X + 4, Y: host.popup.Bounds.Y + 16 + 1}
-	if !host.popup.HandleMousePress(core.MousePressEvent{X: row1.X, Y: row1.Y, Button: core.LeftButton}) {
-		t.Fatal("popup press not handled")
+	if len(tv.chooserMenu.Items()) != 2 {
+		t.Fatalf("chooser menu items = %d, want 2", len(tv.chooserMenu.Items()))
 	}
+	// The tree retains focus and forwards keys (the menu bar pattern):
+	// Down, Down, Enter toggles the second item - the hidden "kind".
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
 	if tv.ColumnByID("kind").Hidden {
-		t.Error("chooser click did not unhide the column")
+		t.Error("chooser keyboard toggle did not unhide the column")
+	}
+	if tv.chooserOpen {
+		t.Error("menu should close after triggering an item")
+	}
+	// Escape path: reopen, dismiss.
+	tv.openColumnChooser(true)
+	if !tv.chooserOpen {
+		t.Fatal("reopen failed")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+	if tv.chooserOpen || host.popup != nil {
+		t.Error("Escape did not dismiss the chooser")
 	}
 }
 
-// Divider drag resizes the column left of the divider, clamped.
+// Divider drags size the side the slack dictates. Fit mode with the
+// auto-fill key column on the left: every divider sizes the column to
+// its RIGHT with the delta inverted, so the grabbed boundary follows
+// the mouse (sizing the left column would move a DIFFERENT boundary -
+// the drag felt like pulling the wrong end). Scroll mode has no slack
+// column: the classic left-column sizing applies.
 func TestTreeColumnDividerDrag(t *testing.T) {
 	tv := newColumnsTree(60, 10)
 	lay := tv.columnLayout()
-	divX := lay.spans[1].divX // divider right of the Size column
+	divX := lay.spans[1].divX // divider between Size and Kind
 
 	if !tv.HandleMousePress(core.MousePressEvent{X: divX + 2, Y: 4, Button: core.LeftButton}) {
 		t.Fatal("divider press not handled")
 	}
-	if !tv.colDragging {
-		t.Fatal("divider press did not start a drag")
+	if !tv.colDragging || !tv.colDragInvert {
+		t.Fatalf("fit-mode drag: dragging=%v invert=%v, want true/true", tv.colDragging, tv.colDragInvert)
 	}
+	// Slack (key) is left: drag RIGHT 4 cells -> Kind (the right column)
+	// gets 4 cells NARROWER, the grabbed boundary moves right with the
+	// mouse, and Kind's right edge stays put.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 4*8, Y: 4, Buttons: 1})
-	if got := tv.ColumnByID("size").Width; got != 14 {
-		t.Errorf("dragged width=%d, want 14", got)
+	if got := tv.ColumnByID("kind").Width; got != 8 {
+		t.Errorf("inverted drag: kind width=%d, want 8", got)
+	}
+	if got := tv.ColumnByID("size").Width; got != 10 {
+		t.Errorf("inverted drag touched the left column: size=%d, want 10", got)
 	}
 	tv.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
 	if tv.colDragging {
 		t.Error("release did not end the drag")
 	}
 
-	// Non-resizable columns refuse.
+	// Scroll mode (no slack column): the divider sizes the column to
+	// its LEFT, classic semantics.
+	tv.SetFitWidth(false)
+	tv.SetKeyWidth(15)
+	lay = tv.columnLayout()
+	divX = lay.spans[1].divX
+	tv.HandleMousePress(core.MousePressEvent{X: divX + 2, Y: 4, Button: core.LeftButton})
+	if !tv.colDragging || tv.colDragInvert {
+		t.Fatalf("scroll-mode drag: dragging=%v invert=%v, want true/false", tv.colDragging, tv.colDragInvert)
+	}
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 4*8, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("size").Width; got != 14 {
+		t.Errorf("scroll-mode drag: size width=%d, want 14", got)
+	}
+	tv.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+
+	// Non-resizable right column refuses the inverted drag.
+	tv.SetFitWidth(true)
 	tv.ColumnByID("kind").Resizable = false
 	lay = tv.columnLayout()
-	if tv.HandleMousePress(core.MousePressEvent{X: lay.spans[1].divX + 2, Y: 4, Button: core.LeftButton}); tv.colDragging {
-		// spans[1].divX is the divider LEFT of kind - it resizes size, fine.
-		tv.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+	tv.HandleMousePress(core.MousePressEvent{X: lay.spans[1].divX + 2, Y: 4, Button: core.LeftButton})
+	if tv.colDragging {
+		t.Error("divider left of a non-resizable column started a drag in fit mode")
 	}
 }
 
-// A click on a sortable header caption toggles the sort state and
-// fires the request callback; non-sortable data captions do nothing;
-// the key column is always sortable (sortedBy -1).
+// Activating a sortable header cycles ascending -> descending ->
+// unsorted and fires the observer; non-sortable data captions do
+// nothing; the key column is always sortable (sortedBy -1).
 func TestTreeColumnSortClick(t *testing.T) {
 	tv := newColumnsTree(60, 10)
 	tv.ColumnByID("size").Sortable = true
 
+	var gotSorted, gotDesc bool
 	var gotBy int
-	var gotDesc bool
 	calls := 0
-	tv.SetOnSortRequested(func(by int, desc bool) { gotBy, gotDesc = by, desc; calls++ })
+	tv.SetOnSortRequested(func(sorted bool, by int, desc bool) {
+		gotSorted, gotBy, gotDesc = sorted, by, desc
+		calls++
+	})
 
 	lay := tv.columnLayout()
 	x := lay.spans[1].x + 8 // inside the Size caption (data index 0)
-	tv.HandleMousePress(core.MousePressEvent{X: x, Y: 4, Button: core.LeftButton})
-	if calls != 1 || gotBy != 0 || gotDesc {
-		t.Fatalf("first click: calls=%d by=%d desc=%v", calls, gotBy, gotDesc)
+	click := func(cx core.Unit) {
+		tv.HandleMousePress(core.MousePressEvent{X: cx, Y: 4, Button: core.LeftButton})
 	}
-	tv.HandleMousePress(core.MousePressEvent{X: x, Y: 4, Button: core.LeftButton})
-	if calls != 2 || !gotDesc {
-		t.Fatalf("second click should toggle descending: calls=%d desc=%v", calls, gotDesc)
+	click(x)
+	if calls != 1 || !gotSorted || gotBy != 0 || gotDesc {
+		t.Fatalf("first click: calls=%d sorted=%v by=%d desc=%v", calls, gotSorted, gotBy, gotDesc)
 	}
-	if sorted, by, desc := tv.Sorted(); !sorted || by != 0 || !desc {
-		t.Errorf("state = %v/%d/%v", sorted, by, desc)
+	click(x)
+	if calls != 2 || !gotSorted || !gotDesc {
+		t.Fatalf("second click should reverse: calls=%d sorted=%v desc=%v", calls, gotSorted, gotDesc)
+	}
+	click(x)
+	if calls != 3 || gotSorted {
+		t.Fatalf("third click should unsort: calls=%d sorted=%v", calls, gotSorted)
+	}
+	if sorted, _, _ := tv.Sorted(); sorted {
+		t.Errorf("view still sorted after the cycle completed")
 	}
 
 	// Kind (data index 1) is not sortable: no callback.
-	tv.HandleMousePress(core.MousePressEvent{X: lay.spans[2].x + 8, Y: 4, Button: core.LeftButton})
-	if calls != 2 {
+	click(lay.spans[2].x + 8)
+	if calls != 3 {
 		t.Errorf("non-sortable caption fired the callback")
 	}
 
 	// The key column is always sortable: sortedBy -1.
-	tv.HandleMousePress(core.MousePressEvent{X: lay.spans[0].x + 8, Y: 4, Button: core.LeftButton})
-	if calls != 3 || gotBy != -1 || gotDesc {
-		t.Errorf("key caption click: calls=%d by=%d desc=%v", calls, gotBy, gotDesc)
+	click(lay.spans[0].x + 8)
+	if calls != 4 || !gotSorted || gotBy != -1 || gotDesc {
+		t.Errorf("key caption click: calls=%d sorted=%v by=%d desc=%v", calls, gotSorted, gotBy, gotDesc)
 	}
 }
 

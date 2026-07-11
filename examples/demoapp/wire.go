@@ -320,6 +320,10 @@ func (a *app) wireDetails() {
 		return ui.Object(name).ID()
 	}))
 	dtree.On("sort", func(ev *protocol.Event) {
+		if ev.Flag("sorted") != protocol.FlagTrue {
+			a.setStatus("Details: unsorted (app order)")
+			return
+		}
 		by, _ := ev.Int("sortedby")
 		dir := "ascending"
 		if ev.Flag("descending") == protocol.FlagTrue {
