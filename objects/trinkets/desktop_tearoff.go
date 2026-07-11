@@ -207,6 +207,13 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	host.SetOnClosed(func() { d.dropTornHost(host) })
 	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)
 
+	// App/window modals block this torn window across surfaces just as they
+	// block in-surface windows; a press while blocked surfaces (OS-restores)
+	// the blocking modal, mirroring the in-surface dock restore.
+	host.SetModalChecker(
+		func() bool { return d.windowManager.IsTornWindowBlocked(win) },
+		func() { d.surfaceBlockingModal(win) })
+
 	// The torn surface drives the same system-cursor control as the
 	// desktop, so resize/edge and text cursors work over it too.
 	if cc, ok := plat.(platform.CursorController); ok {
@@ -266,6 +273,43 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 		d.windowFocusChanged(win)
 	}
 	return host
+}
+
+// tornHostForWindow returns the torn host currently hosting win, or nil.
+func (d *Desktop) tornHostForWindow(win *window.Window) *window.TearOffHost {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for _, h := range d.tornHosts {
+		if h.Window() == win {
+			return h
+		}
+	}
+	return nil
+}
+
+// surfaceBlockingModal is called when a press lands on a modally-blocked torn
+// window: if the application modal that blocks it is minimized, restore it -
+// OS-restoring a torn modal, or dock-restoring an in-surface one - so the user
+// is pulled to the modal they must resolve. Mirrors the in-surface pattern
+// where clicking a blocked window (or the wallpaper) surfaces a minimized
+// modal, with OS-level restore standing in for the desktop dock.
+func (d *Desktop) surfaceBlockingModal(win *window.Window) {
+	wm := d.windowManager
+	if wm == nil {
+		return
+	}
+	modal := wm.TopAppModal(win.AppID())
+	if modal == nil || !modal.IsMinimized() {
+		return
+	}
+	if h := d.tornHostForWindow(modal); h != nil {
+		if r, ok := h.Surface().(platform.NativeRestorer); ok {
+			r.Restore()
+			modal.Restore()
+			return
+		}
+	}
+	wm.RestoreWindow(modal)
 }
 
 // tearOffFollowers tears every non-tearable child of app (other than the

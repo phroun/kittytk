@@ -393,3 +393,39 @@ func TestTearOffHostOwnsPopups(t *testing.T) {
 		t.Error("popup still active after an outside press closed it")
 	}
 }
+
+// A modally-blocked torn window swallows all input: a press surfaces the
+// blocking modal (onBlockedPress) and is consumed, move/release/key are
+// consumed, and focus events still pass through. When unblocked, input flows
+// again and onBlockedPress no longer fires.
+func TestTornHostModalBlockedSuppressesInput(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}}
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+
+	blocked := true
+	presses := 0
+	h.SetModalChecker(func() bool { return blocked }, func() { presses++ })
+
+	if !h.Event(core.MousePressEvent{X: 50, Y: 50, Button: core.LeftButton}) {
+		t.Error("a blocked press should be consumed")
+	}
+	if presses != 1 {
+		t.Errorf("onBlockedPress fired %d times, want 1", presses)
+	}
+	if !h.Event(core.KeyPressEvent{Key: "a"}) {
+		t.Error("a blocked key should be consumed")
+	}
+	// Focus still updates while blocked (chrome must stay correct).
+	h.Event(core.FocusEvent{Focused: true})
+	if !win.IsActive() {
+		t.Error("a focus event should pass through while blocked")
+	}
+
+	// Unblocked: onBlockedPress must not fire on further presses.
+	blocked = false
+	h.Event(core.MousePressEvent{X: 50, Y: 50, Button: core.LeftButton})
+	if presses != 1 {
+		t.Errorf("onBlockedPress fired while unblocked (count=%d)", presses)
+	}
+}

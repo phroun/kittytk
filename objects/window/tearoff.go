@@ -33,6 +33,14 @@ type TearOffHost struct {
 	// focused (the window still borrows the desktop's menu bar line).
 	onFocus func(focused bool)
 
+	// modalBlocked reports whether this torn window is suppressed by an
+	// application- or window-level modal of its app (across surfaces).
+	// onBlockedPress fires on a press while blocked so the desktop can
+	// surface the blocking modal - OS-restoring it if it is minimized -
+	// mirroring the in-surface "click a blocked window to reach the modal".
+	modalBlocked   func() bool
+	onBlockedPress func()
+
 	savedFlags WindowFlags
 
 	dragging bool
@@ -210,6 +218,20 @@ func (h *TearOffHost) SetOnClosed(fn func()) { h.onClosed = fn }
 // loses OS focus, letting the desktop point its menu bar at this
 // window's app when it becomes focused.
 func (h *TearOffHost) SetOnFocus(fn func(focused bool)) { h.onFocus = fn }
+
+// SetModalChecker wires the app/window modal state: blocked reports whether
+// this torn window is currently suppressed by a modal, and onBlockedPress
+// runs on a press while blocked (so the desktop can OS-restore a minimized
+// blocking modal). Either may be nil.
+func (h *TearOffHost) SetModalChecker(blocked func() bool, onBlockedPress func()) {
+	h.modalBlocked = blocked
+	h.onBlockedPress = onBlockedPress
+}
+
+// isModalBlocked reports whether this torn window is currently modal-blocked.
+func (h *TearOffHost) isModalBlocked() bool {
+	return h.modalBlocked != nil && h.modalBlocked()
+}
 
 // SetCursorSetter wires the platform's system-cursor control so the torn
 // surface can update the mouse cursor as the pointer moves over its edges
@@ -459,6 +481,12 @@ func (h *TearOffHost) Frame(p *core.Painter) {
 		return
 	}
 	h.win.Paint(p)
+	// A modally-blocked torn window is darkened, mirroring an in-surface
+	// window suppressed by a modal.
+	if h.isModalBlocked() {
+		b := h.win.Bounds()
+		h.win.PaintModalDim(p, core.UnitRect{Width: b.Width, Height: b.Height})
+	}
 	for _, popup := range h.popups {
 		if popup.Paint != nil {
 			popup.Paint(p)
@@ -471,6 +499,22 @@ func (h *TearOffHost) Frame(p *core.Painter) {
 // starts an OS-window drag, mirroring the WindowManager's in-surface
 // title drag.
 func (h *TearOffHost) Event(ev core.Event) bool {
+	// A modally-blocked torn window ignores all input: a press surfaces the
+	// blocking modal (OS-restoring it if minimized), everything else is
+	// swallowed. Focus/leave events still pass so chrome and hover stay sane.
+	if !h.ghost && h.isModalBlocked() {
+		switch ev.(type) {
+		case core.MousePressEvent:
+			if h.onBlockedPress != nil {
+				h.onBlockedPress()
+			}
+			return true
+		case core.MouseMoveEvent, core.MouseReleaseEvent, core.MouseWheelEvent,
+			core.KeyPressEvent, core.KeyReleaseEvent:
+			return true
+		}
+	}
+
 	var handled bool
 	switch e := ev.(type) {
 	case core.FocusEvent:
