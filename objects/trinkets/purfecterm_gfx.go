@@ -1875,7 +1875,9 @@ func (t *PurfecTerm) CopySelection() {
 }
 
 // PasteClipboard sends the clipboard to the PTY (bracketed when the
-// application enabled bracketed paste mode).
+// application enabled bracketed paste mode). The clipboard read may be
+// asynchronous (a terminal OSC 52 query can prompt the user), so the desktop
+// resolves it and calls back on the UI thread; SDL/internal reads are immediate.
 func (t *PurfecTerm) PasteClipboard() {
 	if t.terminal == nil {
 		return
@@ -1884,8 +1886,13 @@ func (t *PurfecTerm) PasteClipboard() {
 	if d == nil {
 		return
 	}
-	s := d.Clipboard()
-	if s == "" {
+	d.ReadClipboardAsync(func(s string) { t.sendPaste(s) })
+}
+
+// sendPaste writes resolved clipboard text to the child PTY, bracketing it when
+// the application enabled bracketed paste mode.
+func (t *PurfecTerm) sendPaste(s string) {
+	if t.terminal == nil || s == "" {
 		return
 	}
 	if t.terminal.Buffer().IsBracketedPasteModeEnabled() {

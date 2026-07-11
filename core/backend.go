@@ -109,6 +109,25 @@ type RenderBackend interface {
 	Beep()
 }
 
+// AsyncClipboardReader is an optional RenderBackend capability for surfaces
+// whose clipboard read is asynchronous - a terminal answering an OSC 52 query
+// may prompt the user for permission or otherwise take an unbounded time. The
+// desktop uses it to drive a "waiting for clipboard" affordance instead of
+// blocking the event loop. Backends whose read is instant (SDL) omit it, and
+// callers use the synchronous GetClipboard.
+type AsyncClipboardReader interface {
+	// RequestClipboardRead asks the host/terminal for its clipboard. It returns
+	// false when an async read isn't available or applicable right now (the
+	// caller should fall back to GetClipboard); when true, the handler set via
+	// SetClipboardReadHandler will be invoked with the reply if/when it arrives
+	// (it may never arrive - the caller decides how long to wait).
+	RequestClipboardRead() bool
+
+	// SetClipboardReadHandler registers the single callback invoked (possibly
+	// on another goroutine) when a clipboard response arrives.
+	SetClipboardReadHandler(func(text string))
+}
+
 // SmoothPositioner is an optional RenderBackend capability: true
 // when the surface can place window chrome at arbitrary unit
 // positions (pixel surfaces). Cell-only surfaces (terminals) omit it

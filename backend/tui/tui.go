@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 	"unicode/utf8"
 
 	"github.com/phroun/kittytk/backend/tui/keyboard"
@@ -73,12 +72,14 @@ type TUIBackend struct {
 	clipboard string
 	osc52     bool
 
-	// osc52Paste enables OSC 52 read-back: Paste queries the terminal for the
-	// clipboard and uses its reply, falling back to the internal clipboard if
-	// none arrives. osc52Resp carries the decoded reply from the keyboard
-	// handler's OnClipboard callback (latest-wins, buffered size 1).
-	osc52Paste bool
-	osc52Resp  chan string
+	// osc52Paste enables OSC 52 read-back: a clipboard read queries the
+	// terminal (RequestClipboardRead) and the reply arrives asynchronously via
+	// the keyboard handler's OnClipboard callback. onClipboardRead is the
+	// registered sink for that reply (see SetClipboardReadHandler); the desktop
+	// wires it to drive a "waiting for clipboard" modal so the event loop is
+	// never blocked while the terminal prompts the user.
+	osc52Paste      bool
+	onClipboardRead func(string)
 }
 
 // TUIOptions configures the TUI backend.
@@ -149,9 +150,6 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		hasUnicode: true, // Assume Unicode support
 		osc52:      opts.OSC52Clipboard,
 		osc52Paste: opts.OSC52Paste,
-	}
-	if opts.OSC52Paste {
-		t.osc52Resp = make(chan string, 1)
 	}
 	return t
 }
@@ -224,16 +222,10 @@ func (t *TUIBackend) Init() error {
 	t.keyboard.OnKey = t.handleKey
 	if t.osc52Paste {
 		// OSC 52 clipboard responses (replies to our read query) are delivered
-		// here, not as keystrokes; GetClipboard drains the latest.
+		// here, not as keystrokes: keep the internal copy in sync and notify the
+		// registered reader (the desktop resolves the pending paste).
 		t.keyboard.OnClipboard = func(_ byte, data []byte) {
-			select {
-			case <-t.osc52Resp:
-			default:
-			}
-			select {
-			case t.osc52Resp <- string(data):
-			default:
-			}
+			t.deliverClipboard(string(data))
 		}
 	}
 
@@ -780,42 +772,49 @@ func (t *TUIBackend) ColorDepth() int {
 	return t.colorDepth
 }
 
-// osc52ReadTimeout bounds how long Paste waits for the terminal to answer an
-// OSC 52 clipboard query before falling back to the internal clipboard.
-const osc52ReadTimeout = 120 * time.Millisecond
-
-// GetClipboard returns the clipboard contents. With OSC 52 read-back enabled it
-// queries the terminal for its clipboard (ESC ] 52 ; c ; ? BEL) and returns the
-// reply, gracefully falling back to the host's internal clipboard if the
-// terminal doesn't answer within osc52ReadTimeout (many terminals disable read
-// for security). Otherwise it returns the internal clipboard - what Copy/Cut
-// last stored; pasting from OUTSIDE the app then arrives through the terminal's
-// own bracketed paste as ordinary input.
+// GetClipboard returns the host's internal clipboard - what Copy/Cut last
+// stored (and the latest OSC 52 read-back reply, which is mirrored into it).
+// This never blocks; the actual terminal query is the async RequestClipboardRead
+// path (the AsyncClipboardReader capability), which the desktop drives so it can
+// show a "waiting for clipboard" modal while the terminal prompts the user.
 func (t *TUIBackend) GetClipboard() string {
 	t.mu.Lock()
-	internal := t.clipboard
-	doRead := t.osc52Paste && t.output != nil && t.osc52Resp != nil
-	if doRead {
-		// Drop any stale reply, then ask for the current clipboard.
-		select {
-		case <-t.osc52Resp:
-		default:
-		}
-		fmt.Fprint(t.output, "\033]52;c;?\a")
-	}
-	t.mu.Unlock()
+	defer t.mu.Unlock()
+	return t.clipboard
+}
 
-	if !doRead {
-		return internal
+// RequestClipboardRead implements core.AsyncClipboardReader: it emits the OSC 52
+// read query (ESC ] 52 ; c ; ? BEL) and returns whether a reply may arrive.
+// When read-back is disabled it returns false so the caller uses the internal
+// clipboard. The reply (if any) is delivered to the handler registered with
+// SetClipboardReadHandler.
+func (t *TUIBackend) RequestClipboardRead() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.osc52Paste || t.output == nil {
+		return false
 	}
-	select {
-	case s := <-t.osc52Resp:
-		t.mu.Lock()
-		t.clipboard = s // keep the internal copy in sync
-		t.mu.Unlock()
-		return s
-	case <-time.After(osc52ReadTimeout):
-		return internal // terminal stayed silent: graceful fallback
+	fmt.Fprint(t.output, "\033]52;c;?\a")
+	return true
+}
+
+// SetClipboardReadHandler implements core.AsyncClipboardReader.
+func (t *TUIBackend) SetClipboardReadHandler(fn func(text string)) {
+	t.mu.Lock()
+	t.onClipboardRead = fn
+	t.mu.Unlock()
+}
+
+// deliverClipboard records a clipboard read-back reply (from the keyboard
+// handler's OSC 52 callback) into the internal clipboard and notifies the
+// registered read handler.
+func (t *TUIBackend) deliverClipboard(s string) {
+	t.mu.Lock()
+	t.clipboard = s
+	h := t.onClipboardRead
+	t.mu.Unlock()
+	if h != nil {
+		h(s)
 	}
 }
 

@@ -5,12 +5,13 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
-	"time"
 )
 
-// With read-back enabled, GetClipboard emits the OSC 52 query and returns the
-// terminal's reply (delivered on osc52Resp as the keyboard handler would).
-func TestTUIClipboardReadBackSuccess(t *testing.T) {
+// With read-back enabled, RequestClipboardRead emits the OSC 52 query and
+// reports that a reply may arrive. GetClipboard itself never blocks - it just
+// returns the internal clipboard, which the registered handler updates when the
+// terminal answers.
+func TestTUIClipboardRequestRead(t *testing.T) {
 	var out bytes.Buffer
 	opts := DefaultTUIOptions()
 	opts.Output = &out
@@ -18,39 +19,46 @@ func TestTUIClipboardReadBackSuccess(t *testing.T) {
 	opts.OSC52Paste = true
 	b := NewTUIBackend(opts)
 	b.SetClipboard("internal-old")
+	out.Reset()
 
-	// Deliver the terminal's reply shortly after the query goes out.
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		b.osc52Resp <- "from-terminal"
-	}()
-
-	if got := b.GetClipboard(); got != "from-terminal" {
-		t.Errorf("read-back = %q, want from-terminal", got)
+	if !b.RequestClipboardRead() {
+		t.Fatal("RequestClipboardRead should report a possible reply")
 	}
 	if !strings.Contains(out.String(), "\033]52;c;?\a") {
 		t.Errorf("OSC 52 query not emitted; output = %q", out.String())
 	}
+	// GetClipboard is non-blocking and returns the internal value.
+	if got := b.GetClipboard(); got != "internal-old" {
+		t.Errorf("GetClipboard = %q, want internal-old", got)
+	}
 }
 
-// When the terminal stays silent, GetClipboard falls back to the internal
-// clipboard after the timeout.
-func TestTUIClipboardReadBackFallback(t *testing.T) {
+// The registered read handler receives the terminal's reply (as the keyboard
+// handler's OnClipboard callback would deliver it) and the internal clipboard
+// is updated to match.
+func TestTUIClipboardReadHandler(t *testing.T) {
 	var out bytes.Buffer
 	opts := DefaultTUIOptions()
 	opts.Output = &out
 	opts.OSC52Paste = true
 	b := NewTUIBackend(opts)
-	b.SetClipboard("internal-fallback")
 
-	if got := b.GetClipboard(); got != "internal-fallback" {
-		t.Errorf("silent-terminal fallback = %q, want internal-fallback", got)
+	got := ""
+	b.SetClipboardReadHandler(func(s string) { got = s })
+	// Simulate the keyboard handler delivering an OSC 52 reply.
+	b.deliverClipboard("from-terminal")
+
+	if got != "from-terminal" {
+		t.Errorf("read handler got %q, want from-terminal", got)
+	}
+	if cb := b.GetClipboard(); cb != "from-terminal" {
+		t.Errorf("internal clipboard = %q, want from-terminal", cb)
 	}
 }
 
-// Without read-back, GetClipboard never queries the terminal - it just returns
-// the internal clipboard.
-func TestTUIClipboardNoReadBackNoQuery(t *testing.T) {
+// Without read-back, RequestClipboardRead reports false and emits nothing - the
+// caller uses the internal clipboard.
+func TestTUIClipboardNoReadBack(t *testing.T) {
 	var out bytes.Buffer
 	opts := DefaultTUIOptions()
 	opts.Output = &out
@@ -59,11 +67,14 @@ func TestTUIClipboardNoReadBackNoQuery(t *testing.T) {
 	b.SetClipboard("kept")
 	out.Reset() // ignore the SetClipboard OSC 52 write
 
-	if got := b.GetClipboard(); got != "kept" {
-		t.Errorf("GetClipboard = %q, want kept", got)
+	if b.RequestClipboardRead() {
+		t.Error("read-back off: RequestClipboardRead should report false")
 	}
 	if out.Len() != 0 {
 		t.Errorf("read-back off should emit no query, got %q", out.String())
+	}
+	if got := b.GetClipboard(); got != "kept" {
+		t.Errorf("GetClipboard = %q, want kept", got)
 	}
 }
 

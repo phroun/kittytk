@@ -212,6 +212,12 @@ type Desktop struct {
 	notifyTimer  *DesktopTimer
 	notifyGen    int
 
+	// clipWait tracks an in-progress asynchronous clipboard read (the terminal
+	// may prompt the user for OSC 52 permission). At most one runs at a time.
+	// All access is on the UI thread (ReadClipboardAsync, timer callbacks, and
+	// the read handler's Post), so no lock is needed.
+	clipWait *clipboardWait
+
 	// Callbacks
 	onStartup  func()
 	onShutdown func()
@@ -367,6 +373,15 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	defer d.mu.Unlock()
 
 	d.backend = backend
+
+	// Async clipboard read (OSC 52 terminal query): route the reply onto the UI
+	// thread so ReadClipboardAsync can resolve its pending paste / dismiss the
+	// waiting modal.
+	if reader, ok := backend.(core.AsyncClipboardReader); ok {
+		reader.SetClipboardReadHandler(func(text string) {
+			d.Post(func() { d.onClipboardResponse(text) })
+		})
+	}
 
 	// The desktop roots the grid-metrics inheritance chain: seed its
 	// override from the backend so every trinket inherits the display
@@ -3087,6 +3102,119 @@ func (d *Desktop) SetClipboard(text string) {
 	if backend != nil {
 		backend.SetClipboard(text)
 	}
+}
+
+// clipboardGraceDelay is how long an async clipboard read waits for the
+// terminal to answer before putting up the "waiting for clipboard" modal. A
+// terminal that answers instantly (no permission prompt) resolves within this
+// window, so no modal flashes; a terminal that prompts the user does not, so
+// the modal appears to explain the wait.
+const clipboardGraceDelay = 300 * time.Millisecond
+
+// clipboardWait is one in-progress asynchronous clipboard read.
+type clipboardWait struct {
+	onResult func(string) // delivered exactly once
+	internal string       // fallback (host-internal clipboard) if none arrives
+	resolved bool
+	timer    *DesktopTimer
+	modal    *MessageBox
+	closing  bool // the modal's own Cancel is closing it; don't double-close
+}
+
+// ReadClipboardAsync resolves the clipboard, calling onResult exactly once on
+// the UI thread. When the backend reads synchronously (SDL, or read-back off)
+// it resolves immediately with GetClipboard. When the backend reads
+// asynchronously (a terminal OSC 52 query that may prompt the user), it fires
+// the query, and if no reply lands within clipboardGraceDelay it raises a
+// "Waiting for Clipboard" system modal with a Cancel button: a reply closes the
+// modal and delivers it; Cancel delivers the internal clipboard instead.
+func (d *Desktop) ReadClipboardAsync(onResult func(string)) {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+
+	internal := ""
+	if backend != nil {
+		internal = backend.GetClipboard()
+	}
+
+	reader, ok := backend.(core.AsyncClipboardReader)
+	if !ok || d.clipWait != nil || !reader.RequestClipboardRead() {
+		// Synchronous / unsupported / already waiting: resolve now.
+		onResult(internal)
+		return
+	}
+
+	w := &clipboardWait{onResult: onResult, internal: internal}
+	d.clipWait = w
+	w.timer = d.StartTimer(clipboardGraceDelay, func() { d.clipboardGraceElapsed(w) })
+}
+
+// clipboardGraceElapsed fires when a still-pending read has waited past the
+// grace period: put up the waiting modal (unless already resolved).
+func (d *Desktop) clipboardGraceElapsed(w *clipboardWait) {
+	if w.resolved || d.clipWait != w {
+		return
+	}
+	w.timer = nil
+
+	mb := NewMessageBox("Waiting for Clipboard",
+		"Waiting for the terminal to provide the clipboard.\nCancel to paste the last copied item instead.",
+		ButtonCancel)
+	mb.SetIcon(IconInformation)
+	mb.SetOnFinished(func(DialogResult) {
+		// Cancel (or Escape): the modal is closing itself, so resolve with the
+		// internal clipboard without closing it again.
+		w.closing = true
+		d.resolveClipboard(w, w.internal)
+	})
+	w.modal = mb
+
+	if wm := d.WindowManager(); wm != nil {
+		wm.AddWindow(&mb.Window)
+		mb.ResizeToFitContent()
+		area := wm.ClientArea()
+		b := mb.Bounds()
+		x := area.X + (area.Width-b.Width)/2
+		y := area.Y + (area.Height-b.Height)/2
+		if !wm.SmoothPositioning() {
+			metrics := d.EffectiveCellMetrics()
+			x = metrics.RoundDownToCellX(x)
+			y = metrics.RoundDownToCellY(y)
+		}
+		mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
+	}
+}
+
+// onClipboardResponse handles a clipboard reply arriving from the backend
+// (already marshalled onto the UI thread). It resolves the pending read; a
+// late/stray reply with no pending read is ignored.
+func (d *Desktop) onClipboardResponse(text string) {
+	if w := d.clipWait; w != nil {
+		d.resolveClipboard(w, text)
+	}
+}
+
+// resolveClipboard completes a clipboard read exactly once: it stops the grace
+// timer, dismisses the waiting modal (unless the modal is closing itself), and
+// delivers text to the waiter.
+func (d *Desktop) resolveClipboard(w *clipboardWait, text string) {
+	if w.resolved {
+		return
+	}
+	w.resolved = true
+	if w.timer != nil {
+		d.StopTimer(w.timer)
+		w.timer = nil
+	}
+	if d.clipWait == w {
+		d.clipWait = nil
+	}
+	if w.modal != nil && !w.closing {
+		w.modal.Close()
+	}
+	w.onResult(text)
+	d.RequestUpdate()
 }
 
 // Beep produces an audible alert.

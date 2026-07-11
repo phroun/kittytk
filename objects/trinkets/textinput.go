@@ -1150,17 +1150,28 @@ func (t *TextInput) Cut() {
 }
 
 // Paste inserts the clipboard at the caret, replacing any selection.
-// A single-line input flattens newlines to spaces.
+// A single-line input flattens newlines to spaces. Reading the clipboard can be
+// asynchronous (a terminal's OSC 52 query may prompt the user), so the desktop
+// resolves it and calls back - on the UI thread - when it is ready; SDL and
+// internal reads resolve immediately.
 func (t *TextInput) Paste() {
 	if t.readOnly {
 		return
 	}
-	get, _ := t.clipboardAccess()
-	if get == nil {
+	if d := findDesktopFor(t); d != nil {
+		d.ReadClipboardAsync(func(s string) { t.pasteText(s) })
 		return
 	}
-	s := get()
-	if s == "" {
+	get, _ := t.clipboardAccess()
+	if get != nil {
+		t.pasteText(get())
+	}
+}
+
+// pasteText inserts resolved clipboard text at the caret (newlines flattened to
+// spaces for the single-line flow).
+func (t *TextInput) pasteText(s string) {
+	if t.readOnly || s == "" {
 		return
 	}
 	flat := make([]rune, 0, len(s))
