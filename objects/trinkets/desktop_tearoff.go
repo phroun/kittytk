@@ -45,6 +45,9 @@ func (d *Desktop) setupTearOff(p platform.Platform, surf platform.Surface) {
 		return
 	}
 	d.windowManager.SetTearOffHandler(d.tearOffWindow)
+	// Clicking a modally-blocked window surfaces the modal blocking it
+	// (raising or OS-restoring it), even across applications.
+	d.windowManager.SetOnBlockedClick(d.surfaceBlockingModal)
 }
 
 // deviceScale is the desktop surface's device zoom (integer pixels per
@@ -299,17 +302,31 @@ func (d *Desktop) surfaceBlockingModal(win *window.Window) {
 		return
 	}
 	modal := wm.TopAppModal(win.AppID())
-	if modal == nil || !modal.IsMinimized() {
+	if modal == nil {
 		return
 	}
 	if h := d.tornHostForWindow(modal); h != nil {
-		if r, ok := h.Surface().(platform.NativeRestorer); ok {
-			r.Restore()
-			modal.Restore()
-			return
+		// The modal is torn onto its own OS surface: un-minimize it if
+		// needed, then raise it back over the window the user just clicked
+		// (which the OS brought forward), so it never stays lost behind.
+		if modal.IsMinimized() {
+			if r, ok := h.Surface().(platform.NativeRestorer); ok {
+				r.Restore()
+				modal.Restore()
+			}
 		}
+		if n, ok := h.Surface().(platform.NativeSurface); ok {
+			n.Raise()
+		}
+		return
 	}
-	wm.RestoreWindow(modal)
+	// The modal is in-surface: restore it from the dock if minimized,
+	// otherwise raise it back to the top of the window stack.
+	if modal.IsMinimized() {
+		wm.RestoreWindow(modal)
+	} else {
+		wm.RaiseWindow(modal)
+	}
 }
 
 // tearOffFollowers tears every non-tearable child of app (other than the

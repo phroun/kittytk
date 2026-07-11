@@ -429,3 +429,27 @@ func TestTornHostModalBlockedSuppressesInput(t *testing.T) {
 		t.Errorf("onBlockedPress fired while unblocked (count=%d)", presses)
 	}
 }
+
+// The one interaction a blocked torn window still allows: dragging it by the
+// title bar to move it aside.
+func TestTornHostModalBlockedAllowsTitleDrag(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}}
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+	h.SetModalChecker(func() bool { return true }, nil)
+
+	// Title-bar press (below the 6-unit top grip, above the content, mid-width
+	// so it is not on a titlebar button) starts a move drag.
+	h.Event(core.MousePressEvent{X: 100, Y: 8, Button: core.LeftButton})
+	if !h.Dragging() {
+		t.Error("a title-bar press on a blocked torn window should start a move drag")
+	}
+
+	// A content press does not start a drag.
+	h2 := NewTearOffHost(NewWindow("t2"), surf, 1, func() (int, int) { return 0, 0 }, nil)
+	h2.SetModalChecker(func() bool { return true }, nil)
+	h2.Event(core.MousePressEvent{X: 100, Y: 60, Button: core.LeftButton})
+	if h2.Dragging() {
+		t.Error("a content press on a blocked torn window must not start a drag")
+	}
+}

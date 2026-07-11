@@ -233,6 +233,23 @@ func (h *TearOffHost) isModalBlocked() bool {
 	return h.modalBlocked != nil && h.modalBlocked()
 }
 
+// blockedTitleDragStart reports whether a press at (x,y) on a modally-blocked
+// torn window may begin a title-bar move: on the draggable title area, not on
+// a titlebar button (or the tear handle), and not on a resize edge. This is
+// the one interaction a blocked window still allows, so it can be moved aside.
+func (h *TearOffHost) blockedTitleDragStart(x, y core.Unit) bool {
+	if h.win.Flags()&(WindowFlagNoTitle|WindowFlagNoMove) != 0 {
+		return false
+	}
+	if h.edgeAt(x, y) != 0 {
+		return false
+	}
+	if h.win.buttonAtPosition(x, y) != TitleButtonNone {
+		return false
+	}
+	return h.inTitleBar(x, y)
+}
+
 // SetCursorSetter wires the platform's system-cursor control so the torn
 // surface can update the mouse cursor as the pointer moves over its edges
 // and controls, matching the desktop.
@@ -499,18 +516,32 @@ func (h *TearOffHost) Frame(p *core.Painter) {
 // starts an OS-window drag, mirroring the WindowManager's in-surface
 // title drag.
 func (h *TearOffHost) Event(ev core.Event) bool {
-	// A modally-blocked torn window ignores all input: a press surfaces the
-	// blocking modal (OS-restoring it if minimized), everything else is
-	// swallowed. Focus/leave events still pass so chrome and hover stay sane.
+	// A modally-blocked torn window ignores input, with one exception: it may
+	// be dragged by its title bar to move it out of the way (mirroring the
+	// in-surface rule). Any press also surfaces the blocking modal - raising
+	// it back on top (and OS-restoring it if minimized). Focus/leave events
+	// still pass so chrome and hover stay sane.
 	if !h.ghost && h.isModalBlocked() {
-		switch ev.(type) {
+		switch e := ev.(type) {
 		case core.MousePressEvent:
 			if h.onBlockedPress != nil {
 				h.onBlockedPress()
 			}
+			if e.Button == core.LeftButton && h.blockedTitleDragStart(e.X, e.Y) {
+				h.BeginDrag(e.X, e.Y)
+			}
 			return true
-		case core.MouseMoveEvent, core.MouseReleaseEvent, core.MouseWheelEvent,
-			core.KeyPressEvent, core.KeyReleaseEvent:
+		case core.MouseMoveEvent:
+			if h.dragging {
+				break // let the title-bar move continue
+			}
+			return true
+		case core.MouseReleaseEvent:
+			if h.dragging {
+				break // let the title-bar move finish
+			}
+			return true
+		case core.MouseWheelEvent, core.KeyPressEvent, core.KeyReleaseEvent:
 			return true
 		}
 	}

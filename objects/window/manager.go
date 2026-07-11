@@ -128,6 +128,10 @@ type WindowManager struct {
 	onRepaintNeeded   func()
 	onWindowMinimized func(*Window) // Called when a window is minimized
 	onWindowRestored  func(*Window) // Called when a window is restored
+	// onBlockedClick fires when a modally-blocked window is clicked, so the
+	// desktop can surface (raise/restore, incl. OS-restore of a torn one) the
+	// modal blocking it - a convenience that also works across applications.
+	onBlockedClick func(*Window)
 
 	// Popup overlays (painted on top of everything)
 	popups []*PopupOverlay
@@ -1483,6 +1487,14 @@ func (m *WindowManager) RestoreWindow(win *Window) {
 	m.RequestRepaint()
 }
 
+// SetOnBlockedClick sets the callback invoked when a modally-blocked window is
+// clicked, so the host can surface the modal blocking it.
+func (m *WindowManager) SetOnBlockedClick(handler func(*Window)) {
+	m.mu.Lock()
+	m.onBlockedClick = handler
+	m.mu.Unlock()
+}
+
 // SetOnWindowMinimized sets the callback for window minimization.
 func (m *WindowManager) SetOnWindowMinimized(handler func(*Window)) {
 	m.mu.Lock()
@@ -1912,12 +1924,17 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 			}
 
 			// Modally blocked: swallow the press, allowing only a title-bar
-			// drag to move the window out of the way. If the modal itself is
-			// minimized, a click here restores it so the user isn't stuck
-			// behind a modal they can't see.
+			// drag to move the window out of the way. If a system modal is
+			// minimized, a click here restores it; otherwise surface the
+			// application/window modal blocking this window (raise it, or
+			// restore it from the dock) as a convenience - especially when
+			// clicking another app's window that its own modal is blocking.
 			if m.isModalBlocked(win) {
 				if m.restoreMinimizedTopModal() {
 					return true
+				}
+				if m.onBlockedClick != nil {
+					m.onBlockedClick(win)
 				}
 				m.beginBlockedTitleDrag(win, event, bounds)
 				return true
