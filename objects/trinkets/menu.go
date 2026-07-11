@@ -18,6 +18,14 @@ const (
 	shortcutNativeSizeDen = 5
 )
 
+// graphicalMenuTrailingUnits is the small gap kept to the right of a
+// graphical menu's shortcut or submenu arrow, between it and the menu's right
+// edge. Graphical menus have only a 1-pixel right stroke (not a whole char
+// border), so this is a hair rather than the two cells cell/TUI menus reserve.
+func graphicalMenuTrailingUnits(metrics core.CellMetrics) core.Unit {
+	return metrics.CellWidth / 4
+}
+
 // shortcutFont returns the font used to draw a menu item's shortcut. In
 // macOS-native mode it swaps the family to Apple's UI face (so the ⌃⌥⇧⌘ glyphs
 // render in Apple's typeface) and shrinks it to 80%, while keeping the style
@@ -795,6 +803,12 @@ func (m *Menu) calculateSize() core.UnitSize {
 
 	// Add padding (gutter: 3 cells, content space: 1 cell, right border: 1 cell)
 	maxWidth += metrics.CellWidth * 5
+	// Graphical menus draw only a 1-pixel right stroke, not a full char
+	// border, so most of the two-cell trailing space is dead air: trim it to
+	// a hair (keep the cell/TUI trailing as it was, which is intentional).
+	if m.graphicalSurface() {
+		maxWidth -= metrics.CellWidth*2 - graphicalMenuTrailingUnits(metrics)
+	}
 
 	// Sum the heights of the visible item rows (thin separators on
 	// graphical surfaces are shorter than a text row), plus a full row
@@ -1269,9 +1283,19 @@ func (m *Menu) Paint(p *core.Painter) {
 			x += font.MeasureText(item.Text)
 		}
 
-		// Draw shortcut or submenu arrow at the right (in content area)
+		// Draw shortcut or submenu arrow at the right (in content area). The
+		// right trailing gap is two cells on cell/TUI surfaces but only a hair
+		// on graphical ones.
+		rightPad := metrics.CellWidth * 2
+		if p.Graphical() {
+			rightPad = graphicalMenuTrailingUnits(metrics)
+		}
 		if item.SubMenu != nil {
-			arrowX := m.popupX + size.Width - metrics.CellWidth*2
+			// Keep a one-cell glyph slot before the trailing gap.
+			arrowX := m.popupX + size.Width - metrics.CellWidth - rightPad
+			if !p.Graphical() {
+				arrowX = m.popupX + size.Width - metrics.CellWidth*2
+			}
 			p.DrawCell(arrowX, itemY, '▸', contentStyle)
 		} else if item.Shortcut != "" {
 			shortcutStr := item.Shortcut.DisplayString()
@@ -1280,7 +1304,7 @@ func (m *Menu) Paint(p *core.Painter) {
 			// exact, and center the shorter line box within the item's row.
 			sf := shortcutFont(font)
 			shortcutWidth := sf.MeasureText(shortcutStr)
-			shortcutX := m.popupX + size.Width - shortcutWidth - metrics.CellWidth*2
+			shortcutX := m.popupX + size.Width - shortcutWidth - rightPad
 			shortcutY := itemY
 			if sf != font {
 				if dy := (font.LineHeight() - sf.LineHeight()) / 2; dy > 0 {
