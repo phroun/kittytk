@@ -479,19 +479,20 @@ func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 // highlight when the button is idle, and the pressed-and-over state during
 // a press.
 func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
-	// Check if mouse is inside the button area (first row, not the shadow).
+	// Check if the pointer is over the button area (first row, not the shadow).
 	bounds := b.Bounds()
 	metrics := b.EffectiveCellMetrics()
-	// Hover is a no-button affordance: while any button is held, a drag begun
-	// elsewhere is passing over, so treat the pointer as "not inside" - this
-	// both suppresses new hover and clears any set before the button went down.
-	inside := event.Buttons == 0 &&
-		event.X >= 0 && event.X < bounds.Width &&
+	overBounds := event.X >= 0 && event.X < bounds.Width &&
 		event.Y >= 0 && event.Y < metrics.CellHeight
 
 	if !b.pressed {
-		// Plain hover. Don't consume the move, so sibling widgets can
-		// still clear their own hover as the pointer leaves them.
+		// Plain hover is a no-button affordance: while any button is held, a
+		// drag begun elsewhere is merely passing over, so treat the pointer as
+		// "not inside" - this both suppresses new hover and clears any set
+		// before the pointer went down.
+		inside := overBounds && event.Buttons == 0
+		// Don't consume the move, so sibling widgets can still clear their own
+		// hover as the pointer leaves them.
 		if b.IsEnabled() && inside != b.mouseOver {
 			b.mouseOver = inside
 			b.Update()
@@ -499,8 +500,12 @@ func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	if inside != b.hovered {
-		b.hovered = inside
+	// This button owns the press: stay pressed as the pointer drags around,
+	// and only drop the pressed look once the pointer leaves the hit box. The
+	// held button is ours, so ignore event.Buttons here - re-entering the same
+	// button during the same drag lights it back up as pressed.
+	if overBounds != b.hovered {
+		b.hovered = overBounds
 		b.Update()
 	}
 
