@@ -2333,7 +2333,7 @@ func (d *Desktop) FocusedTrinket() core.Trinket {
 	// whatever docked window the window manager still calls active.
 	if torn != nil {
 		if fw := torn.FocusManager().FocusedTrinket(); fw != nil {
-			return fw
+			return resolveFocusedTrinket(fw)
 		}
 	}
 
@@ -2348,9 +2348,39 @@ func (d *Desktop) FocusedTrinket() core.Trinket {
 		win = wm.PreviousActiveWindow()
 	}
 	if win != nil {
-		return win.FocusManager().FocusedTrinket()
+		return resolveFocusedTrinket(win.FocusManager().FocusedTrinket())
 	}
 	return nil
+}
+
+// mdiFocusHost is implemented by a trinket (an MDIPane) that hosts its own
+// child windows: real keyboard focus can live inside its active child window,
+// deeper than the enclosing window's focus manager reaches.
+type mdiFocusHost interface {
+	ActiveWindow() *window.Window
+}
+
+// resolveFocusedTrinket drills through MDI panes: a window's focus manager
+// only reaches as far as the MDIPane trinket, but the actually-focused control
+// (e.g. an input box) lives inside the pane's active child window. Follow the
+// active child's own focus, recursively for nested MDI, so Edit-menu
+// inspection sees the real focused trinket rather than the pane. Nil-safe.
+func resolveFocusedTrinket(t core.Trinket) core.Trinket {
+	for {
+		host, ok := t.(mdiFocusHost)
+		if !ok {
+			return t
+		}
+		win := host.ActiveWindow()
+		if win == nil {
+			return t // no active child: the pane itself is the focus
+		}
+		fw := win.FocusManager().FocusedTrinket()
+		if fw == nil {
+			return t
+		}
+		t = fw
+	}
 }
 
 // updateCursor resolves and applies the system mouse cursor for the
