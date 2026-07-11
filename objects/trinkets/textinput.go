@@ -847,12 +847,25 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case "^A":
-		// Go to beginning (Emacs binding)
-		t.cursorPos = 0
-		if event.Modifiers&core.ShiftModifier == 0 {
-			t.selStart = 0
+		if event.Modifiers&core.ShiftModifier != 0 {
+			// Shift+Ctrl+A: extend the selection to the beginning.
+			t.cursorPos = 0
 			t.selEnd = 0
+			t.ensureCursorVisible()
+			t.Update()
+			return true
+		}
+		// Home cycle (Emacs C-a, with a convenience twist): a two-state toggle.
+		// Already at the beginning with nothing selected -> select all, caret to
+		// the end. Anywhere else (including with all selected) -> caret to the
+		// beginning, clearing any selection.
+		if t.cursorPos == 0 && !t.HasSelection() {
+			t.selStart = 0
+			t.selEnd = len(t.text)
+			t.cursorPos = t.selEnd
 		} else {
+			t.cursorPos = 0
+			t.selStart = 0
 			t.selEnd = 0
 		}
 		t.ensureCursorVisible()
