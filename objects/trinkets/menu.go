@@ -803,12 +803,6 @@ func (m *Menu) calculateSize() core.UnitSize {
 
 	// Add padding (gutter: 3 cells, content space: 1 cell, right border: 1 cell)
 	maxWidth += metrics.CellWidth * 5
-	// Graphical menus draw only a 1-pixel right stroke, not a full char
-	// border, so most of the two-cell trailing space is dead air: trim it to
-	// a hair (keep the cell/TUI trailing as it was, which is intentional).
-	if m.graphicalSurface() {
-		maxWidth -= metrics.CellWidth*2 - graphicalMenuTrailingUnits(metrics)
-	}
 
 	// Sum the heights of the visible item rows (thin separators on
 	// graphical surfaces are shorter than a text row), plus a full row
@@ -1284,21 +1278,18 @@ func (m *Menu) Paint(p *core.Painter) {
 		}
 
 		// Draw shortcut or submenu arrow at the right (in content area). The
-		// right trailing gap is two cells on cell/TUI surfaces but only a hair
-		// on graphical ones.
-		rightPad := metrics.CellWidth * 2
-		if p.Graphical() {
-			rightPad = graphicalMenuTrailingUnits(metrics)
-		}
+		// menu width is unchanged; only the shortcut hugs closer to the right
+		// edge on graphical surfaces (whose right border is a single pixel, not
+		// a full char cell), trimming the empty space to its right.
 		if item.SubMenu != nil {
-			// Keep a one-cell glyph slot before the trailing gap.
-			arrowX := m.popupX + size.Width - metrics.CellWidth - rightPad
-			if !p.Graphical() {
-				arrowX = m.popupX + size.Width - metrics.CellWidth*2
-			}
+			arrowX := m.popupX + size.Width - metrics.CellWidth*2
 			p.DrawCell(arrowX, itemY, '▸', contentStyle)
 		} else if item.Shortcut != "" {
 			shortcutStr := item.Shortcut.DisplayString()
+			rightPad := metrics.CellWidth * 2
+			if p.Graphical() {
+				rightPad = graphicalMenuTrailingUnits(metrics)
+			}
 			// Native mode renders the shortcut in Apple's UI face at 80%;
 			// measure and draw with that same font so the right-alignment is
 			// exact, and center the shorter line box within the item's row.
