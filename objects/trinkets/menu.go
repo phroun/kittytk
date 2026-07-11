@@ -56,8 +56,13 @@ type MenuItem struct {
 	Enabled         bool
 	Checkable       bool
 	Checked         bool
-	Separator       bool   // If true, this is a separator line
-	wellKnownID     string // system-level role tag (see MenuID* constants), "" if none
+	Separator       bool // If true, this is a separator line
+	// InPlace: activating this item performs its action but KEEPS the
+	// menu open, re-rendering the updated content in place (checkable
+	// toggles that users flip several times in a row - column choosers,
+	// view options). Escape or a click away still dismisses.
+	InPlace     bool
+	wellKnownID string // system-level role tag (see MenuID* constants), "" if none
 
 	// Submenu
 	SubMenu *Menu
@@ -140,6 +145,13 @@ func (m *MenuItem) SetShortcut(shortcut core.Shortcut) *MenuItem {
 // SetIcon sets the icon.
 func (m *MenuItem) SetIcon(icon *style.TextIcon) *MenuItem {
 	m.Icon = icon
+	return m
+}
+
+// SetInPlace marks the item as acting in place: triggering it runs the
+// action and keeps the menu open (see the InPlace field).
+func (m *MenuItem) SetInPlace(inPlace bool) *MenuItem {
+	m.InPlace = inPlace
 	return m
 }
 
@@ -1525,6 +1537,14 @@ func (m *Menu) closeSubMenu() {
 
 // triggerItem triggers a menu item and closes the menu.
 func (m *Menu) triggerItem(item *MenuItem) {
+	// InPlace items act without closing: run the action and re-render
+	// the (possibly toggled) content where it stands.
+	if item.InPlace {
+		item.Trigger()
+		m.Update()
+		return
+	}
+
 	// Close all menus up to the menu bar
 	menu := m
 	for menu != nil {

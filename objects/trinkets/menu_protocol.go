@@ -144,6 +144,14 @@ func init() {
 				m.SetChecked(b)
 				return nil
 			})).Tip("Checked state").Def("false"),
+			"inplace": protocol.NewProperty("flag", wprop("inplace", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				b, err := protocol.AsBool("inplace", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetInPlace(b)
+				return nil
+			})).Tip("Activation acts in place: the menu stays open.").Def("false"),
 			"enabled": protocol.NewProperty("flag", wprop("enabled", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("enabled", v, f)
 				if err != nil {

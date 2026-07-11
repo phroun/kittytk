@@ -226,6 +226,39 @@ func TestTreeColumnFixedLeft(t *testing.T) {
 	}
 }
 
+// The pinned-right boundary divider sizes the PINNED column (inverted),
+// not the scrolling column to its left - the right flank is laid out
+// from the window's right edge, so that divider IS the pinned column's
+// left edge.
+func TestTreeColumnPinnedRightDividerSizesPinned(t *testing.T) {
+	tv := newColumnsTree(30, 10)
+	tv.SetFitWidth(false)
+	tv.SetKeyWidth(10)
+	tv.SetFixedColumns(0, 1) // pin the last column (Kind)
+
+	lay := tv.columnLayout()
+	n := len(lay.spans)
+	if !lay.spans[n-1].fixed {
+		t.Fatal("precondition: last span pinned")
+	}
+	divX := lay.spans[n-2].divX // the pinned boundary divider
+	col, startW, invert, ok := tv.dividerAt(divX+2, lay)
+	if !ok || col != tv.ColumnByID("kind") || !invert {
+		t.Fatalf("pinned boundary: col=%v invert=%v ok=%v, want kind/inverted", col, invert, ok)
+	}
+	if startW != 12 {
+		t.Errorf("startW=%d, want 12", startW)
+	}
+
+	// The cursor over that divider is the horizontal resizer.
+	if got := tv.CursorShapeAt(divX+2, 4); got != core.CursorResizeH {
+		t.Errorf("cursor over divider = %v, want CursorResizeH", got)
+	}
+	if got := tv.CursorShapeAt(divX+2, 40); got != core.CursorDefault {
+		t.Errorf("cursor below header = %v, want default", got)
+	}
+}
+
 // Hidden columns drop out of the layout; the chooser toggles them back.
 func TestTreeColumnHiddenAndChooser(t *testing.T) {
 	tv := newColumnsTree(60, 10)
@@ -268,13 +301,18 @@ func TestTreeColumnHiddenAndChooser(t *testing.T) {
 	if tv.ColumnByID("kind").Hidden {
 		t.Error("chooser keyboard toggle did not unhide the column")
 	}
-	if tv.chooserOpen {
-		t.Error("menu should close after triggering an item")
-	}
-	// Escape path: reopen, dismiss.
-	tv.openColumnChooser(true)
+	// Chooser items are InPlace: the menu STAYS open (users flip
+	// several columns per visit) with its checkmark re-rendered.
 	if !tv.chooserOpen {
-		t.Fatal("reopen failed")
+		t.Fatal("InPlace toggle must keep the menu open")
+	}
+	if !tv.chooserMenu.Items()[1].Checked {
+		t.Error("checkmark did not re-render in place")
+	}
+	// Toggle it right back without reopening.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	if !tv.ColumnByID("kind").Hidden {
+		t.Error("second in-place toggle did not re-hide")
 	}
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 	if tv.chooserOpen || host.popup != nil {

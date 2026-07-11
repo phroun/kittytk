@@ -462,14 +462,20 @@ func (t *TreeView) headerHeight() core.Unit {
 	return t.EffectiveCellMetrics().CellHeight
 }
 
-// footerHeight is the horizontal scrollbar row's height: the bottom
-// display row is reserved whenever horizontal scrolling is enabled
-// (scroll mode), so content never sits under the bar.
+// footerHeight is the horizontal scrollbar band's height, reserved
+// whenever horizontal scrolling is enabled (scroll mode) so content
+// never sits under the bar. The TUI needs a whole display row; pixel
+// surfaces use the standard slim scrollbar height (one column's worth
+// of units - the same lane size the vertical bar uses sideways).
 func (t *TreeView) footerHeight() core.Unit {
 	if !t.multiColumn() || t.fitWidth {
 		return 0
 	}
-	return t.EffectiveCellMetrics().CellHeight
+	metrics := t.EffectiveCellMetrics()
+	if core.FindSmoothPositioning(t.Self()) {
+		return metrics.CellWidth
+	}
+	return metrics.CellHeight
 }
 
 // colSpan is one visible column's placement for this paint/hit pass.
@@ -852,8 +858,11 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		t.paintChooserButton(p, lay, headerStyle)
 	}
 
-	// Rows.
+	// Rows. Row styles are collected for the horizontal-scroll edge
+	// fades, which must match each band's own background (header,
+	// selected row, plain rows).
 	visibleCount := t.visibleCount()
+	rowStyles := make([]style.CellStyle, 0, visibleCount)
 	for i := 0; i < visibleCount; i++ {
 		itemIndex := t.scrollOffset + i
 		if itemIndex >= len(t.flatList) {
@@ -862,17 +871,22 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		item := t.flatList[itemIndex]
 		itemY := lay.headerH + core.Unit(i)*metrics.CellHeight
 
+		// While the internal focus sits in the header (bar or drilled
+		// items), the selected row shows the NON-focused selection
+		// color - the header owns the focus, the row is just selected.
+		rowFocused := focused && t.headerZone == hzContent
 		var s style.CellStyle
 		switch {
 		case !item.Enabled:
 			s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(scheme.GetListBG())
-		case itemIndex == t.currentIndex && focused:
+		case itemIndex == t.currentIndex && rowFocused:
 			s = scheme.GetFocusedListItem()
 		case itemIndex == t.currentIndex:
 			s = scheme.GetSelectedListItem()
 		default:
 			s = bgStyle
 		}
+		rowStyles = append(rowStyles, s)
 		if itemIndex == t.currentIndex {
 			// Selection spans the full row, Finder/Explorer style.
 			p.FillRect(core.UnitRect{X: 0, Y: itemY, Width: lay.contentW, Height: metrics.CellHeight}, ' ', s)
@@ -921,11 +935,80 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		}
 	}
 
+	// Edge fades over the scrolled content (under the scrollbars),
+	// banded so each fade matches the background it covers.
+	t.paintHScrollFades(p, lay, headerStyle, rowStyles, bgStyle)
+
 	if t.footerHeight() > 0 {
 		t.paintHScrollbar(p, lay)
 	}
 	if len(t.flatList) > visibleCount {
 		t.paintScrollbar(p, visibleCount)
+	}
+}
+
+// paintHScrollFades draws the ScrollArea-style edge gradients on the
+// horizontal scroll region: a two-column fade from opaque at the
+// region's edge to transparent inward, on whichever side has more
+// content beyond it. Because the rows behind it carry different
+// backgrounds, the fade is painted in BANDS - the header with the
+// header's background, the selected row with the selection color, the
+// other rows and the empty area with the list background - so every
+// strip fades into exactly what it covers. Pixel surfaces only.
+func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerStyle style.CellStyle, rowStyles []style.CellStyle, bgStyle style.CellStyle) {
+	if !p.Graphical() || t.fitWidth {
+		return
+	}
+	showLeft := t.hScroll > 0
+	showRight := t.hScroll < lay.maxHScroll
+	if !showLeft && !showRight {
+		return
+	}
+	metrics := t.EffectiveCellMetrics()
+	wtPx := p.UnitSpanPxX(0, metrics.CellWidth*2)
+	if regionPx := p.UnitSpanPxX(lay.scrollL, lay.scrollR); wtPx > regionPx/2 {
+		wtPx = regionPx / 2
+	}
+	if wtPx <= 0 {
+		return
+	}
+	bottom := t.Bounds().Height - t.footerHeight()
+
+	// Vertical bands, top to bottom, each with its own fade color.
+	type band struct {
+		y0, y1 core.Unit
+		bg     style.Color
+	}
+	var bands []band
+	y := core.Unit(0)
+	if lay.headerH > 0 {
+		bands = append(bands, band{0, lay.headerH, headerStyle.Bg})
+		y = lay.headerH
+	}
+	for _, rs := range rowStyles {
+		bands = append(bands, band{y, y + metrics.CellHeight, rs.Bg})
+		y += metrics.CellHeight
+	}
+	if y < bottom {
+		bands = append(bands, band{y, bottom, bgStyle.Bg})
+	}
+
+	alphaAt := func(d int) float64 { return 1.0 - (float64(d)+0.5)/float64(wtPx) }
+	for _, b := range bands {
+		hPx := p.UnitSpanPxY(b.y0, b.y1)
+		if hPx <= 0 {
+			continue
+		}
+		r, g, bl := b.bg.RGBComponents()
+		for j := 0; j < wtPx; j++ {
+			a := alphaAt(j)
+			if showLeft {
+				p.FillRectPixelsAlpha(lay.scrollL, b.y0, j, 0, 1, hPx, r, g, bl, a)
+			}
+			if showRight {
+				p.FillRectPixelsAlpha(lay.scrollR, b.y0, -j-1, 0, 1, hPx, r, g, bl, a)
+			}
+		}
 	}
 }
 
@@ -1010,9 +1093,13 @@ func (t *TreeView) paintChooserButton(p *core.Painter, lay treeColLayout, header
 	st := headerStyle
 	keyFocused := t.HasFocus() && t.headerZone == hzItems &&
 		t.headerFocusIdx == len(lay.spans) // the stop after the columns
-	if t.chooserHovered || t.chooserOpen || keyFocused {
-		// The standard hover convention, same as every other button.
+	switch {
+	case t.chooserHovered:
+		// Hover color is a MOUSE affordance only.
 		st = scheme.GetHoveredButton()
+	case keyFocused, t.chooserOpen:
+		// Keyboard focus (and the open state) use the focus styling.
+		st = scheme.GetFocusedListItem()
 	}
 	if p.Graphical() {
 		p.FillRect(core.UnitRect{X: r.X, Y: r.Y, Width: r.Width, Height: r.Height}, ' ', st)
@@ -1121,10 +1208,11 @@ func (t *TreeView) openColumnChooser(keyboard bool) {
 	}
 	for _, c := range cols {
 		col := c
-		item := NewMenuItem(col.Caption).SetCheckable(true).SetChecked(!col.Hidden)
+		// InPlace: toggling a column keeps the menu open (users flip
+		// several in one visit), re-rendering the checkmarks in place.
+		item := NewMenuItem(col.Caption).SetCheckable(true).SetChecked(!col.Hidden).SetInPlace(true)
 		item.SetOnTriggered(func() {
 			col.Hidden = !col.Hidden
-			t.closeColumnChooser()
 			t.Update()
 		})
 		m.AddItem(item)
@@ -1133,6 +1221,8 @@ func (t *TreeView) openColumnChooser(keyboard bool) {
 	// Down-and-left from the button.
 	btn, _ := t.chooserButtonRect()
 	size := m.calculateSize()
+	btnOrigin := pc.MapToScreen(t.Self(), core.UnitPoint{X: btn.X, Y: btn.Y})
+	btnScreen := core.UnitRect{X: btnOrigin.X, Y: btnOrigin.Y, Width: btn.Width, Height: btn.Height}
 	at := pc.MapToScreen(t.Self(), core.UnitPoint{X: btn.X + btn.Width, Y: btn.Y + btn.Height})
 	screen := pc.ScreenBounds()
 	x := at.X - size.Width
@@ -1156,19 +1246,26 @@ func (t *TreeView) openColumnChooser(keyboard bool) {
 		Bounds: bounds,
 		Paint:  func(p *core.Painter) { m.Paint(p) },
 		HandleMousePress: func(ev core.MousePressEvent) bool {
-			if !bounds.Contains(core.UnitPoint{X: ev.X, Y: ev.Y}) {
+			pt := core.UnitPoint{X: ev.X, Y: ev.Y}
+			if !bounds.Contains(pt) {
 				t.closeColumnChooser()
-				return false
+				// A click on the opener button itself is a TOGGLE:
+				// swallow it so it doesn't fall through and reopen.
+				return btnScreen.Contains(pt)
 			}
 			return m.HandleMousePress(ev)
 		},
 		HandleMouseMove: m.HandleMouseMove,
 		HandleMouseRelease: func(ev core.MouseReleaseEvent) bool {
 			// The press selected; the release triggers (the menu bar's
-			// drag-mode contract, played standalone here).
+			// drag-mode contract, played standalone here). InPlace
+			// items keep the menu open; others dismiss it.
 			if bounds.Contains(core.UnitPoint{X: ev.X, Y: ev.Y}) {
 				if item := m.CurrentItem(); item != nil && item.Enabled && !item.Separator {
 					item.Trigger()
+					if !item.InPlace {
+						t.closeColumnChooser()
+					}
 				}
 			}
 			return true
@@ -1222,6 +1319,11 @@ func (t *TreeView) handleChooserKey(event core.KeyPressEvent) bool {
 		return true
 	}
 	t.chooserMenu.HandleKeyPress(event)
+	// A non-InPlace trigger hides the menu itself; tear the popup down
+	// with it (InPlace items keep it open by design).
+	if t.chooserMenu != nil && !t.chooserMenu.IsVisible() {
+		t.closeColumnChooser()
+	}
 	return true
 }
 
@@ -1257,6 +1359,17 @@ func (t *TreeView) dividerAt(x core.Unit, lay treeColLayout) (col *TreeColumn, s
 			}
 			return right, right.clampWidth(right.Width), true, true
 		}
+		if i+1 < len(lay.spans) && lay.spans[i+1].fixed && !sp.fixed {
+			// The pinned-right boundary: this divider IS the pinned
+			// column's left edge (the right flank is laid out from the
+			// window's right edge), so it sizes the PINNED column,
+			// inverted - not the scrolling column to its left.
+			right := lay.spans[i+1].col
+			if right == nil || !right.Resizable {
+				return nil, 0, false, false
+			}
+			return right, right.clampWidth(right.Width), true, true
+		}
 		if sp.col == nil {
 			// The key column in scroll mode sizes by its own width.
 			kw := t.keyWidth
@@ -1271,6 +1384,23 @@ func (t *TreeView) dividerAt(x core.Unit, lay treeColLayout) (col *TreeColumn, s
 		return sp.col, sp.col.clampWidth(sp.col.Width), false, true
 	}
 	return nil, 0, false, false
+}
+
+// CursorShapeAt implements core.CursorShaper: the pointer shows the
+// horizontal resize cursor over a draggable divider in the header band
+// (mid-drag it stays put wherever the pointer is).
+func (t *TreeView) CursorShapeAt(localX, localY core.Unit) core.CursorShape {
+	if t.colDragging {
+		return core.CursorResizeH
+	}
+	headerH := t.headerHeight()
+	if headerH == 0 || localY >= headerH || !t.multiColumn() {
+		return core.CursorDefault
+	}
+	if _, _, _, ok := t.dividerAt(localX, t.columnLayout()); ok {
+		return core.CursorResizeH
+	}
+	return core.CursorDefault
 }
 
 // handleMultiPress handles presses in the header band (chooser button,
@@ -1402,15 +1532,18 @@ func (t *TreeView) paintHScrollbar(p *core.Painter, lay treeColLayout) {
 	}
 	scheme := t.GetScheme()
 	metrics := t.EffectiveCellMetrics()
-	y := t.Bounds().Height - metrics.CellHeight
+	footerH := t.footerHeight()
+	y := t.Bounds().Height - footerH
 	trackStyle := scheme.GetScrollbar()
 	thumbStyle := scheme.GetScrollbarThumbState(false)
 
 	if p.Graphical() {
-		stripeY := y + metrics.CellHeight/2
+		// The slim band: hairline track stripe centered, thumb inset a
+		// unit on each side - the vertical bar's treatment, sideways.
+		stripeY := y + footerH/2
 		p.FillRect(core.UnitRect{X: trackX0, Y: stripeY, Width: trackX1 - trackX0, Height: 1},
 			'▒', trackStyle.WithBg(style.ColorTransparent))
-		p.FillRect(core.UnitRect{X: thumbX0, Y: y + 1, Width: thumbX1 - thumbX0, Height: metrics.CellHeight - 2},
+		p.FillRect(core.UnitRect{X: thumbX0, Y: y + 1, Width: thumbX1 - thumbX0, Height: footerH - 2},
 			' ', thumbStyle.WithBg(thumbStyle.Fg))
 		return
 	}
