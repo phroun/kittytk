@@ -196,6 +196,25 @@ func (t *TreeView) columnIndex(c *TreeColumn) int {
 	return -1
 }
 
+// treeHostColumn returns the data column hosting the tree affordances
+// (expander arrow + nesting indent): the FIRST visible data column
+// when the key column is hidden. Nesting must stay visible with the
+// key off, so that column is forced LEFT-aligned regardless of its
+// Align setting - an app that wants a right-aligned first column
+// provides a proper key column instead. Nil when the key column is
+// visible (it hosts the tree itself).
+func (t *TreeView) treeHostColumn() *TreeColumn {
+	if t.showKey || !t.anyVisibleData() {
+		return nil
+	}
+	for _, c := range t.columns {
+		if !c.Hidden {
+			return c
+		}
+	}
+	return nil
+}
+
 // sortIndicatorFor reports whether the indicator sits on this span's
 // column (nil col = the key column).
 func (t *TreeView) sortIndicatorFor(col *TreeColumn) bool {
@@ -513,8 +532,13 @@ func (t *TreeView) neededCells(col *TreeColumn) int {
 	if t.sortIndicatorFor(col) {
 		maxW += font.MeasureText(" ▲")
 	}
+	host := t.treeHostColumn() == col // carries expander + indent
 	for _, it := range t.flatList {
-		if w := font.MeasureText(it.Value(col.ID)); w > maxW {
+		w := font.MeasureText(it.Value(col.ID))
+		if host {
+			w += core.Unit(it.Level()*t.indentWidth+1) * cw
+		}
+		if w > maxW {
 			maxW = w
 		}
 	}
@@ -680,15 +704,21 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			p.FillRect(core.UnitRect{X: 0, Y: itemY, Width: lay.contentW, Height: metrics.CellHeight}, ' ', s)
 		}
 
+		host := t.treeHostColumn()
 		for _, sp := range lay.spans {
 			clip, ok := lay.spanClip(sp, bounds.Height)
 			if !ok {
 				continue
 			}
 			cp := p.WithClip(clip)
-			if sp.col == nil {
-				t.paintKeyCell(cp, item, sp, itemY, s, metrics, font)
-			} else {
+			switch {
+			case sp.col == nil:
+				t.paintTreeCell(cp, item, sp, itemY, s, metrics, font, item.Text)
+			case sp.col == host:
+				// Key column hidden: this column carries the expander
+				// and indent (and is forced left-aligned for it).
+				t.paintTreeCell(cp, item, sp, itemY, s, metrics, font, item.Value(sp.col.ID))
+			default:
 				t.drawAligned(cp, item.Value(sp.col.ID), sp, itemY, s, font, sp.col.Align)
 			}
 		}
@@ -725,10 +755,11 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	}
 }
 
-// paintKeyCell draws the tree column's content for one row: indent,
-// expander, icon, caption (the original single-column rendering,
-// constrained to the span).
-func (t *TreeView) paintKeyCell(p *core.Painter, item *TreeItem, sp colSpan, itemY core.Unit, s style.CellStyle, metrics core.CellMetrics, font *core.Font) {
+// paintTreeCell draws a tree-hosting cell for one row: indent,
+// expander, icon, then the given text (the key column's caption, or -
+// with the key hidden - the host data column's value), constrained to
+// the span and always left-aligned.
+func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, itemY core.Unit, s style.CellStyle, metrics core.CellMetrics, font *core.Font, text string) {
 	level := item.Level()
 	x := sp.x + core.Unit(level*t.indentWidth)*metrics.CellWidth
 	if !item.IsLeaf() {
@@ -745,7 +776,6 @@ func (t *TreeView) paintKeyCell(p *core.Painter, item *TreeItem, sp colSpan, ite
 		x += metrics.CellWidth * 2
 	}
 	avail := sp.x + sp.w - x
-	text := item.Text
 	for font.MeasureText(text) > avail && len(text) > 0 {
 		text = text[:len(text)-1]
 	}

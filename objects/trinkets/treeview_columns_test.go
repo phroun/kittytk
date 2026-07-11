@@ -126,6 +126,47 @@ func TestTreeColumnFitReclaimsMeasuredSlack(t *testing.T) {
 	}
 }
 
+// With the key column hidden, the FIRST visible data column hosts the
+// tree affordances: nesting indent, a working expander, and forced
+// left alignment regardless of its Align setting.
+func TestTreeColumnHostWhenKeyHidden(t *testing.T) {
+	tv := newColumnsTree(60, 10)
+	tv.SetShowKey(false)
+	size := tv.ColumnByID("size") // first visible data column, align=right
+	if tv.treeHostColumn() != size {
+		t.Fatalf("host = %v, want the size column", tv.treeHostColumn())
+	}
+	// Hiding the first column moves the host to the next one.
+	size.Hidden = true
+	if tv.treeHostColumn() != tv.ColumnByID("kind") {
+		t.Fatalf("host after hiding = %v, want kind", tv.treeHostColumn())
+	}
+	size.Hidden = false
+
+	// The expander click works in the host span: the expanded root
+	// folder (level 0, indicator in the span's first cell) collapses.
+	lay := tv.columnLayout()
+	if lay.spans[0].col != size {
+		t.Fatalf("first span should be the size column, got %v", lay.spans[0].col)
+	}
+	root := tv.RootItems()[0]
+	if !root.Expanded {
+		t.Fatal("precondition: root expanded")
+	}
+	tv.HandleMousePress(core.MousePressEvent{
+		X: lay.spans[0].x + 2, Y: tv.headerHeight() + 2, Button: core.LeftButton,
+	})
+	if root.Expanded {
+		t.Error("expander click in the host data column did not collapse")
+	}
+
+	// With the key visible, the host is nil (the key hosts the tree).
+	tv.SetShowKey(true)
+	if tv.treeHostColumn() != nil {
+		t.Errorf("host with key visible = %v, want nil", tv.treeHostColumn())
+	}
+}
+
 // Scroll mode: natural widths, footer row reserved, hScroll pans the
 // unfixed spans and clamps to the overflow.
 func TestTreeColumnLayoutScrollMode(t *testing.T) {

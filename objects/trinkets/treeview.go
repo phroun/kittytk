@@ -996,20 +996,22 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		level := item.Level()
 
 		// Check if clicked on expand/collapse indicator. In the
-		// multi-column presentation the tree lives in the key column's
-		// span (which may be panned); offset the indicator accordingly.
+		// multi-column presentation the tree lives in its host span -
+		// the key column, or (key hidden) the first visible data
+		// column - which may be panned; offset accordingly.
 		keyX := core.Unit(0)
 		if t.multiColumn() {
 			lay := t.columnLayout()
+			host := t.treeHostColumn()
 			keyX = core.Unit(-1)
 			for _, sp := range lay.spans {
-				if sp.col == nil {
+				if sp.col == nil || (host != nil && sp.col == host) {
 					keyX = sp.x
 					break
 				}
 			}
 			if keyX < 0 {
-				keyX = contentWidth // key column hidden: no indicator hit
+				keyX = contentWidth // no tree host in view: no indicator hit
 			}
 		}
 		indicatorX := keyX + core.Unit(level*t.indentWidth)*metrics.CellWidth
