@@ -425,6 +425,15 @@ func (p *Platform) pumpEvents() bool {
 					}
 					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
 				}
+			} else if e.Type == sdl2.KEYUP {
+				// Report releases with the modifier state AFTER this key rose
+				// (SDL's live keymap), so the desktop can commit a window-cycle
+				// run once every modifier is up. Emitted even for a bare
+				// modifier key (translateKey == "") so that release is seen.
+				s.handler.Event(core.KeyReleaseEvent{
+					Key:       translateKey(e.Keysym),
+					Modifiers: currentKeyModifiers(),
+				})
 			}
 		case *sdl2.MouseButtonEvent:
 			s := p.surfaceFor(e.WindowID)

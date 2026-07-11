@@ -415,6 +415,12 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 		// surfaces keep the default snap-to-cell behavior.
 		d.windowManager.SetSmoothPositioning(true)
 	}
+	// Graphical (SDL) surfaces deliver key releases, so the window-cycle run
+	// commits its MRU order the instant all modifiers rise. The TUI can't see
+	// that and falls back to the idle lock-in timer.
+	if d.graphicalFrames {
+		d.windowManager.SetModifierReleaseTracked(true)
+	}
 	d.windowManager.SetOnRepaintNeeded(func() {
 		d.RequestUpdate()
 	})
@@ -2662,6 +2668,15 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		}
 		// Pass to window manager
 		return wm.HandleKeyPress(e)
+
+	case core.KeyReleaseEvent:
+		// When every modifier has gone up, lock in an in-progress window-cycle
+		// run's MRU order (the Alt-Tab "commit on release"). Only the graphical
+		// backend delivers releases; the WM ignores this on the TUI.
+		if e.Modifiers == 0 && wm != nil {
+			wm.NotifyModifiersReleased()
+		}
+		return false
 
 	case core.FocusEvent:
 		// The desktop's OS window gained or lost focus: its active

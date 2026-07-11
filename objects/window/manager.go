@@ -155,6 +155,15 @@ type WindowManager struct {
 	// directions. The MRU is committed once, when the run ends (endCycleSession).
 	cycling bool
 
+	// lastCycleAt marks when the last cycle step ran, for the idle lock-in.
+	lastCycleAt time.Time
+
+	// modifierReleaseTracked is set on surfaces that deliver key releases
+	// (the graphical/SDL backend): there the run is committed the moment all
+	// modifiers go up (NotifyModifiersReleased), so the idle lock-in timer is
+	// disabled. The TUI can't see the modifier release and relies on the timer.
+	modifierReleaseTracked bool
+
 	// Smooth positioning: when the surface's backend supports sub-cell
 	// placement (pixel surfaces), drag and resize track the pointer at
 	// unit granularity instead of snapping to cell boundaries.
@@ -975,6 +984,29 @@ func (m *WindowManager) activate(win *Window, reorderCycle bool) {
 	if handler != nil {
 		handler(win)
 	}
+}
+
+// cycleCommitTimeout is the idle gap after which an unfinished window-cycle run
+// locks its result into the MRU order on surfaces that can't observe the
+// modifier going up (the TUI). It approximates "you released the Alt-Tab keys".
+const cycleCommitTimeout = 2 * time.Second
+
+// SetModifierReleaseTracked marks whether this surface delivers key-release
+// events (the graphical/SDL backend does). When true, a cycle run is committed
+// the moment all modifiers rise (NotifyModifiersReleased) and the idle lock-in
+// timer is disabled; when false (the TUI) the idle timer is the fallback.
+func (m *WindowManager) SetModifierReleaseTracked(tracked bool) {
+	m.mu.Lock()
+	m.modifierReleaseTracked = tracked
+	m.mu.Unlock()
+}
+
+// NotifyModifiersReleased locks an in-progress window-cycle run into the MRU
+// order when every modifier key has gone up - the desktop convention of
+// committing the Alt-Tab order on release. Driven by the SDL backend's key
+// releases; a no-op when no run is in progress.
+func (m *WindowManager) NotifyModifiersReleased() {
+	m.endCycleSession()
 }
 
 // endCycleSession ends an in-progress M-Tab cycle run, committing its result to
@@ -2585,14 +2617,6 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RUnlock()
 
 	// Any key other than the cycle keys ends an in-progress M-Tab run,
-	// committing its MRU order before the key is acted on.
-	switch event.Key {
-	case "M-Tab", "C-Tab", "M-S-Tab", "C-S-Tab":
-		// stays within / continues the cycle run
-	default:
-		m.endCycleSession()
-	}
-
 	// Global shortcuts
 	// Uses direct-key-handler naming: M- = Alt, C- = Ctrl, S- = Shift
 	switch event.Key {
@@ -2635,6 +2659,10 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	// blocks it - keys belong to the modal on top).
 	if active != nil && !active.IsMinimized() && !m.isModalBlocked(active) {
 		if active.HandleKeyPress(event) {
+			// A key the window itself acts on is a genuine window interaction:
+			// commit the cycle run's MRU order. Keys that fall through to the
+			// menu bar (below) are not window interactions and do not commit.
+			m.endCycleSession()
 			return true
 		}
 	}
@@ -2651,6 +2679,22 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 // Uses activation order: most recently activated item is at the end.
 // The dock participates in this order like a window (nil in cycleOrder).
 func (m *WindowManager) CycleWindows(forward bool) {
+	now := time.Now()
+
+	m.mu.Lock()
+	wasCycling := m.cycling
+	gap := now.Sub(m.lastCycleAt)
+	idleLockIn := !m.modifierReleaseTracked
+	m.mu.Unlock()
+
+	// Idle lock-in (TUI only, where we can't observe the modifier going up): a
+	// step more than cycleCommitTimeout after the previous one is a new
+	// gesture, so lock the prior run's landing spot into the MRU first. On the
+	// SDL side NotifyModifiersReleased does this the instant all modifiers rise.
+	if idleLockIn && wasCycling && gap > cycleCommitTimeout {
+		m.endCycleSession()
+	}
+
 	m.mu.Lock()
 	desktop := m.desktop
 	// Read the LIVE cycle order (not a snapshot): stepping locates the current
@@ -2663,6 +2707,7 @@ func (m *WindowManager) CycleWindows(forward bool) {
 	// Mark the run in progress: activation during it must not promote the
 	// selection to the front (that churn is what broke backward cycling). The
 	// MRU commit is deferred to endCycleSession.
+	m.lastCycleAt = now
 	m.cycling = true
 	m.mu.Unlock()
 
