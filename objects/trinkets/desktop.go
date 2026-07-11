@@ -321,7 +321,7 @@ func (d *Desktop) createSystemMenu() *Menu {
 // version come from the core package's single source of truth.
 func aboutDesktopText() string {
 	return fmt.Sprintf("%s — %s\n\n"+
-		"A cross-surface UI toolkit in Go.\n\n"+
+		"One user interface toolkit for graphics, text, and speech.\n\n"+
 		"Version %s (build %d)\n\n"+
 		"© 2026 Jeffrey R. Day. All rights reserved.",
 		core.Name, core.Tagline, core.Version, core.Build)
