@@ -19,11 +19,12 @@ const (
 )
 
 // graphicalMenuTrailingUnits is the small gap kept to the right of a
-// graphical menu's shortcut or submenu arrow, between it and the menu's right
-// edge. Graphical menus have only a 1-pixel right stroke (not a whole char
-// border), so this is a hair rather than the two cells cell/TUI menus reserve.
+// graphical menu's shortcut, between it and the menu's right edge. Graphical
+// menus have only a 1-pixel right stroke (not a whole char border), so this is
+// about three-quarters of a cell rather than the two cells cell/TUI menus
+// reserve.
 func graphicalMenuTrailingUnits(metrics core.CellMetrics) core.Unit {
-	return metrics.CellWidth / 4
+	return metrics.CellWidth * 3 / 4
 }
 
 // shortcutFont returns the font used to draw a menu item's shortcut. In
