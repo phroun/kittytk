@@ -183,23 +183,43 @@ func (m *MessageBox) ResizeToFitContent() { m.calculateSize() }
 // calculateSize sets the dialog size based on content.
 func (m *MessageBox) calculateSize() {
 	metrics := m.EffectiveCellMetrics()
+	font := m.content.EffectiveFont()
 
-	// Calculate width and height based on text content
 	lines := strings.Split(m.content.text, "\n")
-	maxLineWidth := 0
+
+	// Width: measure each line in the ACTUAL (proportional) font, not one cell
+	// per character - assuming a full cell per glyph makes the dialog far too
+	// wide on graphical surfaces. Reserve the icon gutter on the left (matching
+	// Paint's textX) and a margin on the right.
+	leftGutter := metrics.CellWidth * 6
+	rightMargin := metrics.CellWidth * 2
+	var maxLineW core.Unit
 	for _, line := range lines {
-		if len(line) > maxLineWidth {
-			maxLineWidth = len(line)
+		if w := font.MeasureText(line); w > maxLineW {
+			maxLineW = w
 		}
 	}
+	contentW := leftGutter + maxLineW + rightMargin
 
-	// Add padding for icon and margins
-	textWidth := maxLineWidth + 6 // 4 for icon area, 2 for margins
-	if textWidth > 60 {
-		textWidth = 60
+	// Absolute minimum: the dialog must be wide enough for its button row (as
+	// Paint measures it) plus a little slack on each side, so even a blank
+	// dialog comfortably holds its OK button.
+	var rowWidth core.Unit
+	for _, btn := range m.content.buttonTrinkets {
+		rowWidth += core.Unit(len(btn.Text())+4) * metrics.CellWidth
 	}
-	if textWidth < 24 {
-		textWidth = 24
+	if n := len(m.content.buttonTrinkets); n > 1 {
+		rowWidth += core.Unit(n-1) * metrics.CellWidth // inter-button gaps
+	}
+	minW := rowWidth + metrics.CellWidth*4
+	if floor := metrics.CellWidth * 16; minW < floor {
+		minW = floor
+	}
+	if maxW := metrics.CellWidth * 64; contentW > maxW {
+		contentW = maxW
+	}
+	if contentW < minW {
+		contentW = minW
 	}
 
 	// Height: 1 top margin + text lines + 1 gap + 1 button row + 1 bottom margin
@@ -209,7 +229,6 @@ func (m *MessageBox) calculateSize() {
 	// the button into). The window also spends rows on its title bar and frame,
 	// so measure that chrome and add it - otherwise the content area is short
 	// and the OK button rides up over the last line of text.
-	contentW := core.Unit(textWidth) * metrics.CellWidth
 	contentH := core.Unit(textHeight) * metrics.CellHeight
 
 	m.SetBounds(core.UnitRect{Width: contentW, Height: contentH})
@@ -298,16 +317,19 @@ func (c *messageBoxContent) Paint(p *core.Painter) {
 	// Draw background
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', contentStyle)
 
-	// Draw icon
+	// Draw icon (indented two columns from the left edge so it isn't crowding
+	// the frame).
 	iconText := c.getIconText()
 	textY := metrics.CellHeight
 	if iconText != "" {
-		p.DrawCell(metrics.CellWidth, textY, []rune(iconText)[0], contentStyle)
+		p.DrawCell(metrics.CellWidth*3, textY, []rune(iconText)[0], contentStyle)
 	}
 
-	// Draw message text in the proportional font, one DrawText per line.
+	// Draw message text in the proportional font, one DrawText per line. textX
+	// matches the icon indent plus the icon gutter (kept in sync with
+	// calculateSize's leftGutter).
 	font := c.EffectiveFont()
-	textX := metrics.CellWidth * 4
+	textX := metrics.CellWidth * 6
 	lineY := textY
 	for _, line := range strings.Split(c.text, "\n") {
 		p.DrawText(textX, lineY, line, contentStyle, font)
