@@ -260,6 +260,13 @@ type PopupRequest struct {
 	HandleMouseRelease func(event MouseReleaseEvent) bool
 	// HandleMouseWheel function to handle wheel scrolling (returns true if handled)
 	HandleMouseWheel func(event MouseWheelEvent) bool
+	// OnDismiss is called when the HOST discards the popup without
+	// routing the triggering event to the popup's own handlers (e.g.
+	// a press outside every popup force-clears the overlay list). It
+	// lets the owner reset its open-state - otherwise the owner still
+	// believes its popup is up and keeps swallowing keys for a menu
+	// that no longer exists. NOT called on an explicit UnregisterPopup.
+	OnDismiss func()
 }
 
 // PopupController is an interface for managing popup overlays.

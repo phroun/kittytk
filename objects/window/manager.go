@@ -191,6 +191,11 @@ type PopupOverlay struct {
 	HandleMouseRelease func(event core.MouseReleaseEvent) bool
 	// HandleMouseWheel function to handle wheel scrolling (returns true if handled)
 	HandleMouseWheel func(event core.MouseWheelEvent) bool
+	// OnDismiss is called when the manager force-clears the popup (a
+	// press outside every popup) without routing the press to it - the
+	// owner's chance to reset its open-state. Not called on an
+	// explicit UnregisterPopup.
+	OnDismiss func()
 }
 
 // NewWindowManager creates a new window manager.
@@ -1681,6 +1686,7 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,
 		HandleMouseWheel:   request.HandleMouseWheel,
+		OnDismiss:          request.OnDismiss,
 	}
 	m.popups = append(m.popups, overlay)
 }
@@ -2030,6 +2036,14 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 		m.mu.Lock()
 		m.popups = nil
 		m.mu.Unlock()
+		// Tell each owner its popup is gone (outside the lock - the
+		// callback may re-enter the controller), or it will keep
+		// routing input to an overlay that no longer exists.
+		for _, p := range popups {
+			if p.OnDismiss != nil {
+				p.OnDismiss()
+			}
+		}
 		m.RequestRepaint()
 		// Don't consume the click - let it propagate to close the underlying popup source
 	}

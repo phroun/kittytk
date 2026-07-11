@@ -130,6 +130,21 @@ type TreeView struct {
 	colDragStartW int
 	colDragInvert bool
 
+	// Composite fit-mode drag: the grabbed line moves by resizing the
+	// two columns astride it against the slack pool (the auto-fill
+	// key's spare width when the key shows, else the blank width right
+	// of the last column), capped so the layout never starts
+	// reclaiming from unrelated columns mid-drag - no other line ever
+	// moves contrary to the drag direction. Snapshot widths keep each
+	// move idempotent from the press state.
+	colDragFit        bool
+	colDragSlackRight bool        // pool right of the line (key hidden)
+	colDragL          *TreeColumn // nil = the key column (divider 0)
+	colDragR          *TreeColumn
+	colDragLW         int
+	colDragRW         int
+	colDragPool       int // slack cells consumable before reclaim would kick in
+
 	// Horizontal scrollbar (footer row) drag state.
 	hbarDragging    bool
 	hbarDragStartX  core.Unit
@@ -1141,6 +1156,8 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		t.scrollbarDragging = false
 		t.colDragging = false
 		t.colDragCol = nil
+		t.colDragFit = false
+		t.colDragL, t.colDragR = nil, nil
 		t.hbarDragging = false
 		return false
 	}

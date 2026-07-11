@@ -9,14 +9,14 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// Scheme ledger/header defaults: cyan on black (odd), silver on dark
-// gray (even), silver on dark yellow (header).
+// Scheme ledger/header defaults: cyan on very dark gray (odd), silver
+// on very dark teal (even), silver on dark yellow (header).
 func TestSchemeLedgerHeaderDefaults(t *testing.T) {
 	s := &style.Scheme{}
-	if got := s.GetLedgerOdd(); got.Fg != style.ColorCyan || got.Bg != style.ColorBlack {
+	if got := s.GetLedgerOdd(); got.Fg != style.ColorCyan || got.Bg != style.RGB(26, 26, 26) {
 		t.Errorf("LedgerOdd default = %v/%v", got.Fg, got.Bg)
 	}
-	if got := s.GetLedgerEven(); got.Fg != style.ColorWhite || got.Bg != style.ColorBrightBlack {
+	if got := s.GetLedgerEven(); got.Fg != style.ColorWhite || got.Bg != style.RGB(12, 44, 44) {
 		t.Errorf("LedgerEven default = %v/%v", got.Fg, got.Bg)
 	}
 	if got := s.GetHeader(); got.Fg != style.ColorWhite || got.Bg != style.ColorYellow {

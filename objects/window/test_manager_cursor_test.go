@@ -104,6 +104,37 @@ func TestOverlaySuppressesCursorAndResizeHover(t *testing.T) {
 	}
 }
 
+// A press outside every popup force-clears the overlay list without
+// routing the press to the popup's own handlers - the owner must be
+// told via OnDismiss so it can drop its open-state.
+func TestManagerOutsidePressCallsOnDismiss(t *testing.T) {
+	m := NewWindowManager()
+	dismissed := false
+	m.RegisterPopup(&core.PopupRequest{
+		ID:        "dropdown",
+		Bounds:    core.UnitRect{X: 150, Y: 140, Width: 200, Height: 100},
+		OnDismiss: func() { dismissed = true },
+	})
+	m.HandleMousePress(core.MousePressEvent{X: 10, Y: 10, Button: core.LeftButton})
+	if !dismissed {
+		t.Error("OnDismiss not called on the outside-press force-clear")
+	}
+
+	// A press INSIDE the popup goes to its handlers - no dismissal.
+	dismissed = false
+	pressed := false
+	m.RegisterPopup(&core.PopupRequest{
+		ID:               "dropdown",
+		Bounds:           core.UnitRect{X: 150, Y: 140, Width: 200, Height: 100},
+		HandleMousePress: func(core.MousePressEvent) bool { pressed = true; return true },
+		OnDismiss:        func() { dismissed = true },
+	})
+	m.HandleMousePress(core.MousePressEvent{X: 200, Y: 160, Button: core.LeftButton})
+	if !pressed || dismissed {
+		t.Errorf("inside press: pressed=%v dismissed=%v, want true/false", pressed, dismissed)
+	}
+}
+
 func TestWindowCursorShapeAtTitleBarIsDefault(t *testing.T) {
 	w := NewWindow("w")
 	content := &ibeamContent{}

@@ -50,8 +50,8 @@ type Scheme struct {
 	DisabledTextFG *CellStyle // FG only
 	Selection      *CellStyle // bright white on blue
 	Normal         *CellStyle // nil = WindowFG on WindowBG
-	LedgerOdd      *CellStyle // ledger-banded odd rows; nil = cyan on black
-	LedgerEven     *CellStyle // ledger-banded even rows; nil = white (silver) on dark gray
+	LedgerOdd      *CellStyle // ledger-banded odd rows; nil = cyan on very dark gray
+	LedgerEven     *CellStyle // ledger-banded even rows; nil = white (silver) on very dark teal
 	Header         *CellStyle // column header band; nil = silver on dark yellow (amber)
 
 	// =========================================================================
@@ -703,7 +703,7 @@ func (s *Scheme) GetLedgerOdd() CellStyle {
 	if s.LedgerOdd != nil {
 		return *s.LedgerOdd
 	}
-	return DefaultStyle().WithFg(ColorCyan).WithBg(ColorBlack)
+	return DefaultStyle().WithFg(ColorCyan).WithBg(RGB(26, 26, 26))
 }
 
 // GetLedgerEven returns the ledger banding style for even rows.
@@ -711,7 +711,7 @@ func (s *Scheme) GetLedgerEven() CellStyle {
 	if s.LedgerEven != nil {
 		return *s.LedgerEven
 	}
-	return DefaultStyle().WithFg(ColorWhite).WithBg(ColorBrightBlack)
+	return DefaultStyle().WithFg(ColorWhite).WithBg(RGB(12, 44, 44))
 }
 
 // GetHeader returns the column header band style (details views).

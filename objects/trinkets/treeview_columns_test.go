@@ -320,37 +320,86 @@ func TestTreeColumnHiddenAndChooser(t *testing.T) {
 	}
 }
 
-// Divider drags size the side the slack dictates. Fit mode with the
-// auto-fill key column on the left: every divider sizes the column to
-// its RIGHT with the delta inverted, so the grabbed boundary follows
-// the mouse (sizing the left column would move a DIFFERENT boundary -
-// the drag felt like pulling the wrong end). Scroll mode has no slack
-// column: the classic left-column sizing applies.
+// Divider drags size the side the slack dictates. Fit mode runs the
+// composite two-sided drag: with the auto-fill key column left of the
+// line, dragging LEFT widens the RIGHT column - funded by the key's
+// spare width first, then by narrowing the LEFT column - and dragging
+// RIGHT narrows the right column, the cells returning to the key. The
+// total is capped so the layout never reclaims from unrelated columns
+// mid-drag: no line ever moves contrary to the drag direction. Scroll
+// mode has no slack column: the classic left-column sizing applies.
 func TestTreeColumnDividerDrag(t *testing.T) {
 	tv := newColumnsTree(60, 10)
 	lay := tv.columnLayout()
 	divX := lay.spans[1].divX // divider between Size and Kind
+	// TUI, 60 cells wide: content 59, key auto-width 35, defended
+	// floor 20 -> a 15-cell slack pool; Size can give 10-3=7 more.
 
 	if !tv.HandleMousePress(core.MousePressEvent{X: divX + 2, Y: 4, Button: core.LeftButton}) {
 		t.Fatal("divider press not handled")
 	}
-	if !tv.colDragging || !tv.colDragInvert {
-		t.Fatalf("fit-mode drag: dragging=%v invert=%v, want true/true", tv.colDragging, tv.colDragInvert)
+	if !tv.colDragging || !tv.colDragFit || tv.colDragSlackRight {
+		t.Fatalf("fit-mode drag: dragging=%v fit=%v slackRight=%v, want true/true/false",
+			tv.colDragging, tv.colDragFit, tv.colDragSlackRight)
 	}
-	// Slack (key) is left: drag RIGHT 4 cells -> Kind (the right column)
-	// gets 4 cells NARROWER, the grabbed boundary moves right with the
-	// mouse, and Kind's right edge stays put.
+	// Drag RIGHT 4 cells -> Kind narrows by 4, its cells return to the
+	// key; Size stays put, and Kind's right edge stays put.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 4*8, Y: 4, Buttons: 1})
 	if got := tv.ColumnByID("kind").Width; got != 8 {
-		t.Errorf("inverted drag: kind width=%d, want 8", got)
+		t.Errorf("right drag: kind width=%d, want 8", got)
 	}
 	if got := tv.ColumnByID("size").Width; got != 10 {
-		t.Errorf("inverted drag touched the left column: size=%d, want 10", got)
+		t.Errorf("right drag touched the left column: size=%d, want 10", got)
+	}
+	// Far right: stops at Kind's minimum (3), never squeezing Size.
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 100*8, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("kind").Width; got != 3 {
+		t.Errorf("right drag clamp: kind width=%d, want 3", got)
+	}
+	// LEFT 10 cells (from the press point): all funded by the key's
+	// slack pool - Kind widens, Size untouched.
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 - 10*8, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("kind").Width; got != 22 {
+		t.Errorf("left drag (slack): kind width=%d, want 22", got)
+	}
+	if got := tv.ColumnByID("size").Width; got != 10 {
+		t.Errorf("left drag (slack) touched the left column: size=%d, want 10", got)
+	}
+	// LEFT 20: the 15-cell pool is spent; the remaining 5 comes from
+	// narrowing Size.
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 - 20*8, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("kind").Width; got != 32 {
+		t.Errorf("left drag (pool+left): kind width=%d, want 32", got)
+	}
+	if got := tv.ColumnByID("size").Width; got != 5 {
+		t.Errorf("left drag (pool+left): size=%d, want 5", got)
+	}
+	// Far left: capped at pool(15) + Size's room(7) = 22 - the key
+	// stays at its defended floor, so the layout never starts
+	// reclaiming from other columns (which would move their lines
+	// AGAINST the drag).
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 - 60*8, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("kind").Width; got != 34 {
+		t.Errorf("left drag cap: kind width=%d, want 34", got)
+	}
+	if got := tv.ColumnByID("size").Width; got != 3 {
+		t.Errorf("left drag cap: size=%d, want 3", got)
+	}
+	// The grabbed line resolved exactly 22 cells left of where it
+	// started, and the key|Size line moved only WITH the drag.
+	lay2 := tv.columnLayout()
+	if lay2.spans[1].divX != divX-22*8 {
+		t.Errorf("grabbed line at %d, want %d", lay2.spans[1].divX, divX-22*8)
+	}
+	if lay2.spans[0].divX > lay.spans[0].divX {
+		t.Errorf("key|Size line moved AGAINST the drag: %d > %d", lay2.spans[0].divX, lay.spans[0].divX)
 	}
 	tv.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
 	if tv.colDragging {
 		t.Error("release did not end the drag")
 	}
+	tv.ColumnByID("size").Width = 10 // restore for the scroll-mode leg
+	tv.ColumnByID("kind").Width = 12
 
 	// Scroll mode (no slack column): the divider sizes the column to
 	// its LEFT, classic semantics.
@@ -375,6 +424,101 @@ func TestTreeColumnDividerDrag(t *testing.T) {
 	tv.HandleMousePress(core.MousePressEvent{X: lay.spans[1].divX + 2, Y: 4, Button: core.LeftButton})
 	if tv.colDragging {
 		t.Error("divider left of a non-resizable column started a drag in fit mode")
+	}
+}
+
+// Fit mode with the key hidden: the slack is the BLANK width right of
+// the last column, and the drag mirrors - rightward widens the LEFT
+// column into the blank first, then the right column gives way;
+// leftward narrows the left column and the blank grows back.
+func TestTreeFitDragKeyHiddenBlankPool(t *testing.T) {
+	tv := newColumnsTree(60, 10)
+	tv.SetShowKey(false)
+	lay := tv.columnLayout()
+	// Visible: Size(10) | Kind(12); content 59 cells, one divider ->
+	// 23 used, 36 blank at the right; Kind can give 12-3=9 more.
+	divX := lay.spans[0].divX
+
+	if !tv.HandleMousePress(core.MousePressEvent{X: divX + 2, Y: 4, Button: core.LeftButton}) {
+		t.Fatal("divider press not handled")
+	}
+	if !tv.colDragging || !tv.colDragFit || !tv.colDragSlackRight {
+		t.Fatalf("no-key fit drag: dragging=%v fit=%v slackRight=%v, want true/true/true",
+			tv.colDragging, tv.colDragFit, tv.colDragSlackRight)
+	}
+	// Rightward 10: Size widens into the blank; Kind untouched (its
+	// lines move right WITH the drag).
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 10*8, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("size").Width; got != 20 {
+		t.Errorf("right drag (blank): size=%d, want 20", got)
+	}
+	if got := tv.ColumnByID("kind").Width; got != 12 {
+		t.Errorf("right drag (blank) touched kind: %d, want 12", got)
+	}
+	// Rightward 40: the 36-cell blank is spent; Kind gives the rest.
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 40*8, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("size").Width; got != 50 {
+		t.Errorf("right drag (blank+kind): size=%d, want 50", got)
+	}
+	if got := tv.ColumnByID("kind").Width; got != 8 {
+		t.Errorf("right drag (blank+kind): kind=%d, want 8", got)
+	}
+	// Far right: capped at blank(36) + Kind's room(9) = 45.
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 100*8, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("size").Width; got != 55 {
+		t.Errorf("right drag cap: size=%d, want 55", got)
+	}
+	if got := tv.ColumnByID("kind").Width; got != 3 {
+		t.Errorf("right drag cap: kind=%d, want 3", got)
+	}
+	// Back LEFT past the origin: Size narrows, Kind restored.
+	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 - 6*8, Y: 4, Buttons: 1})
+	if got := tv.ColumnByID("size").Width; got != 4 {
+		t.Errorf("left drag: size=%d, want 4", got)
+	}
+	if got := tv.ColumnByID("kind").Width; got != 12 {
+		t.Errorf("left drag did not restore kind: %d, want 12", got)
+	}
+	tv.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+}
+
+// A press OUTSIDE every popup makes the HOST clear the overlay list
+// itself - the popup's own press handler never runs. OnDismiss is the
+// owner's notification: the chooser must drop its open-state, or the
+// button stays painted "focused" and every keystroke keeps being
+// swallowed for a menu that no longer exists.
+func TestTreeColumnChooserHostDismiss(t *testing.T) {
+	tv := newColumnsTree(60, 10)
+	host := &recordingPopupController{}
+	parent := NewPanel()
+	parent.SetPopupController(host)
+	tv.SetParent(parent)
+	r, _ := tv.chooserButtonRect()
+	tv.HandleMousePress(core.MousePressEvent{X: r.X, Y: r.Y, Button: core.LeftButton})
+	if host.popup == nil || !tv.chooserOpen {
+		t.Fatal("precondition: chooser open")
+	}
+	if host.popup.OnDismiss == nil {
+		t.Fatal("chooser popup registered without OnDismiss")
+	}
+	// Simulate the WindowManager's outside-press force-clear: the list
+	// is dropped first, then the owner is notified, and the press is
+	// NOT consumed - it falls through to whatever was clicked (here, a
+	// row in the tree's own item list).
+	dismissed := host.popup
+	host.popup = nil
+	dismissed.OnDismiss()
+	if tv.chooserOpen || tv.chooserMenu != nil {
+		t.Error("chooser open-state survived the host dismissal")
+	}
+	tv.HandleMousePress(core.MousePressEvent{X: 20, Y: 36, Button: core.LeftButton}) // row 1
+	if tv.CurrentIndex() != 1 {
+		t.Fatalf("fall-through row click: index=%d, want 1", tv.CurrentIndex())
+	}
+	// Keys route normally again instead of feeding the dead menu.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})
+	if tv.CurrentIndex() != 2 {
+		t.Errorf("Down after dismissal: index=%d, want 2", tv.CurrentIndex())
 	}
 }
 

@@ -972,7 +972,9 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			p.FillRectPixelsAlpha(0, lay.headerH, 0, -1,
 				p.UnitSpanPxX(0, bounds.Width), 1, fr, fg, fb, 0.6)
 		}
-		t.paintChooserButton(p, lay, headerStyle)
+		// The chooser button paints AFTER the hscroll edge fades (below):
+		// the graphical button is two cells wide, so its left half sits
+		// inside the content area the right-edge fade covers.
 	}
 
 	// Rows. Row styles are collected for the horizontal-scroll edge
@@ -1079,6 +1081,9 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	// banded so each fade matches the background it covers.
 	t.paintHScrollFades(p, lay, headerStyle, rowStyles, bgStyle)
 	paintDividers(true)
+	if lay.headerH > 0 {
+		t.paintChooserButton(p, lay, headerStyle)
+	}
 
 	if t.footerHeight() > 0 {
 		t.paintHScrollbar(p, lay)
@@ -1441,6 +1446,11 @@ func (t *TreeView) openColumnChooser(keyboard bool) {
 			return true
 		},
 		HandleMouseWheel: m.HandleMouseWheel,
+		// The host may discard the overlay itself (a press outside every
+		// popup clears them all without routing the press here). Reset
+		// the open-state, or the button stays lit "focused" and every
+		// keystroke keeps going to a menu that no longer exists.
+		OnDismiss: func() { t.closeColumnChooser() },
 	})
 	t.Update()
 }
@@ -1497,22 +1507,195 @@ func (t *TreeView) handleChooserKey(event core.KeyPressEvent) bool {
 	return true
 }
 
-// dividerAt returns the column resized by a drag starting at header
-// position x, and whether the delta INVERTS. Which side a divider
-// sizes depends on where the slack lives: normally it sizes the column
-// to its LEFT (boundary follows the mouse, columns to the right shift
-// into the slack). But when the auto-fill column (the fit-mode key,
-// which absorbs the slack) lies LEFT of the divider, sizing the left
-// column would move a boundary other than the one under the mouse - so
-// the divider sizes the column to its RIGHT instead, with the delta
-// inverted (drag right = that column narrower). Either way the grabbed
-// boundary tracks the mouse and the far edges stay put.
-func (t *TreeView) dividerAt(x core.Unit, lay treeColLayout) (col *TreeColumn, startW int, invert, ok bool) {
+// dividerGrabZone is the horizontal grab band around a divider line.
+func (t *TreeView) dividerGrabZone() (grab0, grab1 core.Unit) {
 	cw := t.EffectiveCellMetrics().CellWidth
-	grab0, grab1 := core.Unit(0), cw // TUI: the divider cell itself
 	if core.FindGraphicalFrames(t.Self()) {
-		grab0, grab1 = -cw/2, cw/2 // pixels: half a cell astride the line
+		return -cw / 2, cw / 2 // pixels: half a cell astride the line
 	}
+	return 0, cw // TUI: the divider cell itself
+}
+
+// beginFitDrag arms the composite fit-mode divider drag. In fit mode
+// the columns tile the width exactly, so a line can only move by
+// trading cells across it against the slack pool - the auto-fill key
+// column's spare width when the key shows (slack LEFT of every line),
+// else the blank width right of the last column (slack RIGHT).
+//
+// Slack left: dragging LEFT widens the RIGHT column, funded by the
+// pool first and then by narrowing the LEFT column; dragging RIGHT
+// narrows the right column, the cells returning to the key. Slack
+// right is the mirror: RIGHT widens the left column (blank first,
+// then the right column gives way), LEFT narrows it back.
+//
+// Every step is capped by the pool plus the giving neighbor's own
+// room, so the layout never starts reclaiming width from UNRELATED
+// columns mid-drag: lines left of the grab move only WITH the drag
+// (into consumed slack), lines right of it stay put - none ever moves
+// contrary to the drag direction.
+func (t *TreeView) beginFitDrag(x core.Unit, lay treeColLayout) bool {
+	cw := t.EffectiveCellMetrics().CellWidth
+	grab0, grab1 := t.dividerGrabZone()
+	for i, sp := range lay.spans {
+		if !lay.divVisible(sp) || x < sp.divX+grab0 || x >= sp.divX+grab1 {
+			continue
+		}
+		if i+1 >= len(lay.spans) {
+			return false
+		}
+		left, right := lay.spans[i], lay.spans[i+1]
+		slackLeft := lay.spans[0].col == nil // the auto-fill key column
+		if slackLeft {
+			// The right column is the movement mechanism.
+			if right.col == nil || !right.col.Resizable {
+				return false
+			}
+		} else if left.col == nil || !left.col.Resizable {
+			// No key: the left column is the mechanism.
+			return false
+		}
+		t.colDragging = true
+		t.colDragFit = true
+		t.colDragSlackRight = !slackLeft
+		t.colDragStartX = x
+		t.colDragL = left.col
+		t.colDragR = right.col
+		t.colDragLW = int(left.w / cw)
+		t.colDragRW = int(right.w / cw)
+		if slackLeft {
+			// Pool: the key's cells above the width the layout defends
+			// (below it the key starts reclaiming from other columns,
+			// which would move unrelated lines).
+			floor := t.keyWidth
+			if floor <= 0 {
+				floor = treeKeyDefaultCells
+			}
+			if floor < treeKeyMinCells {
+				floor = treeKeyMinCells
+			}
+			t.colDragPool = int(lay.spans[0].w/cw) - floor
+		} else {
+			// Pool: the blank cells right of the last span.
+			last := lay.spans[len(lay.spans)-1]
+			t.colDragPool = int((lay.contentW - (last.x + last.w)) / cw)
+		}
+		if t.colDragPool < 0 {
+			t.colDragPool = 0
+		}
+		return true
+	}
+	return false
+}
+
+// applyFitDrag recomputes both neighbor widths from the press-time
+// snapshot for the pointer's current position (idempotent per move).
+func (t *TreeView) applyFitDrag(x core.Unit) {
+	cw := t.EffectiveCellMetrics().CellWidth
+	delta := int((x - t.colDragStartX) / cw) // + = rightward
+	if !t.colDragSlackRight {
+		// Slack pool (the auto key) LEFT of the line; the right
+		// column is the mechanism.
+		right := t.colDragR
+		if delta >= 0 {
+			// Rightward: narrow the right column; its cells return to
+			// the key. (Widening the left column instead would not
+			// move the grabbed line - the key would just absorb it.)
+			c := delta
+			if room := t.colDragRW - right.MinWidth; c > room {
+				c = room
+			}
+			if c < 0 {
+				c = 0
+			}
+			right.Width = t.colDragRW - c
+			if t.colDragL != nil {
+				t.colDragL.Width = t.colDragLW
+			}
+		} else {
+			// Leftward: widen the right column - the pool pays first,
+			// then the left column narrows toward its minimum.
+			m := -delta
+			lFree := 0
+			if t.colDragL != nil && t.colDragL.Resizable {
+				if lFree = t.colDragLW - t.colDragL.MinWidth; lFree < 0 {
+					lFree = 0
+				}
+			}
+			if m > t.colDragPool+lFree {
+				m = t.colDragPool + lFree
+			}
+			if right.MaxWidth > 0 && m > right.MaxWidth-t.colDragRW {
+				m = right.MaxWidth - t.colDragRW
+			}
+			if m < 0 {
+				m = 0
+			}
+			fromL := m - t.colDragPool
+			if fromL < 0 {
+				fromL = 0
+			}
+			right.Width = t.colDragRW + m
+			if t.colDragL != nil {
+				t.colDragL.Width = t.colDragLW - fromL
+			}
+		}
+	} else {
+		// Slack pool (blank width) RIGHT of the line, key hidden; the
+		// left column is the mechanism - the exact mirror.
+		left := t.colDragL
+		if delta <= 0 {
+			c := -delta
+			if room := t.colDragLW - left.MinWidth; c > room {
+				c = room
+			}
+			if c < 0 {
+				c = 0
+			}
+			left.Width = t.colDragLW - c
+			if t.colDragR != nil {
+				t.colDragR.Width = t.colDragRW
+			}
+		} else {
+			m := delta
+			rFree := 0
+			if t.colDragR != nil && t.colDragR.Resizable {
+				if rFree = t.colDragRW - t.colDragR.MinWidth; rFree < 0 {
+					rFree = 0
+				}
+			}
+			if m > t.colDragPool+rFree {
+				m = t.colDragPool + rFree
+			}
+			if left.MaxWidth > 0 && m > left.MaxWidth-t.colDragLW {
+				m = left.MaxWidth - t.colDragLW
+			}
+			if m < 0 {
+				m = 0
+			}
+			fromR := m - t.colDragPool
+			if fromR < 0 {
+				fromR = 0
+			}
+			left.Width = t.colDragLW + m
+			if t.colDragR != nil {
+				t.colDragR.Width = t.colDragRW - fromR
+			}
+		}
+	}
+	t.Update()
+}
+
+// dividerAt returns the column resized by a SCROLL-mode drag starting
+// at header position x, and whether the delta INVERTS. It also serves
+// as the divider hit-test for the resize cursor in both modes (its
+// refusal rules match beginFitDrag's: the movement-mechanism column
+// must be resizable). Scroll mode sizes the column LEFT of the line
+// (the boundary follows the mouse; columns to the right pan), except
+// at the pinned-right flank where the divider IS the pinned column's
+// left edge. Fit-mode PRESSES never use the returned sizing - they arm
+// the composite beginFitDrag/applyFitDrag path instead.
+func (t *TreeView) dividerAt(x core.Unit, lay treeColLayout) (col *TreeColumn, startW int, invert, ok bool) {
+	grab0, grab1 := t.dividerGrabZone()
 	slackLeft := t.fitWidth && len(lay.spans) > 0 && lay.spans[0].col == nil
 	for i, sp := range lay.spans {
 		if !lay.divVisible(sp) {
@@ -1592,7 +1775,12 @@ func (t *TreeView) handleMultiPress(event core.MousePressEvent) bool {
 		return true
 	}
 	lay := t.columnLayout()
-	if col, startW, invert, ok := t.dividerAt(event.X, lay); ok {
+	if t.fitWidth {
+		// Fit mode: the composite two-sided drag (see beginFitDrag).
+		if t.beginFitDrag(event.X, lay) {
+			return true
+		}
+	} else if col, startW, invert, ok := t.dividerAt(event.X, lay); ok {
 		t.colDragging = true
 		t.colDragCol = col
 		t.colDragStartX = event.X
@@ -1619,6 +1807,10 @@ func (t *TreeView) handleMultiPress(event core.MousePressEvent) bool {
 func (t *TreeView) handleMultiMove(event core.MouseMoveEvent) bool {
 	if !t.colDragging {
 		return false
+	}
+	if t.colDragFit {
+		t.applyFitDrag(event.X)
+		return true
 	}
 	cw := t.EffectiveCellMetrics().CellWidth
 	deltaCells := int((event.X - t.colDragStartX) / cw)
@@ -1650,6 +1842,8 @@ func (t *TreeView) handleMultiRelease() bool {
 	if t.colDragging {
 		t.colDragging = false
 		t.colDragCol = nil
+		t.colDragFit = false
+		t.colDragL, t.colDragR = nil, nil
 		handled = true
 	}
 	if t.hbarDragging {

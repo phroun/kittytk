@@ -666,6 +666,10 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 		HandleMouseRelease: func(event core.MouseReleaseEvent) bool {
 			return c.handlePopupMouseRelease(event, popupBounds)
 		},
+		// The host can force-clear the overlay (press outside every
+		// popup) without routing the press here: resync isOpen or the
+		// box keeps acting like the dropdown is still up.
+		OnDismiss: func() { c.HidePopup() },
 	}
 
 	pc.RegisterPopup(request)

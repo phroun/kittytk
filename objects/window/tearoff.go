@@ -392,6 +392,7 @@ func (h *TearOffHost) RegisterPopup(request *core.PopupRequest) {
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,
 		HandleMouseWheel:   request.HandleMouseWheel,
+		OnDismiss:          request.OnDismiss,
 	})
 	h.surf.Invalidate(core.UnitRect{})
 }
@@ -438,7 +439,15 @@ func (h *TearOffHost) popupsHandleMouse(ev core.Event) (handled bool) {
 				return true
 			}
 		}
+		cleared := h.popups
 		h.popups = nil
+		// Same contract as the WindowManager: the owner must learn its
+		// popup is gone or it keeps swallowing keys for a dead overlay.
+		for _, p := range cleared {
+			if p.OnDismiss != nil {
+				p.OnDismiss()
+			}
+		}
 		h.surf.Invalidate(core.UnitRect{})
 		return false
 	case core.MouseMoveEvent:
