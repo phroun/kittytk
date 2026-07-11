@@ -438,7 +438,11 @@ func (m *WindowManager) updateResizeHover(x, y core.Unit) {
 		}
 		if win.Bounds().Contains(core.UnitPoint{X: x, Y: y}) {
 			target = win
-			edge = m.detectResizeEdge(win, x, y)
+			// A modally-blocked window can't be resized, so it shows no
+			// edge highlight at all.
+			if !m.isModalBlocked(win) {
+				edge = m.detectResizeEdge(win, x, y)
+			}
 			break
 		}
 	}
@@ -507,6 +511,11 @@ func ResizeCursorForEdge(edge int) core.CursorShape {
 func (m *WindowManager) CursorAt(x, y core.Unit) core.CursorShape {
 	win := m.topWindowAt(x, y)
 	if win == nil {
+		return core.CursorDefault
+	}
+	// A modally-blocked window is inert: no resize cursor on its edges and no
+	// trinket cursor (text I-beam, terminal, etc.) from its interior.
+	if m.isModalBlocked(win) {
 		return core.CursorDefault
 	}
 	if s := ResizeCursorForEdge(m.detectResizeEdge(win, x, y)); s != core.CursorDefault {
