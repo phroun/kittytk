@@ -1698,6 +1698,11 @@ type MenuBar struct {
 	hoverIndex     int // Top-level item under the pointer (-1 = none)
 	hoverScrollBtn int // Overflow scroll button under the pointer (-1 left, +1 right, 0 none)
 
+	// modalBlocked reports whether this menu bar is disabled by a modal (the
+	// app it represents is modally blocked). A blocked bar shows no hover
+	// highlight on its items. nil means never blocked.
+	modalBlocked func() bool
+
 	// Appearance
 	showShortcuts bool
 	hideCalendar  bool // when true, omit the right-hand date/time area
@@ -1736,6 +1741,17 @@ type MenuBar struct {
 	// wires these to its own timer system and the torn surface's repaint.
 	scrollTimerStarter func(interval time.Duration, callback func()) interface{ Stop() }
 	requestUpdate      func()
+}
+
+// SetModalBlockedChecker wires a predicate reporting whether this menu bar is
+// disabled by a modal. A blocked bar suppresses item hover highlighting.
+func (m *MenuBar) SetModalBlockedChecker(fn func() bool) {
+	m.modalBlocked = fn
+}
+
+// isModalBlocked reports whether the menu bar is currently modal-blocked.
+func (m *MenuBar) isModalBlocked() bool {
+	return m.modalBlocked != nil && m.modalBlocked()
 }
 
 // SetScrollTimerStarter installs a fallback repeating-timer starter for
@@ -2383,6 +2399,13 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// no painter of its own).
 	m.graphicalCached = p.Graphical()
 
+	// A modally-blocked bar is disabled: drop any hover highlight even if the
+	// modal appeared without an intervening mouse move to clear it.
+	if m.isModalBlocked() {
+		m.hoverIndex = -1
+		m.hoverScrollBtn = 0
+	}
+
 	// Clamp scroll offset if container was resized and more menus can now fit
 	m.clampScrollOffset()
 
@@ -3008,6 +3031,17 @@ func (m *MenuBar) scrollButtonAt(px, py core.Unit) int {
 
 // HandleMouseMove handles mouse movement during drag.
 func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A modally-blocked bar is disabled: it never highlights an item under the
+	// pointer. Clear any lingering hover and stop before tracking a new one.
+	if m.isModalBlocked() {
+		if m.hoverIndex != -1 || m.hoverScrollBtn != 0 {
+			m.hoverIndex = -1
+			m.hoverScrollBtn = 0
+			m.Update()
+		}
+		return false
+	}
+
 	// Track pointer hover over top-level items so the bar highlights the
 	// item under the cursor even when no dropdown is open. Selection
 	// (focus/active) still wins in Paint.

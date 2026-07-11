@@ -274,6 +274,11 @@ func NewDesktop() *Desktop {
 	d.menuBar = NewMenuBar()
 	d.menuBar.SetParent(d)
 	d.menuBar.AddMenu(d.systemMenu)
+	// The menu bar represents the active app; when that app (or the desktop)
+	// is modally blocked, the bar is disabled and must not highlight items.
+	d.menuBar.SetModalBlockedChecker(func() bool {
+		return d.windowManager != nil && d.windowManager.WallpaperModalActive()
+	})
 
 	// Create status bar (always present in Desktop)
 	d.statusBar = NewStatusBar()

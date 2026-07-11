@@ -1551,6 +1551,14 @@ func (m *WindowManager) wallpaperModalActive() bool {
 	return appID != 0 && len(m.appModalStacks[appID]) > 0
 }
 
+// WallpaperModalActive is the exported form of wallpaperModalActive: it reports
+// whether the desktop (and its menu bar, showing the active app) is currently
+// blocked by a modal - a system modal, or a modal owned by the active menu-bar
+// app. A background app's modal does not count.
+func (m *WindowManager) WallpaperModalActive() bool {
+	return m.wallpaperModalActive()
+}
+
 // SetOnWindowMinimized sets the callback for window minimization.
 func (m *WindowManager) SetOnWindowMinimized(handler func(*Window)) {
 	m.mu.Lock()
