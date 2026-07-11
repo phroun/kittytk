@@ -564,16 +564,23 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			handled = h.resizeMove()
 		} else if h.dragging {
 			handled = h.dragMove()
-		} else {
-			handled = h.win.HandleMouseMove(e)
-			// The resize-edge highlight and cursor are hover affordances; skip
-			// them while a button is held (a drag begun elsewhere passing over
-			// the frame), dropping any lingering band.
-			if e.Buttons == 0 {
-				h.updateHoverAndCursor(e.X, e.Y)
+		} else if e.Buttons == 0 {
+			// Plain hover. Over a resize edge a press would resize, not click
+			// a control under the pointer, so clear all control hover (titlebar
+			// buttons and edge-adjacent content) and show only the edge
+			// highlight + resize cursor - matching the in-surface desktop.
+			if h.edgeAt(e.X, e.Y) != 0 {
+				h.win.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
+				handled = true
 			} else {
-				h.win.SetResizeHoverRects(nil)
+				handled = h.win.HandleMouseMove(e)
 			}
+			h.updateHoverAndCursor(e.X, e.Y)
+		} else {
+			// A button is held (a drag begun elsewhere passing over the frame):
+			// forward it and drop any lingering edge band.
+			handled = h.win.HandleMouseMove(e)
+			h.win.SetResizeHoverRects(nil)
 		}
 	case core.MouseReleaseEvent:
 		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {
