@@ -132,6 +132,53 @@ func TestWindowModalBlocksOwnerGroupOnly(t *testing.T) {
 	}
 }
 
+// An application modal keeps blocking its app across surfaces: after the modal
+// is torn off (removed from the manager's window list), it still blocks the
+// app's in-surface windows and any torn same-app window, until it is closed.
+func TestAppModalSurvivesTearOff(t *testing.T) {
+	m := NewWindowManager()
+	a1 := NewWindow("a1")
+	a1.SetAppID(1)
+	m.AddWindow(a1)
+
+	modal := NewWindow("modal")
+	modal.SetType(WindowTypeModal)
+	modal.SetAppID(1)
+	m.AddWindow(modal)
+	if !m.isModalBlocked(a1) {
+		t.Fatal("precondition: a1 should be blocked by the app modal")
+	}
+
+	// Tear the modal off: it leaves the manager's window list.
+	m.RemoveWindow(modal)
+	modal.SetDetached(true)
+
+	if !m.isModalBlocked(a1) {
+		t.Error("the app modal must keep blocking the app's in-surface window after tear-off")
+	}
+	a2 := NewWindow("a2")
+	a2.SetAppID(1)
+	a2.SetDetached(true)
+	if !m.IsTornWindowBlocked(a2) {
+		t.Error("a torn same-app window must be blocked by the app modal")
+	}
+	if m.IsTornWindowBlocked(modal) {
+		t.Error("the modal itself must not be blocked")
+	}
+	b := NewWindow("b")
+	b.SetAppID(2)
+	b.SetDetached(true)
+	if m.IsTornWindowBlocked(b) {
+		t.Error("a torn window of another app must not be blocked")
+	}
+
+	// Closing the modal unregisters it via the close observer.
+	modal.Close()
+	if m.isModalBlocked(a1) {
+		t.Error("closing the modal must unblock the app")
+	}
+}
+
 // Adding a window to the desktop while a modal is up must leave the modal on
 // top with focus, not the newly added window.
 func TestAddWindowKeepsModalOnTop(t *testing.T) {

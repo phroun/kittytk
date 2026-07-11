@@ -65,6 +65,10 @@ type WindowManager struct {
 	modalStack        []*Window
 	appModalStacks    map[core.ObjectID][]*Window
 	windowModalStacks map[*Window][]*Window
+	// modalObserved tracks modals for which a close observer (unregistering
+	// the modal from its stack) has been installed, so re-docking a torn modal
+	// - which re-runs AddWindow - does not add a duplicate observer.
+	modalObserved map[*Window]bool
 
 	// Desktop/root trinket (what's behind all windows)
 	desktop core.Trinket
@@ -688,14 +692,22 @@ func (m *WindowManager) AddWindow(win *Window) {
 	// Add to cycle order (for M-Tab cycling)
 	m.cycleOrder = append(m.cycleOrder, win)
 	// A modal window joins the appropriate modal stack (window/app/system) so
-	// it blocks input from the moment it is added.
-	if win.Type() == WindowTypeModal {
+	// it blocks input from the moment it is added. Registration is idempotent
+	// (re-dock re-runs AddWindow).
+	isModal := win.Type() == WindowTypeModal
+	if isModal {
 		m.registerModalLocked(win)
 	}
 	handler := m.onWindowAdded
 	desktop := m.desktop
 	smooth := m.smoothPositioning
 	m.mu.Unlock()
+
+	// Tie modal unregistration to the window's close (not to manager
+	// membership) so a torn-off modal keeps blocking across surfaces.
+	if isModal {
+		m.ensureModalCloseObserver(win)
+	}
 
 	win.SetSmoothPositioning(smooth)
 
@@ -803,8 +815,10 @@ func (m *WindowManager) RemoveWindow(win *Window) {
 		}
 	}
 
-	// Remove from whichever modal stack (system/app/window) holds it.
-	m.unregisterModalLocked(win)
+	// NOTE: modal-stack membership is NOT dropped here. Removing a window from
+	// the manager also happens on tear-off, and a torn-off modal must keep
+	// blocking its app/owner across surfaces. The close observer installed in
+	// AddWindow unregisters the modal when it is actually closed.
 
 	// Update active window
 	wasActive := m.activeWindow == win
@@ -1140,22 +1154,107 @@ func (m *WindowManager) isModalBlocked(win *Window) bool {
 // an application modal (no owner, app set) joins that app's stack, and a system
 // modal (neither) joins the system stack. m.mu held.
 func (m *WindowManager) registerModalLocked(win *Window) {
+	if contains(m.modalStack, win) {
+		return
+	}
 	switch {
 	case win.Owner() != nil:
+		owner := win.Owner()
+		if contains(m.windowModalStacks[owner], win) {
+			return
+		}
 		if m.windowModalStacks == nil {
 			m.windowModalStacks = map[*Window][]*Window{}
 		}
-		owner := win.Owner()
 		m.windowModalStacks[owner] = append(m.windowModalStacks[owner], win)
 	case win.AppID() != 0:
+		id := win.AppID()
+		if contains(m.appModalStacks[id], win) {
+			return
+		}
 		if m.appModalStacks == nil {
 			m.appModalStacks = map[core.ObjectID][]*Window{}
 		}
-		id := win.AppID()
 		m.appModalStacks[id] = append(m.appModalStacks[id], win)
 	default:
 		m.modalStack = append(m.modalStack, win)
 	}
+}
+
+func contains(s []*Window, w *Window) bool {
+	for _, x := range s {
+		if x == w {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureModalCloseObserver installs, once per modal, a close observer that
+// unregisters the modal from its stack. Registration is thus tied to the
+// window's lifetime, not to window-manager membership - so a torn-off modal
+// stays on its stack (and keeps blocking its app/owner across surfaces) and is
+// removed only when it is actually closed.
+func (m *WindowManager) ensureModalCloseObserver(win *Window) {
+	m.mu.Lock()
+	if m.modalObserved == nil {
+		m.modalObserved = map[*Window]bool{}
+	}
+	if m.modalObserved[win] {
+		m.mu.Unlock()
+		return
+	}
+	m.modalObserved[win] = true
+	m.mu.Unlock()
+
+	win.AddOnClosed(func() {
+		m.mu.Lock()
+		m.unregisterModalLocked(win)
+		delete(m.modalObserved, win)
+		m.mu.Unlock()
+	})
+}
+
+// IsTornWindowBlocked reports whether a torn-off (native-surface) window is
+// suppressed by an application- or window-level modal of its own app. System
+// modals live in-surface and do not reach across to torn surfaces. The torn
+// window need not be in this manager's window list - the check consults only
+// the app/owner modal stacks, which survive tear-off.
+func (m *WindowManager) IsTornWindowBlocked(win *Window) bool {
+	if win == nil {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if id := win.AppID(); id != 0 {
+		if st := m.appModalStacks[id]; len(st) > 0 {
+			if top := st[len(st)-1]; !m.modalExempt(win, top) {
+				return true
+			}
+		}
+	}
+	for owner, st := range m.windowModalStacks {
+		if len(st) == 0 {
+			continue
+		}
+		top := st[len(st)-1]
+		if m.windowInModalScope(win, owner) && !m.modalExempt(win, top) {
+			return true
+		}
+	}
+	return false
+}
+
+// TopAppModal returns the top modal on an application's modal stack, or nil.
+// Used to surface (and OS-restore) a minimized app modal when a blocked
+// window or the wallpaper is clicked.
+func (m *WindowManager) TopAppModal(appID core.ObjectID) *Window {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if st := m.appModalStacks[appID]; len(st) > 0 {
+		return st[len(st)-1]
+	}
+	return nil
 }
 
 // unregisterModalLocked removes win from whichever modal stack holds it,
