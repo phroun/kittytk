@@ -898,7 +898,11 @@ func (m *WindowManager) PreviousActiveWindow() *Window {
 // ActivateWindow brings a window to the front and gives it focus.
 func (m *WindowManager) ActivateWindow(win *Window) {
 	m.mu.Lock()
-	if win == m.activeWindow {
+	// Nothing to do only if it is already the active window AND visually
+	// active. A window can be m.activeWindow yet inactive - e.g. a torn
+	// window took surface focus and this one was SetActive(false)'d - in which
+	// case a click must re-activate it, not early-return.
+	if win == m.activeWindow && win != nil && win.IsActive() {
 		m.mu.Unlock()
 		return
 	}
@@ -935,7 +939,7 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 	}
 
 	// Update active states (SetActive handles the onActivate callback)
-	if oldActive != nil {
+	if oldActive != nil && oldActive != win {
 		oldActive.SetActive(false)
 	}
 	if win != nil {
@@ -994,7 +998,10 @@ func (m *WindowManager) RestorePreviousActiveWindow() {
 // raises on mouse release within its bounds.
 func (m *WindowManager) FocusWindow(win *Window) {
 	m.mu.Lock()
-	if win == m.activeWindow {
+	// As in ActivateWindow: only skip if it is already active AND visually
+	// active, so a click re-focuses a topmost-but-inactive window (one that
+	// lost its active look when a torn window took surface focus).
+	if win == m.activeWindow && win != nil && win.IsActive() {
 		m.mu.Unlock()
 		return
 	}
@@ -1013,7 +1020,7 @@ func (m *WindowManager) FocusWindow(win *Window) {
 	m.mu.Unlock()
 
 	// Update active states (SetActive handles the onActivate callback)
-	if oldActive != nil {
+	if oldActive != nil && oldActive != win {
 		oldActive.SetActive(false)
 	}
 	if win != nil {

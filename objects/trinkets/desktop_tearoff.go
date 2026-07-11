@@ -352,11 +352,13 @@ func (d *Desktop) surfaceAppModal(appID core.ObjectID) {
 		return
 	}
 	// The modal is in-surface: restore it from the dock if minimized,
-	// otherwise raise it back to the top of the window stack.
+	// otherwise raise it back to the top of the window stack and focus it
+	// (RestoreWindow already activates). Activating - not just raising - so
+	// the user lands on the modal ready to interact with it.
 	if modal.IsMinimized() {
 		wm.RestoreWindow(modal)
 	} else {
-		wm.RaiseWindow(modal)
+		wm.ActivateWindow(modal)
 	}
 }
 
