@@ -2,6 +2,8 @@ package trinkets
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
@@ -119,18 +121,66 @@ func (t *TreeView) SetOnSortRequested(fn func(sortedBy int, descending bool)) {
 	t.onSortRequested = fn
 }
 
-// Sorted returns the view's sort state: whether a sort indicator is
-// shown, which column it is on (-1 = the key column, else a declared
+// Sorted returns the view's sort state: whether visual sorting is
+// active, which column it is on (-1 = the key column, else a declared
 // data-column index), and the direction.
 func (t *TreeView) Sorted() (sorted bool, sortedBy int, descending bool) {
 	return t.sorted, t.sortedBy, t.sortDescending
 }
 
-// SetSorted sets the sort state for header display. Display-only: it
-// does not reorder items (the application owns the data).
+// SetSorted sets the sort state. Sorting is VISUAL, built into the
+// trinket: the logical item order (rootItems/Children - the app's
+// order) is never touched; the flattened row list is regenerated with
+// siblings in sorted order, and paint, hit-testing and scrolling all
+// work off that list. Selection tracks the ITEM across the reorder,
+// and events keep reporting item identity - the app can stay entirely
+// unaware sorting is happening.
 func (t *TreeView) SetSorted(sorted bool, sortedBy int, descending bool) {
 	t.sorted, t.sortedBy, t.sortDescending = sorted, sortedBy, descending
+	t.resortKeepingSelection()
+}
+
+// resortKeepingSelection regenerates the visual row list under the
+// current sort state, keeping the selected ITEM selected (its visual
+// index may change; its identity does not).
+func (t *TreeView) resortKeepingSelection() {
+	cur := t.CurrentItem()
+	t.rebuildFlatList()
+	if cur != nil {
+		t.restoreSelectionByItem(cur)
+	}
 	t.Update()
+}
+
+// sortKeyFor is the string an item sorts by under the current sort
+// column (-1 = the key column's caption text).
+func (t *TreeView) sortKeyFor(it *TreeItem) string {
+	if t.sortedBy >= 0 && t.sortedBy < len(t.columns) {
+		return it.Value(t.columns[t.sortedBy].ID)
+	}
+	return it.Text
+}
+
+// visualSiblings returns one sibling run in VISUAL order: the logical
+// slice untouched when unsorted; a sorted copy otherwise (stable and
+// case-insensitive, so equal keys keep the app's order; descending
+// reverses). Children sort within their parent - the hierarchy is
+// never flattened away, exactly like Finder's list view.
+func (t *TreeView) visualSiblings(items []*TreeItem) []*TreeItem {
+	if !t.sorted || len(items) < 2 {
+		return items
+	}
+	out := make([]*TreeItem, len(items))
+	copy(out, items)
+	sort.SliceStable(out, func(i, j int) bool {
+		a := strings.ToLower(t.sortKeyFor(out[i]))
+		b := strings.ToLower(t.sortKeyFor(out[j]))
+		if t.sortDescending {
+			return b < a
+		}
+		return a < b
+	})
+	return out
 }
 
 // columnIndex returns c's declared index (-1 for nil = the key column).

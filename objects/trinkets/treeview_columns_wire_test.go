@@ -48,6 +48,14 @@ tree=new treeview caption="Name" showheader sorted sortedby=-1 children={
 	if size == nil || size.Width != 10 || size.Align != "right" || !size.Sortable {
 		t.Fatalf("size column misapplied: %+v", size)
 	}
+	// Wire-built columns get the documented defaults: resizable and
+	// optional (divider dragging and the [=] chooser work without the
+	// script spelling the flags out).
+	for _, c := range tv.Columns() {
+		if !c.Resizable || !c.Optional {
+			t.Errorf("column %q: resizable=%v optional=%v, want true/true", c.ID, c.Resizable, c.Optional)
+		}
+	}
 
 	// Surface the nested items' IDs (top-level reference statements),
 	// then send the column-major cell values keyed by them.

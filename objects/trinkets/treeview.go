@@ -483,7 +483,7 @@ func (t *TreeView) clampScrollOffset() {
 }
 
 func (t *TreeView) flattenItems(items []*TreeItem) {
-	for _, item := range items {
+	for _, item := range t.visualSiblings(items) {
 		t.flatList = append(t.flatList, item)
 		if item.Expanded && len(item.Children) > 0 {
 			t.flattenItems(item.Children)

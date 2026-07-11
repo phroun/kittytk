@@ -306,17 +306,20 @@ func (a *app) wireSecondary(n int) {
 
 // wireDetails fills the Details tab's column values (the two-batch
 // pattern: the build surfaced the item IDs, this batch references
-// them) and narrates sort requests. The demo shows the request flow;
-// a real app would reorder its items and rebuild.
+// them), narrates sort requests, and wires the feature-toggle row.
+// Sorting itself is built into the trinket (visual reorder only; the
+// item order the app owns never moves) - the status line just shows
+// the app CAN observe it.
 func (a *app) wireDetails() {
 	ui := a.ui
-	if !ui.Object("dtree").Valid() {
+	dtree := ui.Object("dtree")
+	if !dtree.Valid() {
 		return
 	}
 	_, _ = a.conn.Exec(detailsValuesScript(func(name string) uint64 {
 		return ui.Object(name).ID()
 	}))
-	ui.Object("dtree").On("sort", func(ev *protocol.Event) {
+	dtree.On("sort", func(ev *protocol.Event) {
 		by, _ := ev.Int("sortedby")
 		dir := "ascending"
 		if ev.Flag("descending") == protocol.FlagTrue {
@@ -327,5 +330,36 @@ func (a *app) wireDetails() {
 			colName = fmt.Sprintf("column %d", by)
 		}
 		a.setStatus(fmt.Sprintf("Details: sort by %s, %s", colName, dir))
+	})
+
+	// Feature toggles: key column visibility, the horizontal-scroll
+	// model, and pinned columns on either side.
+	ui.Checkbox("dshowkey").OnToggle(func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = dtree.Set("showkey")
+		} else {
+			_ = dtree.Set("!showkey")
+		}
+	})
+	ui.Checkbox("dhscroll").OnToggle(func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = dtree.Set("!fit_width")
+		} else {
+			_ = dtree.Set("fit_width")
+		}
+	})
+	ui.Checkbox("dpinl").OnToggle(func(s protocol.FlagState) {
+		n := 0
+		if s == protocol.FlagTrue {
+			n = 2
+		}
+		_ = dtree.Set(fmt.Sprintf("fixed_left=%d", n))
+	})
+	ui.Checkbox("dpinr").OnToggle(func(s protocol.FlagState) {
+		n := 0
+		if s == protocol.FlagTrue {
+			n = 1
+		}
+		_ = dtree.Set(fmt.Sprintf("fixed_right=%d", n))
 	})
 }

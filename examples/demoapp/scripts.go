@@ -341,17 +341,25 @@ new tab caption="Vertical Tabs" children={
 }
 
 det=new tab caption="Details" children={
-	dtree=new treeview caption="Name" showheader sorted sortedby=-1 children={
-		dsizec=new column id=size caption="Size" width=10 align=right sortable
-		dkindc=new column id=kind caption="Kind" width=14 sortable
-		dmodc=new column id=modified caption="Date Modified" width=24 sortable
-		dtagsc=new column id=tags caption="Tags" width=8
-		ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
-		ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"
-		dpc=new item caption="PC12" expanded children={
-			dpcin=new item caption="pc12"
+	dbox=new panel layout=vbox spacing=0 children={
+		dtree=new treeview caption="Name" showheader sorted sortedby=-1 stretch=1 align=fill children={
+			dsizec=new column id=size caption="Size" width=10 align=right sortable
+			dkindc=new column id=kind caption="Kind" width=14 sortable
+			dmodc=new column id=modified caption="Date Modified" width=24 sortable
+			dtagsc=new column id=tags caption="Tags" width=8
+			ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
+			ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"
+			dpc=new item caption="PC12" expanded children={
+				dpcin=new item caption="pc12"
+			}
+			darj=new item caption="pc12.arj"
 		}
-		darj=new item caption="pc12.arj"
+		drow=new panel layout=hbox spacing=8 children={
+			dshowkey=new checkbox caption="Name column" checked
+			dhscroll=new checkbox caption="H-scroll (fit off)"
+			dpinl=new checkbox caption="Pin first 2"
+			dpinr=new checkbox caption="Pin last"
+		}
 	}
 }
 
@@ -388,16 +396,20 @@ mtab=new tab caption="MDI Demo" children={
 # Surface what the app-side handlers address, then open the event flows
 # they listen to (command flows regardless; toggles/changes need a sub).
 tabs=w.t
-dtree=w.t.det.dtree
-dsizec=w.t.det.dtree.dsizec
-dkindc=w.t.det.dtree.dkindc
-dmodc=w.t.det.dtree.dmodc
-dtagsc=w.t.det.dtree.dtagsc
-ds1=w.t.det.dtree.ds1
-ds2=w.t.det.dtree.ds2
-dpc=w.t.det.dtree.dpc
-dpcin=w.t.det.dtree.dpc.dpcin
-darj=w.t.det.dtree.darj
+dtree=w.t.det.dbox.dtree
+dsizec=w.t.det.dbox.dtree.dsizec
+dkindc=w.t.det.dbox.dtree.dkindc
+dmodc=w.t.det.dbox.dtree.dmodc
+dtagsc=w.t.det.dbox.dtree.dtagsc
+ds1=w.t.det.dbox.dtree.ds1
+ds2=w.t.det.dbox.dtree.ds2
+dpc=w.t.det.dbox.dtree.dpc
+dpcin=w.t.det.dbox.dtree.dpc.dpcin
+darj=w.t.det.dbox.dtree.darj
+dshowkey=w.t.det.dbox.drow.dshowkey
+dhscroll=w.t.det.dbox.drow.dhscroll
+dpinl=w.t.det.dbox.drow.dpinl
+dpinr=w.t.det.dbox.drow.dpinr
 binput=w.t.b.bw.brow.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont

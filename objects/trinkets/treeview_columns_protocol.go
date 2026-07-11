@@ -84,15 +84,6 @@ func (c *wireColumn) refresh() {
 // bind adopts the record into a treeview.
 func (c *wireColumn) bind(view *TreeView) {
 	col := c.col // copy the accumulated definition
-	if col.MinWidth < 1 {
-		col.MinWidth = 3
-	}
-	if col.Width < 1 {
-		col.Width = 8
-	}
-	if col.Align == "" {
-		col.Align = "left"
-	}
 	view.AddColumn(&col)
 	c.live = &col
 	c.view = view
@@ -118,7 +109,13 @@ func (c *wireCell) apply(owner *wireColumn) {
 	}
 	if it := owner.view.itemByID(c.item); it != nil {
 		it.SetValue(owner.live.ID, c.value)
-		owner.refresh()
+		// Under an active visual sort a new value can move rows: the
+		// trinket re-sorts itself (selection tracks the item).
+		if owner.view.sorted {
+			owner.view.resortKeepingSelection()
+		} else {
+			owner.refresh()
+		}
 	}
 }
 
@@ -207,7 +204,16 @@ func init() {
 
 	protocol.RegisterType("column", &protocol.TypeSpec{
 		Virtual: true,
-		New:     func() any { return &wireColumn{} },
+		// The record starts from the SAME defaults NewTreeColumn gives
+		// Go callers (resizable, optional, left-aligned) - the wire's
+		// documented defaults must be the actual defaults, or wire-built
+		// columns silently lose the divider drag and the [=] chooser.
+		New: func() any {
+			return &wireColumn{col: TreeColumn{
+				Width: 8, MinWidth: 3, Align: "left",
+				Resizable: true, Optional: true,
+			}}
+		},
 		Props: map[string]protocol.Property{
 			"id": protocol.NewProperty("word", colProp("id", func(c *wireColumn, v *protocol.Value, f protocol.FlagState) error {
 				w, err := protocol.AsWord("id", v, f)
