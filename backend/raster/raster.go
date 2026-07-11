@@ -332,6 +332,27 @@ func (b *Backend) SetRoundedClip(r core.UnitRect, radius core.Unit) {
 	b.roundPxRad = rad
 }
 
+// clipRejects reports whether the device rectangle [x0,x1) x [y0,y1) lies
+// entirely outside the framebuffer and every active clip - so a draw confined
+// to it writes nothing and can be skipped wholesale. A cheap bounding-box test
+// (the rounded clip is treated as its bounding rect) that lets clipped paints
+// skip fully off-clip glyph/image composites instead of testing every pixel.
+func (b *Backend) clipRejects(x0, y0, x1, y1 int) bool {
+	if x1 <= 0 || y1 <= 0 || x0 >= b.w || y0 >= b.h {
+		return true
+	}
+	if b.pxClipActive && (x1 <= b.pxClipX0 || x0 >= b.pxClipX1) {
+		return true
+	}
+	if b.hasClip && (x1 <= b.clipPxX0 || y1 <= b.clipPxY0 || x0 >= b.clipPxX1 || y0 >= b.clipPxY1) {
+		return true
+	}
+	if b.hasRoundClip && (x1 <= b.roundPxX0 || y1 <= b.roundPxY0 || x0 >= b.roundPxX1 || y0 >= b.roundPxY1) {
+		return true
+	}
+	return false
+}
+
 // pointVisible applies every active clip constraint to a device
 // pixel: framebuffer bounds, the rectangular clip, and the rounded
 // clip's rect and corner arcs (hard-edged, pixel centers).
@@ -832,6 +853,9 @@ func (b *Backend) compositeRGBA(xPx, yPx int, src *image.RGBA) {
 	if sw <= 0 || sh <= 0 {
 		return
 	}
+	if b.clipRejects(xPx, yPx, xPx+sw, yPx+sh) {
+		return
+	}
 	dst := b.img
 
 	// When no clip is active (the common case for text), clamp the destination
@@ -894,6 +918,9 @@ func (b *Backend) compositeRGBA(xPx, yPx int, src *image.RGBA) {
 func (b *Backend) blitRGBA(xPx, yPx int, src *image.RGBA) {
 	sw, sh := src.Rect.Dx(), src.Rect.Dy()
 	if sw <= 0 || sh <= 0 {
+		return
+	}
+	if b.clipRejects(xPx, yPx, xPx+sw, yPx+sh) {
 		return
 	}
 	fullyVisible := !b.hasRoundClip && !b.pxClipActive &&
@@ -1460,4 +1487,4 @@ func (b *Backend) SetClipboard(s string) {
 		b.sysClipSet(s)
 	}
 }
-func (b *Backend) Beep()                                  {}
+func (b *Backend) Beep() {}
