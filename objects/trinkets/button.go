@@ -459,17 +459,22 @@ func (b *Button) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 	return false
 }
 
-// hitExtent returns the button's local click/hover region (width, height). The
-// click path routes by the button's full Bounds(), so hover and drag key off
-// the same rectangle. On graphical surfaces, though, the drop shadow only
-// reaches partway into the second row: the bottom half-row of the bounds is
-// dead space, so exclude it uniformly - hover, drag, and press all stop at the
-// same lower edge. Cell surfaces use the full bounds.
+// hitExtent returns the button's local click/hover region (width, height). A
+// button's height is intrinsic - two rows (face + drop shadow) - and it paints
+// top-aligned in its bounds; any extra vertical space a layout grants it (e.g.
+// stretched to an H-box's row height) is inert blank below. So hit-test the
+// intrinsic two-row footprint, not the whole bounds. On graphical surfaces the
+// shadow only reaches partway into the second row, so trim the dead bottom
+// half-row. Cell surfaces use the full two rows.
 func (b *Button) hitExtent() (core.Unit, core.Unit) {
 	bounds := b.Bounds()
-	h := bounds.Height
+	metrics := b.EffectiveCellMetrics()
+	h := metrics.CellHeight * 2
+	if h > bounds.Height {
+		h = bounds.Height
+	}
 	if core.FindGraphicalFrames(b.Self()) {
-		h -= b.EffectiveCellMetrics().CellHeight / 2
+		h -= metrics.CellHeight / 2
 	}
 	return bounds.Width, h
 }

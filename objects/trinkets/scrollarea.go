@@ -1159,6 +1159,126 @@ func (s *ScrollArea) SizeHint() core.UnitSize {
 	}
 }
 
+// paintEdgeFades overlays a gradient on each viewport edge that has more
+// content beyond it - a scroll affordance on the graphical path only. The
+// fade is 1 row tall on the top/bottom and 2 columns wide on the left/right,
+// running from fully transparent on its inner edge to fully opaque (the
+// scroll-area background) on the outer edge. Where two fades meet at a corner
+// they are mitered: the corner square is split along its diagonal so the two
+// gradients abut instead of double-darkening (they meet at equal opacity, so
+// the seam is invisible).
+func (s *ScrollArea) paintEdgeFades(p *core.Painter, viewport core.UnitRect) {
+	if !p.Graphical() {
+		return
+	}
+
+	// An edge fades when it can scroll further that way (more content lies
+	// beyond it) and its scrollbar is actually in play.
+	vScroll := s.needsVScrollBar()
+	hScroll := s.needsHScrollBar()
+	showTop := vScroll && s.vScrollBar.Value() > s.vScrollBar.Minimum()
+	showBottom := vScroll && s.vScrollBar.Value() < s.vScrollBar.Maximum()
+	showLeft := hScroll && s.hScrollBar.Value() > s.hScrollBar.Minimum()
+	showRight := hScroll && s.hScrollBar.Value() < s.hScrollBar.Maximum()
+	if !showTop && !showBottom && !showLeft && !showRight {
+		return
+	}
+
+	metrics := s.EffectiveCellMetrics()
+	wvPx := p.UnitSpanPxX(0, viewport.Width)
+	hvPx := p.UnitSpanPxY(0, viewport.Height)
+	if wvPx <= 0 || hvPx <= 0 {
+		return
+	}
+	// Fade thickness: one row deep on the top/bottom, two columns on the
+	// left/right - clamped so opposing fades can't cross a small viewport.
+	htPx := p.UnitSpanPxY(0, metrics.CellHeight)
+	wtPx := p.UnitSpanPxX(0, metrics.CellWidth*2)
+	if htPx > hvPx/2 {
+		htPx = hvPx / 2
+	}
+	if wtPx > wvPx/2 {
+		wtPx = wvPx / 2
+	}
+	if htPx <= 0 || wtPx <= 0 {
+		return
+	}
+
+	r, g, b := s.EffectiveBackgroundColor().RGBComponents()
+
+	// Corner ownership (matched exactly by the two loops below so the fades
+	// partition each corner square along its diagonal): the horizontal fade
+	// owns pixel (col, row) when col*htPx >= row*wtPx; the vertical fade owns
+	// the complement. The insets gate on the perpendicular fade being present.
+	//
+	// alphaAt gives the opacity of a fade at device-depth d (0 = outer edge)
+	// of thickness t: opaque at the outer edge, transparent at the inner one.
+	alphaAt := func(d, t int) float64 {
+		return 1.0 - (float64(d)+0.5)/float64(t)
+	}
+
+	// Top fade: rows from the top edge inward.
+	if showTop {
+		for k := 0; k < htPx; k++ {
+			x0, x1 := 0, wvPx
+			if showLeft {
+				x0 = (k*wtPx + htPx - 1) / htPx // ceil(k*wtPx/htPx)
+			}
+			if showRight {
+				x1 = wvPx - (k*wtPx+htPx-1)/htPx
+			}
+			if x1 > x0 {
+				p.FillRectPixelsAlpha(0, 0, x0, k, x1-x0, 1, r, g, b, alphaAt(k, htPx))
+			}
+		}
+	}
+	// Bottom fade: rows from the bottom edge inward.
+	if showBottom {
+		for k := 0; k < htPx; k++ {
+			x0, x1 := 0, wvPx
+			if showLeft {
+				x0 = (k*wtPx + htPx - 1) / htPx
+			}
+			if showRight {
+				x1 = wvPx - (k*wtPx+htPx-1)/htPx
+			}
+			if x1 > x0 {
+				p.FillRectPixelsAlpha(0, 0, x0, hvPx-1-k, x1-x0, 1, r, g, b, alphaAt(k, htPx))
+			}
+		}
+	}
+	// Left fade: columns from the left edge inward.
+	if showLeft {
+		for j := 0; j < wtPx; j++ {
+			y0, y1 := 0, hvPx
+			if showTop {
+				y0 = j*htPx/wtPx + 1 // floor(j*htPx/wtPx)+1
+			}
+			if showBottom {
+				y1 = hvPx - (j*htPx/wtPx + 1)
+			}
+			if y1 > y0 {
+				p.FillRectPixelsAlpha(0, 0, j, y0, 1, y1-y0, r, g, b, alphaAt(j, wtPx))
+			}
+		}
+	}
+	// Right fade: columns from the right edge inward.
+	if showRight {
+		for j := 0; j < wtPx; j++ {
+			y0, y1 := 0, hvPx
+			if showTop {
+				y0 = j*htPx/wtPx + 1
+			}
+			if showBottom {
+				y1 = hvPx - (j*htPx/wtPx + 1)
+			}
+			if y1 > y0 {
+				p.FillRectPixelsAlpha(0, 0, wvPx-1-j, y0, 1, y1-y0, r, g, b, alphaAt(j, wtPx))
+			}
+		}
+	}
+}
+
 // Paint renders the scroll area.
 func (s *ScrollArea) Paint(p *core.Painter) {
 	bounds := s.Bounds()
@@ -1203,6 +1323,11 @@ func (s *ScrollArea) Paint(p *core.Painter) {
 			})
 		s.content.Paint(contentPainter)
 	}
+
+	// Fade the content toward the scroll-area background on any edge that has
+	// more content beyond it. Painted over the content (even an MDI window)
+	// but under the scrollbars, and it never touches event handling.
+	s.paintEdgeFades(p, viewport)
 
 	// Draw vertical scrollbar (use offset painter since scrollbar paints at 0,0)
 	if s.needsVScrollBar() {

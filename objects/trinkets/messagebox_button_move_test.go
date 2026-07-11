@@ -14,7 +14,7 @@ func TestMessageBoxButtonHoverAndDragOff(t *testing.T) {
 	m := NewMessageBox("t", "msg", ButtonOK|ButtonCancel)
 	ok := m.content.buttonTrinkets[0]
 	// Paint normally assigns bounds; set them by hand for the test.
-	ok.SetBounds(core.UnitRect{X: 10, Y: 40, Width: 40, Height: 16})
+	ok.SetBounds(core.UnitRect{X: 10, Y: 40, Width: 40, Height: 32})
 
 	// Plain hover over the button lights mouseOver.
 	m.content.HandleMouseMove(core.MouseMoveEvent{X: 12, Y: 44, Buttons: 0})
@@ -47,7 +47,7 @@ func TestMessageBoxButtonHoverAndDragOff(t *testing.T) {
 func TestMessageBoxButtonReleaseOffCancels(t *testing.T) {
 	m := NewMessageBox("t", "msg", ButtonOK)
 	ok := m.content.buttonTrinkets[0]
-	ok.SetBounds(core.UnitRect{X: 10, Y: 40, Width: 40, Height: 16})
+	ok.SetBounds(core.UnitRect{X: 10, Y: 40, Width: 40, Height: 32})
 
 	clicked := false
 	ok.SetOnClick(func() { clicked = true })

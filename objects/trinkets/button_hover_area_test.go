@@ -86,3 +86,31 @@ func TestButtonGraphicalHitBoxExcludesBottomHalfRow(t *testing.T) {
 		t.Error("dragging into the dead bottom half-row kept the pressed look")
 	}
 }
+
+// When a layout stretches a button taller than its intrinsic two rows (an
+// H-box handing it the row height), the extra vertical space is inert blank:
+// the hit box stays the two-row footprint, so a press down in the stretched
+// slack is not on the button.
+func TestButtonExtraVerticalSpaceIsInert(t *testing.T) {
+	check := func(t *testing.T, parent core.Container) {
+		b := NewButton("OK")
+		b.SetParent(parent)
+		ch := b.EffectiveCellMetrics().CellHeight
+		// Four rows tall - twice the intrinsic button height.
+		b.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 60, Height: ch * 4})
+
+		// A press inside the top two rows lands on the button.
+		if !b.HandleMousePress(core.MousePressEvent{X: 20, Y: ch / 2, Button: core.LeftButton}) || !b.pressed {
+			t.Error("press within the button footprint did not press it")
+		}
+		b.HandleMouseRelease(core.MouseReleaseEvent{X: 20, Y: ch / 2, Button: core.LeftButton})
+		// A press down in the stretched slack (third row) is inert.
+		if b.HandleMousePress(core.MousePressEvent{X: 20, Y: ch * 5 / 2, Button: core.LeftButton}) || b.pressed {
+			t.Error("press in the inert stretched space was treated as on the button")
+		}
+	}
+	t.Run("cell", func(t *testing.T) { check(t, NewPanel()) })
+	t.Run("graphical", func(t *testing.T) {
+		check(t, &graphicalFrameStub{Panel: NewPanel(), border: 0})
+	})
+}

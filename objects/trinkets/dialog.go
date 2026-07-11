@@ -361,7 +361,7 @@ func (c *messageBoxContent) Paint(p *core.Painter) {
 			X:      buttonX,
 			Y:      buttonY,
 			Width:  btnWidth,
-			Height: metrics.CellHeight,
+			Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
 		})
 		// Use a translated painter for the button at its position
 		btnPainter := p.WithOffset(buttonX, buttonY)
@@ -851,7 +851,7 @@ func (f *FileDialog) Paint(p *core.Painter) {
 		X:      bounds.Width - buttonWidth*2 - metrics.CellWidth*4,
 		Y:      buttonY,
 		Width:  buttonWidth,
-		Height: metrics.CellHeight,
+		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
 	})
 	f.okButton.Paint(p)
 
@@ -859,7 +859,7 @@ func (f *FileDialog) Paint(p *core.Painter) {
 		X:      bounds.Width - buttonWidth - metrics.CellWidth*2,
 		Y:      buttonY,
 		Width:  buttonWidth,
-		Height: metrics.CellHeight,
+		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
 	})
 	f.cancelButton.Paint(p)
 }
@@ -1017,7 +1017,7 @@ func (d *InputDialog) Paint(p *core.Painter) {
 		X:      bounds.Width/2 - buttonWidth - metrics.CellWidth,
 		Y:      buttonY,
 		Width:  buttonWidth,
-		Height: metrics.CellHeight,
+		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
 	})
 	d.okButton.Paint(p)
 
@@ -1025,7 +1025,7 @@ func (d *InputDialog) Paint(p *core.Painter) {
 		X:      bounds.Width/2 + metrics.CellWidth,
 		Y:      buttonY,
 		Width:  buttonWidth,
-		Height: metrics.CellHeight,
+		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
 	})
 	d.cancelButton.Paint(p)
 }
