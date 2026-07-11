@@ -128,6 +128,22 @@ func TestTUIClipboardConfig(t *testing.T) {
 		t.Error("clipboard=osc52 should enable OSC 52")
 	}
 
+	// Read-back is opt-in: only the paste-enabling values turn it on, and they
+	// keep write on too.
+	if Defaults().UseTUIOSC52Paste() {
+		t.Error("default should not enable OSC 52 read-back")
+	}
+	cfg = Defaults()
+	apply([]byte("[tui]\nclipboard = osc52\n"), &cfg)
+	if cfg.UseTUIOSC52Paste() {
+		t.Error("clipboard=osc52 is write-only, read-back should be off")
+	}
+	cfg = Defaults()
+	apply([]byte("[tui]\nclipboard = osc52-paste\n"), &cfg)
+	if !cfg.UseTUIOSC52Paste() || !cfg.UseTUIOSC52Clipboard() {
+		t.Error("clipboard=osc52-paste should enable both read-back and write")
+	}
+
 	// The key is section-sensitive: outside [tui] it does not bind.
 	cfg = Defaults()
 	apply([]byte("clipboard = internal\n"), &cfg)

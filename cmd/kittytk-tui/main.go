@@ -31,10 +31,12 @@ func main() {
 	// modifier glyphs (⌃⌥⇧⌘) instead of the compact ^X/M-x notation.
 	core.SetMacNativeShortcuts(cfg.UseTUIMacNativeShortcuts())
 
-	// [tui] clipboard controls whether Copy/Cut mirror to the terminal
-	// clipboard via OSC 52 (default) or stay internal to the host.
+	// [tui] clipboard controls the terminal clipboard integration: mirror
+	// Copy/Cut via OSC 52 (default), optionally query the terminal on Paste
+	// (read-back), or stay internal to the host.
 	tuiOpts := tui.DefaultTUIOptions()
 	tuiOpts.OSC52Clipboard = cfg.UseTUIOSC52Clipboard()
+	tuiOpts.OSC52Paste = cfg.UseTUIOSC52Paste()
 	tuiBackend := tui.NewTUIBackend(tuiOpts)
 
 	desktop := trinkets.NewDesktop()

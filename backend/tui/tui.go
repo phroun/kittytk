@@ -8,9 +8,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
-	"github.com/phroun/direct-key-handler/keyboard"
+	"github.com/phroun/kittytk/backend/tui/keyboard"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
 	"golang.org/x/term"
@@ -40,10 +41,10 @@ type TUIBackend struct {
 	backBuffer  [][]Cell
 
 	// Current state
-	currentStyle style.CellStyle
-	clipRect     core.UnitRect
-	cursorX      int
-	cursorY      int
+	currentStyle  style.CellStyle
+	clipRect      core.UnitRect
+	cursorX       int
+	cursorY       int
 	cursorVisible bool
 
 	// Input handling
@@ -66,12 +67,18 @@ type TUIBackend struct {
 	// Flag to clear lines on next render (after resize)
 	needsLineClear bool
 
-	// clipboard is the host's internal clipboard. On the terminal it is the
-	// source of truth for Paste (reading the system clipboard via OSC 52 is
-	// unreliable and often disabled), and Copy/Cut mirror it to the terminal's
-	// clipboard via OSC 52 when osc52 is set.
+	// clipboard is the host's internal clipboard - the fallback Paste source
+	// when OSC 52 read-back is off or the terminal doesn't answer. Copy/Cut
+	// mirror it to the terminal's clipboard via OSC 52 when osc52 is set.
 	clipboard string
 	osc52     bool
+
+	// osc52Paste enables OSC 52 read-back: Paste queries the terminal for the
+	// clipboard and uses its reply, falling back to the internal clipboard if
+	// none arrives. osc52Resp carries the decoded reply from the keyboard
+	// handler's OnClipboard callback (latest-wins, buffered size 1).
+	osc52Paste bool
+	osc52Resp  chan string
 }
 
 // TUIOptions configures the TUI backend.
@@ -99,6 +106,12 @@ type TUIOptions struct {
 	// tmux with set-clipboard, ...). When false the host uses its own internal
 	// clipboard only. Default: true.
 	OSC52Clipboard bool
+
+	// OSC52Paste enables OSC 52 clipboard read-back for Paste: query the
+	// terminal for its clipboard and use the reply, falling back to the
+	// internal clipboard when the terminal doesn't answer (many disable read
+	// for security). Off by default; implies OSC52Clipboard for the query.
+	OSC52Paste bool
 }
 
 // DefaultTUIOptions returns default options.
@@ -126,7 +139,7 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		opts.CellMetrics = core.DefaultCellMetrics()
 	}
 
-	return &TUIBackend{
+	t := &TUIBackend{
 		metrics:    opts.CellMetrics,
 		output:     opts.Output,
 		eventQueue: make(chan core.Event, 256),
@@ -135,7 +148,12 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		hasMouse:   opts.EnableMouse,
 		hasUnicode: true, // Assume Unicode support
 		osc52:      opts.OSC52Clipboard,
+		osc52Paste: opts.OSC52Paste,
 	}
+	if opts.OSC52Paste {
+		t.osc52Resp = make(chan string, 1)
+	}
+	return t
 }
 
 // Init initializes the terminal backend.
@@ -204,6 +222,20 @@ func (t *TUIBackend) Init() error {
 	}
 	t.keyboard = keyboard.New(kbOpts)
 	t.keyboard.OnKey = t.handleKey
+	if t.osc52Paste {
+		// OSC 52 clipboard responses (replies to our read query) are delivered
+		// here, not as keystrokes; GetClipboard drains the latest.
+		t.keyboard.OnClipboard = func(_ byte, data []byte) {
+			select {
+			case <-t.osc52Resp:
+			default:
+			}
+			select {
+			case t.osc52Resp <- string(data):
+			default:
+			}
+		}
+	}
 
 	// Now start the keyboard handler
 	if err := t.keyboard.Start(); err != nil {
@@ -748,15 +780,43 @@ func (t *TUIBackend) ColorDepth() int {
 	return t.colorDepth
 }
 
-// GetClipboard returns the clipboard contents. On the terminal this is the
-// host's internal clipboard: reading the terminal/system clipboard (OSC 52
-// query) is unreliable and disabled in many terminals for security, so Paste
-// reads what Copy/Cut last stored. Pasting text from OUTSIDE the app arrives
-// through the terminal's own paste (bracketed paste) as ordinary input.
+// osc52ReadTimeout bounds how long Paste waits for the terminal to answer an
+// OSC 52 clipboard query before falling back to the internal clipboard.
+const osc52ReadTimeout = 120 * time.Millisecond
+
+// GetClipboard returns the clipboard contents. With OSC 52 read-back enabled it
+// queries the terminal for its clipboard (ESC ] 52 ; c ; ? BEL) and returns the
+// reply, gracefully falling back to the host's internal clipboard if the
+// terminal doesn't answer within osc52ReadTimeout (many terminals disable read
+// for security). Otherwise it returns the internal clipboard - what Copy/Cut
+// last stored; pasting from OUTSIDE the app then arrives through the terminal's
+// own bracketed paste as ordinary input.
 func (t *TUIBackend) GetClipboard() string {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.clipboard
+	internal := t.clipboard
+	doRead := t.osc52Paste && t.output != nil && t.osc52Resp != nil
+	if doRead {
+		// Drop any stale reply, then ask for the current clipboard.
+		select {
+		case <-t.osc52Resp:
+		default:
+		}
+		fmt.Fprint(t.output, "\033]52;c;?\a")
+	}
+	t.mu.Unlock()
+
+	if !doRead {
+		return internal
+	}
+	select {
+	case s := <-t.osc52Resp:
+		t.mu.Lock()
+		t.clipboard = s // keep the internal copy in sync
+		t.mu.Unlock()
+		return s
+	case <-time.After(osc52ReadTimeout):
+		return internal // terminal stayed silent: graceful fallback
+	}
 }
 
 // SetClipboard stores the text in the internal clipboard and, when OSC 52 is

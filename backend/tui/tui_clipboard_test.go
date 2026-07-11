@@ -5,7 +5,67 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 )
+
+// With read-back enabled, GetClipboard emits the OSC 52 query and returns the
+// terminal's reply (delivered on osc52Resp as the keyboard handler would).
+func TestTUIClipboardReadBackSuccess(t *testing.T) {
+	var out bytes.Buffer
+	opts := DefaultTUIOptions()
+	opts.Output = &out
+	opts.OSC52Clipboard = true
+	opts.OSC52Paste = true
+	b := NewTUIBackend(opts)
+	b.SetClipboard("internal-old")
+
+	// Deliver the terminal's reply shortly after the query goes out.
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		b.osc52Resp <- "from-terminal"
+	}()
+
+	if got := b.GetClipboard(); got != "from-terminal" {
+		t.Errorf("read-back = %q, want from-terminal", got)
+	}
+	if !strings.Contains(out.String(), "\033]52;c;?\a") {
+		t.Errorf("OSC 52 query not emitted; output = %q", out.String())
+	}
+}
+
+// When the terminal stays silent, GetClipboard falls back to the internal
+// clipboard after the timeout.
+func TestTUIClipboardReadBackFallback(t *testing.T) {
+	var out bytes.Buffer
+	opts := DefaultTUIOptions()
+	opts.Output = &out
+	opts.OSC52Paste = true
+	b := NewTUIBackend(opts)
+	b.SetClipboard("internal-fallback")
+
+	if got := b.GetClipboard(); got != "internal-fallback" {
+		t.Errorf("silent-terminal fallback = %q, want internal-fallback", got)
+	}
+}
+
+// Without read-back, GetClipboard never queries the terminal - it just returns
+// the internal clipboard.
+func TestTUIClipboardNoReadBackNoQuery(t *testing.T) {
+	var out bytes.Buffer
+	opts := DefaultTUIOptions()
+	opts.Output = &out
+	opts.OSC52Paste = false
+	b := NewTUIBackend(opts)
+	b.SetClipboard("kept")
+	out.Reset() // ignore the SetClipboard OSC 52 write
+
+	if got := b.GetClipboard(); got != "kept" {
+		t.Errorf("GetClipboard = %q, want kept", got)
+	}
+	if out.Len() != 0 {
+		t.Errorf("read-back off should emit no query, got %q", out.String())
+	}
+}
 
 // With OSC 52 enabled, SetClipboard stores the text internally AND emits the
 // OSC 52 set sequence (ESC ] 52 ; c ; <base64> BEL) so the terminal's clipboard

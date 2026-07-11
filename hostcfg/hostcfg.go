@@ -40,6 +40,9 @@
 //	clipboard =           ; terminal clipboard integration:
 //	                      ;   blank/osc52/system = mirror Copy/Cut to the terminal
 //	                      ;                         clipboard via OSC 52 (the default)
+//	                      ;   osc52-paste/full    = also query the terminal on Paste
+//	                      ;                         (read-back), falling back to the
+//	                      ;                         internal clipboard if it is silent
 //	                      ;   internal/off        = host-internal clipboard only
 //
 // Environment variables still take precedence over the file: KITTYTK_DISPLAY
@@ -261,5 +264,18 @@ func (c Config) UseTUIOSC52Clipboard() bool {
 		return false
 	default:
 		return true
+	}
+}
+
+// UseTUIOSC52Paste reports whether Paste queries the terminal for its clipboard
+// via OSC 52 read-back (falling back to the internal clipboard when the
+// terminal stays silent). Opt-in: only the read-enabling [tui] `clipboard`
+// values turn it on. Write (Copy/Cut) is implied on for those values.
+func (c Config) UseTUIOSC52Paste() bool {
+	switch strings.ToLower(strings.TrimSpace(c.TUIClipboard)) {
+	case "osc52-paste", "osc52+paste", "osc52paste", "full", "readwrite", "read", "paste":
+		return true
+	default:
+		return false
 	}
 }
