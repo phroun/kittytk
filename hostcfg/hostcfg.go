@@ -36,7 +36,11 @@
 //	                      ;   else = the default compact notation (^X, M-x, S-Tab)
 //
 //	[tui]
-//	native   =            ; same knob for the terminal host (independent of [system])
+//	native    =           ; same knob for the terminal host (independent of [system])
+//	clipboard =           ; terminal clipboard integration:
+//	                      ;   blank/osc52/system = mirror Copy/Cut to the terminal
+//	                      ;                         clipboard via OSC 52 (the default)
+//	                      ;   internal/off        = host-internal clipboard only
 //
 // Environment variables still take precedence over the file: KITTYTK_DISPLAY
 // for the endpoint and KITTYTK_TOKEN for the token.
@@ -73,6 +77,12 @@ type Config struct {
 	// and terminal ([tui]) hosts respectively.
 	Native    string
 	TUINative string
+
+	// TUIClipboard controls the terminal host's clipboard integration, set by
+	// the [tui] section's `clipboard` key. "internal"/"off"/"none"/"false"
+	// keep an internal-only clipboard; anything else (or empty) mirrors
+	// Copy/Cut to the terminal's clipboard via OSC 52.
+	TUIClipboard string
 
 	// Source is the path of the ini that was loaded, or "" if none was
 	// found (defaults were used).
@@ -175,6 +185,11 @@ func apply(data []byte, cfg *Config) {
 			} else {
 				cfg.Native = val
 			}
+		case "clipboard":
+			// Terminal-host clipboard integration, read under [tui].
+			if section == "tui" {
+				cfg.TUIClipboard = val
+			}
 		}
 	}
 }
@@ -236,3 +251,15 @@ func (c Config) UseMacNativeShortcuts() bool { return resolveNative(c.Native) }
 // UseTUIMacNativeShortcuts resolves the [tui] native setting for the terminal
 // host. See resolveNative for the value semantics.
 func (c Config) UseTUIMacNativeShortcuts() bool { return resolveNative(c.TUINative) }
+
+// UseTUIOSC52Clipboard reports whether the terminal host mirrors Copy/Cut to
+// the terminal clipboard via OSC 52. On (the default) unless the [tui]
+// `clipboard` key opts into an internal-only clipboard.
+func (c Config) UseTUIOSC52Clipboard() bool {
+	switch strings.ToLower(strings.TrimSpace(c.TUIClipboard)) {
+	case "internal", "off", "none", "false", "no", "0":
+		return false
+	default:
+		return true
+	}
+}

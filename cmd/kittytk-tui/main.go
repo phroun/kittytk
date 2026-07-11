@@ -31,7 +31,11 @@ func main() {
 	// modifier glyphs (⌃⌥⇧⌘) instead of the compact ^X/M-x notation.
 	core.SetMacNativeShortcuts(cfg.UseTUIMacNativeShortcuts())
 
-	tuiBackend := tui.NewTUIBackend(tui.DefaultTUIOptions())
+	// [tui] clipboard controls whether Copy/Cut mirror to the terminal
+	// clipboard via OSC 52 (default) or stay internal to the host.
+	tuiOpts := tui.DefaultTUIOptions()
+	tuiOpts.OSC52Clipboard = cfg.UseTUIOSC52Clipboard()
+	tuiBackend := tui.NewTUIBackend(tuiOpts)
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(tuiBackend) // seeds root metrics from the cell grid

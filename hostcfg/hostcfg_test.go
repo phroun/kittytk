@@ -106,6 +106,36 @@ func TestApplyIgnoresSections(t *testing.T) {
 	}
 }
 
+// The [tui] clipboard key toggles OSC 52 clipboard integration. It defaults
+// on, and only [tui] carries it (like native, it is section-sensitive).
+func TestTUIClipboardConfig(t *testing.T) {
+	// Default (no key): OSC 52 on.
+	if def := Defaults(); !def.UseTUIOSC52Clipboard() {
+		t.Error("default should mirror to OSC 52")
+	}
+
+	// [tui] clipboard=internal disables it.
+	cfg := Defaults()
+	apply([]byte("[tui]\nclipboard = internal\n"), &cfg)
+	if cfg.UseTUIOSC52Clipboard() {
+		t.Error("clipboard=internal should disable OSC 52")
+	}
+
+	// An explicit on-value keeps it enabled.
+	cfg = Defaults()
+	apply([]byte("[tui]\nclipboard = osc52\n"), &cfg)
+	if !cfg.UseTUIOSC52Clipboard() {
+		t.Error("clipboard=osc52 should enable OSC 52")
+	}
+
+	// The key is section-sensitive: outside [tui] it does not bind.
+	cfg = Defaults()
+	apply([]byte("clipboard = internal\n"), &cfg)
+	if cfg.TUIClipboard != "" {
+		t.Errorf("clipboard outside [tui] should not bind, got %q", cfg.TUIClipboard)
+	}
+}
+
 // Load uses the first kittytk.ini found; the current directory is searched
 // before the exe dir and the user config dir.
 func TestLoadFirstFoundWinsFromCWD(t *testing.T) {

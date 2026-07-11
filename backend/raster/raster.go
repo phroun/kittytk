@@ -76,6 +76,22 @@ type Backend struct {
 	// clipboard holds the local clipboard for headless use; SDL and
 	// other substrates may sync it with the system clipboard.
 	clipboard string
+
+	// sysClipGet/sysClipSet bridge to the host's system clipboard when the
+	// substrate provides one (the SDL platform wires these to SDL2's
+	// SDL_GetClipboardText/SDL_SetClipboardText, which cover macOS, Windows
+	// and X11/Wayland). nil in headless use, where the local string is used.
+	sysClipGet func() string
+	sysClipSet func(string)
+}
+
+// SetSystemClipboard bridges this backend's clipboard to the host's system
+// clipboard. The SDL host wires get/set to the platform's SDL2-backed
+// clipboard, so Copy/Cut/Paste cross the process boundary to other apps.
+// Passing nils reverts to the internal (headless) clipboard.
+func (b *Backend) SetSystemClipboard(get func() string, set func(string)) {
+	b.sysClipGet = get
+	b.sysClipSet = set
 }
 
 // New creates a framebuffer backend of the given pixel size at scale 1
@@ -1359,6 +1375,16 @@ func (b *Backend) SupportsColor() bool                    { return true }
 func (b *Backend) SupportsMouse() bool                    { return true }
 func (b *Backend) SupportsUnicode() bool                  { return true }
 func (b *Backend) ColorDepth() int                        { return 1 << 24 }
-func (b *Backend) GetClipboard() string                   { return b.clipboard }
-func (b *Backend) SetClipboard(s string)                  { b.clipboard = s }
+func (b *Backend) GetClipboard() string {
+	if b.sysClipGet != nil {
+		return b.sysClipGet()
+	}
+	return b.clipboard
+}
+func (b *Backend) SetClipboard(s string) {
+	b.clipboard = s // keep a local copy as a fallback / for headless
+	if b.sysClipSet != nil {
+		b.sysClipSet(s)
+	}
+}
 func (b *Backend) Beep()                                  {}

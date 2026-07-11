@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -64,6 +65,13 @@ type TUIBackend struct {
 
 	// Flag to clear lines on next render (after resize)
 	needsLineClear bool
+
+	// clipboard is the host's internal clipboard. On the terminal it is the
+	// source of truth for Paste (reading the system clipboard via OSC 52 is
+	// unreliable and often disabled), and Copy/Cut mirror it to the terminal's
+	// clipboard via OSC 52 when osc52 is set.
+	clipboard string
+	osc52     bool
 }
 
 // TUIOptions configures the TUI backend.
@@ -85,6 +93,12 @@ type TUIOptions struct {
 
 	// AlternateScreen uses the alternate screen buffer (default: true)
 	AlternateScreen bool
+
+	// OSC52Clipboard mirrors Copy/Cut to the terminal's clipboard with the
+	// OSC 52 escape sequence (supported by iTerm2, xterm, kitty, wezterm,
+	// tmux with set-clipboard, ...). When false the host uses its own internal
+	// clipboard only. Default: true.
+	OSC52Clipboard bool
 }
 
 // DefaultTUIOptions returns default options.
@@ -96,6 +110,7 @@ func DefaultTUIOptions() TUIOptions {
 		ColorDepth:      0, // Auto-detect
 		EnableMouse:     true,
 		AlternateScreen: true,
+		OSC52Clipboard:  true,
 	}
 }
 
@@ -119,6 +134,7 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		colorDepth: opts.ColorDepth,
 		hasMouse:   opts.EnableMouse,
 		hasUnicode: true, // Assume Unicode support
+		osc52:      opts.OSC52Clipboard,
 	}
 }
 
@@ -732,25 +748,29 @@ func (t *TUIBackend) ColorDepth() int {
 	return t.colorDepth
 }
 
-// GetClipboard returns the clipboard contents.
-// Note: Terminal clipboard access is limited; this uses OSC 52 or
-// falls back to empty string.
+// GetClipboard returns the clipboard contents. On the terminal this is the
+// host's internal clipboard: reading the terminal/system clipboard (OSC 52
+// query) is unreliable and disabled in many terminals for security, so Paste
+// reads what Copy/Cut last stored. Pasting text from OUTSIDE the app arrives
+// through the terminal's own paste (bracketed paste) as ordinary input.
 func (t *TUIBackend) GetClipboard() string {
-	// Clipboard access in terminals is complex and not universally supported.
-	// OSC 52 can be used but requires terminal support.
-	// For now, return empty string - applications can implement
-	// their own clipboard using external tools like xclip, pbcopy, etc.
-	return ""
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.clipboard
 }
 
-// SetClipboard sets the clipboard contents.
-// Uses OSC 52 escape sequence for terminals that support it.
+// SetClipboard stores the text in the internal clipboard and, when OSC 52 is
+// enabled, mirrors it to the terminal's clipboard so Copy/Cut reach other apps.
+// OSC 52 set: ESC ] 52 ; c ; <base64> BEL.
 func (t *TUIBackend) SetClipboard(text string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	// OSC 52 clipboard set: \033]52;c;<base64>\a
-	// Many terminals support this for copying to clipboard
-	// Not implemented here - can be added with base64 encoding
+	t.clipboard = text
+	if !t.osc52 || t.output == nil {
+		return
+	}
+	enc := base64.StdEncoding.EncodeToString([]byte(text))
+	fmt.Fprintf(t.output, "\033]52;c;%s\a", enc)
 }
 
 // Beep produces an audible alert.

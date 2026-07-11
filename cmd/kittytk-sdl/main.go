@@ -57,6 +57,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Bridge Copy/Cut/Paste to the OS clipboard. SDL2's clipboard covers
+	// macOS, Windows and X11/Wayland, so this is the whole cross-platform
+	// integration for the graphical host.
+	backend.SetSystemClipboard(plat.Clipboard, plat.SetClipboard)
+
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font
 	// The UI font stays one cell tall in UNITS (12); font_size makes it
