@@ -1586,10 +1586,14 @@ func cursorShapeAtTrinket(trinket core.Trinket, pos core.UnitPoint) core.CursorS
 		// A container that routes events through a transform the generic
 		// descent can't reproduce (a nested window's chrome + denomination,
 		// an MDI pane's window placement) answers for its whole subtree.
-		// Skip the entry trinket so a window delegating into its own
-		// content does not recurse forever.
-		if cs, ok := cur.(core.CursorShaper); ok && cur != trinket {
-			return cs.CursorShapeAt(p.X, p.Y)
+		// Skip the entry CONTAINER so a window delegating into its own content
+		// does not recurse forever; a leaf entry (e.g. a terminal that wants a
+		// different cursor over its scrollbar) is safe to consult directly.
+		if cs, ok := cur.(core.CursorShaper); ok {
+			_, isContainer := cur.(core.Container)
+			if cur != trinket || !isContainer {
+				return cs.CursorShapeAt(p.X, p.Y)
+			}
 		}
 		c, ok := cur.(core.Container)
 		if !ok {

@@ -153,6 +153,33 @@ func (t *PurfecTerm) CursorShape() core.CursorShape {
 	return core.CursorText
 }
 
+// CursorShapeAt implements core.CursorShaper: the terminal shows the text
+// I-beam over its content, but a plain arrow over the scrollbar lanes (which
+// are chrome, not text). The coordinates arrive in the same space as
+// HandleMouseMove, so the very geometry the scrollbar press path uses locates
+// the lanes.
+func (t *PurfecTerm) CursorShapeAt(x, y core.Unit) core.CursorShape {
+	if t.overScrollLane(x, y) {
+		return core.CursorDefault
+	}
+	return core.CursorText
+}
+
+// overScrollLane reports whether a local point falls in either scrollbar
+// track, mirroring scrollbarPress's hit tests.
+func (t *PurfecTerm) overScrollLane(x, y core.Unit) bool {
+	bounds := t.Bounds()
+	if track, _, _, _, _, ok := t.vScrollGeometry(bounds); ok &&
+		x >= track.X && y >= track.Y && y < track.Y+track.Height {
+		return true
+	}
+	if track, _, _, _, _, ok := t.hScrollGeometry(bounds); ok &&
+		y >= track.Y && x >= track.X && x < track.X+track.Width {
+		return true
+	}
+	return false
+}
+
 // SetDarkTheme selects the terminal's dark (true) or light (false)
 // palette, keeping it in step with the app theme. It sets both the
 // current and preferred theme so a terminal reset stays consistent.
