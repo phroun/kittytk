@@ -245,6 +245,7 @@ func init() {
 			"sortable":  colFlag("sortable", func(c *TreeColumn, b bool) { c.Sortable = b }).Tip("Header click requests a sort on this column.").Def("false"),
 			"numeric":   colFlag("numeric", func(c *TreeColumn, b bool) { c.Numeric = b }).Tip("Sort by each cell's numeric equivalent (parsed once per value).").Def("false"),
 			"sortproxy": colInt("sortproxy", func(c *TreeColumn, n int) { c.SortProxy = n }).Tip("Column index whose values actually sort when this column is chosen (-1 = itself).").Def("-1"),
+			"editable":  colFlag("editable", func(c *TreeColumn, b bool) { c.Editable = b }).Tip("Cells in this column can be edited in place (Enter opens the row editor).").Def("false"),
 		},
 		Append: func(parent, child any) error {
 			p := parent.(*wireColumn)

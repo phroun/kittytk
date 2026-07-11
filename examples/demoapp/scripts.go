@@ -344,9 +344,9 @@ det=new tab caption="Details" children={
 	dbox=new panel layout=vbox spacing=0 children={
 		dtree=new treeview caption="Name" showheader sorted sortedby=-1 stretch=1 align=fill children={
 			dsizec=new column id=size caption="Size" width=10 align=right sortable sortproxy=4
-			dkindc=new column id=kind caption="Kind" width=14 sortable
+			dkindc=new column id=kind caption="Kind" width=14 sortable editable
 			dmodc=new column id=modified caption="Date Modified" width=24 sortable
-			dtagsc=new column id=tags caption="Tags" width=8
+			dtagsc=new column id=tags caption="Tags" width=8 editable
 			drawc=new column id=rawsize caption="Raw Size" width=10 align=right numeric hidden
 			ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
 			ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"

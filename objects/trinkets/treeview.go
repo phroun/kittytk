@@ -150,6 +150,28 @@ type TreeView struct {
 	hbarDragStartX  core.Unit
 	hbarDragStartHS int
 
+	// In-place row editing (see treeview_edit.go). The editor is a
+	// spun-into-existence TextInput floating over one cell; the tree
+	// keeps real focus and forwards input while it is up.
+	rowEditing    bool
+	editCol       *TreeColumn
+	editLastCol   *TreeColumn // resumed on the next edit session
+	editItem      *TreeItem
+	editOrig      string
+	editBox       *TextInput
+	editMouseDown bool
+	onCellEdited  func(item *TreeItem, column *TreeColumn, value string)
+
+	// Click-to-edit arming: a settled single click on an editable cell
+	// of the already-selected row flips into edit mode after a delay
+	// that rules out a double click.
+	clickEditItem  *TreeItem
+	clickEditCol   *TreeColumn
+	clickEditX     core.Unit
+	clickEditY     core.Unit
+	clickEditGen   int
+	clickEditTimer *time.Timer
+
 	// Sort state (visual; the trinket reorders its row list, the app's
 	// item order is untouched): sorted=false means unsorted; sortedBy
 	// is -1 for the key (tree) column or a declared data-column index;
@@ -794,6 +816,10 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 	if t.handleChooserKey(event) {
 		return true
 	}
+	// The open row editor takes everything next (see treeview_edit.go).
+	if t.handleEditKey(event) {
+		return true
+	}
 	// The internal header focus zone consumes its navigation (including
 	// the content zone's S-Tab back into the bar) before content keys.
 	if t.handleHeaderFocusKey(event) {
@@ -912,7 +938,23 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.SetCurrentIndex(newIndex)
 		return true
 
-	case "Enter", " ", "Space":
+	case "Enter":
+		// With editable columns, Enter opens the in-place row editor;
+		// without any, it behaves exactly like Space.
+		if t.startRowEdit() {
+			return true
+		}
+		if current != nil {
+			if !current.IsLeaf() {
+				t.ToggleItem(current)
+			}
+			if t.onItemActivated != nil {
+				t.onItemActivated(current)
+			}
+		}
+		return true
+
+	case " ", "Space":
 		if current != nil {
 			if !current.IsLeaf() {
 				t.ToggleItem(current)
@@ -964,6 +1006,15 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 
 	t.SetFocusWithoutScroll() // Use without-scroll variant since click proves visibility
 	metrics := t.EffectiveCellMetrics()
+
+	// Row editor: a press inside it edits text; a press anywhere else
+	// ACCEPTS the value and the click proceeds. Also note whether this
+	// press could become a settled click-to-edit (and cancel any
+	// pending one - this press IS the double click it guarded against).
+	if t.handleEditMousePress(event) {
+		return true
+	}
+	t.noteClickEditPress(event)
 
 	// Header band: chooser button and divider drags (multi-column).
 	if t.handleMultiPress(event) {
@@ -1162,6 +1213,10 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
+	// Text-selection drag inside the row editor.
+	if t.handleEditMouseMove(event) {
+		return true
+	}
 	// Column divider drag (multi-column resize).
 	if t.handleMultiMove(event) {
 		return true
@@ -1262,6 +1317,12 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 // containers broadcast releases to every child, so an unconditional
 // true here would starve sibling trinkets of their release.
 func (t *TreeView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	if t.handleEditMouseRelease(event) {
+		return true
+	}
+	// A drag-free release over the press-time candidate arms the
+	// settled click-to-edit timer.
+	t.armClickEdit(event)
 	if t.handleMultiRelease() {
 		return true
 	}
@@ -1342,6 +1403,9 @@ func (t *TreeView) HandleFocusOut() {
 	t.scrollbarDragging = false
 	t.headerZone = hzContent
 	t.closeColumnChooser()
+	// Focus moving elsewhere accepts an in-flight row edit.
+	t.endRowEdit(true)
+	t.cancelClickEdit()
 	t.Update()
 }
 

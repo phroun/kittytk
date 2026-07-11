@@ -335,6 +335,13 @@ func (a *app) wireDetails() {
 		}
 		a.setStatus(fmt.Sprintf("Details: sort by %s, %s", colName, dir))
 	})
+	// In-place cell edits (Kind and Tags are editable): the trinket
+	// already updated the cell; this is observation only.
+	dtree.On("edit", func(ev *protocol.Event) {
+		col, _ := ev.Int("column")
+		value, _ := ev.Text("value")
+		a.setStatus(fmt.Sprintf("Details: edited column %d -> %q", col, value))
+	})
 
 	// Feature toggles: key column visibility, the horizontal-scroll
 	// model, and pinned columns on either side.

@@ -74,6 +74,20 @@ func init() {
 					WithInt("sortedby", sortedBy).
 					WithFlag("descending", flag(descending)))
 			})
+			tv.SetOnCellEdited(func(item *TreeItem, col *TreeColumn, value string) {
+				colIdx := -1
+				for i, c := range tv.columns {
+					if c == col {
+						colIdx = i
+						break
+					}
+				}
+				ctx.EmitEvent(protocol.NewEvent("edit").
+					WithUint("trinket", id).
+					WithUint("item", uint64(item.ID)).
+					WithInt("column", colIdx).
+					WithString("value", value))
+			})
 		},
 		Props: treeViewProps(),
 		Append: func(parent, child any) error {

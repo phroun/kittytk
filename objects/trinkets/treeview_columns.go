@@ -55,6 +55,9 @@ type TreeColumn struct {
 	// a hidden column holds the machine-friendly sort values (e.g.
 	// "2 KB" displayed, 2048 in a hidden numeric raw-size column).
 	SortProxy int
+	// Editable lets this column's cells be edited in place: Enter on
+	// a row opens the row editor (see treeview_edit.go).
+	Editable bool
 }
 
 // NewTreeColumn creates a column with sensible defaults (resizable,
@@ -1084,6 +1087,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	if lay.headerH > 0 {
 		t.paintChooserButton(p, lay, headerStyle)
 	}
+	t.paintRowEditor(p)
 
 	if t.footerHeight() > 0 {
 		t.paintHScrollbar(p, lay)
@@ -1192,10 +1196,11 @@ func ellipsizeText(p *core.Painter, font *core.Font, text string, avail core.Uni
 	if font.MeasureText(text) <= avail {
 		return text
 	}
+	// The REAL ellipsis rune in both modes: in TUI it costs one cell
+	// where "..." would eat three (the dock items do the same).
+	// Project-wide unification/configurability of this pattern is a
+	// planned later step.
 	ell := "…"
-	if !p.Graphical() {
-		ell = "..."
-	}
 	ellW := font.MeasureText(ell)
 	runes := []rune(text)
 	for len(runes) > 0 && font.MeasureText(string(runes))+ellW > avail {
