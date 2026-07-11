@@ -27,8 +27,14 @@ func TestShortcutFont(t *testing.T) {
 	if got.Name != core.MacShortcutFontFamily {
 		t.Errorf("native font family = %q, want %q", got.Name, core.MacShortcutFontFamily)
 	}
-	if got.Size != base.Size || got.Style != base.Style {
-		t.Errorf("native font lost size/style: got size=%d style=%v", got.Size, got.Style)
+	if want := base.Size * 4 / 5; got.Size != want {
+		t.Errorf("native font size = %d, want %d (80%% of %d)", got.Size, want, base.Size)
+	}
+	if got.Size >= base.Size {
+		t.Errorf("native font size %d should be smaller than base %d", got.Size, base.Size)
+	}
+	if got.Style != base.Style {
+		t.Errorf("native font lost style: got %v, want %v", got.Style, base.Style)
 	}
 	if base.Name != "ui-text" {
 		t.Errorf("base font was mutated: Name = %q", base.Name)

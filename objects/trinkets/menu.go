@@ -9,18 +9,30 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
+// shortcutNativeSizeNum/Den scale the native-mode shortcut to 80% of the base
+// font size: Apple's UI face renders visually larger than the menu's body
+// face at the same point size, so the shortcut column is shrunk to sit
+// comfortably beside the item text.
+const (
+	shortcutNativeSizeNum = 4
+	shortcutNativeSizeDen = 5
+)
+
 // shortcutFont returns the font used to draw a menu item's shortcut. In
 // macOS-native mode it swaps the family to Apple's UI face (so the ⌃⌥⇧⌘ glyphs
-// render in Apple's typeface) while keeping the size, style, and colors of the
-// base font; otherwise it returns the base unchanged. The returned font is a
-// copy, so the shared base font is never mutated, and callers measure and draw
-// with this same font so widths stay exact.
+// render in Apple's typeface) and shrinks it to 80%, while keeping the style
+// and colors of the base font; otherwise it returns the base unchanged. The
+// returned font is a copy, so the shared base font is never mutated, and
+// callers measure and draw with this same font so widths stay exact.
 func shortcutFont(base *core.Font) *core.Font {
 	if base == nil || !core.MacNativeShortcuts() {
 		return base
 	}
 	f := *base
 	f.Name = core.MacShortcutFontFamily
+	if s := base.Size * shortcutNativeSizeNum / shortcutNativeSizeDen; s > 0 {
+		f.Size = s
+	}
 	return &f
 }
 
@@ -1263,16 +1275,23 @@ func (m *Menu) Paint(p *core.Painter) {
 			p.DrawCell(arrowX, itemY, '▸', contentStyle)
 		} else if item.Shortcut != "" {
 			shortcutStr := item.Shortcut.DisplayString()
-			// Native mode renders the shortcut in Apple's UI face; measure
-			// and draw with that same font so the right-alignment is exact.
+			// Native mode renders the shortcut in Apple's UI face at 80%;
+			// measure and draw with that same font so the right-alignment is
+			// exact, and center the shorter line box within the item's row.
 			sf := shortcutFont(font)
 			shortcutWidth := sf.MeasureText(shortcutStr)
 			shortcutX := m.popupX + size.Width - shortcutWidth - metrics.CellWidth*2
+			shortcutY := itemY
+			if sf != font {
+				if dy := (font.LineHeight() - sf.LineHeight()) / 2; dy > 0 {
+					shortcutY += dy
+				}
+			}
 			shortcutStyle := contentStyle
 			if item.Enabled {
 				shortcutStyle = contentStyle.WithAttrs(style.StyleDim)
 			}
-			p.DrawText(shortcutX, itemY, shortcutStr, shortcutStyle, sf)
+			p.DrawText(shortcutX, shortcutY, shortcutStr, shortcutStyle, sf)
 		}
 
 		currentY += rowH
