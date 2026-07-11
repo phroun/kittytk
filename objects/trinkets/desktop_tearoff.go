@@ -48,6 +48,18 @@ func (d *Desktop) setupTearOff(p platform.Platform, surf platform.Surface) {
 	// Clicking a modally-blocked window surfaces the modal blocking it
 	// (raising or OS-restoring it), even across applications.
 	d.windowManager.SetOnBlockedClick(d.surfaceBlockingModal)
+	// The wallpaper dim and wallpaper-click apply only to the desktop itself:
+	// a system modal, or a modal owned by the app currently on the menu bar.
+	d.windowManager.SetActiveAppIDFunc(func() core.ObjectID {
+		d.mu.RLock()
+		a := d.activeApp
+		d.mu.RUnlock()
+		if a != nil {
+			return a.ObjectID()
+		}
+		return 0
+	})
+	d.windowManager.SetOnWallpaperClick(d.surfaceActiveAppModal)
 }
 
 // deviceScale is the desktop surface's device zoom (integer pixels per
@@ -297,11 +309,30 @@ func (d *Desktop) tornHostForWindow(win *window.Window) *window.TearOffHost {
 // where clicking a blocked window (or the wallpaper) surfaces a minimized
 // modal, with OS-level restore standing in for the desktop dock.
 func (d *Desktop) surfaceBlockingModal(win *window.Window) {
+	d.surfaceAppModal(win.AppID())
+}
+
+// surfaceActiveAppModal surfaces the modal of the application whose menu bar is
+// currently showing (a wallpaper click). A background app's modal is not
+// touched: only the app the user is looking at can be surfaced this way.
+func (d *Desktop) surfaceActiveAppModal() {
+	d.mu.RLock()
+	active := d.activeApp
+	d.mu.RUnlock()
+	if active != nil {
+		d.surfaceAppModal(active.ObjectID())
+	}
+}
+
+// surfaceAppModal raises (or restores, incl. OS-restore of a torn one) the top
+// modal of the given application, so the user is pulled to the modal blocking
+// that app.
+func (d *Desktop) surfaceAppModal(appID core.ObjectID) {
 	wm := d.windowManager
 	if wm == nil {
 		return
 	}
-	modal := wm.TopAppModal(win.AppID())
+	modal := wm.TopAppModal(appID)
 	if modal == nil {
 		return
 	}

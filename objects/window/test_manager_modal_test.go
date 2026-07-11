@@ -1,6 +1,10 @@
 package window
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/phroun/kittytk/core"
+)
 
 // A window in the manager is modally blocked when a modal sits above it: any
 // modal blocks a non-modal window, and a later modal blocks an earlier one.
@@ -253,5 +257,41 @@ func TestRaiseTopModalOverSkipsMinimized(t *testing.T) {
 
 	if !modal.IsMinimized() {
 		t.Error("a minimized modal must not be auto-restored when a new window is added")
+	}
+}
+
+// The wallpaper dim (and wallpaper-click surface) applies only when the
+// desktop itself is blocked: a system modal, or a modal owned by the app whose
+// menu bar is showing. A modal in a background app must not shade the wallpaper.
+func TestWallpaperModalActiveScopedToActiveApp(t *testing.T) {
+	m := NewWindowManager()
+	m.SetActiveAppIDFunc(func() core.ObjectID { return core.ObjectID(1) })
+
+	// A background app (2) has a modal; the active app (1) does not.
+	a2mod := NewWindow("a2mod")
+	a2mod.SetType(WindowTypeModal)
+	a2mod.SetAppID(2)
+	m.AddWindow(a2mod)
+	if m.wallpaperModalActive() {
+		t.Error("a background app's modal must not shade the wallpaper")
+	}
+
+	// The active app (1) now has a modal: the wallpaper is shaded.
+	a1mod := NewWindow("a1mod")
+	a1mod.SetType(WindowTypeModal)
+	a1mod.SetAppID(1)
+	m.AddWindow(a1mod)
+	if !m.wallpaperModalActive() {
+		t.Error("the active app's modal should shade the wallpaper")
+	}
+}
+
+// A system modal always shades the wallpaper, regardless of the active app.
+func TestWallpaperModalActiveSystemModal(t *testing.T) {
+	m := NewWindowManager()
+	m.SetActiveAppIDFunc(func() core.ObjectID { return core.ObjectID(1) })
+	m.ShowModal(NewWindow("sys")) // system modal (no app)
+	if !m.wallpaperModalActive() {
+		t.Error("a system modal should shade the wallpaper")
 	}
 }

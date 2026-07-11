@@ -132,6 +132,15 @@ type WindowManager struct {
 	// desktop can surface (raise/restore, incl. OS-restore of a torn one) the
 	// modal blocking it - a convenience that also works across applications.
 	onBlockedClick func(*Window)
+	// activeAppID returns the ObjectID of the application whose menu bar is
+	// currently showing on the desktop (0 = none / the desktop itself). The
+	// wallpaper dim and wallpaper-click surface apply only when a system modal
+	// is up or THAT app is the one blocked, so a modal in a background app
+	// neither shades the wallpaper nor is raised by clicking it.
+	activeAppID func() core.ObjectID
+	// onWallpaperClick fires when the desktop background is clicked, so the
+	// desktop can surface the active app's modal (if any).
+	onWallpaperClick func()
 
 	// Popup overlays (painted on top of everything)
 	popups []*PopupOverlay
@@ -1502,6 +1511,39 @@ func (m *WindowManager) SetOnBlockedClick(handler func(*Window)) {
 	m.mu.Unlock()
 }
 
+// SetActiveAppIDFunc sets the accessor for the active menu-bar application's
+// ObjectID, used to scope the wallpaper dim/click to the app that is blocked.
+func (m *WindowManager) SetActiveAppIDFunc(fn func() core.ObjectID) {
+	m.mu.Lock()
+	m.activeAppID = fn
+	m.mu.Unlock()
+}
+
+// SetOnWallpaperClick sets the callback invoked when the desktop background is
+// clicked, so the host can surface the active application's modal.
+func (m *WindowManager) SetOnWallpaperClick(handler func()) {
+	m.mu.Lock()
+	m.onWallpaperClick = handler
+	m.mu.Unlock()
+}
+
+// wallpaperModalActive reports whether the desktop wallpaper should be dimmed
+// (and its click surface a modal): a system modal is up, or the active menu-bar
+// application has an application modal. A modal owned by a background app does
+// not shade the wallpaper.
+func (m *WindowManager) wallpaperModalActive() bool {
+	var appID core.ObjectID
+	if m.activeAppID != nil {
+		appID = m.activeAppID()
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.modalStack) > 0 {
+		return true
+	}
+	return appID != 0 && len(m.appModalStacks[appID]) > 0
+}
+
 // SetOnWindowMinimized sets the callback for window minimization.
 func (m *WindowManager) SetOnWindowMinimized(handler func(*Window)) {
 	m.mu.Lock()
@@ -2072,11 +2114,19 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 		}
 	}
 
-	// Wallpaper (desktop background) click: if the top modal is minimized,
-	// restore it rather than letting the click fall through to the desktop,
-	// so the user is pulled back to the modal they need to deal with.
-	if m.restoreMinimizedTopModal() {
-		return true
+	// Wallpaper (desktop background) click: only when the desktop itself is
+	// blocked - a system modal, or a modal owned by the active menu-bar app -
+	// surface it (restore a minimized system modal; raise/restore the active
+	// app's modal). A background app's modal is left alone: that app isn't the
+	// one showing, so clicking the wallpaper must not raise it.
+	if m.wallpaperModalActive() {
+		if m.restoreMinimizedTopModal() {
+			return true
+		}
+		if m.onWallpaperClick != nil {
+			m.onWallpaperClick()
+			return true
+		}
 	}
 
 	// Check desktop (already read above, but re-read in case it changed)
@@ -2647,13 +2697,11 @@ func (m *WindowManager) Paint(p *core.Painter) {
 	// Get client area to clip windows properly (avoid covering status bar)
 	clientArea := m.ClientArea()
 
-	// While a modal is up, darken the wallpaper area behind the windows. The
-	// modal (and any window painted over this) covers it; blocked windows add
-	// their own dim on top. Graphical path only (no-ops on cell surfaces).
-	m.mu.RLock()
-	modalUp := m.anyModalActiveLocked()
-	m.mu.RUnlock()
-	if modalUp {
+	// Darken the wallpaper only when the desktop itself is blocked: a system
+	// modal is up, or the active menu-bar app has an application modal. A modal
+	// in a background app blocks that app's own windows (each dims itself) but
+	// leaves the wallpaper untouched. Graphical path only.
+	if m.wallpaperModalActive() {
 		p.FillRectPixelsAlpha(clientArea.X, clientArea.Y, 0, 0,
 			p.UnitSpanPxX(clientArea.X, clientArea.X+clientArea.Width),
 			p.UnitSpanPxY(clientArea.Y, clientArea.Y+clientArea.Height),
