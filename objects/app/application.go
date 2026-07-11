@@ -829,6 +829,10 @@ func (app *Application) AddWindow(w *window.Window) {
 	desktop := app.desktop
 	app.mu.Unlock()
 
+	// Stamp the owning application so the manager can scope
+	// application-level modal blocking to this app's windows.
+	w.SetAppID(app.ObjectID())
+
 	// Closing the window must drop it from this app's list too. The manager
 	// and tear-off host each reassign the single onCloseComplete slot for
 	// their own removal, so use an accumulating observer that survives -

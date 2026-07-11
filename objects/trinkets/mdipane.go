@@ -704,8 +704,8 @@ func (m *MDIPane) CascadeWindows() {
 
 // ShowModal shows a window as modal.
 func (m *MDIPane) ShowModal(win *window.Window) {
+	win.SetType(window.WindowTypeModal)
 	m.mu.Lock()
-	win.SetFlags(win.Flags() | window.WindowFlagModal)
 	m.modalStack = append(m.modalStack, win)
 	m.mu.Unlock()
 	m.AddWindow(win)

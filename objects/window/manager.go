@@ -1106,10 +1106,11 @@ func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePress
 	m.mu.Unlock()
 }
 
-// ShowModal shows a window as modal (blocks other windows).
+// ShowModal shows a window as a system-level modal (blocks every other
+// in-surface window). System modals - the auth prompt - have no application.
 func (m *WindowManager) ShowModal(win *Window) {
+	win.SetType(WindowTypeModal)
 	m.mu.Lock()
-	win.SetFlags(win.Flags() | WindowFlagModal)
 	m.modalStack = append(m.modalStack, win)
 	m.mu.Unlock()
 

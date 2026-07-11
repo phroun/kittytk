@@ -30,9 +30,7 @@ const (
 	WindowFlagNoClose                            // No close button
 	WindowFlagNoMinimize                         // No minimize button
 	WindowFlagNoMaximize                         // No maximize button
-	WindowFlagModal                              // Blocks input to other windows
 	WindowFlagStaysOnTop                         // Always on top
-	WindowFlagToolWindow                         // Smaller title bar, no taskbar entry
 	WindowFlagTearable                           // Shows the %/# tear-off handle; window may detach
 )
 
@@ -81,6 +79,15 @@ type Window struct {
 	title string
 	flags WindowFlags
 	state WindowState
+
+	// windowType classifies the window's role (main, normal, mdichild,
+	// dialog, modal, toolpalette). owner is the resolved non-overlay window a
+	// dialog/modal/toolpalette floats above (nil = application-level). appID
+	// is the owning application's ObjectID (0 = a system window). See
+	// window_type.go.
+	windowType WindowType
+	owner      *Window
+	appID      core.ObjectID
 
 	// G4 dual mode: the app's request for a native OS window,
 	// honored when the platform can create surfaces.

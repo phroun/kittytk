@@ -121,7 +121,8 @@ func NewMessageBox(title, text string, buttons DialogButton) *MessageBox {
 		result:  ResultNone,
 	}
 	m.Window = *window.NewWindow(title)
-	m.SetFlags(window.WindowFlagModal | window.WindowFlagNoResize)
+	m.SetType(window.WindowTypeModal)
+	m.SetFlags(window.WindowFlagNoResize)
 
 	// Create content trinket
 	m.content = &messageBoxContent{
@@ -511,7 +512,7 @@ func NewFileDialog(mode FileDialogMode) *FileDialog {
 	}
 
 	f.Window = *window.NewWindow(title)
-	f.SetFlags(window.WindowFlagModal)
+	f.SetType(window.WindowTypeModal)
 	f.setupUI()
 	return f
 }
@@ -906,7 +907,8 @@ func NewInputDialog(title, label, defaultValue string) *InputDialog {
 		labelText: label,
 	}
 	d.Window = *window.NewWindow(title)
-	d.SetFlags(window.WindowFlagModal | window.WindowFlagNoResize)
+	d.SetType(window.WindowTypeModal)
+	d.SetFlags(window.WindowFlagNoResize)
 
 	metrics := d.EffectiveCellMetrics()
 

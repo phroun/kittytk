@@ -25,9 +25,7 @@ func init() {
 		"no_close":     WindowFlagNoClose,
 		"no_minimize":  WindowFlagNoMinimize,
 		"no_maximize":  WindowFlagNoMaximize,
-		"modal":        WindowFlagModal,
 		"stays_on_top": WindowFlagStaysOnTop,
-		"tool":         WindowFlagToolWindow,
 		"tearable":     WindowFlagTearable,
 	}
 
@@ -62,6 +60,22 @@ func init() {
 			target.(*Window).SetMainRequested(b)
 			return nil
 		}).Tip("Mark as the application's main window").Def("false"),
+		// type classifies the window's role: main, normal, mdichild, dialog,
+		// modal, or toolpalette. Creation gating (multiwindow for normal, and
+		// the requirements for dialog/modal/toolpalette) is enforced by the
+		// display layer when it adopts the window.
+		"type": protocol.NewProperty("string", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+			s, err := protocol.AsString("type", v, f)
+			if err != nil {
+				return err
+			}
+			wt, ok := WindowTypeFromString(s)
+			if !ok {
+				return fmt.Errorf("window: unknown type %q", s)
+			}
+			target.(*Window).SetType(wt)
+			return nil
+		}).Tip("Window role: main|normal|mdichild|dialog|modal|toolpalette").Def("normal"),
 		// font overrides the window's font (its content inherits it);
 		// empty / "default" clears the override back to the desktop's.
 		"font": protocol.NewProperty("string", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
