@@ -122,6 +122,78 @@ func TestTreePinnedDividerAboveFade(t *testing.T) {
 	}
 }
 
+// While the column chooser is popped down, the selected grid row shows
+// the NON-focused selection color - otherwise the grid row and the
+// menu's focused item would both read as "the focus" at once.
+func TestTreeChooserDimsSelection(t *testing.T) {
+	b, _ := raster.New(480, 160)
+	d := NewDesktop()
+	d.SetBackend(b)
+	tv := NewTreeView()
+	tv.SetParent(d)
+	tv.SetShowHeader(true)
+	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	for _, name := range []string{"aaa", "bbb"} {
+		tv.AddRootItem(NewTreeItem(name))
+	}
+	tv.SetCurrentIndex(0)
+	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
+	tv.SetFocus()
+	// Focus lands on the header bar stop; Down moves the internal
+	// zone into the content, where the selection carries the focus.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})
+
+	paintRowBG := func() (uint8, uint8, uint8) {
+		b.Clear(style.DefaultStyle())
+		tv.Paint(core.NewPainter(b))
+		c := b.Image().RGBAAt(300, 16+8) // row 0, away from text
+		return c.R, c.G, c.B
+	}
+	// Prime once so the desktop's theme is applied, THEN read the
+	// scheme colors the row is expected to use.
+	paintRowBG()
+	scheme := tv.GetScheme()
+	fR, fG, fB := scheme.GetFocusedListItem().Bg.RGBComponents()
+	sR, sG, sB := scheme.GetSelectedListItem().Bg.RGBComponents()
+
+	if r, g, bl := paintRowBG(); r != fR || g != fG || bl != fB {
+		t.Fatalf("focused selection bg = %d,%d,%d want %d,%d,%d", r, g, bl, fR, fG, fB)
+	}
+	tv.chooserOpen = true
+	if r, g, bl := paintRowBG(); r != sR || g != sG || bl != sB {
+		t.Errorf("selection bg with chooser open = %d,%d,%d want non-focused %d,%d,%d",
+			r, g, bl, sR, sG, sB)
+	}
+	tv.chooserOpen = false
+	if r, g, bl := paintRowBG(); r != fR || g != fG || bl != fB {
+		t.Errorf("selection bg after chooser close = %d,%d,%d want focused %d,%d,%d",
+			r, g, bl, fR, fG, fB)
+	}
+
+	// Same principle while the cell editor is up: the editor is the
+	// focus, the row shows the non-focused selection color. (Editable
+	// column added here so Enter opens the editor.)
+	tv.ColumnByID("size").Editable = true
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	if !tv.rowEditing {
+		t.Fatal("precondition: row editor open")
+	}
+	// Sample row 0 at x=150 (inside the key column, past its text and
+	// outside the Size cell the editor covers).
+	b.Clear(style.DefaultStyle())
+	tv.Paint(core.NewPainter(b))
+	c := b.Image().RGBAAt(150, 16+8)
+	if c.R != sR || c.G != sG || c.B != sB {
+		t.Errorf("selection bg while editing = %d,%d,%d want non-focused %d,%d,%d",
+			c.R, c.G, c.B, sR, sG, sB)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+	if r, g, bl := paintRowBG(); r != fR || g != fG || bl != fB {
+		t.Errorf("selection bg after editor close = %d,%d,%d want focused %d,%d,%d",
+			r, g, bl, fR, fG, fB)
+	}
+}
+
 // Ledger banding: non-selected rows alternate LedgerOdd/LedgerEven,
 // selection keeps the selection colors, and the blank area below the
 // last row keeps the plain list background.

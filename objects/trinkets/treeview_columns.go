@@ -994,9 +994,13 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		itemY := lay.headerH + core.Unit(i)*metrics.CellHeight
 
 		// While the internal focus sits in the header (bar or drilled
-		// items), the selected row shows the NON-focused selection
-		// color - the header owns the focus, the row is just selected.
-		rowFocused := focused && t.headerZone == hzContent
+		// items), the column chooser menu is popped down, or the cell
+		// editor is up, the selected row shows the NON-focused
+		// selection color - the header/menu/editor owns the focus, the
+		// row is just selected, and two focus-colored things at once
+		// would read as two focuses.
+		rowFocused := focused && t.headerZone == hzContent &&
+			!t.chooserOpen && !t.rowEditing
 		ledgerRow := false
 		var s style.CellStyle
 		switch {
