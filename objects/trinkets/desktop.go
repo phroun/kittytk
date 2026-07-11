@@ -192,6 +192,14 @@ type Desktop struct {
 	// Running state
 	running atomic.Bool
 
+	// needsFrame is set by the core repaint hook (Update()) between ticks; the
+	// periodic tick only invalidates the surface when it is set, so an idle
+	// desktop stops repainting. idleTicks counts ticks since the last real
+	// repaint to drive a slow heartbeat (a safety net for any animation that
+	// changes without calling Update()).
+	needsFrame atomic.Bool
+	idleTicks  int
+
 	// Quit channel
 	quitChan chan struct{}
 
@@ -2534,6 +2542,8 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
 
 		d.running.Store(true)
+		// Wake the tick's repaint only when something actually changed.
+		core.SetRepaintHook(func() { d.needsFrame.Store(true) })
 		if onStartup != nil {
 			onStartup()
 		}
@@ -2542,6 +2552,7 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 	})
 
 	d.running.Store(false)
+	core.SetRepaintHook(nil)
 
 	d.mu.RLock()
 	onShutdown := d.onShutdown
@@ -2552,10 +2563,16 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 	return code
 }
 
-// scheduleTick keeps desktop timers firing and preserves the
-// historical full-frame cadence while trinkets migrate to precise
-// invalidation. Self-reposting through the platform (D21: PostAfter
-// is the timer primitive).
+// tickHeartbeatTicks is how many 50ms ticks may pass with nothing requesting a
+// repaint before one is forced anyway - a ~1s safety net so any animation that
+// mutates without calling Update() still advances.
+const tickHeartbeatTicks = 20
+
+// scheduleTick keeps desktop timers firing. It repaints only when an Update()
+// arrived since the last tick (via the core repaint hook), with a slow
+// heartbeat fallback, so an idle desktop no longer burns a full frame every
+// tick. Self-reposting through the platform (D21: PostAfter is the timer
+// primitive).
 func (d *Desktop) scheduleTick(p platform.Platform) {
 	p.PostAfter(50*time.Millisecond, func() {
 		if !d.running.Load() {
@@ -2570,11 +2587,24 @@ func (d *Desktop) scheduleTick(p platform.Platform) {
 		s := d.surface
 		torn := append([]*window.TearOffHost(nil), d.tornHosts...)
 		d.mu.RUnlock()
-		if s != nil {
-			s.Invalidate(core.UnitRect{})
+
+		// Only repaint when something asked for one (an Update() since the last
+		// tick), with a slow heartbeat as a safety net for any animation that
+		// mutates without calling Update(). An idle desktop otherwise stops
+		// repainting instead of burning a full frame every tick.
+		repaint := d.needsFrame.Swap(false)
+		d.idleTicks++
+		if !repaint && d.idleTicks >= tickHeartbeatTicks {
+			repaint = true
 		}
-		for _, h := range torn {
-			h.Invalidate()
+		if repaint {
+			d.idleTicks = 0
+			if s != nil {
+				s.Invalidate(core.UnitRect{})
+			}
+			for _, h := range torn {
+				h.Invalidate()
+			}
 		}
 		d.scheduleTick(p)
 	})

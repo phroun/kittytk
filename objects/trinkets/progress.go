@@ -22,6 +22,7 @@ type ProgressBar struct {
 
 	// Indeterminate mode (unknown progress)
 	indeterminate bool
+	indetTimer    *DesktopTimer // drives the indeterminate sweep's repaints
 }
 
 // NewProgressBar creates a new progress bar.
@@ -191,6 +192,14 @@ func (p *ProgressBar) IsInlineTrinket() bool {
 
 // Paint renders the progress bar.
 func (p *ProgressBar) Paint(painter *core.Painter) {
+	// An indeterminate bar animates off wall time, so it must keep requesting
+	// repaints on its own - the desktop no longer blindly repaints every tick.
+	if p.indeterminate {
+		p.ensureIndetTimer()
+	} else {
+		p.stopIndetTimer()
+	}
+
 	bounds := p.Bounds()
 	scheme := p.GetScheme()
 	metrics := p.EffectiveCellMetrics()
@@ -314,6 +323,27 @@ func (p *ProgressBar) formatText() string {
 func (p *ProgressBar) AnimateIndeterminate() {
 	if p.indeterminate {
 		p.Update()
+	}
+}
+
+// ensureIndetTimer starts a ~20Hz repaint timer while indeterminate, so the
+// sweep keeps advancing without the desktop's old blind per-tick repaint.
+// Started lazily from Paint once the bar can reach a desktop timer source.
+func (p *ProgressBar) ensureIndetTimer() {
+	if p.indetTimer != nil {
+		return
+	}
+	d := findDesktopFor(p)
+	if d == nil {
+		return
+	}
+	p.indetTimer = d.StartRepeatingTimer(50*time.Millisecond, p.AnimateIndeterminate)
+}
+
+func (p *ProgressBar) stopIndetTimer() {
+	if p.indetTimer != nil {
+		p.indetTimer.Stop()
+		p.indetTimer = nil
 	}
 }
 
