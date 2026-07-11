@@ -31,9 +31,29 @@ type tornDrag struct {
 	offY core.Unit
 }
 
-// setupTearOff arms the window manager's tear-off policy when the
-// platform can host more than one surface.
+// setupTearOff arms the window manager's modal-surfacing policy (every
+// platform) and, when the platform can host more than one surface, its
+// tear-off handler.
 func (d *Desktop) setupTearOff(p platform.Platform, surf platform.Surface) {
+	// Modal-surfacing works in-surface too, so it is wired on every platform
+	// (the TUI is single-surface): clicking a modally-blocked window surfaces
+	// the modal blocking it (raising or, for a torn one, OS-restoring it), even
+	// across applications; the wallpaper dim and wallpaper-click apply only when
+	// the desktop itself is blocked (a system modal, or a modal owned by the app
+	// currently on the menu bar).
+	d.windowManager.SetOnBlockedClick(d.surfaceBlockingModal)
+	d.windowManager.SetActiveAppIDFunc(func() core.ObjectID {
+		d.mu.RLock()
+		a := d.activeApp
+		d.mu.RUnlock()
+		if a != nil {
+			return a.ObjectID()
+		}
+		return 0
+	})
+	d.windowManager.SetOnWallpaperClick(d.surfaceActiveAppModal)
+
+	// The tear-off handler needs multiple native surfaces and a global pointer.
 	ms, ok := p.(platform.MultiSurfacePlatform)
 	if !ok || !ms.SupportsMultipleSurfaces() {
 		return
@@ -45,21 +65,6 @@ func (d *Desktop) setupTearOff(p platform.Platform, surf platform.Surface) {
 		return
 	}
 	d.windowManager.SetTearOffHandler(d.tearOffWindow)
-	// Clicking a modally-blocked window surfaces the modal blocking it
-	// (raising or OS-restoring it), even across applications.
-	d.windowManager.SetOnBlockedClick(d.surfaceBlockingModal)
-	// The wallpaper dim and wallpaper-click apply only to the desktop itself:
-	// a system modal, or a modal owned by the app currently on the menu bar.
-	d.windowManager.SetActiveAppIDFunc(func() core.ObjectID {
-		d.mu.RLock()
-		a := d.activeApp
-		d.mu.RUnlock()
-		if a != nil {
-			return a.ObjectID()
-		}
-		return 0
-	})
-	d.windowManager.SetOnWallpaperClick(d.surfaceActiveAppModal)
 }
 
 // deviceScale is the desktop surface's device zoom (integer pixels per

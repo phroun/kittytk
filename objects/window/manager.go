@@ -1897,10 +1897,33 @@ func (m *WindowManager) TileWindows() {
 	}
 	cells := TileLayout(clientArea, items)
 
+	// TileLayout divides the area proportionally, so its cell boundaries land
+	// at arbitrary unit positions. A cell-quantized surface (the TUI) can only
+	// render windows on the cell grid, so snap each cell there; shared edges
+	// round the same way and stay flush. Smooth (pixel) surfaces keep the exact
+	// proportional layout.
+	if !m.SmoothPositioning() {
+		metrics := core.DefaultCellMetrics()
+		for i := range cells {
+			cells[i] = snapRectToCells(metrics, cells[i])
+		}
+	}
+
 	for i, win := range windows {
 		win.Restore()
 		PlaceInCell(win, cells[i], items[i].Resizable)
 	}
+}
+
+// snapRectToCells snaps a rectangle's edges down to the cell grid. Each edge is
+// rounded with the same rule, so two cells that shared a boundary still meet
+// exactly (no seam or overlap) after snapping.
+func snapRectToCells(m core.CellMetrics, r core.UnitRect) core.UnitRect {
+	left := m.RoundDownToCellX(r.X)
+	top := m.RoundDownToCellY(r.Y)
+	right := m.RoundDownToCellX(r.X + r.Width)
+	bot := m.RoundDownToCellY(r.Y + r.Height)
+	return core.UnitRect{X: left, Y: top, Width: right - left, Height: bot - top}
 }
 
 // PlaceInCell moves win into cell: a resizable window fills it, a
