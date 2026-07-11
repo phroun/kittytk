@@ -459,9 +459,35 @@ func (b *Button) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 	return false
 }
 
+// hitExtent returns the button's local click/hover region (width, height). The
+// click path routes by the button's full Bounds(), so hover and drag key off
+// the same rectangle. On graphical surfaces, though, the drop shadow only
+// reaches partway into the second row: the bottom half-row of the bounds is
+// dead space, so exclude it uniformly - hover, drag, and press all stop at the
+// same lower edge. Cell surfaces use the full bounds.
+func (b *Button) hitExtent() (core.Unit, core.Unit) {
+	bounds := b.Bounds()
+	h := bounds.Height
+	if core.FindGraphicalFrames(b.Self()) {
+		h -= b.EffectiveCellMetrics().CellHeight / 2
+	}
+	return bounds.Width, h
+}
+
+// inHitBox reports whether a local point falls in the button's hit region.
+func (b *Button) inHitBox(x, y core.Unit) bool {
+	w, h := b.hitExtent()
+	return x >= 0 && x < w && y >= 0 && y < h
+}
+
 // HandleMousePress handles mouse clicks.
 func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.LeftButton {
+		// A press in the button's dead zone (the excluded bottom half-row on
+		// graphical surfaces) isn't on the button - let it fall through.
+		if !b.inHitBox(event.X, event.Y) {
+			return false
+		}
 		// Disabled buttons don't respond to mouse input
 		if !b.IsEnabled() {
 			return true // Consume event but don't do anything
@@ -479,14 +505,10 @@ func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 // highlight when the button is idle, and the pressed-and-over state during
 // a press.
 func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
-	// Hit box is the button's full bounds - including the drop-shadow row and
-	// column. The click/press path routes by these same bounds, so hover and
-	// drag must use them too; testing only the face row here made the shadow
-	// clickable but not hoverable, and made a drag that began on the shadow
-	// immediately read as "off the button".
-	bounds := b.Bounds()
-	overBounds := event.X >= 0 && event.X < bounds.Width &&
-		event.Y >= 0 && event.Y < bounds.Height
+	// Hover and drag use the same hit box as the click path (full bounds on
+	// cell surfaces; full bounds minus the dead bottom half-row on graphical
+	// surfaces), so all three stop at the same edge.
+	overBounds := b.inHitBox(event.X, event.Y)
 
 	if !b.pressed {
 		// Plain hover is a no-button affordance: while any button is held, a
