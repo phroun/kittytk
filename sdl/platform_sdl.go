@@ -192,7 +192,19 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	// re-lay out and present live at every size change.
 	sdl2.AddEventWatchFunc(func(ev sdl2.Event, _ interface{}) bool {
 		if e, ok := ev.(*sdl2.WindowEvent); ok && e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
+			// The main loop is frozen inside that modal loop, so its post-queue
+			// drain is stalled too - posted work can't land, and a live terminal
+			// (whose feed batches apply through Post) would sit on its last frame
+			// until release while the chrome around it reflows. Drain the queue
+			// on the main thread first (safe: the watch runs on the same, but
+			// blocked, main thread, and feed-applies push no SDL events) so that
+			// work lands, then resize. If the drain dirtied the surface at an
+			// unchanged size, liveResize won't have presented it - so do.
+			p.drainPosts()
 			p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
+			if w, ok := p.wins[e.WindowID]; ok && w.surface != nil && w.surface.dirty.Swap(false) {
+				p.paintAndPresent(w, true)
+			}
 		}
 		return true
 	}, nil)
