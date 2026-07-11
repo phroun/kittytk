@@ -88,29 +88,55 @@ func TestButtonGraphicalHitBoxExcludesBottomHalfRow(t *testing.T) {
 }
 
 // When a layout stretches a button taller than its intrinsic two rows (an
-// H-box handing it the row height), the extra vertical space is inert blank:
-// the hit box stays the two-row footprint, so a press down in the stretched
-// slack is not on the button.
-func TestButtonExtraVerticalSpaceIsInert(t *testing.T) {
+// H-box handing it the row height), the button is centered vertically: the
+// slack splits above and below and is inert blank, so only the centered
+// two-row footprint is on the button.
+func TestButtonExtraVerticalSpaceCentersAndIsInert(t *testing.T) {
 	check := func(t *testing.T, parent core.Container) {
 		b := NewButton("OK")
 		b.SetParent(parent)
 		ch := b.EffectiveCellMetrics().CellHeight
-		// Four rows tall - twice the intrinsic button height.
+		// Four rows tall - twice the intrinsic button height. Slack is two
+		// rows, so one row above and one below; the footprint is rows 1..3.
 		b.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 60, Height: ch * 4})
-
-		// A press inside the top two rows lands on the button.
-		if !b.HandleMousePress(core.MousePressEvent{X: 20, Y: ch / 2, Button: core.LeftButton}) || !b.pressed {
-			t.Error("press within the button footprint did not press it")
+		if b.vInset() != ch {
+			t.Fatalf("vInset = %d, want one row (%d)", b.vInset(), ch)
 		}
-		b.HandleMouseRelease(core.MouseReleaseEvent{X: 20, Y: ch / 2, Button: core.LeftButton})
-		// A press down in the stretched slack (third row) is inert.
-		if b.HandleMousePress(core.MousePressEvent{X: 20, Y: ch * 5 / 2, Button: core.LeftButton}) || b.pressed {
-			t.Error("press in the inert stretched space was treated as on the button")
+
+		// Press in the inert space above the button: not on it.
+		if b.HandleMousePress(core.MousePressEvent{X: 20, Y: ch / 2, Button: core.LeftButton}) || b.pressed {
+			t.Error("press in the inert space above the button pressed it")
+		}
+		// Press in the centered footprint: lands.
+		if !b.HandleMousePress(core.MousePressEvent{X: 20, Y: ch * 3 / 2, Button: core.LeftButton}) || !b.pressed {
+			t.Error("press within the centered footprint did not press it")
+		}
+		b.HandleMouseRelease(core.MouseReleaseEvent{X: 20, Y: ch * 3 / 2, Button: core.LeftButton})
+		// Press in the inert space below the button: not on it.
+		if b.HandleMousePress(core.MousePressEvent{X: 20, Y: ch * 7 / 2, Button: core.LeftButton}) || b.pressed {
+			t.Error("press in the inert space below the button pressed it")
 		}
 	}
 	t.Run("cell", func(t *testing.T) { check(t, NewPanel()) })
 	t.Run("graphical", func(t *testing.T) {
 		check(t, &graphicalFrameStub{Panel: NewPanel(), border: 0})
 	})
+}
+
+// Cell surfaces quantize the centering to whole rows, favoring the top on a
+// tie: an odd row of slack goes below, so the button sits one row higher.
+func TestButtonCenteringQuantizesFavoringTop(t *testing.T) {
+	b := NewButton("OK")
+	b.SetParent(NewPanel()) // cell surface
+	ch := b.EffectiveCellMetrics().CellHeight
+	// Three rows tall: one row of slack. It goes below, top inset is zero.
+	b.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 60, Height: ch * 3})
+	if b.vInset() != 0 {
+		t.Errorf("odd slack: vInset = %d, want 0 (favor top)", b.vInset())
+	}
+	// Five rows tall: three rows of slack -> one above, two below.
+	b.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 60, Height: ch * 5})
+	if b.vInset() != ch {
+		t.Errorf("three-row slack: vInset = %d, want one row (%d)", b.vInset(), ch)
+	}
 }

@@ -323,11 +323,12 @@ func (b *Button) Paint(p *core.Painter) {
 	// the classic one-column shift.
 	shadowOff := metrics.CellWidth / 2
 	xOffset := core.Unit(0)
-	yOffset := core.Unit(0)
+	// Center the two-row button in any extra vertical space its layout gave it.
+	yOffset := b.vInset()
 	if showPressed {
 		if graphical {
 			xOffset = shadowOff
-			yOffset = shadowOff
+			yOffset += shadowOff
 		} else {
 			xOffset = metrics.CellWidth
 		}
@@ -343,7 +344,7 @@ func (b *Button) Paint(p *core.Painter) {
 	if graphical && !showPressed {
 		p.FillRect(core.UnitRect{
 			X:      shadowOff,
-			Y:      shadowOff,
+			Y:      yOffset + shadowOff,
 			Width:  buttonWidth,
 			Height: metrics.CellHeight,
 		}, ' ', style.DefaultStyle().WithBg(shadowFg))
@@ -363,11 +364,11 @@ func (b *Button) Paint(p *core.Painter) {
 	if !showPressed && !graphical {
 		// Bottom half block on right edge of button (top row)
 		shadowX := xOffset + buttonWidth
-		p.DrawCell(shadowX, 0, '▄', shadowStyle)
+		p.DrawCell(shadowX, yOffset, '▄', shadowStyle)
 
 		// Top half blocks on second row (shifted right by 1 cell)
 		// Calculate number of cells needed for the button width
-		shadowY := metrics.CellHeight
+		shadowY := yOffset + metrics.CellHeight
 		numShadowCells := int((buttonWidth + metrics.CellWidth - 1) / metrics.CellWidth)
 		for i := 0; i < numShadowCells; i++ {
 			p.DrawCell(metrics.CellWidth+metrics.CellToUnitsX(i), shadowY, '▀', shadowStyle)
@@ -459,30 +460,49 @@ func (b *Button) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 	return false
 }
 
-// hitExtent returns the button's local click/hover region (width, height). A
-// button's height is intrinsic - two rows (face + drop shadow) - and it paints
-// top-aligned in its bounds; any extra vertical space a layout grants it (e.g.
-// stretched to an H-box's row height) is inert blank below. So hit-test the
-// intrinsic two-row footprint, not the whole bounds. On graphical surfaces the
-// shadow only reaches partway into the second row, so trim the dead bottom
-// half-row. Cell surfaces use the full two rows.
-func (b *Button) hitExtent() (core.Unit, core.Unit) {
+// vInset returns the button's vertical offset within its bounds. A button's
+// height is intrinsic - two rows (face + drop shadow) - so when a layout hands
+// it extra vertical space (e.g. an H-box stretches it to the row height) the
+// button is centered, with the slack split above and below. Cell surfaces
+// quantize the top space to whole rows, favoring the top on a tie (an odd row
+// of slack goes below, so the button sits one row higher).
+func (b *Button) vInset() core.Unit {
 	bounds := b.Bounds()
 	metrics := b.EffectiveCellMetrics()
+	slack := bounds.Height - metrics.CellHeight*2
+	if slack <= 0 {
+		return 0
+	}
+	if core.FindSmoothPositioning(b.Self()) {
+		return slack / 2
+	}
+	rows := slack / metrics.CellHeight
+	return (rows / 2) * metrics.CellHeight
+}
+
+// hitRect returns the button's local click/hover region. It follows the
+// intrinsic two-row footprint at its centered offset (the extra vertical space
+// a layout grants is inert). On graphical surfaces the drop shadow only reaches
+// partway into the second row, so the dead bottom half-row is trimmed; cell
+// surfaces use the full two rows.
+func (b *Button) hitRect() core.UnitRect {
+	bounds := b.Bounds()
+	metrics := b.EffectiveCellMetrics()
+	top := b.vInset()
 	h := metrics.CellHeight * 2
-	if h > bounds.Height {
-		h = bounds.Height
+	if top+h > bounds.Height {
+		h = bounds.Height - top
 	}
 	if core.FindGraphicalFrames(b.Self()) {
 		h -= metrics.CellHeight / 2
 	}
-	return bounds.Width, h
+	return core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: h}
 }
 
 // inHitBox reports whether a local point falls in the button's hit region.
 func (b *Button) inHitBox(x, y core.Unit) bool {
-	w, h := b.hitExtent()
-	return x >= 0 && x < w && y >= 0 && y < h
+	r := b.hitRect()
+	return x >= r.X && x < r.X+r.Width && y >= r.Y && y < r.Y+r.Height
 }
 
 // HandleMousePress handles mouse clicks.
