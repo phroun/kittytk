@@ -501,7 +501,8 @@ func buildStatusSections(script string) []trinkets.StatusSection {
 // dialog. Dialogs are one-shot protocol objects: built from text,
 // closed by their own buttons (the finish event is available via a
 // sub statement in the script when a caller cares).
-func protocolMessageBox(application *app.Application, script string) {
+// buildMessageBox executes a messagebox script and returns the dialog.
+func buildMessageBox(script string) *trinkets.MessageBox {
 	factory := &idCaptureFactory{
 		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
 		byID:  make(map[uint64]any),
@@ -514,12 +515,24 @@ func protocolMessageBox(application *app.Application, script string) {
 	if err != nil {
 		panic(fmt.Sprintf("messagebox script: %v", err))
 	}
-	dialog := factory.byID[reply.IDs["dlg"]].(*trinkets.MessageBox)
-	application.AddWindow(&dialog.Window)
+	return factory.byID[reply.IDs["dlg"]].(*trinkets.MessageBox)
+}
+
+func protocolMessageBox(application *app.Application, script string) {
+	application.AddWindow(&buildMessageBox(script).Window)
 }
 
 func showAboutDialog(desktop *trinkets.Desktop, application *app.Application) {
-	protocolMessageBox(application, fmt.Sprintf(`
+	dlg := buildMessageBox(fmt.Sprintf(`
 dlg=new messagebox title="About %s" icon=information ok text="%s Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion %s"
 `, core.Name, core.Name, core.Version))
+	// Shown modally (experimental): while it's up, the window manager won't let
+	// focus or raise leave it - ShowModal pushes the modal stack, and the OK
+	// button's Close pops it (via RemoveWindow). Falls back to a plain add if
+	// there is no window manager.
+	if wm := desktop.WindowManager(); wm != nil {
+		wm.ShowModal(&dlg.Window)
+	} else {
+		application.AddWindow(&dlg.Window)
+	}
 }
