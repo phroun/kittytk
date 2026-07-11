@@ -523,7 +523,7 @@ func TestWindowTearableAndMainFlags(t *testing.T) {
 		}
 	}()
 
-	conn, err := client.Dial(sock, "Tear App", nil)
+	conn, err := client.DialWith(sock, "Tear App", client.DialOptions{MultiWindow: true})
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -563,4 +563,113 @@ plain=new window title="Plain" width=200 height=120 children={new label caption=
 			}
 		}
 	})
+}
+
+// The display layer enforces the per-type window creation rules: normal
+// windows need multiwindow, a dialog needs an owner, and modal/toolpalette
+// are always allowed.
+func TestWindowTypeCreationGating(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "display.sock")
+
+	desktop := trinkets.NewDesktop()
+	desktop.SetBackend(&nullBackend{})
+
+	ready := make(chan *display.Server, 1)
+	desktop.SetOnStartup(func() {
+		srv, err := display.Serve(desktop, sock)
+		if err != nil {
+			t.Errorf("serve: %v", err)
+			desktop.Quit()
+			return
+		}
+		ready <- srv
+	})
+	exited := make(chan int, 1)
+	go func() { exited <- desktop.Run() }()
+	var srv *display.Server
+	select {
+	case srv = <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop did not start")
+	}
+	defer func() {
+		srv.Close()
+		desktop.Quit()
+		<-exited
+	}()
+
+	// A single-window app (no multiwindow). A rejected window is closed and
+	// not adopted (soft rejection: no Build error), so assert on which
+	// windows the app actually holds by title.
+	conn, err := client.Dial(sock, "Gate App", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	hasWindow := func(title string) bool {
+		found := false
+		onUI(desktop, func() {
+			for _, a := range desktop.Applications() {
+				if a.Name() != "Gate App" {
+					continue
+				}
+				for _, w := range a.Windows() {
+					if w.Title() == title {
+						found = true
+					}
+				}
+			}
+		})
+		return found
+	}
+
+	// The first window defaults to the app's main window: accepted.
+	mui, err := conn.Build(`main=new window title="Main" width=320 height=240 children={new label caption="m"}`)
+	if err != nil {
+		t.Fatalf("build first window: %v", err)
+	}
+	mainID := mui.ID("main")
+	if mainID == 0 {
+		t.Fatal("main window id missing")
+	}
+	if !hasWindow("Main") {
+		t.Error("the first (main) window should be adopted")
+	}
+
+	// A second normal window without multiwindow is rejected.
+	if _, err := conn.Build(`plain=new window title="Plain" width=200 height=120 children={new label caption="p"}`); err != nil {
+		t.Fatalf("build plain: %v", err)
+	}
+	if hasWindow("Plain") {
+		t.Error("a second normal window without multiwindow should be rejected")
+	}
+
+	// A dialog with no owner is rejected; with an owner it is accepted.
+	if _, err := conn.Build(`d=new window type="dialog" title="DlgNoOwner" width=200 height=120 children={new label caption="d"}`); err != nil {
+		t.Fatalf("build dialog no owner: %v", err)
+	}
+	if hasWindow("DlgNoOwner") {
+		t.Error("a dialog without an owner should be rejected")
+	}
+	if _, err := conn.Build(fmt.Sprintf(`d=new window type="dialog" owner=%d title="DlgOwned" width=200 height=120 children={new label caption="d"}`, mainID)); err != nil {
+		t.Fatalf("build dialog with owner: %v", err)
+	}
+	if !hasWindow("DlgOwned") {
+		t.Error("a dialog with an owner should be accepted")
+	}
+
+	// Modal and tool palette are always allowed, even without multiwindow.
+	if _, err := conn.Build(`m=new window type="modal" title="ModalW" width=200 height=120 children={new label caption="m"}`); err != nil {
+		t.Fatalf("build modal: %v", err)
+	}
+	if !hasWindow("ModalW") {
+		t.Error("a modal should always be allowed")
+	}
+	if _, err := conn.Build(`t=new window type="toolpalette" title="ToolW" width=200 height=120 children={new label caption="t"}`); err != nil {
+		t.Fatalf("build toolpalette: %v", err)
+	}
+	if !hasWindow("ToolW") {
+		t.Error("a tool palette should always be allowed")
+	}
 }

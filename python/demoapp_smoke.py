@@ -22,6 +22,9 @@ from demoapp import scripts  # noqa: E402
 
 def main(sock: str) -> int:
     conn = kittytk.dial(sock, "KittyTK Demo")
+    # The demo is a multi-window app: declare it so the host allows the
+    # additional (normal) windows the smoke test builds below.
+    conn.set_app("multiwindow")
 
     ui = conn.build(scripts.main_build_script())
     for key in ["w", "tabs", "binput", "wfont", "dfont", "grid",

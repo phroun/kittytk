@@ -76,6 +76,17 @@ func init() {
 			target.(*Window).SetType(wt)
 			return nil
 		}).Tip("Window role: main|normal|mdichild|dialog|modal|toolpalette").Def("normal"),
+		// owner is the object id of the window a dialog/modal/toolpalette
+		// floats above. The display layer resolves it (up the ownership chain)
+		// when the window is adopted. 0 = application-level.
+		"owner": protocol.NewProperty("int", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+			n, err := protocol.AsInt("owner", v, f)
+			if err != nil {
+				return err
+			}
+			target.(*Window).SetOwnerRequestID(uint64(n))
+			return nil
+		}).Tip("Owning window's object id for a dialog/modal/toolpalette (0 = app-level)").Def("0"),
 		// font overrides the window's font (its content inherits it);
 		// empty / "default" clears the override back to the desktop's.
 		"font": protocol.NewProperty("string", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {

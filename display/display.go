@@ -358,6 +358,15 @@ func (c *conn) execute(batch []*protocol.Statement) {
 			// MDI document appended into an mdipane) already has a home;
 			// only genuinely top-level windows join the application.
 			if t.Parent() == nil {
+				// Enforce the per-type creation rules. A rejected window is
+				// closed (which emits its window_closed event so the client
+				// learns it did not open) and skipped - no out-of-band error
+				// line, which would desync the batch's request/reply stream.
+				if err := c.gateWindow(t); err != nil {
+					dbg("window rejected for app=%q: %v", c.app.Name(), err)
+					t.Close()
+					continue
+				}
 				c.app.AddWindow(t)
 				// A window that asked to be the app's main window carries
 				// the menu/status chrome when torn off.
@@ -396,6 +405,76 @@ func (c *conn) execute(batch []*protocol.Statement) {
 		c.send(line)
 	}
 	c.send(protocol.EncodeReply(reply))
+}
+
+// resolveOwnerWindow returns the window an owner object id refers to in this
+// session, or nil (unknown id, or the object is not a window).
+func (c *conn) resolveOwnerWindow(id uint64) *window.Window {
+	if id == 0 {
+		return nil
+	}
+	obj, ok := c.session.Object(id)
+	if !ok {
+		return nil
+	}
+	if tp, ok := obj.(interface{ Target() any }); ok {
+		if w, ok := tp.Target().(*window.Window); ok {
+			return w
+		}
+	}
+	return nil
+}
+
+// gateWindow resolves a newly created top-level window's owner and enforces
+// the per-type creation rules before it is adopted into the application:
+//
+//   - main: at most one per application.
+//   - normal: only when the application declares multiwindow.
+//   - dialog: must have an owner window.
+//   - mdichild, modal, toolpalette: always allowed (all apps may create these).
+//
+// It returns an error describing why the window was rejected, or nil to adopt.
+func (c *conn) gateWindow(t *window.Window) error {
+	if owner := c.resolveOwnerWindow(t.OwnerRequestID()); owner != nil {
+		t.SetOwner(owner)
+	}
+	// The application's first top-level window defaults to its main window, so
+	// a single-window app can create a plain window without declaring
+	// multiwindow.
+	if t.Type() == window.WindowTypeNormal && !c.appHasMainWindow(t) {
+		t.SetType(window.WindowTypeMain)
+	}
+	switch t.Type() {
+	case window.WindowTypeMain:
+		if c.appHasMainWindow(t) {
+			return fmt.Errorf("application already has a main window")
+		}
+	case window.WindowTypeNormal:
+		if !c.app.MultiWindow() {
+			return fmt.Errorf("normal windows require the application to declare multiwindow")
+		}
+	case window.WindowTypeDialog:
+		if t.Owner() == nil {
+			return fmt.Errorf("a dialog window requires an owner")
+		}
+	case window.WindowTypeMDIChild, window.WindowTypeModal, window.WindowTypeToolPalette:
+		// Always allowed.
+	}
+	return nil
+}
+
+// appHasMainWindow reports whether the application already has a main window
+// (a set main window, or an adopted window of type main), ignoring except.
+func (c *conn) appHasMainWindow(except *window.Window) bool {
+	if c.app.MainWindow() != nil {
+		return true
+	}
+	for _, w := range c.app.Windows() {
+		if w != except && w.Type() == window.WindowTypeMain {
+			return true
+		}
+	}
+	return false
 }
 
 // handleAppVerbs consumes the session-level application verbs the display

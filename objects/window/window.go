@@ -88,6 +88,9 @@ type Window struct {
 	windowType WindowType
 	owner      *Window
 	appID      core.ObjectID
+	// ownerRequestID is the wire object id an owner= property asked for; the
+	// display layer resolves it to owner at adoption time.
+	ownerRequestID uint64
 
 	// G4 dual mode: the app's request for a native OS window,
 	// honored when the platform can create surfaces.

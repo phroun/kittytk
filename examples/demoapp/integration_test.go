@@ -105,7 +105,7 @@ func TestDemoBuildsOverService(t *testing.T) {
 	sock, stop := startService(t)
 	defer stop()
 
-	conn, err := client.Dial(sock, "KittyTK Demo", nil)
+	conn, err := client.DialWith(sock, "KittyTK Demo", client.DialOptions{MultiWindow: true})
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

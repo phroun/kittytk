@@ -112,6 +112,21 @@ func (w *Window) SetOwner(owner *Window) {
 	w.mu.Unlock()
 }
 
+// OwnerRequestID returns the wire object id an owner= property requested (0 if
+// none), for the display layer to resolve into the owner window at adoption.
+func (w *Window) OwnerRequestID() uint64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.ownerRequestID
+}
+
+// SetOwnerRequestID records the wire object id from an owner= property.
+func (w *Window) SetOwnerRequestID(id uint64) {
+	w.mu.Lock()
+	w.ownerRequestID = id
+	w.mu.Unlock()
+}
+
 // AppID returns the ObjectID of the application that owns this window, or 0
 // when it has no application (a system window such as an auth prompt).
 func (w *Window) AppID() core.ObjectID {

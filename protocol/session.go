@@ -74,6 +74,13 @@ func (s *Session) Register(obj Object) {
 	}
 }
 
+// Object returns the object registered under id, if any. The host uses it at
+// window-adoption time to resolve wire references such as a window's owner id.
+func (s *Session) Object(id uint64) (Object, bool) {
+	obj, ok := s.objects[id]
+	return obj, ok
+}
+
 // NewSession creates an empty session.
 func NewSession() *Session {
 	return &Session{
