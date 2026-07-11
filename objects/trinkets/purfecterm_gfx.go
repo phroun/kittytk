@@ -20,6 +20,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/phroun/kittytk/core"
@@ -1889,12 +1890,24 @@ func (t *PurfecTerm) PasteClipboard() {
 	d.ReadClipboardAsync(func(s string) { t.sendPaste(s) })
 }
 
+// normalizePasteNewlines converts clipboard line endings to carriage return
+// for the child PTY: a terminal's Enter key sends CR, and the child's line
+// discipline (raw mode, no ICRNL on the paste) acts on CR, not LF. Clipboard
+// text uses LF (or CRLF), so pasting it verbatim would swallow the line breaks.
+// CRLF is collapsed first, then any lone LF.
+func normalizePasteNewlines(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\r")
+	s = strings.ReplaceAll(s, "\n", "\r")
+	return s
+}
+
 // sendPaste writes resolved clipboard text to the child PTY, bracketing it when
 // the application enabled bracketed paste mode.
 func (t *PurfecTerm) sendPaste(s string) {
 	if t.terminal == nil || s == "" {
 		return
 	}
+	s = normalizePasteNewlines(s)
 	if t.terminal.Buffer().IsBracketedPasteModeEnabled() {
 		s = "\x1b[200~" + s + "\x1b[201~"
 	}
