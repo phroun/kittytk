@@ -149,6 +149,12 @@ type WindowManager struct {
 	// Items are *Window or nil (nil represents the dock).
 	cycleOrder []interface{}
 
+	// cycling is true while an M-Tab/M-S-Tab run is in progress. During a run
+	// the MRU cycleOrder is left frozen (activation does not promote the
+	// selected item to the front) so stepping walks a stable list in both
+	// directions. The MRU is committed once, when the run ends (endCycleSession).
+	cycling bool
+
 	// Smooth positioning: when the surface's backend supports sub-cell
 	// placement (pixel surfaces), drag and resize track the pointer at
 	// unit granularity instead of snapping to cell boundaries.
@@ -895,8 +901,19 @@ func (m *WindowManager) PreviousActiveWindow() *Window {
 	return m.previousActiveWindow
 }
 
-// ActivateWindow brings a window to the front and gives it focus.
+// ActivateWindow brings a window to the front and gives it focus. Any
+// M-Tab cycle run in progress is ended first (committing its MRU order), since
+// an explicit activation is a fresh, non-cycle interaction.
 func (m *WindowManager) ActivateWindow(win *Window) {
+	m.endCycleSession()
+	m.activate(win, true)
+}
+
+// activate brings a window to the front and gives it focus. reorderCycle
+// controls whether the window is promoted to the front of the MRU cycle order:
+// true for a normal activation, false while stepping an M-Tab cycle run (which
+// must not churn the list it is walking).
+func (m *WindowManager) activate(win *Window, reorderCycle bool) {
 	m.mu.Lock()
 	// Nothing to do only if it is already the active window AND visually
 	// active. A window can be m.activeWindow yet inactive - e.g. a torn
@@ -921,8 +938,11 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 	// its whole owner group forward. Pure z-order: overlays are not focused.
 	m.raiseWithOverlaysLocked(win)
 
-	// Move to front of cycle order (for M-Tab cycling)
-	m.bringToCycleFront(win)
+	// Move to front of cycle order (for M-Tab cycling), unless a cycle run is
+	// stepping through - then the MRU stays frozen until the run ends.
+	if reorderCycle {
+		m.bringToCycleFront(win)
+	}
 
 	handler := m.onActiveChanged
 	desktop := m.desktop
@@ -955,6 +975,40 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 	if handler != nil {
 		handler(win)
 	}
+}
+
+// endCycleSession ends an in-progress M-Tab cycle run, committing its result to
+// the MRU order: the window (or dock) the run landed on is promoted to the
+// front, so the next independent cycle starts from it. A no-op when no run is
+// in progress. Called on any non-cycle interaction (a normal key, a click, an
+// explicit activation).
+func (m *WindowManager) endCycleSession() {
+	m.mu.Lock()
+	if !m.cycling {
+		m.mu.Unlock()
+		return
+	}
+	m.cycling = false
+	active := m.activeWindow
+	desktop := m.desktop
+	m.mu.Unlock()
+
+	// The run landed on the dock when no window is active and the dock holds
+	// focus; otherwise it landed on the active window.
+	dockFocused := false
+	if active == nil && desktop != nil {
+		if dp, ok := desktop.(DockProvider); ok {
+			dockFocused = dp.IsDockFocused()
+		}
+	}
+
+	m.mu.Lock()
+	if active != nil {
+		m.bringToCycleFront(active)
+	} else if dockFocused {
+		m.bringToCycleFront(nil)
+	}
+	m.mu.Unlock()
 }
 
 // DeactivateActiveWindow removes focus from the active window without closing it.
@@ -997,6 +1051,7 @@ func (m *WindowManager) RestorePreviousActiveWindow() {
 // This is used for focus-follows-click behavior where the window only
 // raises on mouse release within its bounds.
 func (m *WindowManager) FocusWindow(win *Window) {
+	m.endCycleSession()
 	m.mu.Lock()
 	// As in ActivateWindow: only skip if it is already active AND visually
 	// active, so a click re-focuses a topmost-but-inactive window (one that
@@ -2529,6 +2584,15 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	desktop := m.desktop
 	m.mu.RUnlock()
 
+	// Any key other than the cycle keys ends an in-progress M-Tab run,
+	// committing its MRU order before the key is acted on.
+	switch event.Key {
+	case "M-Tab", "C-Tab", "M-S-Tab", "C-S-Tab":
+		// stays within / continues the cycle run
+	default:
+		m.endCycleSession()
+	}
+
 	// Global shortcuts
 	// Uses direct-key-handler naming: M- = Alt, C- = Ctrl, S- = Shift
 	switch event.Key {
@@ -2589,9 +2653,17 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 func (m *WindowManager) CycleWindows(forward bool) {
 	m.mu.Lock()
 	desktop := m.desktop
+	// Read the LIVE cycle order (not a snapshot): stepping locates the current
+	// selection by identity every press, so a window added or removed mid-run
+	// is picked up automatically. The run only freezes the MRU *reordering*,
+	// not the list's membership.
 	cycleOrder := make([]interface{}, len(m.cycleOrder))
 	copy(cycleOrder, m.cycleOrder)
 	activeWindow := m.activeWindow
+	// Mark the run in progress: activation during it must not promote the
+	// selection to the front (that churn is what broke backward cycling). The
+	// MRU commit is deferred to endCycleSession.
+	m.cycling = true
 	m.mu.Unlock()
 
 	// Check if dock is available and has entries
@@ -2673,7 +2745,8 @@ func (m *WindowManager) CycleWindows(forward bool) {
 		nextIdx = (currentIdx - 1 + len(effectiveCycle)) % len(effectiveCycle)
 	}
 
-	// Activate the target
+	// Activate the target. During a run the MRU is left frozen (no
+	// bringToCycleFront); endCycleSession commits the final landing spot.
 	nextItem := effectiveCycle[nextIdx]
 	if nextItem == nil {
 		// Moving to dock - deactivate current window first
@@ -2682,7 +2755,6 @@ func (m *WindowManager) CycleWindows(forward bool) {
 		}
 		m.mu.Lock()
 		m.activeWindow = nil
-		m.bringToCycleFront(nil)
 		m.mu.Unlock()
 		if dockProvider != nil {
 			dockProvider.FocusDock()
@@ -2693,7 +2765,7 @@ func (m *WindowManager) CycleWindows(forward bool) {
 		if isDockFocused && dockProvider != nil {
 			dockProvider.UnfocusDock()
 		}
-		m.ActivateWindow(win)
+		m.activate(win, false)
 	}
 }
 
