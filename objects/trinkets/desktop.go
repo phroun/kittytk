@@ -332,9 +332,23 @@ func aboutDesktopText() string {
 func (d *Desktop) showAboutDesktop() {
 	mb := NewMessageBox("About KittyTK", aboutDesktopText(), ButtonOK)
 	mb.SetIcon(IconInformation)
-	if wm := d.WindowManager(); wm != nil {
-		wm.AddWindow(&mb.Window)
+	wm := d.WindowManager()
+	if wm == nil {
+		return
 	}
+	wm.AddWindow(&mb.Window)
+	// Now parented to the desktop, the window knows its real (graphical vs
+	// cell) chrome: re-measure so the content holds the text and OK button,
+	// then center the dialog in the desktop's client area.
+	mb.ResizeToFitContent()
+	area := wm.ClientArea()
+	b := mb.Bounds()
+	mb.SetBounds(core.UnitRect{
+		X:      area.X + (area.Width-b.Width)/2,
+		Y:      area.Y + (area.Height-b.Height)/2,
+		Width:  b.Width,
+		Height: b.Height,
+	})
 }
 
 // SetBackend sets the render backend and initializes related components.

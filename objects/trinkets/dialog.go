@@ -174,6 +174,12 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 	}
 }
 
+// ResizeToFitContent recomputes the dialog's size from its text and buttons
+// using the window's current chrome. Call it after the dialog is parented (so
+// the graphical vs cell frame insets are known) to guarantee the content area
+// holds every text line plus the button row.
+func (m *MessageBox) ResizeToFitContent() { m.calculateSize() }
+
 // calculateSize sets the dialog size based on content.
 func (m *MessageBox) calculateSize() {
 	metrics := m.EffectiveCellMetrics()
@@ -199,10 +205,24 @@ func (m *MessageBox) calculateSize() {
 	// Height: 1 top margin + text lines + 1 gap + 1 button row + 1 bottom margin
 	textHeight := len(lines) + 4
 
-	m.SetBounds(core.UnitRect{
-		Width:  core.Unit(textWidth) * metrics.CellWidth,
-		Height: core.Unit(textHeight) * metrics.CellHeight,
-	})
+	// These are CONTENT dimensions (what messageBoxContent.Paint lays text and
+	// the button into). The window also spends rows on its title bar and frame,
+	// so measure that chrome and add it - otherwise the content area is short
+	// and the OK button rides up over the last line of text.
+	contentW := core.Unit(textWidth) * metrics.CellWidth
+	contentH := core.Unit(textHeight) * metrics.CellHeight
+
+	m.SetBounds(core.UnitRect{Width: contentW, Height: contentH})
+	cb := m.ContentBounds()
+	chromeW := contentW - cb.Width
+	chromeH := contentH - cb.Height
+	if chromeW < 0 {
+		chromeW = 0
+	}
+	if chromeH < 0 {
+		chromeH = 0
+	}
+	m.SetBounds(core.UnitRect{Width: contentW + chromeW, Height: contentH + chromeH})
 }
 
 // getIconText returns the text representation of the icon.

@@ -1234,6 +1234,14 @@ func (w *Window) ClientAreaOffset() core.UnitPoint {
 	return core.UnitPoint{X: cb.X, Y: cb.Y}
 }
 
+// ContentBounds returns the window-local rectangle available to the content
+// trinket, inside the title bar and frame (and any detached chrome). Callers
+// that size a window to fit its content use it to learn how much room the
+// chrome takes: chrome = window bounds minus ContentBounds.
+func (w *Window) ContentBounds() core.UnitRect {
+	return w.contentBounds()
+}
+
 // ClientArea reports the space a dropdown from the window's own (detached)
 // menu bar may occupy, expressed in that menu bar's local coordinate
 // space (its origin sits at the menu bar's top-left, since the dropdown
