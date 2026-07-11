@@ -322,9 +322,9 @@ func (d *Desktop) createSystemMenu() *Menu {
 func aboutDesktopText() string {
 	return fmt.Sprintf("%s — %s\n\n"+
 		"One user interface toolkit for graphics, text, and speech.\n\n"+
-		"Version %s (build %d)\n\n"+
+		"Version %s\n\n"+
 		"© 2026 Jeffrey R. Day. All rights reserved.",
-		core.Name, core.Tagline, core.Version, core.Build)
+		core.Name, core.Tagline, core.FullVersion())
 }
 
 // showAboutDesktop opens the About KittyTK dialog - the About entry in the

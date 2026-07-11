@@ -50,7 +50,7 @@ func TestAboutDesktopDialog(t *testing.T) {
 	txt := aboutDesktopText()
 	for _, want := range []string{
 		"image/tty Trinket Kit",
-		"Version " + core.Version,
+		"Version " + core.FullVersion(),
 		"Jeffrey R. Day",
 		"All rights reserved",
 	} {
