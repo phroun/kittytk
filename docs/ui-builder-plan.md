@@ -182,8 +182,115 @@ highlight covers v1.
 Limitation to document honestly: templates parameterize by *overriding
 props on the root base type*; there is no "slot"/placeholder mechanism for
 overriding a nested child's caption per-instance. That is a real future
-protocol conversation (named slots?), not a builder hack. v1 components are
-"stamps"; editing one means editing the template.
+protocol conversation, not a builder hack. v1 components are "stamps";
+editing one means editing the template. The TrinketClass proposal below is
+the candidate answer.
+
+## TrinketClass — user-defined classes as first-class vocabulary (proposal)
+
+Owner's idea, recorded here for refinement: attach a metadata class name to
+any node in the tree, and introduce a `trinketclass` object — a container
+whose children are PROPERTY objects, each carrying exactly the metadata our
+builtin properties already carry (`PropDesc`: kind, default, doc, enum).
+Business logic for how the class behaves attaches either display-side or
+app-side.
+
+### Why this is the right shape
+
+It closes the template limitation above by giving a component its own
+declared property *surface*, and — the elegant part — because a class's
+properties use the SAME descriptor shape as builtins, the whole
+introspection pipeline lifts for free: `describe` can report user classes
+alongside builtin types, and the builder's generated inspector cannot tell
+the difference. User components stop being second-class the moment they are
+declared.
+
+Every mechanism it needs has an existing precedent:
+
+- **Descriptor-holding children**: virtual types are the established
+  pattern for "objects that exist to carry structured data" — `item`,
+  `section`/`span`, `menuitem`, `dockentry` (`TypeSpec.Virtual`,
+  `objects/trinkets/statusbar_protocol.go`). A `classprop` is a virtual
+  object whose payload IS a `PropDesc` plus a binding.
+- **Session-scoped declaration**: templates already live in the session
+  (`s.templates`), declared over the wire, uppercase-named (D18). Classes
+  are the same lifecycle: declared in the document/connection, saved as
+  statements at the top of a `.ktk` file.
+- **Instantiation & inner addressing**: template expansion at `new` (D14)
+  plus correlation keys already give the machinery to instantiate a
+  subtree and address nodes inside it (`k=new`, key paths in `set`).
+
+### Wire sketch (illustrative, names not frozen)
+
+```
+new trinketclass name=Card base=panel children={
+    new classprop name=title kind=string default="" doc="Card heading" bind=hdr.caption
+    new classprop name=level kind=enum enum=info,warning default=info doc="Accent" bind=hdr.scheme
+    new classprop name=ref   kind=string default="" doc="App-side record id"        # no bind: pure state
+    new classevent name=dismissed from=closer doc="User dismissed the card"
+    new classbody children={
+        hdr=new label
+        new spacer
+        closer=new button caption="Dismiss"
+    }
+}
+
+c1=new Card title="Hello" level=warning ref="ticket-42"
+```
+
+Semantics: `new Card` instantiates the body subtree; setting a class prop
+resolves its `bind` (a key path relative to the instance root) and forwards
+the value to the inner property; a prop with no `bind` is stored state that
+rides along on the instance's events. `classevent from=` surfaces an inner
+object's event under the class's own name, so the app subscribes to `Card
+dismissed` without knowing the internals.
+
+### Where the business logic lives — recommendation
+
+Split it by NATURE, using the line the architecture already draws (the
+render server draws; the process belongs to the app — see the client-side
+pty decision):
+
+- **Display-side: declarative only.** Property bindings (class prop →
+  inner props, possibly one-to-many, possibly with a value map like
+  `false→white / true→red`), and event surfacing (inner event → class
+  event). This is data flow, not computation — no conditions, no loops, no
+  scripting language on the display server. It keeps the server thin,
+  introspectable, and safe (a display accepting remote connections must
+  not grow an embedded interpreter).
+- **App-side: everything imperative.** Real behavior arrives exactly as it
+  does today — the class instance emits its (surfaced) events, the app
+  handles them in its own language and responds with `set`. A class is a
+  *facade*: schema + wiring on the display, brains in the app.
+
+If genuinely computed display-side behavior is ever wanted (validation,
+derived values), that is a separate, deliberate protocol conversation —
+start with bindings and see how far they carry; the demo suggests very far.
+
+### The light form: `class=` as a plain annotation
+
+"Attach a metadata class name to any item" also has a useful weak reading:
+a common `class=` word property that is pure annotation — no behavior. It
+gives the builder a grouping/selector handle, test tooling a stable target,
+and theming a future hook (CSS-class-like). Cheap, orthogonal to
+`trinketclass`, and worth having even if the full proposal waits. The
+builder's "promote to class" gesture then reads naturally: tag the subtree,
+generate the `trinketclass` declaration from it, swap in an instance.
+
+### Open design points (for the next session on this)
+
+- Naming: `trinketclass`/`classprop`/`classevent`/`classbody` vs shorter
+  (`class`/`prop`/`event`/`body`)? Lowercase verbs are system vocabulary
+  (D18) — the CLASS NAME is the uppercase user identifier.
+- Does `trinketclass` subsume `template`, or layer on it? Leaning: keep
+  template as the simple stamp; class = template + declared surface.
+- Two-way bindings (inner state change → class prop event) — needed for
+  form-like components; defer until a concrete case demands it.
+- Can a class base be another class? Templates already chain transitively
+  with a cycle guard; reuse that rule.
+- `describe` reporting: session-scoped classes appear only on the
+  connection that declared them — is that the right visibility for a
+  multi-app desktop?
 
 ## Inspector grouping ("by category")
 
@@ -251,8 +358,9 @@ on the document text and the built trinket tree — see
 - Should the builder emit correlation keys for every node in saved files
   (stable handles for the consuming app), or only where the user names one?
 - `Cat()` categories: agree on the starter vocabulary before Phase 3.
-- Components-with-slots: park until real usage shows which parameterization
-  is actually wanted.
+- Components-with-slots: the TrinketClass proposal (section above) is the
+  candidate mechanism; decide whether it lands with the builder's Phase 4
+  or after real template usage exposes the sharpest needs.
 - Reorder verb (`set ... index=`?) — worth adding if subtree rebuilds ever
   feel sluggish; measure first.
 
