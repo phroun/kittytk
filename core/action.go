@@ -234,6 +234,15 @@ var macNativeShortcuts bool
 // menus and tooltips. Called once at host startup.
 func SetMacNativeShortcuts(on bool) { macNativeShortcuts = on }
 
+// MacShortcutFontFamily is the font family the graphical renderer uses to draw
+// menu shortcuts when macOS-native rendering is on. The text engine registers
+// macOS's UI font under this name (best-effort - it falls back to the default
+// UI face when that font isn't present, e.g. off macOS), so the native
+// modifier glyphs ⌃⌥⇧⌘ appear in Apple's own typeface. Because the same font
+// object is used to measure and to draw, switching families never desyncs the
+// menu's width machinery.
+const MacShortcutFontFamily = "apple-menu"
+
 // MacNativeShortcuts reports whether macOS-native shortcut rendering is on.
 func MacNativeShortcuts() bool { return macNativeShortcuts }
 

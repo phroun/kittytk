@@ -566,6 +566,9 @@ func engine() *text.Engine {
 		// the embedded faces stay authoritative, system fonts only
 		// catch runes nothing embedded covers.
 		engineInst.LoadSystemFallbacks()
+		// macOS's UI font, addressable by name so native-mode menu
+		// shortcuts render in Apple's own typeface (no-op off macOS).
+		engineInst.LoadMacMenuFont()
 	})
 	return engineInst
 }
