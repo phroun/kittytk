@@ -55,8 +55,16 @@ type WindowManager struct {
 	// so its hover states can be cleared when the pointer moves off it.
 	lastHoverWindow *Window
 
-	// Modal window stack
-	modalStack []*Window
+	// Modal window stacks, three tiers. modalStack is the system-level stack
+	// (system modals such as the auth prompt block every in-surface window).
+	// appModalStacks are per-application (keyed by the window's AppID): an app
+	// modal blocks only that application's windows. windowModalStacks are
+	// per-owner-window (keyed by the resolved owner): a window modal blocks its
+	// owner window and that window's group. A modal joins exactly one tier by
+	// its owner/appID (see registerModalLocked).
+	modalStack        []*Window
+	appModalStacks    map[core.ObjectID][]*Window
+	windowModalStacks map[*Window][]*Window
 
 	// Desktop/root trinket (what's behind all windows)
 	desktop core.Trinket
@@ -679,6 +687,11 @@ func (m *WindowManager) AddWindow(win *Window) {
 	m.windows = append(m.windows, win)
 	// Add to cycle order (for M-Tab cycling)
 	m.cycleOrder = append(m.cycleOrder, win)
+	// A modal window joins the appropriate modal stack (window/app/system) so
+	// it blocks input from the moment it is added.
+	if win.Type() == WindowTypeModal {
+		m.registerModalLocked(win)
+	}
 	handler := m.onWindowAdded
 	desktop := m.desktop
 	smooth := m.smoothPositioning
@@ -790,13 +803,8 @@ func (m *WindowManager) RemoveWindow(win *Window) {
 		}
 	}
 
-	// Remove from modal stack
-	for i, w := range m.modalStack {
-		if w == win {
-			m.modalStack = append(m.modalStack[:i], m.modalStack[i+1:]...)
-			break
-		}
-	}
+	// Remove from whichever modal stack (system/app/window) holds it.
+	m.unregisterModalLocked(win)
 
 	// Update active window
 	wasActive := m.activeWindow == win
@@ -868,13 +876,10 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 		return
 	}
 
-	// Check if blocked by modal
-	if len(m.modalStack) > 0 {
-		topModal := m.modalStack[len(m.modalStack)-1]
-		if win != topModal && !m.isChildOf(win, topModal) {
-			m.mu.Unlock()
-			return
-		}
+	// A modally-blocked window can't be fronted or focused.
+	if m.isModalBlockedLocked(win) {
+		m.mu.Unlock()
+		return
 	}
 
 	oldActive := m.activeWindow
@@ -967,13 +972,10 @@ func (m *WindowManager) FocusWindow(win *Window) {
 		return
 	}
 
-	// Check if blocked by modal
-	if len(m.modalStack) > 0 {
-		topModal := m.modalStack[len(m.modalStack)-1]
-		if win != topModal && !m.isChildOf(win, topModal) {
-			m.mu.Unlock()
-			return
-		}
+	// A modally-blocked window can't be focused.
+	if m.isModalBlockedLocked(win) {
+		m.mu.Unlock()
+		return
 	}
 
 	oldActive := m.activeWindow
@@ -1133,14 +1135,114 @@ func (m *WindowManager) isModalBlocked(win *Window) bool {
 	return m.isModalBlockedLocked(win)
 }
 
-// isModalBlockedLocked is isModalBlocked with m.mu already held.
+// registerModalLocked routes a modal window into the appropriate tier by its
+// owner and application: a window modal (owner set) joins that owner's stack,
+// an application modal (no owner, app set) joins that app's stack, and a system
+// modal (neither) joins the system stack. m.mu held.
+func (m *WindowManager) registerModalLocked(win *Window) {
+	switch {
+	case win.Owner() != nil:
+		if m.windowModalStacks == nil {
+			m.windowModalStacks = map[*Window][]*Window{}
+		}
+		owner := win.Owner()
+		m.windowModalStacks[owner] = append(m.windowModalStacks[owner], win)
+	case win.AppID() != 0:
+		if m.appModalStacks == nil {
+			m.appModalStacks = map[core.ObjectID][]*Window{}
+		}
+		id := win.AppID()
+		m.appModalStacks[id] = append(m.appModalStacks[id], win)
+	default:
+		m.modalStack = append(m.modalStack, win)
+	}
+}
+
+// unregisterModalLocked removes win from whichever modal stack holds it,
+// pruning empty per-key stacks. m.mu held.
+func (m *WindowManager) unregisterModalLocked(win *Window) {
+	rm := func(s []*Window) []*Window {
+		for i, w := range s {
+			if w == win {
+				return append(s[:i], s[i+1:]...)
+			}
+		}
+		return s
+	}
+	m.modalStack = rm(m.modalStack)
+	if id := win.AppID(); id != 0 && m.appModalStacks != nil {
+		if st, ok := m.appModalStacks[id]; ok {
+			if st = rm(st); len(st) == 0 {
+				delete(m.appModalStacks, id)
+			} else {
+				m.appModalStacks[id] = st
+			}
+		}
+	}
+	if o := win.Owner(); o != nil && m.windowModalStacks != nil {
+		if st, ok := m.windowModalStacks[o]; ok {
+			if st = rm(st); len(st) == 0 {
+				delete(m.windowModalStacks, o)
+			} else {
+				m.windowModalStacks[o] = st
+			}
+		}
+	}
+}
+
+// anyModalActiveLocked reports whether any modal (system, application, or
+// window level) is currently up. m.mu held.
+func (m *WindowManager) anyModalActiveLocked() bool {
+	return len(m.modalStack) > 0 || len(m.appModalStacks) > 0 || len(m.windowModalStacks) > 0
+}
+
+// modalExempt reports whether win is exempt from the modal top: it is the
+// modal itself, a child window of it, or an owned overlay of it.
+func (m *WindowManager) modalExempt(win, top *Window) bool {
+	return win == top || m.isChildOf(win, top) || win.Owner() == top
+}
+
+// windowInModalScope reports whether win is within a window-level modal's
+// scope for owner: the owner itself, a descendant of it, or one of its owned
+// overlays (so a window modal blocks its owner's whole group).
+func (m *WindowManager) windowInModalScope(win, owner *Window) bool {
+	return win == owner || m.isChildOf(win, owner) || win.Owner() == owner
+}
+
+// isModalBlockedLocked is isModalBlocked with m.mu already held. A window is
+// blocked when a system modal is up (blocks everything), an application modal
+// for its own app is up (blocks that app's windows), or a window modal on a
+// window in its group is up - unless the window is the relevant top modal, a
+// child of it, or one of its owned overlays.
 func (m *WindowManager) isModalBlockedLocked(win *Window) bool {
-	n := len(m.modalStack)
-	if n == 0 {
+	if win == nil {
 		return false
 	}
-	top := m.modalStack[n-1]
-	return win != top && !m.isChildOf(win, top)
+	// System-level modals block every in-surface window.
+	if n := len(m.modalStack); n > 0 {
+		if top := m.modalStack[n-1]; !m.modalExempt(win, top) {
+			return true
+		}
+	}
+	// Application-level modals block only this app's windows.
+	if id := win.AppID(); id != 0 {
+		if st := m.appModalStacks[id]; len(st) > 0 {
+			if top := st[len(st)-1]; !m.modalExempt(win, top) {
+				return true
+			}
+		}
+	}
+	// Window-level modals block their owner's group.
+	for owner, st := range m.windowModalStacks {
+		if len(st) == 0 {
+			continue
+		}
+		top := st[len(st)-1]
+		if m.windowInModalScope(win, owner) && !m.modalExempt(win, top) {
+			return true
+		}
+	}
+	return false
 }
 
 // beginBlockedTitleDrag starts a move drag when a modally-blocked window is
@@ -1175,14 +1277,11 @@ func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePress
 	m.mu.Unlock()
 }
 
-// ShowModal shows a window as a system-level modal (blocks every other
-// in-surface window). System modals - the auth prompt - have no application.
+// ShowModal shows a window as a modal. AddWindow routes it to the right stack:
+// with no owner and no application it is a system-level modal (the auth
+// prompt) that blocks every in-surface window.
 func (m *WindowManager) ShowModal(win *Window) {
 	win.SetType(WindowTypeModal)
-	m.mu.Lock()
-	m.modalStack = append(m.modalStack, win)
-	m.mu.Unlock()
-
 	m.AddWindow(win)
 }
 
@@ -2429,7 +2528,7 @@ func (m *WindowManager) Paint(p *core.Painter) {
 	// modal (and any window painted over this) covers it; blocked windows add
 	// their own dim on top. Graphical path only (no-ops on cell surfaces).
 	m.mu.RLock()
-	modalUp := len(m.modalStack) > 0
+	modalUp := m.anyModalActiveLocked()
 	m.mu.RUnlock()
 	if modalUp {
 		p.FillRectPixelsAlpha(clientArea.X, clientArea.Y, 0, 0,

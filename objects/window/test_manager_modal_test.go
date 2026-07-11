@@ -65,6 +65,73 @@ func TestDetachedWindowNotModalBlocked(t *testing.T) {
 	}
 }
 
+// An application-level modal (owner unset, appID set) blocks every window of
+// the same application, but not windows of another application.
+func TestAppModalBlocksOnlySameApp(t *testing.T) {
+	m := NewWindowManager()
+	a1 := NewWindow("a1")
+	a1.SetAppID(1)
+	a2 := NewWindow("a2")
+	a2.SetAppID(1)
+	b1 := NewWindow("b1")
+	b1.SetAppID(2)
+	m.AddWindow(a1)
+	m.AddWindow(a2)
+	m.AddWindow(b1)
+
+	modalA := NewWindow("modalA")
+	modalA.SetType(WindowTypeModal)
+	modalA.SetAppID(1)
+	m.AddWindow(modalA) // application modal for app 1
+
+	if !m.isModalBlocked(a1) || !m.isModalBlocked(a2) {
+		t.Error("app 1 windows should be blocked by app 1's modal")
+	}
+	if m.isModalBlocked(modalA) {
+		t.Error("the app modal itself must not be blocked")
+	}
+	if m.isModalBlocked(b1) {
+		t.Error("app 2's window must not be blocked by app 1's modal")
+	}
+}
+
+// A window-level modal (owner set) blocks its owner's group only - the owner,
+// its descendants, and its owned overlays - not unrelated windows of the same
+// application.
+func TestWindowModalBlocksOwnerGroupOnly(t *testing.T) {
+	m := NewWindowManager()
+	base := NewWindow("base")
+	base.SetAppID(1)
+	dlg := NewWindow("dlg")
+	dlg.SetType(WindowTypeDialog)
+	dlg.SetAppID(1)
+	other := NewWindow("other")
+	other.SetAppID(1)
+	m.AddWindow(base)
+	m.AddWindow(dlg)
+	m.AddWindow(other)
+	dlg.SetOwner(base)
+
+	modal := NewWindow("modal")
+	modal.SetType(WindowTypeModal)
+	modal.SetAppID(1)
+	modal.SetOwner(base)
+	m.AddWindow(modal) // window modal owned by base
+
+	if !m.isModalBlocked(base) {
+		t.Error("the owner window should be blocked by its window modal")
+	}
+	if !m.isModalBlocked(dlg) {
+		t.Error("the owner's dialog should be blocked by the window modal")
+	}
+	if m.isModalBlocked(modal) {
+		t.Error("the window modal itself must not be blocked")
+	}
+	if m.isModalBlocked(other) {
+		t.Error("an unrelated same-app window must not be blocked by a window-level modal")
+	}
+}
+
 // Adding a window to the desktop while a modal is up must leave the modal on
 // top with focus, not the newly added window.
 func TestAddWindowKeepsModalOnTop(t *testing.T) {
