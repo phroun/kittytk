@@ -719,6 +719,22 @@ type textImage struct {
 	opaque bool
 }
 
+// textKey identifies a cached render. It is an all-comparable struct
+// (color.RGBA is comparable), so it maps directly with no per-call key
+// string to build - the string-concat key this replaced allocated on every
+// DrawText.
+type textKey struct {
+	name      string
+	text      string
+	fg, bg    color.RGBA
+	style     int
+	size      int
+	scale     int
+	fontSize  int
+	underline bool
+	opaque    bool
+}
+
 // textImageCache caches rendered strings across frames (and across
 // backends - SDL recreates the backend on resize; scale is in the
 // key). Same two-generation scheme as the engine's shape cache.
@@ -727,39 +743,34 @@ type textImage struct {
 var textImageCache = struct {
 	sync.Mutex
 	epoch     uint64
-	cur, prev map[string]textImage
-}{cur: map[string]textImage{}, prev: map[string]textImage{}}
+	cur, prev map[textKey]textImage
+}{cur: map[textKey]textImage{}, prev: map[textKey]textImage{}}
 
 const textImageCacheMax = 512
 
-func textImageKey(f *core.Font, s string, fg, bg color.RGBA, underline bool, scale, fontSize int) string {
+func textImageKey(f *core.Font, s string, fg, bg color.RGBA, underline, opaque bool, scale, fontSize int) textKey {
 	if f == nil {
 		f = core.DefaultFont()
 	}
-	u := byte('-')
-	if underline {
-		u = 'u'
+	return textKey{
+		name: f.Name, text: s, fg: fg, bg: bg,
+		style: int(f.Style), size: f.Size,
+		scale: scale, fontSize: fontSize,
+		underline: underline, opaque: opaque,
 	}
-	return f.Name + "\x00" + string([]byte{
-		byte(f.Style), byte(f.Style >> 8), byte(f.Size), byte(scale), byte(fontSize), u,
-		fg.R, fg.G, fg.B, bg.R, bg.G, bg.B,
-	}) + "\x00" + s
 }
 
 // cachedTextImage returns the cached render of one string (see
 // textImageCache), rasterizing on a miss.
 func (b *Backend) cachedTextImage(f *core.Font, s string, fg, bg color.RGBA, underline, opaque bool) textImage {
-	key := textImageKey(f, s, fg, bg, underline, b.scale, b.fontSize)
-	if !opaque {
-		key = "t\x00" + key
-	}
+	key := textImageKey(f, s, fg, bg, underline, opaque, b.scale, b.fontSize)
 	textImageCache.Lock()
 	defer textImageCache.Unlock()
 	if e := engine().Epoch(); e != textImageCache.epoch {
 		// Font set changed: shaped output may differ - flush.
 		textImageCache.epoch = e
-		textImageCache.cur = map[string]textImage{}
-		textImageCache.prev = map[string]textImage{}
+		textImageCache.cur = map[textKey]textImage{}
+		textImageCache.prev = map[textKey]textImage{}
 	}
 	ti, ok := textImageCache.cur[key]
 	if !ok {
@@ -771,7 +782,7 @@ func (b *Backend) cachedTextImage(f *core.Font, s string, fg, bg color.RGBA, und
 		ti = b.renderTextImage(f, s, fg, bg, underline, opaque)
 		if len(textImageCache.cur) >= textImageCacheMax {
 			textImageCache.prev = textImageCache.cur
-			textImageCache.cur = map[string]textImage{}
+			textImageCache.cur = map[textKey]textImage{}
 		}
 		textImageCache.cur[key] = ti
 	}
