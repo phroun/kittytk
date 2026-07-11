@@ -303,3 +303,29 @@ func (a *app) wireSecondary(n int) {
 	// Closing the window ends this secondary connection.
 	ui.Window("w").OnClosed(func() { a.conn.Close() })
 }
+
+// wireDetails fills the Details tab's column values (the two-batch
+// pattern: the build surfaced the item IDs, this batch references
+// them) and narrates sort requests. The demo shows the request flow;
+// a real app would reorder its items and rebuild.
+func (a *app) wireDetails() {
+	ui := a.ui
+	if !ui.Object("dtree").Valid() {
+		return
+	}
+	_, _ = a.conn.Exec(detailsValuesScript(func(name string) uint64 {
+		return ui.Object(name).ID()
+	}))
+	ui.Object("dtree").On("sort", func(ev *protocol.Event) {
+		by, _ := ev.Int("sortedby")
+		dir := "ascending"
+		if ev.Flag("descending") == protocol.FlagTrue {
+			dir = "descending"
+		}
+		colName := "Name"
+		if by >= 0 {
+			colName = fmt.Sprintf("column %d", by)
+		}
+		a.setStatus(fmt.Sprintf("Details: sort by %s, %s", colName, dir))
+	})
+}

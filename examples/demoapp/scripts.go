@@ -340,6 +340,21 @@ new tab caption="Vertical Tabs" children={
 	}
 }
 
+det=new tab caption="Details" children={
+	dtree=new treeview caption="Name" showheader sorted sortedby=-1 children={
+		dsizec=new column id=size caption="Size" width=10 align=right sortable
+		dkindc=new column id=kind caption="Kind" width=14 sortable
+		dmodc=new column id=modified caption="Date Modified" width=24 sortable
+		dtagsc=new column id=tags caption="Tags" width=8
+		ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
+		ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"
+		dpc=new item caption="PC12" expanded children={
+			dpcin=new item caption="pc12"
+		}
+		darj=new item caption="pc12.arj"
+	}
+}
+
 mtab=new tab caption="MDI Demo" children={
 	mdisp=new splitter orientation=vertical position=0.9 caption="Dock" children={
 		mdisa=new scrollarea children={
@@ -373,6 +388,16 @@ mtab=new tab caption="MDI Demo" children={
 # Surface what the app-side handlers address, then open the event flows
 # they listen to (command flows regardless; toggles/changes need a sub).
 tabs=w.t
+dtree=w.t.det.dtree
+dsizec=w.t.det.dtree.dsizec
+dkindc=w.t.det.dtree.dkindc
+dmodc=w.t.det.dtree.dmodc
+dtagsc=w.t.det.dtree.dtagsc
+ds1=w.t.det.dtree.ds1
+ds2=w.t.det.dtree.ds2
+dpc=w.t.det.dtree.dpc
+dpcin=w.t.det.dtree.dpc.dpcin
+darj=w.t.det.dtree.darj
 binput=w.t.b.bw.brow.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont
@@ -559,4 +584,31 @@ wwin=mdi.d%d
 wnew=mdi.d%d.p.bp.nb
 wclose=mdi.d%d.p.bp.cl
 `, n, n, (offset*2+1)*8, (offset+1)*16, n, n, n, n)
+}
+
+// detailsValuesScript fills the Details tab's cell values column-major
+// (each column owns its data, keyed by item), per the two-batch
+// pattern: items build first so their IDs exist, then the values
+// reference them. id resolves a surfaced correlation key to its wire ID.
+func detailsValuesScript(id func(name string) uint64) string {
+	col := func(colKey string, vals map[string]string) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, "set %s children={\n", colKey)
+		for _, item := range []string{"ds1", "ds2", "dpc", "dpcin", "darj"} {
+			if v, ok := vals[item]; ok {
+				fmt.Fprintf(&b, "\tnew cell item=%d value=%q\n", id(item), v)
+			}
+		}
+		b.WriteString("}\n")
+		return b.String()
+	}
+	return col("dsizec", map[string]string{
+		"ds1": "311 KB", "ds2": "74 KB", "dpc": "--", "dpcin": "--", "darj": "99 KB",
+	}) + col("dkindc", map[string]string{
+		"ds1": "PNG image", "ds2": "PNG image", "dpc": "Folder", "dpcin": "Folder", "darj": "ARJ Archive",
+	}) + col("dmodc", map[string]string{
+		"ds1": "Yesterday at 1:21 AM", "ds2": "Yesterday at 12:24 AM",
+		"dpc": "Yesterday at 12:23 AM", "dpcin": "Yesterday at 12:28 AM",
+		"darj": "Yesterday at 12:17 AM",
+	}) + col("dtagsc", map[string]string{})
 }

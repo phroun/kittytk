@@ -104,6 +104,7 @@ func newPrimary(path string) (*app, error) {
 	a.wireMainWindow()
 	a.wireMenus()
 	a.wireMDI()
+	a.wireDetails()
 	a.openProtocolWindow()
 
 	// The demo ends when its main window closes (or the desktop exits).

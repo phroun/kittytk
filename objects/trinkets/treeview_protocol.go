@@ -61,22 +61,43 @@ func init() {
 					WithUint("item", uint64(item.ID)).
 					WithFlag("expanded", protocol.FlagFalse))
 			})
+			tv.SetOnSortRequested(func(sortedBy int, descending bool) {
+				desc := protocol.FlagFalse
+				if descending {
+					desc = protocol.FlagTrue
+				}
+				ctx.EmitEvent(protocol.NewEvent("sort").
+					WithUint("trinket", id).
+					WithInt("sortedby", sortedBy).
+					WithFlag("descending", desc))
+			})
 		},
-		Props: map[string]protocol.Property{
-			"selected":     intProp("selected", (*TreeView).SetCurrentIndex).Tip("Selected visible-row index.").Def("-1"),
-			"indent_width": intProp("indent_width", (*TreeView).SetIndentWidth).Tip("Indent width per tree level."),
-		},
+		Props: treeViewProps(),
 		Append: func(parent, child any) error {
 			tv, ok := parent.(*TreeView)
 			if !ok {
 				return fmt.Errorf("treeview: wrong parent type %T", parent)
 			}
-			it, ok := child.(*wireItem)
-			if !ok {
-				return fmt.Errorf("treeview: children must be items, got %T", child)
+			switch c := child.(type) {
+			case *wireItem:
+				tv.AddRootItem(c.bind(tv))
+				return nil
+			case *wireColumn:
+				c.bind(tv)
+				return nil
+			case *wireCollection:
+				// A collection is packaging: adopt each member as if
+				// appended directly.
+				for _, m := range c.members {
+					col, ok := m.(*wireColumn)
+					if !ok {
+						return fmt.Errorf("treeview: collection members must be columns, got %T", m)
+					}
+					col.bind(tv)
+				}
+				return nil
 			}
-			tv.AddRootItem(it.bind(tv))
-			return nil
+			return fmt.Errorf("treeview: children must be items or columns, got %T", child)
 		},
 		Destroy: func(t any) error {
 			return destroyTrinket(t.(*TreeView))
