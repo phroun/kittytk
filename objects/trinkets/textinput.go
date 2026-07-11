@@ -776,6 +776,12 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 			}
 			t.ensureCursorVisible()
 			t.Update()
+		} else if event.Modifiers&core.ShiftModifier == 0 && t.HasSelection() {
+			// Caret already at the beginning: a plain Left can't move, so it
+			// just collapses any selection (leaving the caret at the start).
+			t.selStart = t.cursorPos
+			t.selEnd = t.cursorPos
+			t.Update()
 		}
 		return true
 
@@ -789,6 +795,12 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 				t.selEnd = t.cursorPos
 			}
 			t.ensureCursorVisible()
+			t.Update()
+		} else if event.Modifiers&core.ShiftModifier == 0 && t.HasSelection() {
+			// Caret already at the end: a plain Right can't move, so it just
+			// collapses any selection (leaving the caret at the end).
+			t.selStart = t.cursorPos
+			t.selEnd = t.cursorPos
 			t.Update()
 		}
 		return true
