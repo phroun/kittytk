@@ -62,10 +62,19 @@ func Start(command string, feed func([]byte), args ...string) (*Driver, error) {
 	return d, nil
 }
 
+// readBufSize is the pty read buffer. Each read becomes one wire feed batch,
+// and each batch is a synchronous round-trip that stalls the reader until the
+// host applies it and replies - so bulk output (a fast-scrolling program, a
+// full-screen animation) is drained one buffer per round-trip. A large buffer
+// lets a single read grab the whole pty backlog that accumulated during the
+// previous round-trip, collapsing many batches into one and multiplying
+// throughput; interactive output is small and unaffected.
+const readBufSize = 128 * 1024
+
 // readLoop forwards child output to the feed sink until the PTY closes.
 func (d *Driver) readLoop(feed func([]byte)) {
 	defer close(d.done)
-	buf := make([]byte, 4096)
+	buf := make([]byte, readBufSize)
 	for {
 		n, err := d.pty.Read(buf)
 		if n > 0 && feed != nil {
