@@ -11,6 +11,17 @@ import (
 	"github.com/phroun/kittytk/objects/window"
 )
 
+// snapCellX floors an X origin to a whole column on cell surfaces, where
+// drawing is column-quantized, so a trinket's stored bounds (used for
+// hit-testing) match the column its content actually paints in. Smooth
+// (pixel) surfaces keep sub-column precision.
+func snapCellX(self core.Trinket, m core.CellMetrics, x core.Unit) core.Unit {
+	if m.CellWidth > 0 && !core.FindSmoothPositioning(self) {
+		x = (x / m.CellWidth) * m.CellWidth
+	}
+	return x
+}
+
 // DialogButton represents standard dialog buttons.
 type DialogButton int
 
@@ -354,6 +365,11 @@ func (c *messageBoxContent) Paint(p *core.Painter) {
 	if buttonX < metrics.CellWidth {
 		buttonX = metrics.CellWidth
 	}
+	// Centering can land the row origin on a half column when the slack is an
+	// odd number of columns; the cell backend draws on whole columns, so snap
+	// it or the buttons' stored bounds (used for hit-testing) drift half a
+	// column from where they paint.
+	buttonX = snapCellX(c.Self(), metrics, buttonX)
 
 	for i, btn := range c.buttonTrinkets {
 		btnWidth := btnWidths[i]
@@ -848,7 +864,7 @@ func (f *FileDialog) Paint(p *core.Painter) {
 	buttonWidth := metrics.CellWidth * 10
 
 	f.okButton.SetBounds(core.UnitRect{
-		X:      bounds.Width - buttonWidth*2 - metrics.CellWidth*4,
+		X:      snapCellX(f.Self(), metrics, bounds.Width-buttonWidth*2-metrics.CellWidth*4),
 		Y:      buttonY,
 		Width:  buttonWidth,
 		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
@@ -856,7 +872,7 @@ func (f *FileDialog) Paint(p *core.Painter) {
 	f.okButton.Paint(p)
 
 	f.cancelButton.SetBounds(core.UnitRect{
-		X:      bounds.Width - buttonWidth - metrics.CellWidth*2,
+		X:      snapCellX(f.Self(), metrics, bounds.Width-buttonWidth-metrics.CellWidth*2),
 		Y:      buttonY,
 		Width:  buttonWidth,
 		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
@@ -1014,7 +1030,7 @@ func (d *InputDialog) Paint(p *core.Painter) {
 	buttonWidth := metrics.CellWidth * 10
 
 	d.okButton.SetBounds(core.UnitRect{
-		X:      bounds.Width/2 - buttonWidth - metrics.CellWidth,
+		X:      snapCellX(d.Self(), metrics, bounds.Width/2-buttonWidth-metrics.CellWidth),
 		Y:      buttonY,
 		Width:  buttonWidth,
 		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
@@ -1022,7 +1038,7 @@ func (d *InputDialog) Paint(p *core.Painter) {
 	d.okButton.Paint(p)
 
 	d.cancelButton.SetBounds(core.UnitRect{
-		X:      bounds.Width/2 + metrics.CellWidth,
+		X:      snapCellX(d.Self(), metrics, bounds.Width/2+metrics.CellWidth),
 		Y:      buttonY,
 		Width:  buttonWidth,
 		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
