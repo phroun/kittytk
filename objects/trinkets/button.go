@@ -479,11 +479,14 @@ func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 // highlight when the button is idle, and the pressed-and-over state during
 // a press.
 func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
-	// Check if the pointer is over the button area (first row, not the shadow).
+	// Hit box is the button's full bounds - including the drop-shadow row and
+	// column. The click/press path routes by these same bounds, so hover and
+	// drag must use them too; testing only the face row here made the shadow
+	// clickable but not hoverable, and made a drag that began on the shadow
+	// immediately read as "off the button".
 	bounds := b.Bounds()
-	metrics := b.EffectiveCellMetrics()
 	overBounds := event.X >= 0 && event.X < bounds.Width &&
-		event.Y >= 0 && event.Y < metrics.CellHeight
+		event.Y >= 0 && event.Y < bounds.Height
 
 	if !b.pressed {
 		// Plain hover is a no-button affordance: while any button is held, a
