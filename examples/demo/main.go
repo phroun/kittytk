@@ -526,13 +526,10 @@ func showAboutDialog(desktop *trinkets.Desktop, application *app.Application) {
 	dlg := buildMessageBox(fmt.Sprintf(`
 dlg=new messagebox title="About %s" icon=information ok text="%s Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion %s"
 `, core.Name, core.Name, core.Version))
-	// Shown modally (experimental): while it's up, the window manager won't let
-	// focus or raise leave it - ShowModal pushes the modal stack, and the OK
-	// button's Close pops it (via RemoveWindow). Falls back to a plain add if
-	// there is no window manager.
-	if wm := desktop.WindowManager(); wm != nil {
-		wm.ShowModal(&dlg.Window)
-	} else {
-		application.AddWindow(&dlg.Window)
-	}
+	// The About belongs to this application, so add it through the app: as a
+	// modal-type window it becomes an APPLICATION modal (blocking this app's
+	// windows across the desktop and any torn-off surfaces), never a system
+	// modal. System modals are reserved for the desktop's own prompts.
+	_ = desktop
+	application.AddWindow(&dlg.Window)
 }

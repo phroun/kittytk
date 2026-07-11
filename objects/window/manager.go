@@ -1155,8 +1155,12 @@ func (m *WindowManager) isModalBlocked(win *Window) bool {
 
 // registerModalLocked routes a modal window into the appropriate tier by its
 // owner and application: a window modal (owner set) joins that owner's stack,
-// an application modal (no owner, app set) joins that app's stack, and a system
-// modal (neither) joins the system stack. m.mu held.
+// an application modal (app set) joins that app's stack, and only a modal with
+// NEITHER an owner NOR an application is a system modal (the desktop's own
+// prompts - never an app's, and never a torn-off window). Application is
+// checked before ownerlessness precisely so an app's modal is an application
+// modal even when it (or its owner) is torn off, keeping it blocking across
+// surfaces. m.mu held.
 func (m *WindowManager) registerModalLocked(win *Window) {
 	if contains(m.modalStack, win) {
 		return
@@ -1380,9 +1384,12 @@ func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePress
 	m.mu.Unlock()
 }
 
-// ShowModal shows a window as a modal. AddWindow routes it to the right stack:
-// with no owner and no application it is a system-level modal (the auth
-// prompt) that blocks every in-surface window.
+// ShowModal shows a window as a SYSTEM modal - the desktop's own prompts (the
+// authorization prompt), which block every in-surface window. It is reserved
+// for the desktop itself: applications must not use it. An app's modal instead
+// goes through the application (Application.AddWindow), which stamps its app id
+// so the modal is an application modal - blocking that app across the desktop
+// and its torn-off surfaces, and never leaking into the system stack.
 func (m *WindowManager) ShowModal(win *Window) {
 	win.SetType(WindowTypeModal)
 	m.AddWindow(win)
