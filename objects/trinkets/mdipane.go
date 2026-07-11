@@ -1621,8 +1621,10 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 		bounds.X = newX
 		bounds.Y = newY
 
-		// Maximize gesture
-		if bounds.Y < clientArea.Y && dragging.Flags()&window.WindowFlagNoMaximize == 0 && !justRestored {
+		// Maximize gesture: only when the POINTER itself moves above the pane's
+		// top (into/past the pane edge), not merely when the window's top edge
+		// is lifted there by the grab offset - which fired too eagerly.
+		if event.Y < clientArea.Y && dragging.Flags()&window.WindowFlagNoMaximize == 0 && !justRestored {
 			if !dragging.IsMaximized() {
 				m.MaximizeWindow(dragging)
 			}

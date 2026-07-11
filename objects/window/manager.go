@@ -2407,12 +2407,14 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		bounds.X = newX
 		bounds.Y = newY
 
-		// Dragging into menu bar area = maximize gesture. Skipped for a
-		// tear-handle drag: that gesture tears the window off, so it
-		// must not snap-maximize on the way up. Also skipped for windows
-		// that can't be maximized (fixed-size dialogs), which then fall
-		// through to the normal clamped move.
-		if !isTearHandle && bounds.Y < clientArea.Y && canMaximize(dragging.Flags()) && !justRestored {
+		// Snap-maximize only when the POINTER itself enters the menu-bar strip
+		// above the client area - not merely when the window's top edge is
+		// pushed up there (which fired too eagerly, since the grab offset lifts
+		// the edge well before the cursor arrives). Skipped for a tear-handle
+		// drag (that gesture tears off, not maximize) and for windows that
+		// can't be maximized (fixed-size dialogs), which fall through to the
+		// normal clamped move.
+		if !isTearHandle && event.Y < clientArea.Y && canMaximize(dragging.Flags()) && !justRestored {
 			if !dragging.IsMaximized() {
 				m.MaximizeWindow(dragging)
 				m.RequestRepaint()
