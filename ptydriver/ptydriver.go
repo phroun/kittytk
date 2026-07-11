@@ -14,6 +14,7 @@ package ptydriver
 import (
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/phroun/purfecterm"
 )
@@ -62,29 +63,80 @@ func Start(command string, feed func([]byte), args ...string) (*Driver, error) {
 	return d, nil
 }
 
-// readBufSize is the pty read buffer. Each read becomes one wire feed batch,
-// and each batch is a synchronous round-trip that stalls the reader until the
-// host applies it and replies - so bulk output (a fast-scrolling program, a
-// full-screen animation) is drained one buffer per round-trip. A large buffer
-// lets a single read grab the whole pty backlog that accumulated during the
-// previous round-trip, collapsing many batches into one and multiplying
-// throughput; interactive output is small and unaffected.
-const readBufSize = 128 * 1024
+// readBufSize is the pty read buffer per read syscall.
+const readBufSize = 64 * 1024
 
-// readLoop forwards child output to the feed sink until the PTY closes.
+// maxPending caps the coalescing buffer. Each feed is a synchronous wire
+// round-trip that stalls until the host applies it and replies; a reader
+// goroutine keeps draining the pty into `pending` meanwhile, so the next feed
+// ships everything that piled up (one full-screen frame becomes one batch, no
+// matter how the pty chunked its reads). Past this watermark the reader stops
+// pulling from the pty - the child then flow-controls on a full pty buffer,
+// bounding memory instead of racing ahead of what the display can absorb.
+const maxPending = 8 << 20 // 8 MB
+
+// readLoop pumps child output to feed until the PTY closes. It decouples
+// reading from sending: a reader goroutine drains the pty into a shared buffer
+// as fast as it can, while this loop ships the whole accumulated buffer per
+// feed (round-trip) - coalescing bursty output into as few batches as the wire
+// can carry.
 func (d *Driver) readLoop(feed func([]byte)) {
 	defer close(d.done)
-	buf := make([]byte, readBufSize)
+
+	var (
+		mu      sync.Mutex
+		cond    = sync.NewCond(&mu)
+		pending []byte
+		closed  bool
+	)
+
+	// Reader: blocking reads append to pending; back off past the watermark.
+	go func() {
+		buf := make([]byte, readBufSize)
+		for {
+			mu.Lock()
+			for len(pending) >= maxPending && !closed {
+				cond.Wait()
+			}
+			stop := closed
+			mu.Unlock()
+			if stop {
+				return
+			}
+			n, err := d.pty.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				pending = append(pending, buf[:n]...)
+				cond.Broadcast()
+				mu.Unlock()
+			}
+			if err != nil {
+				mu.Lock()
+				closed = true
+				cond.Broadcast()
+				mu.Unlock()
+				return
+			}
+		}
+	}()
+
+	// Sender: take everything accumulated and ship it as one feed; while that
+	// round-trip is in flight the reader keeps filling pending.
 	for {
-		n, err := d.pty.Read(buf)
-		if n > 0 && feed != nil {
-			// Copy: buf is reused on the next read, and feed may hand
-			// the slice to another goroutine (the wire encoder).
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
+		mu.Lock()
+		for len(pending) == 0 && !closed {
+			cond.Wait()
+		}
+		chunk := pending
+		pending = nil
+		done := closed && len(chunk) == 0
+		cond.Broadcast() // wake the reader if it was at the watermark
+		mu.Unlock()
+
+		if len(chunk) > 0 && feed != nil {
 			feed(chunk)
 		}
-		if err != nil {
+		if done {
 			return
 		}
 	}
