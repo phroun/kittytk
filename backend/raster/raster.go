@@ -531,13 +531,41 @@ func (b *Backend) blendRectPx(x0, y0, x1, y1 int, over color.RGBA, alpha float64
 	if y1 > b.h {
 		y1 = b.h
 	}
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
+
+	// Fixed-point coverage in [0,256]: mix = (over*a + under*(256-a)) >> 8,
+	// matching blend()'s float result within a unit. The alpha channel mixes
+	// with 255 as `over` (opaque ground stays opaque; a transparent corner
+	// keeps its smooth rim), same as blend(). Direct Pix indexing and integer
+	// math replace per-pixel RGBAAt/SetRGBA + float - this is the hot path for
+	// the scroll-area edge fades and the modal dim.
+	a := int(alpha*256 + 0.5)
+	if a <= 0 {
+		return
+	}
+	if a > 256 {
+		a = 256
+	}
+	inv := uint32(256 - a)
+	oR := uint32(over.R) * uint32(a)
+	oG := uint32(over.G) * uint32(a)
+	oB := uint32(over.B) * uint32(a)
+	oA := uint32(255) * uint32(a)
+	pix := b.img.Pix
 	for y := y0; y < y1; y++ {
+		o := b.img.PixOffset(x0, y)
 		for x := x0; x < x1; x++ {
 			if b.hasRoundClip && !b.pointVisible(x, y) {
+				o += 4
 				continue
 			}
-			under := b.img.RGBAAt(x, y)
-			b.img.SetRGBA(x, y, blend(over, under, alpha))
+			pix[o] = uint8((oR + uint32(pix[o])*inv) >> 8)
+			pix[o+1] = uint8((oG + uint32(pix[o+1])*inv) >> 8)
+			pix[o+2] = uint8((oB + uint32(pix[o+2])*inv) >> 8)
+			pix[o+3] = uint8((oA + uint32(pix[o+3])*inv) >> 8)
+			o += 4
 		}
 	}
 }
