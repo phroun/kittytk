@@ -24,6 +24,10 @@ type TreeItem struct {
 	Expanded bool
 	Parent   *TreeItem
 	Children []*TreeItem
+
+	// Values holds this item's data-column cell text, keyed by
+	// TreeColumn.ID (see SetValue/Value in treeview_columns.go).
+	Values map[string]string
 }
 
 // NewTreeItem creates a new tree item.
@@ -101,6 +105,38 @@ type TreeView struct {
 	// Fractional rows carried between trackpad wheel events.
 	wheelAccum float64
 
+	// Multi-column state (see treeview_columns.go). The tree itself is
+	// the KEY column; data columns render item cell values beside it.
+	columns    []*TreeColumn
+	showHeader bool
+	showKey    bool   // key column shown as the first visible column
+	keyCaption string // header caption over the key (tree) column
+	fitWidth   bool // true: squeeze to width (no hscroll); false: pan
+	fixedLeft  int  // visible columns pinned outside the hscroll region
+	fixedRight int
+	keyWidth   int // key column cells in scroll mode (0 = default)
+	hScroll    int // horizontal scroll offset in cells
+
+	// Divider drag-resize state (nil colDragCol = the key column).
+	colDragging   bool
+	colDragCol    *TreeColumn
+	colDragStartX core.Unit
+	colDragStartW int
+
+	// Horizontal scrollbar (footer row) drag state.
+	hbarDragging    bool
+	hbarDragStartX  core.Unit
+	hbarDragStartHS int
+
+	// Sort state (display) + request callback (the app reorders):
+	// sorted=false means no sort indicator; sortedBy is -1 for the key
+	// (tree) column or a declared data-column index; sortDescending
+	// flips the direction.
+	sorted          bool
+	sortedBy        int
+	sortDescending  bool
+	onSortRequested func(sortedBy int, descending bool)
+
 	// Callbacks
 	onCurrentChanged func(item *TreeItem)
 	onItemActivated  func(item *TreeItem)
@@ -114,6 +150,8 @@ func NewTreeView() *TreeView {
 		currentIndex:   -1,
 		indentWidth:    2,
 		lastClickIndex: -1,
+		showKey:        true,
+		fitWidth:       true,
 	}
 	t.TrinketBase = *core.NewTrinketBase()
 	t.Init(t) // Enable polymorphic focus handling
@@ -431,10 +469,7 @@ func (t *TreeView) clampScrollOffset() {
 		return
 	}
 
-	bounds := t.Bounds()
-	metrics := t.EffectiveCellMetrics()
-	visibleCount := int(bounds.Height / metrics.CellHeight)
-
+	visibleCount := t.visibleCount()
 	maxScroll := len(t.flatList) - visibleCount
 	if maxScroll < 0 {
 		maxScroll = 0
@@ -456,16 +491,18 @@ func (t *TreeView) flattenItems(items []*TreeItem) {
 	}
 }
 
-// ensureVisible ensures the given index is visible.
+// ensureVisible ensures the given index is visible. Degenerate bounds
+// (zero height, e.g. before the first layout) are left alone - there
+// is no viewport to scroll into yet, and adjusting would push a bogus
+// offset that survives the real layout.
 func (t *TreeView) ensureVisible(index int) {
 	if index < 0 {
 		return
 	}
-
-	bounds := t.Bounds()
-	metrics := t.EffectiveCellMetrics()
-	visibleCount := int(bounds.Height / metrics.CellHeight)
-
+	visibleCount := t.visibleCount()
+	if visibleCount <= 0 {
+		return
+	}
 	if index < t.scrollOffset {
 		t.scrollOffset = index
 	} else if index >= t.scrollOffset+visibleCount {
@@ -485,6 +522,10 @@ func (t *TreeView) SizeHint() core.UnitSize {
 
 // Paint renders the tree view.
 func (t *TreeView) Paint(p *core.Painter) {
+	if t.multiColumn() {
+		t.paintMulti(p)
+		return
+	}
 	bounds := t.Bounds()
 	scheme := t.GetScheme()
 	focused := t.HasFocus()
@@ -569,11 +610,12 @@ func (t *TreeView) Paint(p *core.Painter) {
 	}
 }
 
-// visibleCount returns the number of visible rows.
+// visibleCount returns the number of visible content rows (the header
+// row and the horizontal-scrollbar footer row are not content rows).
 func (t *TreeView) visibleCount() int {
 	bounds := t.Bounds()
 	metrics := t.EffectiveCellMetrics()
-	return int(bounds.Height / metrics.CellHeight)
+	return int((bounds.Height - t.headerHeight() - t.footerHeight()) / metrics.CellHeight)
 }
 
 // scrollbarGeometry returns scrollbar dimensions and thumb position.
@@ -666,19 +708,22 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 	// opacity behind, and one solid full-opacity rectangle for the
 	// thumb, at unit granularity - same treatment as the combobox
 	// popup lane.
+	// The track starts below the header row (when one is shown).
+	headerH := t.headerHeight()
+
 	if p.Graphical() {
 		trackU, thumbU, posU := t.scrollbarUnits(visibleCount)
 		laneX := t.Bounds().Width - metrics.CellWidth
 		stripeX := laneX + metrics.CellWidth/2
 		p.FillRect(core.UnitRect{
 			X:      stripeX,
-			Y:      0,
+			Y:      headerH,
 			Width:  1,
 			Height: core.Unit(trackU + 0.5),
 		}, '▒', trackStyle.WithBg(style.ColorTransparent))
 		p.FillRect(core.UnitRect{
 			X:      laneX + 1,
-			Y:      core.Unit(posU + 0.5),
+			Y:      headerH + core.Unit(posU+0.5),
 			Width:  metrics.CellWidth - 2,
 			Height: core.Unit(thumbU + 0.5),
 		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
@@ -689,13 +734,13 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 
 	// Draw scrollbar track
 	for i := 0; i < trackHeight; i++ {
-		y := core.Unit(i) * metrics.CellHeight
+		y := headerH + core.Unit(i)*metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '│', trackStyle)
 	}
 
 	// Draw scrollbar thumb
 	for i := 0; i < thumbHeight; i++ {
-		y := core.Unit(thumbStart+i) * metrics.CellHeight
+		y := headerH + core.Unit(thumbStart+i)*metrics.CellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)
 	}
 }
@@ -867,16 +912,27 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	t.SetFocusWithoutScroll() // Use without-scroll variant since click proves visibility
 	metrics := t.EffectiveCellMetrics()
 
+	// Header band: chooser button and divider drags (multi-column).
+	if t.handleMultiPress(event) {
+		return true
+	}
+	// Footer band: the reserved horizontal-scrollbar row.
+	if t.handleHBarPress(event) {
+		return true
+	}
+	headerH := t.headerHeight()
+	contentY := event.Y - headerH
+
 	// Check if click is on scrollbar
 	scrollbarX, thumbStart, thumbHeight, _ := t.scrollbarGeometry(t.visibleCount())
 	if event.X >= scrollbarX && len(t.flatList) > t.visibleCount() {
-		clickedRow := int(event.Y / metrics.CellHeight)
+		clickedRow := int(contentY / metrics.CellHeight)
 
 		// Pixel surfaces anchor the drag to the grab point within
 		// the unit-granular thumb.
 		if core.FindSmoothPositioning(t.Self()) {
 			_, thumbU, posU := t.scrollbarUnits(t.visibleCount())
-			pos := float64(event.Y)
+			pos := float64(contentY)
 			if pos >= posU && pos < posU+thumbU {
 				t.scrollbarDragging = true
 				t.smoothScrollbarDrag = true
@@ -930,17 +986,33 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	// Calculate which item was clicked
-	clickedRow := int(event.Y / metrics.CellHeight)
+	clickedRow := int(contentY / metrics.CellHeight)
 	clickedIndex := t.scrollOffset + clickedRow
 
 	// Only process if click is on a valid item
 	contentWidth := bounds.Width - metrics.CellWidth
-	if event.X >= 0 && event.X < contentWidth && clickedIndex >= 0 && clickedIndex < len(t.flatList) {
+	if event.X >= 0 && event.X < contentWidth && contentY >= 0 && clickedIndex >= 0 && clickedIndex < len(t.flatList) {
 		item := t.flatList[clickedIndex]
 		level := item.Level()
 
-		// Check if clicked on expand/collapse indicator
-		indicatorX := core.Unit(level*t.indentWidth) * metrics.CellWidth
+		// Check if clicked on expand/collapse indicator. In the
+		// multi-column presentation the tree lives in the key column's
+		// span (which may be panned); offset the indicator accordingly.
+		keyX := core.Unit(0)
+		if t.multiColumn() {
+			lay := t.columnLayout()
+			keyX = core.Unit(-1)
+			for _, sp := range lay.spans {
+				if sp.col == nil {
+					keyX = sp.x
+					break
+				}
+			}
+			if keyX < 0 {
+				keyX = contentWidth // key column hidden: no indicator hit
+			}
+		}
+		indicatorX := keyX + core.Unit(level*t.indentWidth)*metrics.CellWidth
 		if event.X >= indicatorX && event.X < indicatorX+metrics.CellWidth {
 			if !item.IsLeaf() {
 				t.ToggleItem(item)
@@ -997,12 +1069,13 @@ func (t *TreeView) overScrollbarThumb(x, y core.Unit) bool {
 	if x < scrollbarX {
 		return false
 	}
+	contentY := y - t.headerHeight() // the track starts below the header
 	if core.FindSmoothPositioning(t.Self()) {
 		_, thumbU, posU := t.scrollbarUnits(visibleCount)
-		pos := float64(y)
+		pos := float64(contentY)
 		return pos >= posU && pos < posU+thumbU
 	}
-	row := int(y / t.EffectiveCellMetrics().CellHeight)
+	row := int(contentY / t.EffectiveCellMetrics().CellHeight)
 	return row >= thumbStart && row < thumbStart+thumbHeight
 }
 
@@ -1021,10 +1094,23 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if !t.HasFocus() {
 		t.isDragging = false
 		t.scrollbarDragging = false
+		t.colDragging = false
+		t.colDragCol = nil
+		t.hbarDragging = false
 		return false
 	}
 
+	// Column divider drag (multi-column resize).
+	if t.handleMultiMove(event) {
+		return true
+	}
+	// Footer horizontal-scrollbar thumb drag.
+	if t.handleHBarMove(event) {
+		return true
+	}
+
 	metrics := t.EffectiveCellMetrics()
+	contentY := event.Y - t.headerHeight()
 
 	// Handle scrollbar thumb drag
 	// Note: Once drag is captured on press, we don't check horizontal bounds during drag
@@ -1035,7 +1121,7 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 			visibleCount := t.visibleCount()
 			trackU, thumbU, _ := t.scrollbarUnits(visibleCount)
 			scrollable := trackU - thumbU
-			newPos := float64(event.Y) - t.scrollbarGrabOff
+			newPos := float64(contentY) - t.scrollbarGrabOff
 			if newPos < 0 {
 				newPos = 0
 			}
@@ -1054,7 +1140,7 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		currentRow := int(event.Y / metrics.CellHeight)
+		currentRow := int(contentY / metrics.CellHeight)
 		rowDelta := currentRow - t.scrollbarDragStart
 
 		visibleCount := t.visibleCount()
@@ -1092,7 +1178,7 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	row := int(event.Y / metrics.CellHeight)
+	row := int(contentY / metrics.CellHeight)
 	index := t.scrollOffset + row
 
 	// Clamp to valid range
@@ -1114,6 +1200,9 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 // containers broadcast releases to every child, so an unconditional
 // true here would starve sibling trinkets of their release.
 func (t *TreeView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
+	if t.handleMultiRelease() {
+		return true
+	}
 	if t.isDragging || t.scrollbarDragging {
 		t.isDragging = false
 		t.scrollbarDragging = false
@@ -1128,6 +1217,12 @@ func (t *TreeView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 func (t *TreeView) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	if len(t.flatList) == 0 {
 		return false
+	}
+
+	// Horizontal wheel pans the column scroll region (scroll mode).
+	if event.DeltaX != 0 && t.scrollHorizontally(event.DeltaX*2) {
+		core.ClaimWheelGesture(event, t.HandleMouseWheel)
+		return true
 	}
 
 	visibleCount := t.visibleCount()
