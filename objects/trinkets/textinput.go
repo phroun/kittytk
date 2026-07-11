@@ -1147,7 +1147,7 @@ func (t *TextInput) clipboardAccess() (get func() string, set func(string)) {
 		Clipboard() string
 		SetClipboard(string)
 	}
-	if c, ok := t.PopupController().(clipper); ok {
+	if c, ok := t.findPopupController().(clipper); ok {
 		return c.Clipboard, c.SetClipboard
 	}
 	return nil, nil
@@ -1226,10 +1226,36 @@ func (t *TextInput) contextMenuItems() []termMenuItem {
 	}
 }
 
+// findPopupController resolves the popup controller by checking this input's
+// own field first, then walking up the parent chain. A directly-stamped
+// controller isn't always present - e.g. an MDI child window's content is
+// never stamped, but an ancestor (the MDI pane) is - so the walk is what makes
+// the right-click menu and clipboard bridge work inside an MDI child.
+func (t *TextInput) findPopupController() core.PopupController {
+	if pc := t.PopupController(); pc != nil {
+		return pc
+	}
+	for current := t.Parent(); current != nil; {
+		trinket, ok := current.(core.Trinket)
+		if !ok {
+			break
+		}
+		if getter, ok := trinket.(interface {
+			PopupController() core.PopupController
+		}); ok {
+			if pc := getter.PopupController(); pc != nil {
+				return pc
+			}
+		}
+		current = trinket.Parent()
+	}
+	return nil
+}
+
 // showContextMenu opens the right-click menu as a popup overlay,
 // using the same presentation as PurfecTerm's terminal menu.
 func (t *TextInput) showContextMenu(event core.MousePressEvent) {
-	pc := t.PopupController()
+	pc := t.findPopupController()
 	if pc == nil {
 		return
 	}
