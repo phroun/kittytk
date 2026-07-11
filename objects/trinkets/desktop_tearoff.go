@@ -696,6 +696,11 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghos
 		d.redockFollowers(app, win)
 		d.windowManager.ActivateWindow(win)
 	}
+
+	// The re-dock is fully settled now (including any followers that came home
+	// with a main window): if a modal is up, bring it back over everything and
+	// refocus it so a modal that was active before the dock stays in charge.
+	d.windowManager.RaiseTopModalOver(win)
 }
 
 // hostSurface exposes the host's surface for teardown.

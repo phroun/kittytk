@@ -696,6 +696,11 @@ func (m *WindowManager) AddWindow(win *Window) {
 	if handler != nil {
 		handler(win)
 	}
+
+	// A modal must stay on top: if an app drops a new window onto the desktop
+	// while a modal is up, pull the modal back over it and refocus it. Adding
+	// the modal itself (via ShowModal) is exempt - win is the top modal.
+	m.RaiseTopModalOver(win)
 }
 
 // setPopupControllerRecursive sets this WindowManager as the popup controller
@@ -1085,6 +1090,45 @@ func (m *WindowManager) CloseModal() {
 	m.mu.Unlock()
 
 	win.Close()
+}
+
+// topModal returns the topmost window on the modal stack, or nil when no
+// modal is active.
+func (m *WindowManager) topModal() *Window {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if n := len(m.modalStack); n > 0 {
+		return m.modalStack[n-1]
+	}
+	return nil
+}
+
+// RaiseTopModalOver returns the top modal to the front of the z-order with
+// focus after another window was brought up - a window re-docking, or an app
+// adding a desktop window - so a modal always stays above everything and
+// keeps focus. It is a no-op when no modal is active, when the given window
+// is the top modal itself or a descendant of it (a modal's own child dialog
+// belongs above it), or when the modal is minimized (a click restores it).
+func (m *WindowManager) RaiseTopModalOver(win *Window) {
+	top := m.topModal()
+	if top == nil || top == win || m.isChildOf(win, top) || top.IsMinimized() {
+		return
+	}
+	m.ActivateWindow(top)
+}
+
+// restoreMinimizedTopModal restores the top modal when it is minimized, so a
+// click on any modally-blocked window or on the wallpaper surfaces the modal
+// the user must deal with instead of leaving them stuck behind it. Restoring
+// removes it from the dock via the restore callback, exactly as clicking its
+// dock item would. Returns true when it restored a modal.
+func (m *WindowManager) restoreMinimizedTopModal() bool {
+	top := m.topModal()
+	if top == nil || !top.IsMinimized() {
+		return false
+	}
+	m.RestoreWindow(top)
+	return true
 }
 
 // MaximizeWindow maximizes a window to fill the client area. Windows that
@@ -1562,8 +1606,13 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 			}
 
 			// Modally blocked: swallow the press, allowing only a title-bar
-			// drag to move the window out of the way.
+			// drag to move the window out of the way. If the modal itself is
+			// minimized, a click here restores it so the user isn't stuck
+			// behind a modal they can't see.
 			if m.isModalBlocked(win) {
+				if m.restoreMinimizedTopModal() {
+					return true
+				}
 				m.beginBlockedTitleDrag(win, event, bounds)
 				return true
 			}
@@ -1691,6 +1740,13 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 			localEvent.Y -= bounds.Y
 			return win.HandleMousePress(localEvent)
 		}
+	}
+
+	// Wallpaper (desktop background) click: if the top modal is minimized,
+	// restore it rather than letting the click fall through to the desktop,
+	// so the user is pulled back to the modal they need to deal with.
+	if m.restoreMinimizedTopModal() {
+		return true
 	}
 
 	// Check desktop (already read above, but re-read in case it changed)
