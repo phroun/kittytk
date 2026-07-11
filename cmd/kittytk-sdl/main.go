@@ -47,6 +47,10 @@ func main() {
 	// default.
 	core.SetWindowFrameBorderPx(cfg.BorderWidth)
 
+	// [system] native controls whether menu shortcuts render with macOS's
+	// native modifier glyphs (⌃⌥⇧⌘) instead of the compact ^X/M-x notation.
+	core.SetMacNativeShortcuts(cfg.UseMacNativeShortcuts())
+
 	backend, err := plat.EnsureBackend()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

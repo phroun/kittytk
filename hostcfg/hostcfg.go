@@ -11,9 +11,11 @@
 //  3. the user config dir (%APPDATA%\kittytk on Windows, else
 //     $XDG_CONFIG_HOME/kittytk or ~/.config/kittytk)
 //
-// The file is section-tolerant but keys are matched by name, so section
-// headers are cosmetic and a user who omits them still gets a working
-// config:
+// The file is section-tolerant: keys are matched by name, so section headers
+// are cosmetic and a user who omits them still gets a working config. The one
+// exception is native, which is read per section - under [system] it styles
+// the graphical host's menu shortcuts, under [tui] the terminal host's - so
+// the two hosts can be configured independently:
 //
 //	[window]
 //	title        = KittyTK
@@ -27,6 +29,15 @@
 //	endpoint =            ; blank = default; tcp://host:port, tls://…, or a socket path
 //	token    =            ; optional shared secret
 //
+//	[system]
+//	native   =            ; graphical host menu-shortcut glyph style:
+//	                      ;   true = native glyphs (⌃⌥⇧⌘) only when the host OS is macOS
+//	                      ;   mac  = force native glyphs on any OS
+//	                      ;   else = the default compact notation (^X, M-x, S-Tab)
+//
+//	[tui]
+//	native   =            ; same knob for the terminal host (independent of [system])
+//
 // Environment variables still take precedence over the file: KITTYTK_DISPLAY
 // for the endpoint and KITTYTK_TOKEN for the token.
 package hostcfg
@@ -34,6 +45,7 @@ package hostcfg
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -55,6 +67,12 @@ type Config struct {
 
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret
+
+	// Native/TUINative set the menu-shortcut glyph style ("true" = native on
+	// macOS, "mac" = force native, else default) for the graphical ([system])
+	// and terminal ([tui]) hosts respectively.
+	Native    string
+	TUINative string
 
 	// Source is the path of the ini that was loaded, or "" if none was
 	// found (defaults were used).
@@ -102,9 +120,18 @@ func Load() Config {
 // insensitive). Unknown keys and malformed numbers are skipped so a
 // stray typo never prevents the host from starting.
 func apply(data []byte, cfg *Config) {
+	section := ""
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSpace(strings.TrimRight(raw, "\r"))
-		if line == "" || line[0] == ';' || line[0] == '#' || line[0] == '[' {
+		if line == "" || line[0] == ';' || line[0] == '#' {
+			continue
+		}
+		// Track the current section: keys are matched by name (sections are
+		// cosmetic), except native, which is routed by section below.
+		if line[0] == '[' {
+			if end := strings.IndexByte(line, ']'); end > 0 {
+				section = strings.ToLower(strings.TrimSpace(line[1:end]))
+			}
 			continue
 		}
 		eq := strings.IndexByte(line, '=')
@@ -140,6 +167,14 @@ func apply(data []byte, cfg *Config) {
 			cfg.Endpoint = val
 		case "token":
 			cfg.Token = val
+		case "native":
+			// The only section-sensitive key: [tui] configures the terminal
+			// host, every other section (including none) the graphical host.
+			if section == "tui" {
+				cfg.TUINative = val
+			} else {
+				cfg.Native = val
+			}
 		}
 	}
 }
@@ -179,3 +214,25 @@ func (c Config) ResolveToken() string {
 	}
 	return c.Token
 }
+
+// resolveNative maps a native setting against the host OS: "mac" forces
+// macOS-native shortcut glyphs on any OS, "true" enables them only when the
+// host OS is macOS, and any other value keeps the default compact notation.
+func resolveNative(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "mac":
+		return true
+	case "true":
+		return runtime.GOOS == "darwin"
+	default:
+		return false
+	}
+}
+
+// UseMacNativeShortcuts resolves the [system] native setting for the graphical
+// host. See resolveNative for the value semantics.
+func (c Config) UseMacNativeShortcuts() bool { return resolveNative(c.Native) }
+
+// UseTUIMacNativeShortcuts resolves the [tui] native setting for the terminal
+// host. See resolveNative for the value semantics.
+func (c Config) UseTUIMacNativeShortcuts() bool { return resolveNative(c.TUINative) }

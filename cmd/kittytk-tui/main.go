@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/phroun/kittytk/backend/tui"
+	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
 	"github.com/phroun/kittytk/objects/app"
@@ -21,9 +22,14 @@ import (
 )
 
 func main() {
-	// Shared launch config (kittytk.ini): the terminal host uses only the
-	// [service] keys; [window] settings apply to kittytk-sdl.
+	// Shared launch config (kittytk.ini): the terminal host uses the
+	// [service] keys ([window] settings apply to kittytk-sdl) plus its own
+	// [tui] native knob, separate from the graphical host's [system] native.
 	cfg := hostcfg.Load()
+
+	// [tui] native controls whether menu shortcuts render with macOS's native
+	// modifier glyphs (⌃⌥⇧⌘) instead of the compact ^X/M-x notation.
+	core.SetMacNativeShortcuts(cfg.UseTUIMacNativeShortcuts())
 
 	tuiBackend := tui.NewTUIBackend(tui.DefaultTUIOptions())
 

@@ -171,3 +171,50 @@ func TestResolveFallsBackToIniAndDefault(t *testing.T) {
 		t.Errorf("blank endpoint should fall back to default: %q", got)
 	}
 }
+
+// native is section-sensitive: [system] configures the graphical host and
+// [tui] the terminal host, independently, while every other key stays matched
+// by name regardless of section.
+func TestApplyRoutesNativeBySection(t *testing.T) {
+	cfg := Defaults()
+	apply([]byte(`
+[system]
+native = mac
+[tui]
+native = true
+`), &cfg)
+	if cfg.Native != "mac" {
+		t.Errorf("[system] native = %q, want %q", cfg.Native, "mac")
+	}
+	if cfg.TUINative != "true" {
+		t.Errorf("[tui] native = %q, want %q", cfg.TUINative, "true")
+	}
+}
+
+// A bare native key (no section) applies to the graphical host, preserving the
+// section-cosmetic default for the common case.
+func TestApplyNativeNoSectionIsSystem(t *testing.T) {
+	cfg := Defaults()
+	apply([]byte("native = mac\n"), &cfg)
+	if cfg.Native != "mac" {
+		t.Errorf("bare native = %q, want %q on Native", cfg.Native, "mac")
+	}
+	if cfg.TUINative != "" {
+		t.Errorf("bare native should not set TUINative, got %q", cfg.TUINative)
+	}
+}
+
+// resolveNative: "mac" forces on, unknown/blank forces off, on any OS.
+func TestResolveNativeValues(t *testing.T) {
+	if !resolveNative("mac") {
+		t.Error(`"mac" should force native on any OS`)
+	}
+	if !resolveNative("  MAC ") {
+		t.Error(`"mac" should be case- and space-insensitive`)
+	}
+	for _, v := range []string{"", "false", "no", "1", "yes"} {
+		if resolveNative(v) {
+			t.Errorf("resolveNative(%q) should be false", v)
+		}
+	}
+}
