@@ -95,6 +95,37 @@ func TestTreeColumnLayoutFitShrinks(t *testing.T) {
 	}
 }
 
+// Fit mode under pressure reclaims MEASURED slack: a column declared
+// far wider than its content (measured with the effective font, not a
+// rune count) gives that padding to the key column before anything
+// truncates - the key column ends up far wider than its hard minimum.
+func TestTreeColumnFitReclaimsMeasuredSlack(t *testing.T) {
+	tv := NewTreeView()
+	tv.SetShowHeader(true)
+	wide := NewTreeColumn("pad", "Pad", 30) // declared 30 cells of mostly padding
+	tv.AddColumn(wide)
+	it := NewTreeItem("a-rather-long-file-name.png")
+	it.SetValue("pad", "x") // content needs ~1 cell
+	tv.AddRootItem(it)
+	// 40 cells wide: 39 content; declared key(20 desired)+30+1 divider
+	// overflows, so the pad column must shrink toward its measured need.
+	tv.SetBounds(core.UnitRect{Width: 40 * 8, Height: 10 * 16})
+
+	lay := tv.columnLayout()
+	keyW := int(lay.spans[0].w / 8)
+	padW := int(lay.spans[1].w / 8)
+	// The key reaches its desired width (20 cells) by reclaiming the
+	// padded column's measured slack; the pad keeps what is left (a
+	// declared width is respected absent pressure). Under the old
+	// MinWidth-only shrink the key would have been crushed to 6.
+	if keyW < 20 {
+		t.Errorf("key column got %d cells; measured reclaim should reach desired 20 (padW=%d)", keyW, padW)
+	}
+	if padW >= 30 {
+		t.Errorf("padded column gave up nothing (%d cells)", padW)
+	}
+}
+
 // Scroll mode: natural widths, footer row reserved, hScroll pans the
 // unfixed spans and clamps to the overflow.
 func TestTreeColumnLayoutScrollMode(t *testing.T) {

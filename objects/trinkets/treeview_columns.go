@@ -380,25 +380,25 @@ func (t *TreeView) columnLayout() treeColLayout {
 				}
 			}
 			keyW := contentCells - used
+			// Under pressure the key column reclaims data columns'
+			// slack in two passes: first down to each column's
+			// MEASURED content width (measured with the effective
+			// font, so pixel surfaces measure the proportional text
+			// as drawn, not a rune count - a declared width that is
+			// only padding gives its slack up before anything visibly
+			// truncates), then down to the hard MinWidth.
+			desired := t.keyWidth
+			if desired <= 0 {
+				desired = treeKeyDefaultCells
+			}
+			if keyW < desired {
+				keyW += t.reclaimWidths(seq, widths, keyIdx, desired-keyW, true)
+			}
 			if keyW < treeKeyMinCells {
-				// Shrink data columns (rightmost first) toward MinWidth
-				// to make room for a usable key column.
-				need := treeKeyMinCells - keyW
-				for i := n - 1; i >= 0 && need > 0; i-- {
-					if i == keyIdx {
-						continue
-					}
-					c := seq[i]
-					give := widths[i] - c.MinWidth
-					if give > need {
-						give = need
-					}
-					if give > 0 {
-						widths[i] -= give
-						need -= give
-					}
+				keyW += t.reclaimWidths(seq, widths, keyIdx, treeKeyMinCells-keyW, false)
+				if keyW < treeKeyMinCells {
+					keyW = treeKeyMinCells // genuine overflow: clip
 				}
-				keyW = treeKeyMinCells
 			}
 			widths[keyIdx] = keyW
 		} else {
@@ -409,19 +409,16 @@ func (t *TreeView) columnLayout() treeColLayout {
 			widths[keyIdx] = kw
 		}
 	} else if t.fitWidth {
-		// No key column: shrink data columns on overflow the same way.
+		// No key column: shrink data columns on overflow the same way
+		// (measured floors first, hard minimums after).
 		used := dividers
 		for _, w := range widths {
 			used += w
 		}
-		for i := n - 1; i >= 0 && used > contentCells; i-- {
-			give := widths[i] - seq[i].MinWidth
-			if over := used - contentCells; give > over {
-				give = over
-			}
-			if give > 0 {
-				widths[i] -= give
-				used -= give
+		if over := used - contentCells; over > 0 {
+			over -= t.reclaimWidths(seq, widths, -1, over, true)
+			if over > 0 {
+				t.reclaimWidths(seq, widths, -1, over, false)
 			}
 		}
 	}
@@ -500,6 +497,64 @@ func (t *TreeView) columnLayout() treeColLayout {
 		lay.spans[n-fr-1].divX = lay.scrollR
 	}
 	return lay
+}
+
+// neededCells is the narrowest width (in cells) that still shows this
+// column's content: the header caption (plus sort-indicator room) and
+// every current row's value, measured with the EFFECTIVE FONT - so on
+// pixel surfaces the proportional text is measured as drawn, not as a
+// rune count - rounded up to whole cells with half a cell of padding.
+// (Measures every row per layout pass; fine at UI scale, cache if a
+// huge tree ever makes it hot.)
+func (t *TreeView) neededCells(col *TreeColumn) int {
+	font := t.EffectiveFont()
+	cw := t.EffectiveCellMetrics().CellWidth
+	maxW := font.MeasureText(col.Caption)
+	if t.sortIndicatorFor(col) {
+		maxW += font.MeasureText(" ▲")
+	}
+	for _, it := range t.flatList {
+		if w := font.MeasureText(it.Value(col.ID)); w > maxW {
+			maxW = w
+		}
+	}
+	cells := int((maxW + cw/2 + cw - 1) / cw) // half-cell pad, ceil
+	if cells < col.MinWidth {
+		cells = col.MinWidth
+	}
+	return cells
+}
+
+// reclaimWidths takes up to need cells from the data columns
+// (rightmost first), never below each column's floor: its MEASURED
+// content width when measured=true (see neededCells), else the hard
+// MinWidth. keyIdx is skipped (-1 = none). Returns the cells reclaimed.
+func (t *TreeView) reclaimWidths(seq []*TreeColumn, widths []int, keyIdx, need int, measured bool) int {
+	got := 0
+	for i := len(seq) - 1; i >= 0 && need > 0; i-- {
+		if i == keyIdx || seq[i] == nil {
+			continue
+		}
+		floor := seq[i].MinWidth
+		if measured {
+			if f := t.neededCells(seq[i]); f > floor {
+				floor = f
+			}
+			if floor > widths[i] {
+				floor = widths[i] // a floor never grows a column
+			}
+		}
+		give := widths[i] - floor
+		if give > need {
+			give = need
+		}
+		if give > 0 {
+			widths[i] -= give
+			need -= give
+			got += give
+		}
+	}
+	return got
 }
 
 // spanClip returns the clip rect for a span (fixed spans clip to
