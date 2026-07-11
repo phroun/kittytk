@@ -24,6 +24,8 @@
 //	scale        = 2
 //	font_size    = 12
 //	border_width =            ; window frame thickness in device px (blank/0 = default)
+//	fps          =            ; true = show the render frame rate in the graphical
+//	                          ;        host's OS title bar (kittytk-sdl only)
 //
 //	[service]
 //	endpoint =            ; blank = default; tcp://host:port, tls://…, or a socket path
@@ -71,6 +73,7 @@ type Config struct {
 	Scale       int    // pixels per abstract unit (1 = small, 2 = crisp/large)
 	FontSize    int    // UI font point size; sizes the desktop cell grid (12 = default)
 	BorderWidth int    // graphical window-frame border width in device pixels, reserved outside the content (0 = default)
+	ShowFPS     bool   // show the render frame rate in the graphical host's OS title bar
 
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret
@@ -176,6 +179,8 @@ func apply(data []byte, cfg *Config) {
 			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
 				cfg.BorderWidth = n
 			}
+		case "fps":
+			cfg.ShowFPS = parseBool(val)
 		case "endpoint":
 			cfg.Endpoint = val
 		case "token":
@@ -194,6 +199,17 @@ func apply(data []byte, cfg *Config) {
 				cfg.TUIClipboard = val
 			}
 		}
+	}
+}
+
+// parseBool reads a permissive boolean: true/1/yes/on (case-insensitive) are
+// true, everything else (including blank) is false.
+func parseBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 

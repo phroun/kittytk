@@ -52,6 +52,26 @@ scale = notanumber
 	}
 }
 
+// The [window] fps flag parses permissively and defaults to off.
+func TestApplyParsesFPS(t *testing.T) {
+	if Defaults().ShowFPS {
+		t.Error("default ShowFPS should be false")
+	}
+	for _, tc := range []struct {
+		val  string
+		want bool
+	}{
+		{"true", true}, {"1", true}, {"yes", true}, {"ON", true},
+		{"false", false}, {"0", false}, {"", false}, {"maybe", false},
+	} {
+		cfg := Defaults()
+		apply([]byte("[window]\nfps = "+tc.val+"\n"), &cfg)
+		if cfg.ShowFPS != tc.want {
+			t.Errorf("fps=%q -> ShowFPS=%v, want %v", tc.val, cfg.ShowFPS, tc.want)
+		}
+	}
+}
+
 // Inline (trailing) comments are stripped from values, including the
 // "blank value + explanatory comment" case that should yield an empty
 // endpoint - but a ';'/'#' inside a value with no leading space is kept.

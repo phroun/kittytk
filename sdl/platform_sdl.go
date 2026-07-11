@@ -43,7 +43,18 @@ type Platform struct {
 	cursors   map[core.CursorShape]*sdl2.Cursor
 	curCursor core.CursorShape
 	cursorSet bool
+
+	// FPS overlay in the OS title bar (kittytk-sdl [window] fps=true): count
+	// presented frames and, once a second, rewrite the main window's title to
+	// "<title> - N fps". main-thread only, so no locking.
+	showFPS   bool
+	fpsFrames int
+	fpsSince  time.Time
 }
+
+// SetShowFPS enables the render frame-rate readout in the main window's OS
+// title bar. Off by default. Call before Run.
+func (p *Platform) SetShowFPS(on bool) { p.showFPS = on }
 
 // nativeWin bundles one OS window with its presentation chain.
 type nativeWin struct {
@@ -195,6 +206,10 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 			}
 		}
 
+		if p.showFPS {
+			p.updateFPSTitle()
+		}
+
 		if !delivered {
 			sdl2.Delay(5)
 		}
@@ -313,6 +328,31 @@ func (p *Platform) paintAndPresent(w *nativeWin) {
 	_ = w.renderer.Clear()
 	_ = w.renderer.Copy(w.texture, nil, nil)
 	w.renderer.Present()
+
+	if p.showFPS && w == p.main {
+		p.fpsFrames++
+	}
+}
+
+// updateFPSTitle rewrites the main window's OS title with the measured frame
+// rate about once a second. Presents are on-demand (only dirty surfaces
+// repaint), so an idle desktop reads 0 fps - that is accurate, not a stall.
+func (p *Platform) updateFPSTitle() {
+	now := time.Now()
+	if p.fpsSince.IsZero() {
+		p.fpsSince = now
+		return
+	}
+	elapsed := now.Sub(p.fpsSince)
+	if elapsed < time.Second {
+		return
+	}
+	fps := int(float64(p.fpsFrames)/elapsed.Seconds() + 0.5)
+	if p.main != nil && p.main.window != nil {
+		p.main.window.SetTitle(fmt.Sprintf("%s - %d fps", p.title, fps))
+	}
+	p.fpsFrames = 0
+	p.fpsSince = now
 }
 
 // liveResize re-sizes one window's framebuffer, re-lays out its
