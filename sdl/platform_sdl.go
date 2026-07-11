@@ -201,7 +201,15 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		delivered := p.pumpEvents()
 
 		for _, w := range p.wins {
-			if s := w.surface; s != nil && s.dirty.Swap(false) {
+			s := w.surface
+			if s == nil {
+				continue
+			}
+			dirty := s.dirty.Swap(false)
+			// fps=true runs a continuous repaint (burn) loop on the main
+			// window so the reading reflects a steady render rate; otherwise
+			// only dirty surfaces repaint (on-demand).
+			if dirty || (p.showFPS && w == p.main) {
 				p.paintAndPresent(w)
 			}
 		}
@@ -210,7 +218,9 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 			p.updateFPSTitle()
 		}
 
-		if !delivered {
+		// The burn loop must not sleep - vsync in the present chain paces it.
+		// On-demand mode idles at 5ms when nothing was delivered.
+		if !delivered && !p.showFPS {
 			sdl2.Delay(5)
 		}
 	}
@@ -335,8 +345,9 @@ func (p *Platform) paintAndPresent(w *nativeWin) {
 }
 
 // updateFPSTitle rewrites the main window's OS title with the measured frame
-// rate about once a second. Presents are on-demand (only dirty surfaces
-// repaint), so an idle desktop reads 0 fps - that is accurate, not a stall.
+// rate about once a second. fps=true drives a continuous repaint of the main
+// window, so this reads the sustained render rate (vsync-paced - typically the
+// monitor refresh) rather than the sporadic on-demand present rate.
 func (p *Platform) updateFPSTitle() {
 	now := time.Now()
 	if p.fpsSince.IsZero() {
