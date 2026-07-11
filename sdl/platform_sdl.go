@@ -50,11 +50,21 @@ type Platform struct {
 	showFPS   bool
 	fpsFrames int
 	fpsSince  time.Time
+
+	// vsync selects whether presents sync to the display refresh. On by
+	// default; turning it off uncaps the burn loop (see SetShowFPS) so fps can
+	// read the raw render throughput.
+	vsync bool
 }
 
 // SetShowFPS enables the render frame-rate readout in the main window's OS
 // title bar. Off by default. Call before Run.
 func (p *Platform) SetShowFPS(on bool) { p.showFPS = on }
+
+// SetVSync selects whether presents sync to the display refresh. On by
+// default; call before Run/EnsureBackend. Off lets fps=true read uncapped
+// throughput (and removes the refresh-rate cap generally).
+func (p *Platform) SetVSync(on bool) { p.vsync = on }
 
 // nativeWin bundles one OS window with its presentation chain.
 type nativeWin struct {
@@ -82,7 +92,7 @@ type timerEntry struct {
 
 // New creates an SDL platform; the main window has the given pixel size.
 func New(title string, widthPx, heightPx int) *Platform {
-	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1, wins: map[uint32]*nativeWin{}}
+	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1, vsync: true, wins: map[uint32]*nativeWin{}}
 }
 
 // SetScale sets how many window pixels one abstract unit covers.
@@ -250,7 +260,11 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 	if err != nil {
 		return nil, err
 	}
-	w.renderer, err = sdl2.CreateRenderer(w.window, -1, sdl2.RENDERER_ACCELERATED|sdl2.RENDERER_PRESENTVSYNC)
+	rendererFlags := uint32(sdl2.RENDERER_ACCELERATED)
+	if p.vsync {
+		rendererFlags |= sdl2.RENDERER_PRESENTVSYNC
+	}
+	w.renderer, err = sdl2.CreateRenderer(w.window, -1, rendererFlags)
 	if err != nil {
 		w.renderer, err = sdl2.CreateRenderer(w.window, -1, 0)
 		if err != nil {

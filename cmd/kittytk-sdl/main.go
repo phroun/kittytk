@@ -33,8 +33,10 @@ func main() {
 	plat := sdlplat.New(cfg.Title, cfg.Width, cfg.Height)
 	plat.SetScale(cfg.Scale) // device zoom: pixels per unit at the base font
 
-	// [window] fps=true overlays the render frame rate on the OS title bar.
+	// [window] fps=true overlays the render frame rate on the OS title bar;
+	// vsync=false uncaps presents (lets fps read raw throughput).
 	plat.SetShowFPS(cfg.ShowFPS)
+	plat.SetVSync(cfg.VSync)
 
 	// font_size sets the PIXEL size of a cell: it scales pixels-per-unit
 	// (12pt = the base 8x16-pixel cell), so a bigger font grows every

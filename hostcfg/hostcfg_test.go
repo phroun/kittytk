@@ -72,6 +72,33 @@ func TestApplyParsesFPS(t *testing.T) {
 	}
 }
 
+// vsync is a default-on flag: absent or blank stays true, only an explicit
+// falsey value turns it off.
+func TestApplyParsesVSync(t *testing.T) {
+	if !Defaults().VSync {
+		t.Error("default VSync should be true")
+	}
+	for _, tc := range []struct {
+		val  string
+		want bool
+	}{
+		{"false", false}, {"0", false}, {"no", false}, {"OFF", false},
+		{"true", true}, {"1", true}, {"", true}, {"whatever", true},
+	} {
+		cfg := Defaults()
+		apply([]byte("[window]\nvsync = "+tc.val+"\n"), &cfg)
+		if cfg.VSync != tc.want {
+			t.Errorf("vsync=%q -> VSync=%v, want %v", tc.val, cfg.VSync, tc.want)
+		}
+	}
+	// Absent entirely keeps the default.
+	cfg := Defaults()
+	apply([]byte("[window]\ntitle = x\n"), &cfg)
+	if !cfg.VSync {
+		t.Error("absent vsync should keep default true")
+	}
+}
+
 // Inline (trailing) comments are stripped from values, including the
 // "blank value + explanatory comment" case that should yield an empty
 // endpoint - but a ';'/'#' inside a value with no leading space is kept.

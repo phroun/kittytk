@@ -74,6 +74,7 @@ type Config struct {
 	FontSize    int    // UI font point size; sizes the desktop cell grid (12 = default)
 	BorderWidth int    // graphical window-frame border width in device pixels, reserved outside the content (0 = default)
 	ShowFPS     bool   // show the render frame rate in the graphical host's OS title bar
+	VSync       bool   // graphical host: sync presents to the display refresh (default true; false uncaps fps)
 
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret
@@ -98,7 +99,7 @@ type Config struct {
 // Defaults returns the built-in configuration used when no ini is found
 // (and as the base every ini is applied onto).
 func Defaults() Config {
-	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12}
+	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true}
 }
 
 // SearchPaths returns the ordered candidate ini paths (see the package
@@ -181,6 +182,10 @@ func apply(data []byte, cfg *Config) {
 			}
 		case "fps":
 			cfg.ShowFPS = parseBool(val)
+		case "vsync":
+			// Default-on flag: only an explicit falsey value disables it, so a
+			// blank "vsync =" keeps the default (sync to refresh).
+			cfg.VSync = !isFalsey(val)
 		case "endpoint":
 			cfg.Endpoint = val
 		case "token":
@@ -207,6 +212,18 @@ func apply(data []byte, cfg *Config) {
 func parseBool(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "true", "1", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// isFalsey reports whether a value explicitly disables a default-on flag:
+// false/0/no/off (case-insensitive). Blank is NOT falsey, so an empty value
+// keeps the default.
+func isFalsey(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "false", "0", "no", "off":
 		return true
 	default:
 		return false
