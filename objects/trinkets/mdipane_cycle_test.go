@@ -37,44 +37,46 @@ func mdiCycleSeq(m *MDIPane, forward bool, n int) []string {
 	return seq
 }
 
-// Backward MDI cycling walks the full set in reverse instead of ping-ponging
-// between the two most-recent children (the same defect the desktop had, here
-// via bringToFront reordering the list being iterated).
-func TestMDIBackwardCycleTraversesAll(t *testing.T) {
-	m := newFourWindowMDI(t)
-	got := mdiCycleSeq(m, false, 4)
-	want := []string{"C", "B", "A", "D"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("MDI backward cycle = %v, want %v", got, want)
-	}
-}
-
-// Forward MDI cycling walks the full set and wraps.
+// Forward MDI cycling (Next) steps toward the most recently used child: with D
+// most recent, one press lands on C, then B, A, and wraps to D. It must walk
+// the full set instead of ping-ponging (the defect bringToFront caused by
+// reordering the list being iterated).
 func TestMDIForwardCycleTraversesAll(t *testing.T) {
 	m := newFourWindowMDI(t)
 	got := mdiCycleSeq(m, true, 4)
-	want := []string{"A", "B", "C", "D"}
+	want := []string{"C", "B", "A", "D"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("MDI forward cycle = %v, want %v", got, want)
 	}
 }
 
+// Backward MDI cycling (Prev) heads the other way, reaching the least recently
+// used first: A, B, C, then back to D.
+func TestMDIBackwardCycleTraversesAll(t *testing.T) {
+	m := newFourWindowMDI(t)
+	got := mdiCycleSeq(m, false, 4)
+	want := []string{"A", "B", "C", "D"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("MDI backward cycle = %v, want %v", got, want)
+	}
+}
+
 // Stepping (as the parent's Next/Prev buttons do) must not commit the sequence:
-// endCycleSession is what promotes the landing spot. Cycling backward to C then
-// committing makes a fresh backward run step to D.
+// endCycleSession is what promotes the landing spot. Cycling forward to C then
+// committing makes a fresh forward step toggle back to D.
 func TestMDICommitOnInteraction(t *testing.T) {
 	m := newFourWindowMDI(t)
 
-	m.PrevWindow() // land on C, sequence frozen [A,B,C,D]
+	m.NextWindow() // land on C, sequence frozen [A,B,C,D]
 	if got := m.ActiveWindow().Title(); got != "C" {
 		t.Fatalf("landed on %q, want C", got)
 	}
 	m.endCycleSession() // stands in for a child key/click interaction
 
-	// Committed [A,B,D,C]: backward from C is D.
-	m.PrevWindow()
+	// Committed (C most recent, D second): a fresh Next toggles back to D.
+	m.NextWindow()
 	if got := m.ActiveWindow().Title(); got != "D" {
-		t.Errorf("after commit, backward from C = %q, want D", got)
+		t.Errorf("after commit, Next from C = %q, want D (toggle)", got)
 	}
 }
 
@@ -83,7 +85,7 @@ func TestMDICommitOnInteraction(t *testing.T) {
 func TestMDIIdleLockInCommitsPriorRun(t *testing.T) {
 	m := newFourWindowMDI(t)
 
-	m.PrevWindow() // land on C
+	m.NextWindow() // land on C
 	if got := m.ActiveWindow().Title(); got != "C" {
 		t.Fatalf("landed on %q, want C", got)
 	}
@@ -93,9 +95,9 @@ func TestMDIIdleLockInCommitsPriorRun(t *testing.T) {
 	m.lastCycleAt = m.lastCycleAt.Add(-2 * mdiCycleCommitTimeout)
 	m.mu.Unlock()
 
-	// New gesture: locks C in first, then steps from committed [A,B,D,C].
-	m.PrevWindow()
+	// New gesture: locks C in first, then Next toggles back to D.
+	m.NextWindow()
 	if got := m.ActiveWindow().Title(); got != "D" {
-		t.Errorf("after idle lock-in, backward from C = %q, want D", got)
+		t.Errorf("after idle lock-in, Next from C = %q, want D", got)
 	}
 }

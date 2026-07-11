@@ -629,11 +629,15 @@ func (m *MDIPane) cycle(forward bool) {
 		currentIdx = len(seq) - 1
 	}
 
+	// cycleOrder holds the most-recently used child at the end, so (matching
+	// the OS convention) forward steps toward the most recent - one press is
+	// the most-recently-used other child - and backward heads toward the least
+	// recent first.
 	var nextIdx int
 	if forward {
-		nextIdx = (currentIdx + 1) % len(seq)
-	} else {
 		nextIdx = (currentIdx - 1 + len(seq)) % len(seq)
+	} else {
+		nextIdx = (currentIdx + 1) % len(seq)
 	}
 	// Raise the target (visible) but leave the sequence frozen for the run.
 	m.activate(seq[nextIdx], false)

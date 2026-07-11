@@ -35,31 +35,33 @@ func newFourWindowManager(t *testing.T) (*WindowManager, [4]*Window) {
 		ws[i] = NewWindow(name)
 		m.AddWindow(ws[i])
 	}
-	m.ActivateWindow(ws[3]) // known start: cycleOrder [A,B,C,D], active D
+	m.ActivateWindow(ws[3]) // known start: cycleOrder [A,B,C,D], D most recent
 	return m, ws
 }
 
-// Backward cycling must walk the full window set in reverse, not ping-pong
-// between the two most-recent windows. This is the regression: promoting the
-// selection to the MRU front on every step used to make M-S-Tab oscillate.
-func TestCycleWindowsBackwardTraversesAll(t *testing.T) {
-	m, _ := newFourWindowManager(t)
-
-	got := cycleSeq(m, false, 4)
-	want := []string{"C", "B", "A", "D"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("backward cycle = %v, want %v", got, want)
-	}
-}
-
-// Forward cycling walks the full set in order and wraps.
+// Forward cycling (Alt-Tab) steps toward the most recently used window: with D
+// most recent, one press lands on the next-most-recent C, then B, then A, then
+// wraps back to D. It must walk the full set, not ping-pong.
 func TestCycleWindowsForwardTraversesAll(t *testing.T) {
 	m, _ := newFourWindowManager(t)
 
 	got := cycleSeq(m, true, 4)
-	want := []string{"A", "B", "C", "D"}
+	want := []string{"C", "B", "A", "D"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("forward cycle = %v, want %v", got, want)
+	}
+}
+
+// Backward cycling (Shift-Alt-Tab) heads the other way, reaching the least
+// recently used first: A, then B, C, and finally back to D. It must walk the
+// full set, not ping-pong between the two most-recent windows.
+func TestCycleWindowsBackwardTraversesAll(t *testing.T) {
+	m, _ := newFourWindowManager(t)
+
+	got := cycleSeq(m, false, 4)
+	want := []string{"A", "B", "C", "D"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("backward cycle = %v, want %v", got, want)
 	}
 }
 
@@ -92,38 +94,47 @@ func TestCycleWindowsPicksUpWindowAddedMidRun(t *testing.T) {
 func TestCycleWindowsSkipsWindowRemovedMidRun(t *testing.T) {
 	m, ws := newFourWindowManager(t)
 
-	// Step forward once: A. Order [A,B,C,D].
+	// Step forward once: lands on C. Order frozen [A,B,C,D].
 	m.CycleWindows(true)
+	if got := activeTitle(m); got != "C" {
+		t.Fatalf("first step = %q, want C", got)
+	}
 
-	// Remove C. Live order becomes [A,B,D].
-	m.RemoveWindow(ws[2])
+	// Remove A (not active). Live order becomes [B,C,D].
+	m.RemoveWindow(ws[0])
 
 	got := cycleSeq(m, true, 3)
-	want := []string{"B", "D", "A"}
+	want := []string{"B", "D", "C"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("cycle after mid-run remove = %v, want %v", got, want)
+	}
+	for _, title := range got {
+		if title == "A" {
+			t.Error("removed window A must not appear in the cycle")
+		}
 	}
 }
 
 // A genuine window interaction ends a run and commits the landing spot to the
-// MRU front, so the next independent run starts from there. (endCycleSession is
-// the commit primitive; in the desktop it fires when the active window itself
+// MRU front, so the next independent run starts from there - this is what makes
+// Alt-Tab toggle between the two most-recent windows. (endCycleSession is the
+// commit primitive; in the desktop it fires when the active window itself
 // handles a key, or on a window click/activation - not on menu-bar keys.)
 func TestCycleWindowsCommitsMRUOnSessionEnd(t *testing.T) {
 	m, _ := newFourWindowManager(t)
 
-	// Cycle backward once to C, then a genuine window interaction commits it.
-	m.CycleWindows(false)
+	// Alt-Tab once to C (the most-recently-used other window), then a genuine
+	// interaction commits it.
+	m.CycleWindows(true)
 	if got := activeTitle(m); got != "C" {
 		t.Fatalf("landed on %q, want C", got)
 	}
 	m.endCycleSession() // stands in for a window-handled key / click
 
-	// C is now MRU-front (active). A fresh backward run steps to the window
-	// just before it in the committed order: [A, B, D, C] -> back from C is D.
-	m.CycleWindows(false)
+	// C is now most-recent, D second. A fresh Alt-Tab toggles back to D.
+	m.CycleWindows(true)
 	if got := activeTitle(m); got != "D" {
-		t.Errorf("after commit, backward from C = %q, want D", got)
+		t.Errorf("after commit, Alt-Tab from C = %q, want D (toggle)", got)
 	}
 }
 
@@ -133,16 +144,16 @@ func TestCycleWindowsCommitsOnModifiersReleased(t *testing.T) {
 	m, _ := newFourWindowManager(t)
 	m.SetModifierReleaseTracked(true)
 
-	m.CycleWindows(false) // land on C
+	m.CycleWindows(true) // land on C
 	if got := activeTitle(m); got != "C" {
 		t.Fatalf("landed on %q, want C", got)
 	}
 	m.NotifyModifiersReleased() // all modifiers up: lock in C
 
-	// Committed [A,B,D,C]: a fresh backward run from C steps to D.
-	m.CycleWindows(false)
+	// Committed (C most recent, D second): a fresh Alt-Tab toggles to D.
+	m.CycleWindows(true)
 	if got := activeTitle(m); got != "D" {
-		t.Errorf("after modifier release, backward from C = %q, want D", got)
+		t.Errorf("after modifier release, Alt-Tab from C = %q, want D", got)
 	}
 }
 
@@ -152,7 +163,7 @@ func TestCycleWindowsIdleLockInCommitsPriorRun(t *testing.T) {
 	m, _ := newFourWindowManager(t)
 	// TUI default: modifier release not tracked, so the idle timer is active.
 
-	m.CycleWindows(false) // land on C, cycling
+	m.CycleWindows(true) // land on C, cycling
 	if got := activeTitle(m); got != "C" {
 		t.Fatalf("landed on %q, want C", got)
 	}
@@ -162,11 +173,11 @@ func TestCycleWindowsIdleLockInCommitsPriorRun(t *testing.T) {
 	m.lastCycleAt = m.lastCycleAt.Add(-2 * cycleCommitTimeout)
 	m.mu.Unlock()
 
-	// The next step is a new gesture: it locks C in first, then steps from the
-	// committed order [A,B,D,C] -> backward from C is D.
-	m.CycleWindows(false)
+	// The next step is a new gesture: it locks C in first, then Alt-Tab from
+	// the committed order toggles back to D.
+	m.CycleWindows(true)
 	if got := activeTitle(m); got != "D" {
-		t.Errorf("after idle lock-in, backward from C = %q, want D", got)
+		t.Errorf("after idle lock-in, Alt-Tab from C = %q, want D", got)
 	}
 }
 
@@ -177,16 +188,16 @@ func TestCycleWindowsIdleTimerDisabledWhenModifiersTracked(t *testing.T) {
 	m, _ := newFourWindowManager(t)
 	m.SetModifierReleaseTracked(true)
 
-	m.CycleWindows(false) // land on C
+	m.CycleWindows(true) // land on C
 	m.mu.Lock()
 	m.lastCycleAt = m.lastCycleAt.Add(-2 * cycleCommitTimeout)
 	m.mu.Unlock()
 
 	// No idle lock-in: the run continues from the frozen order [A,B,C,D],
-	// backward from C is B (not D, which a committed C would give).
-	m.CycleWindows(false)
+	// forward from C is B (not D, which a committed C would give).
+	m.CycleWindows(true)
 	if got := activeTitle(m); got != "B" {
-		t.Errorf("with modifier tracking, backward from C = %q, want B (no idle commit)", got)
+		t.Errorf("with modifier tracking, forward from C = %q, want B (no idle commit)", got)
 	}
 }
 
@@ -196,8 +207,8 @@ func TestCycleWindowsIdleTimerDisabledWhenModifiersTracked(t *testing.T) {
 func TestCycleWindowsMenuKeyDoesNotCommit(t *testing.T) {
 	m, _ := newFourWindowManager(t)
 
-	// Cycle backward to C. The MRU stays [A,B,C,D] (frozen during the run).
-	m.CycleWindows(false)
+	// Alt-Tab to C. The MRU stays [A,B,C,D] (frozen during the run).
+	m.CycleWindows(true)
 	if got := activeTitle(m); got != "C" {
 		t.Fatalf("landed on %q, want C", got)
 	}
@@ -206,10 +217,10 @@ func TestCycleWindowsMenuKeyDoesNotCommit(t *testing.T) {
 	// through to the desktop/menu bar and must not commit the MRU.
 	m.HandleKeyPress(core.KeyPressEvent{Key: "F9"})
 
-	// MRU uncommitted: a fresh backward run from C walks the ORIGINAL order
-	// [A,B,C,D] -> back from C is B (not D, which is what a committed C gives).
-	m.CycleWindows(false)
+	// MRU uncommitted: a fresh Alt-Tab from C walks the ORIGINAL frozen order
+	// [A,B,C,D] -> forward from C is B (not D, which a committed C gives).
+	m.CycleWindows(true)
 	if got := activeTitle(m); got != "B" {
-		t.Errorf("after a menu-bar key, backward from C = %q, want B (MRU uncommitted)", got)
+		t.Errorf("after a menu-bar key, forward from C = %q, want B (MRU uncommitted)", got)
 	}
 }

@@ -2782,12 +2782,17 @@ func (m *WindowManager) CycleWindows(forward bool) {
 		currentIdx = len(effectiveCycle) - 1
 	}
 
-	// Calculate next index with wrapping
+	// Calculate next index with wrapping. cycleOrder holds the most-recently
+	// used item at the end, so, matching the OS convention: forward (Alt-Tab)
+	// steps toward the most recent - one press lands on the most-recently-used
+	// *other* window (index-1), two presses the second-most-recent, and so on;
+	// backward (Shift-Alt-Tab) heads the other way, reaching the least-recently
+	// used first (index+1, wrapping to the front of the list).
 	var nextIdx int
 	if forward {
-		nextIdx = (currentIdx + 1) % len(effectiveCycle)
-	} else {
 		nextIdx = (currentIdx - 1 + len(effectiveCycle)) % len(effectiveCycle)
+	} else {
+		nextIdx = (currentIdx + 1) % len(effectiveCycle)
 	}
 
 	// Activate the target. During a run the MRU is left frozen (no
