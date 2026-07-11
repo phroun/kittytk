@@ -81,6 +81,47 @@ func TestTreeColumnNoDividerCellOnPixels(t *testing.T) {
 	}
 }
 
+// The last pinned-left column's boundary hairline must survive the
+// horizontal-scroll edge fade: the left fade starts exactly on that
+// hairline, so it is repainted OVER the fade - otherwise scrolling
+// erases it and the pinned column visually merges with the scrolled
+// content.
+func TestTreePinnedDividerAboveFade(t *testing.T) {
+	b, _ := raster.New(640, 240)
+	d := NewDesktop()
+	d.SetBackend(b)
+	tv := newColumnsTree(60, 10)
+	tv.SetParent(d)
+	tv.SetFitWidth(false)
+	tv.SetKeyWidth(15)
+	tv.SetFixedColumns(1, 0)
+	tv.scrollHorizontally(4) // panned right: the left fade paints
+	b.Clear(style.DefaultStyle())
+	tv.Paint(core.NewPainter(b))
+
+	lay := tv.columnLayout()
+	if !lay.spans[0].fixed || lay.spans[0].divX != lay.scrollL {
+		t.Fatalf("precondition: pinned key divider at scrollL (divX=%d scrollL=%d)",
+			lay.spans[0].divX, lay.scrollL)
+	}
+	// Sample the divider pixel in a plain row band (row 2; row 0 holds
+	// the selection): the fade there is the list background, and the
+	// hairline must still stand out from it.
+	bgR, bgG, bgB := tv.GetScheme().GetListBG().RGBComponents()
+	c := b.Image().RGBAAt(int(lay.spans[0].divX), 16+2*16+8)
+	abs := func(n int) int {
+		if n < 0 {
+			return -n
+		}
+		return n
+	}
+	diff := abs(int(c.R)-int(bgR)) + abs(int(c.G)-int(bgG)) + abs(int(c.B)-int(bgB))
+	if diff < 20 {
+		t.Errorf("pinned divider vanished under the fade: pixel %d,%d,%d ~= list bg %d,%d,%d",
+			c.R, c.G, c.B, bgR, bgG, bgB)
+	}
+}
+
 // Ledger banding: non-selected rows alternate LedgerOdd/LedgerEven,
 // selection keeps the selection colors, and the blank area below the
 // last row keeps the plain list background.

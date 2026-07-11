@@ -28,6 +28,9 @@ type TreeItem struct {
 	// Values holds this item's data-column cell text, keyed by
 	// TreeColumn.ID (see SetValue/Value in treeview_columns.go).
 	Values map[string]string
+	// numValues caches each cell's numeric equivalent, parsed once in
+	// SetValue so numeric sorts never re-convert text per comparison.
+	numValues map[string]float64
 }
 
 // NewTreeItem creates a new tree item.

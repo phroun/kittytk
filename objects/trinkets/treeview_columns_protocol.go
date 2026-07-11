@@ -211,7 +211,7 @@ func init() {
 		New: func() any {
 			return &wireColumn{col: TreeColumn{
 				Width: 8, MinWidth: 3, Align: "left",
-				Resizable: true, Optional: true,
+				Resizable: true, Optional: true, SortProxy: -1,
 			}}
 		},
 		Props: map[string]protocol.Property{
@@ -243,6 +243,8 @@ func init() {
 			"hidden":    colFlag("hidden", func(c *TreeColumn, b bool) { c.Hidden = b }).Tip("Column is not displayed.").Def("false"),
 			"optional":  colFlag("optional", func(c *TreeColumn, b bool) { c.Optional = b }).Tip("Column appears in the [=] show/hide chooser.").Def("true"),
 			"sortable":  colFlag("sortable", func(c *TreeColumn, b bool) { c.Sortable = b }).Tip("Header click requests a sort on this column.").Def("false"),
+			"numeric":   colFlag("numeric", func(c *TreeColumn, b bool) { c.Numeric = b }).Tip("Sort by each cell's numeric equivalent (parsed once per value).").Def("false"),
+			"sortproxy": colInt("sortproxy", func(c *TreeColumn, n int) { c.SortProxy = n }).Tip("Column index whose values actually sort when this column is chosen (-1 = itself).").Def("-1"),
 		},
 		Append: func(parent, child any) error {
 			p := parent.(*wireColumn)

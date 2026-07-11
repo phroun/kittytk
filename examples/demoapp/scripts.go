@@ -343,10 +343,11 @@ new tab caption="Vertical Tabs" children={
 det=new tab caption="Details" children={
 	dbox=new panel layout=vbox spacing=0 children={
 		dtree=new treeview caption="Name" showheader sorted sortedby=-1 stretch=1 align=fill children={
-			dsizec=new column id=size caption="Size" width=10 align=right sortable
+			dsizec=new column id=size caption="Size" width=10 align=right sortable sortproxy=4
 			dkindc=new column id=kind caption="Kind" width=14 sortable
 			dmodc=new column id=modified caption="Date Modified" width=24 sortable
 			dtagsc=new column id=tags caption="Tags" width=8
+			drawc=new column id=rawsize caption="Raw Size" width=10 align=right numeric hidden
 			ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
 			ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"
 			dpc=new item caption="PC12" expanded children={
@@ -402,6 +403,7 @@ dsizec=w.t.det.dbox.dtree.dsizec
 dkindc=w.t.det.dbox.dtree.dkindc
 dmodc=w.t.det.dbox.dtree.dmodc
 dtagsc=w.t.det.dbox.dtree.dtagsc
+drawc=w.t.det.dbox.dtree.drawc
 ds1=w.t.det.dbox.dtree.ds1
 ds2=w.t.det.dbox.dtree.ds2
 dpc=w.t.det.dbox.dtree.dpc
@@ -624,5 +626,10 @@ func detailsValuesScript(id func(name string) uint64) string {
 		"ds1": "Yesterday at 1:21 AM", "ds2": "Yesterday at 12:24 AM",
 		"dpc": "Yesterday at 12:23 AM", "dpcin": "Yesterday at 12:28 AM",
 		"darj": "Yesterday at 12:17 AM",
-	}) + col("dtagsc", map[string]string{})
+	}) + col("dtagsc", map[string]string{}) + col("drawc", map[string]string{
+		// The Size column's sort proxy: the same sizes expanded to
+		// plain byte counts, so "sort by Size" compares 2048-style
+		// numbers while the visible cells keep their "2 KB" captions.
+		"ds1": "318464", "ds2": "75776", "dpc": "--", "dpcin": "--", "darj": "101376",
+	})
 }

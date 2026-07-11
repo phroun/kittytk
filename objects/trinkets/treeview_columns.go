@@ -3,6 +3,7 @@ package trinkets
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/phroun/kittytk/core"
@@ -45,6 +46,15 @@ type TreeColumn struct {
 	// callback. The VIEW only indicates and requests - reordering the
 	// items is the application's job (it owns the data).
 	Sortable bool
+	// Numeric sorts this column by each cell's numeric equivalent
+	// (parsed once when the value is set) instead of by text.
+	Numeric bool
+	// SortProxy redirects sorting: -1 (the default) means none; a
+	// column index means THAT column's values are what actually sort
+	// when this column is chosen. Captions stay representative while
+	// a hidden column holds the machine-friendly sort values (e.g.
+	// "2 KB" displayed, 2048 in a hidden numeric raw-size column).
+	SortProxy int
 }
 
 // NewTreeColumn creates a column with sensible defaults (resizable,
@@ -56,6 +66,7 @@ func NewTreeColumn(id, caption string, width int) *TreeColumn {
 	return &TreeColumn{
 		ID: id, Caption: caption, Width: width,
 		MinWidth: 3, Align: "left", Resizable: true, Optional: true,
+		SortProxy: -1,
 	}
 }
 
@@ -75,17 +86,80 @@ func (c *TreeColumn) clampWidth(w int) int {
 
 // --- TreeItem cell values ---
 
-// SetValue sets this item's cell text for the given column ID.
+// SetValue sets this item's cell text for the given column ID. The
+// numeric equivalent is parsed and cached HERE, once, so numeric sorts
+// never re-convert text on every comparison.
 func (t *TreeItem) SetValue(columnID, text string) {
 	if t.Values == nil {
 		t.Values = make(map[string]string)
 	}
+	if t.numValues == nil {
+		t.numValues = make(map[string]float64)
+	}
 	t.Values[columnID] = text
+	t.numValues[columnID] = parseNumericValue(text)
 }
 
 // Value returns this item's cell text for the given column ID.
 func (t *TreeItem) Value(columnID string) string {
 	return t.Values[columnID]
+}
+
+// NumericValue returns the cached numeric equivalent of this item's
+// cell text for the column (0 when the text holds no number). Values
+// written through SetValue are pre-parsed; a direct Values map write
+// falls back to parsing here.
+func (t *TreeItem) NumericValue(columnID string) float64 {
+	if v, ok := t.numValues[columnID]; ok {
+		return v
+	}
+	return parseNumericValue(t.Values[columnID])
+}
+
+// parseNumericValue extracts a cell's numeric equivalent: commas are
+// stripped, leading/trailing non-numeric characters are ignored, and
+// what remains must be a minus sign, digits, a potential decimal
+// point, and more digits ("$-1,234.56 USD" -> -1234.56). Text with no
+// digits at all is 0.
+func parseNumericValue(s string) float64 {
+	s = strings.ReplaceAll(s, ",", "")
+	start := -1
+	for i, r := range s {
+		if r >= '0' && r <= '9' {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return 0
+	}
+	// A decimal point and/or minus sign directly before the first
+	// digit belongs to the number (".5", "-3", "-.5").
+	if start > 0 && s[start-1] == '.' {
+		start--
+	}
+	if start > 0 && s[start-1] == '-' {
+		start--
+	}
+	end := start
+	seenDot := false
+	for end < len(s) {
+		switch ch := s[end]; {
+		case ch >= '0' && ch <= '9':
+		case ch == '.' && !seenDot:
+			seenDot = true
+		case ch == '-' && end == start:
+		default:
+			goto parse
+		}
+		end++
+	}
+parse:
+	v, err := strconv.ParseFloat(s[start:end], 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 // --- TreeView column API ---
@@ -153,29 +227,58 @@ func (t *TreeView) resortKeepingSelection() {
 	t.Update()
 }
 
-// sortKeyFor is the string an item sorts by under the current sort
-// column (-1 = the key column's caption text).
-func (t *TreeView) sortKeyFor(it *TreeItem) string {
+// sortTarget resolves which column the sort actually runs on and how:
+// the chosen column's SortProxy redirects to the column holding the
+// real sort values (the indicator stays on the chosen column), and the
+// target's Numeric flag selects float comparison. idx -1 = key column.
+func (t *TreeView) sortTarget() (idx int, numeric bool) {
+	idx = -1
 	if t.sortedBy >= 0 && t.sortedBy < len(t.columns) {
-		return it.Value(t.columns[t.sortedBy].ID)
+		idx = t.sortedBy
+		if p := t.columns[idx].SortProxy; p >= 0 && p < len(t.columns) && p != idx {
+			idx = p
+		}
+		numeric = t.columns[idx].Numeric
+	}
+	return idx, numeric
+}
+
+// sortKeyFor is the string an item sorts by under the given sort
+// target column (-1 = the key column's caption text).
+func (t *TreeView) sortKeyFor(it *TreeItem, idx int) string {
+	if idx >= 0 {
+		return it.Value(t.columns[idx].ID)
 	}
 	return it.Text
 }
 
 // visualSiblings returns one sibling run in VISUAL order: the logical
-// slice untouched when unsorted; a sorted copy otherwise (stable and
-// case-insensitive, so equal keys keep the app's order; descending
-// reverses). Children sort within their parent - the hierarchy is
-// never flattened away, exactly like Finder's list view.
+// slice untouched when unsorted; a sorted copy otherwise (stable, so
+// equal keys keep the app's order; descending reverses). Text columns
+// compare case-insensitively; numeric targets compare the cached
+// numeric equivalents. Children sort within their parent - the
+// hierarchy is never flattened away, exactly like Finder's list view.
 func (t *TreeView) visualSiblings(items []*TreeItem) []*TreeItem {
 	if !t.sorted || len(items) < 2 {
 		return items
 	}
 	out := make([]*TreeItem, len(items))
 	copy(out, items)
+	idx, numeric := t.sortTarget()
+	if numeric {
+		id := t.columns[idx].ID
+		sort.SliceStable(out, func(i, j int) bool {
+			a, b := out[i].NumericValue(id), out[j].NumericValue(id)
+			if t.sortDescending {
+				return b < a
+			}
+			return a < b
+		})
+		return out
+	}
 	sort.SliceStable(out, func(i, j int) bool {
-		a := strings.ToLower(t.sortKeyFor(out[i]))
-		b := strings.ToLower(t.sortKeyFor(out[j]))
+		a := strings.ToLower(t.sortKeyFor(out[i], idx))
+		b := strings.ToLower(t.sortKeyFor(out[j], idx))
 		if t.sortDescending {
 			return b < a
 		}
@@ -937,33 +1040,45 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	}
 
 	// Dividers, over the rows, down to the footer row (the reserved
-	// horizontal-scrollbar row stays clear).
+	// horizontal-scrollbar row stays clear). Two passes around the edge
+	// fades: scrolling-region dividers go UNDER the fades (they fade
+	// out with the content they belong to), but the pinned regions'
+	// boundary dividers go OVER them - the left fade starts exactly on
+	// the last pinned-left column's hairline, and without the second
+	// pass scrolling would erase it and merge the two columns.
 	divBottom := bounds.Height - t.footerHeight()
 	divStyle := style.DefaultStyle().WithFg(scheme.GetScrollbar().Fg).WithBg(scheme.GetListBG())
-	for _, sp := range lay.spans {
-		if !lay.divVisible(sp) {
-			continue
-		}
-		if p.Graphical() {
-			// No divider cell on pixel surfaces: the hairline sits ON
-			// the span boundary.
-			fr, fg, fb := scheme.GetListFG().RGBComponents()
-			p.FillRectPixelsAlpha(sp.divX, 0, 0, 0,
-				1, p.UnitSpanPxY(0, divBottom), fr, fg, fb, 0.35)
-		} else {
-			for y := core.Unit(0); y < divBottom; y += metrics.CellHeight {
-				st := divStyle
-				if y < lay.headerH {
-					st = st.Underline()
+	paintDividers := func(fixedPass bool) {
+		for _, sp := range lay.spans {
+			if !lay.divVisible(sp) {
+				continue
+			}
+			if (sp.fixed || sp.divX == lay.scrollR) != fixedPass {
+				continue
+			}
+			if p.Graphical() {
+				// No divider cell on pixel surfaces: the hairline sits
+				// ON the span boundary.
+				fr, fg, fb := scheme.GetListFG().RGBComponents()
+				p.FillRectPixelsAlpha(sp.divX, 0, 0, 0,
+					1, p.UnitSpanPxY(0, divBottom), fr, fg, fb, 0.35)
+			} else {
+				for y := core.Unit(0); y < divBottom; y += metrics.CellHeight {
+					st := divStyle
+					if y < lay.headerH {
+						st = st.Underline()
+					}
+					p.DrawCell(sp.divX, y, '│', st)
 				}
-				p.DrawCell(sp.divX, y, '│', st)
 			}
 		}
 	}
+	paintDividers(false)
 
 	// Edge fades over the scrolled content (under the scrollbars),
 	// banded so each fade matches the background it covers.
 	t.paintHScrollFades(p, lay, headerStyle, rowStyles, bgStyle)
+	paintDividers(true)
 
 	if t.footerHeight() > 0 {
 		t.paintHScrollbar(p, lay)
