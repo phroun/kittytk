@@ -880,8 +880,10 @@ func (m *WindowManager) ActivateWindow(win *Window) {
 	oldActive := m.activeWindow
 	m.activeWindow = win
 
-	// Move to top of z-order
-	m.bringToFront(win)
+	// Move to top of z-order, forcing owned overlays (dialogs, modals, tool
+	// palettes) to stay above their owner - and, for a tool palette, bringing
+	// its whole owner group forward. Pure z-order: overlays are not focused.
+	m.raiseWithOverlaysLocked(win)
 
 	// Move to front of cycle order (for M-Tab cycling)
 	m.bringToCycleFront(win)
@@ -1000,10 +1002,11 @@ func (m *WindowManager) FocusWindow(win *Window) {
 	}
 }
 
-// RaiseWindow brings a window to the front without changing focus.
+// RaiseWindow brings a window to the front without changing focus, keeping
+// the owner-group z-order invariant.
 func (m *WindowManager) RaiseWindow(win *Window) {
 	m.mu.Lock()
-	m.bringToFront(win)
+	m.raiseWithOverlaysLocked(win)
 	m.mu.Unlock()
 	m.RequestRepaint()
 }
@@ -1018,6 +1021,72 @@ func (m *WindowManager) bringToFront(win *Window) {
 			m.windows = append(m.windows, win)
 			return
 		}
+	}
+}
+
+// ownedOverlaysLocked returns the dialog/modal/toolpalette windows owned by
+// owner, in current z-order (back-to-front). m.mu held.
+func (m *WindowManager) ownedOverlaysLocked(owner *Window) []*Window {
+	if owner == nil {
+		return nil
+	}
+	var out []*Window
+	for _, w := range m.windows {
+		if w.Type().IsOwnedOverlay() && w.Owner() == owner {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// raiseOverlaysAboveLocked moves owner's overlays to the top of the z-order,
+// keeping their relative order, so they sit above owner (expected already near
+// the top). m.mu held.
+func (m *WindowManager) raiseOverlaysAboveLocked(owner *Window) {
+	overlays := m.ownedOverlaysLocked(owner)
+	if len(overlays) == 0 {
+		return
+	}
+	set := make(map[*Window]bool, len(overlays))
+	for _, o := range overlays {
+		set[o] = true
+	}
+	kept := make([]*Window, 0, len(m.windows))
+	for _, w := range m.windows {
+		if !set[w] {
+			kept = append(kept, w)
+		}
+	}
+	m.windows = append(kept, overlays...)
+}
+
+// raiseWithOverlaysLocked brings win to the top of the z-order while keeping
+// the owner-group invariant: an owned overlay always sits above its owner.
+// This is pure z-order and never changes focus/active state. m.mu held.
+//
+//   - normal/main/mdichild: raise it, then float its own overlays on top.
+//   - tool palette: raise its owner group (owner then its overlays in relative
+//     order), then float the chosen palette to the very top - so focusing a
+//     palette brings its whole group forward with the palette on top.
+//   - dialog/modal: raise it alone; it must not drag other windows forward.
+func (m *WindowManager) raiseWithOverlaysLocked(win *Window) {
+	if win == nil {
+		return
+	}
+	switch {
+	case win.Type() == WindowTypeToolPalette:
+		if owner := win.Owner(); owner != nil {
+			m.bringToFront(owner)
+			m.raiseOverlaysAboveLocked(owner) // owner's overlays (incl win) above it
+			m.bringToFront(win)               // the chosen palette on the very top
+			return
+		}
+		m.bringToFront(win) // application-level palette: raise itself
+	case win.Type().IsOwnedOverlay():
+		m.bringToFront(win) // dialog or modal: forward alone
+	default:
+		m.bringToFront(win)
+		m.raiseOverlaysAboveLocked(win)
 	}
 }
 
