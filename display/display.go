@@ -271,19 +271,29 @@ func (s *Server) serveConn(nc net.Conn) {
 	}
 	c.factory = &hostFactory{inner: protocol.NewRegistryFactory(ctx)}
 
-	// The connection is a full Application (D22).
+	// The connection is a full Application (D22). It is a protocol object in
+	// its own right: register it in the session so the client can address it
+	// by ID (set app-wide properties), and hand that ID over in the handshake.
 	application := app.New(nil)
 	application.SetName(appName)
 	application.SetMultiWindow(multiWindow)
+	// The name the app connected with is its authorized name (the trust
+	// decision is keyed on it). A later wire change to a DIFFERENT name doesn't
+	// match that approval, so we allow free renames only when the connection's
+	// trust is independent of the name: a local app, or an "Always for All
+	// Apps" client. Otherwise a wire rename must keep the authorized name.
+	// (A future step could re-prompt instead of rejecting.)
+	application.SetWireNameChangeAllowed(req.Local || s.store.allowsAllApps(req))
 	c.app = application
+	c.session.Register(application)
 	s.desktop.Post(func() { s.desktop.AddApplication(application) })
 	defer s.desktop.Post(func() { c.teardown() })
 
 	go c.writeLoop()
 	defer close(c.out)
 
-	c.send(fmt.Sprintf("welcome version=1 session=%d", sessionID))
-	dbg("welcome sent session=%d app=%q", sessionID, appName)
+	c.send(fmt.Sprintf("welcome version=1 session=%d app=%d", sessionID, application.ObjectID()))
+	dbg("welcome sent session=%d app=%q id=%d", sessionID, appName, application.ObjectID())
 
 	// Batch loop: read until end, execute on the UI thread, reply.
 	for {

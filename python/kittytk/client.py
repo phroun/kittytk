@@ -87,6 +87,10 @@ class Conn:
         self._closed_flag = False
         self.closed = threading.Event()  # set when the connection ends
 
+        # This connection's Application ObjectID, from the handshake (0 until
+        # the welcome is parsed). Address app-wide properties by it: set_app.
+        self._app_id = 0
+
     # --- lifecycle -------------------------------------------------------
 
     def _start(self):
@@ -178,6 +182,21 @@ class Conn:
         name->id map, or raises on a display error / disconnect."""
         ids, _ = self._exec_raw(src)
         return ids
+
+    @property
+    def app_id(self) -> int:
+        """This connection's Application ObjectID, as reported by the display
+        service in the handshake. Use it to address application-wide
+        properties, e.g. conn.exec("set %d multiwindow" % conn.app_id)."""
+        return self._app_id
+
+    def set_app(self, props: str) -> Dict[str, int]:
+        """Apply application-wide properties with the same syntax as any
+        object: set_app("multiwindow contextonly") sends
+        `set <app_id> multiwindow contextonly`."""
+        if not self._app_id:
+            raise RuntimeError("set_app: no application id from the handshake")
+        return self.exec("set %d %s" % (self._app_id, props))
 
     def describe(self) -> protocol.Vocabulary:
         """Query the host's wire vocabulary (D24): the supported trinket
@@ -427,6 +446,13 @@ def _dial(endpoint_str: str, app_name: str, dispatch, solo: bool,
     if not script.statements or script.statements[0].verb != "welcome":
         sock.close()
         raise ConnectionError("handshake: unexpected response %r" % welcome)
+
+    # The handshake carries this connection's Application ObjectID, so the app
+    # can address application-wide properties (see Conn.app_id / Conn.set_app).
+    for a in script.statements[0].args:
+        if (a.name == "app" and a.value is not None
+                and a.value.kind == protocol.ValueKind.NUMBER and a.value.is_int):
+            conn._app_id = int(a.value.number)
 
     conn._start()
     return conn

@@ -12,6 +12,7 @@ import (
 // menu-bar composition.
 type mockApp struct {
 	name        string
+	objectID    core.ObjectID
 	menuName    string
 	main        *window.Window
 	menus       []*Menu
@@ -20,9 +21,10 @@ type mockApp struct {
 	contextOnly bool
 }
 
-func (a *mockApp) Name() string      { return a.name }
-func (a *mockApp) MultiWindow() bool { return a.multiWindow }
-func (a *mockApp) ContextOnly() bool { return a.contextOnly }
+func (a *mockApp) Name() string            { return a.name }
+func (a *mockApp) ObjectID() core.ObjectID { return a.objectID }
+func (a *mockApp) MultiWindow() bool       { return a.multiWindow }
+func (a *mockApp) ContextOnly() bool       { return a.contextOnly }
 func (a *mockApp) MenuName() string {
 	if a.menuName == "" {
 		return "≡"

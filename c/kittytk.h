@@ -64,6 +64,14 @@ void kt_close(kt_conn *c);
 int  kt_is_closed(kt_conn *c);       /* 1 once disconnected */
 void kt_wait_closed(kt_conn *c);     /* block until the connection ends */
 
+/* This connection's Application ObjectID, from the handshake (0 if none).
+ * Use it to address application-wide properties. */
+uint64_t kt_app_id(kt_conn *c);
+/* Apply application-wide properties with the same syntax as any object:
+ * kt_set_app(c, "multiwindow contextonly") sends `set <app_id> ...`.
+ * Returns 0 on success, -1 with no app id / on error. */
+int kt_set_app(kt_conn *c, const char *props);
+
 /* --- requests -------------------------------------------------------- */
 
 /* Execute one batch of protocol text. Returns 0 on success, -1 on a

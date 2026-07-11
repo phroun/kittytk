@@ -459,6 +459,8 @@ struct kt_conn {
     size_t rpos, rlen;
     int reof;
 
+    uint64_t app_id; /* Application ObjectID from the handshake (0 until set) */
+
     kt_mutex write_mu;
 
     kt_mutex rmu; kt_cond rcv;
@@ -804,6 +806,16 @@ uint64_t kt_ui_id(const kt_ui *ui, const char *name) {
     for (int i = 0; i < ui->n; i++)
         if (strcmp(ui->pairs[i].name, name) == 0) return ui->pairs[i].id;
     return 0;
+}
+
+uint64_t kt_app_id(kt_conn *c) { return c ? c->app_id : 0; }
+
+int kt_set_app(kt_conn *c, const char *props) {
+    if (!c || !c->app_id) return -1;
+    char buf[512];
+    snprintf(buf, sizeof(buf), "set %llu %s",
+             (unsigned long long)c->app_id, props ? props : "");
+    return kt_exec(c, buf);
 }
 void kt_ui_free(kt_ui *ui) {
     if (!ui) return;
@@ -1225,10 +1237,21 @@ static kt_conn *dial(const char *endpoint, const char *app_name, const kt_dial_o
     if (!welcome) { KTDBG("dial app=%s: reading welcome failed (EOF)", app_name); goto fail; }
     kt_stmt *st = parse_statement(welcome);
     int ok = st && strcmp(st->verb, "welcome") == 0;
+    if (ok) {
+        /* The handshake carries this connection's Application ObjectID, so the
+         * app can address application-wide properties (kt_app_id/kt_set_app). */
+        for (int i = 0; i < st->n; i++) {
+            if (st->args[i].name && strcmp(st->args[i].name, "app") == 0
+                && st->args[i].kind == 0) {
+                c->app_id = (uint64_t)st->args[i].ival;
+            }
+        }
+    }
     stmt_free(st);
     free(welcome);
     if (!ok) { KTDBG("dial app=%s: bad welcome", app_name); goto fail; }
-    KTDBG("dial app=%s: welcome received, connection ready", app_name);
+    KTDBG("dial app=%s: welcome received (app id=%llu), connection ready",
+          app_name, (unsigned long long)c->app_id);
 
     kt_thread_create(&c->rthread, read_loop, c);
     kt_thread_create(&c->ethread, event_loop, c);

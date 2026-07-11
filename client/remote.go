@@ -119,7 +119,14 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		nc.Close()
 		return nil, fmt.Errorf("handshake: unexpected response %q", welcome)
 	}
-	dbg("dial app=%q: welcome received, connection ready", appName)
+	// The handshake carries this connection's Application ObjectID, so the app
+	// can address application-wide properties (see Conn.AppID / Conn.SetApp).
+	for _, a := range script.Statements[0].Args {
+		if a.Name == "app" && a.Value != nil && a.Value.Kind == protocol.NumberValue && a.Value.IsInt {
+			c.appID = uint64(a.Value.Number)
+		}
+	}
+	dbg("dial app=%q: welcome received (app id=%d), connection ready", appName, c.appID)
 
 	go rt.readLoop()
 	go rt.eventLoop()

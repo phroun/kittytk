@@ -26,6 +26,13 @@ type Application struct {
 	// windows and trinkets.
 	objectID core.ObjectID
 
+	// wireNameAllowed reports whether this connection's trust is independent of
+	// the app name (a local app, or an "Always for All Apps" client), so a
+	// wire Set "name" may change it to anything. When false, a wire rename must
+	// match the authorized (connect-time) name. In-process SetName is
+	// unaffected. See SetWireNameChangeAllowed.
+	wireNameAllowed bool
+
 	// Backend for rendering
 	backend core.RenderBackend
 

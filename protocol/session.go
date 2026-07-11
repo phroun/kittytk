@@ -64,6 +64,16 @@ type templateDef struct {
 	args []*Arg
 }
 
+// Register injects a pre-existing object into the session's object table so
+// verbs (set, sub, destroy) can address it by ID without it having been
+// created via `new`. The host uses this to make the connection's Application
+// settable over the wire - its ID travels to the client in the handshake.
+func (s *Session) Register(obj Object) {
+	if obj != nil {
+		s.objects[obj.ID()] = obj
+	}
+}
+
 // NewSession creates an empty session.
 func NewSession() *Session {
 	return &Session{
