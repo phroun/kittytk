@@ -188,7 +188,7 @@ type TranslucentPixelFiller interface {
 // strip's silhouette corners use this; cell surfaces omit it and
 // callers fall back to scanline fills.
 type ArcWedgeDrawer interface {
-	DrawArcWedge(r UnitRect, centerRight, centerBottom bool, strokeW Unit, s style.CellStyle)
+	DrawArcWedge(r UnitRect, centerRight, centerBottom bool, strokeW Unit, offXPx, offYPx int, s style.CellStyle)
 }
 
 // ImageDrawer is an optional RenderBackend capability: composite a
@@ -675,16 +675,20 @@ func (p *Painter) DrawRoundedRect(r UnitRect, radius Unit, border style.BorderSt
 
 // DrawArcWedge paints an antialiased quarter-arc wedge when the
 // backend supports it (see ArcWedgeDrawer). strokeW is in screen
-// units. Returns false on cell surfaces; the caller then falls back
-// to its scanline rendering.
-func (p *Painter) DrawArcWedge(r UnitRect, centerRight, centerBottom bool, strokeW Unit, s style.CellStyle) bool {
+// units; offXPx/offYPx rigidly translate the whole wedge by an exact
+// device-pixel amount AFTER cell snapping - for sub-cell nudges that
+// must be exact regardless of position (e.g. shifting a foot arc by
+// one line thickness so its stroke meets the shoulder's without a
+// snapping-dependent jog). Returns false on cell surfaces; the caller
+// then falls back to its scanline rendering.
+func (p *Painter) DrawArcWedge(r UnitRect, centerRight, centerBottom bool, strokeW Unit, offXPx, offYPx int, s style.CellStyle) bool {
 	ad, ok := p.backend.(ArcWedgeDrawer)
 	if !ok {
 		return false
 	}
 	screenRect := p.transform.ApplyRect(r)
 	p.applyClip()
-	ad.DrawArcWedge(screenRect, centerRight, centerBottom, strokeW, s)
+	ad.DrawArcWedge(screenRect, centerRight, centerBottom, strokeW, offXPx, offYPx, s)
 	return true
 }
 

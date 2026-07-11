@@ -695,21 +695,21 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	cw := metrics.CellWidth
 	rowH := metrics.CellHeight
 	line := bar.WithBg(bar.Fg)
-	hairW := p.ScreenWidthToLocal(1)
-	if hairW < 1 {
-		hairW = 1
+	// The whole tab outline - the arc strokes AND the straight edge lines - is
+	// one physical hairline. Deriving its weight from pixels-per-unit (a "1
+	// unit" stroke) makes it silently change thickness under re-denomination:
+	// re-denomination pairs a unit-count change with a compensating font_size
+	// to hold the physical size, so pxPerUnit shifts even though nothing
+	// visibly did. Anchor the weight on the device scale instead (denomination-
+	// and font_size-invariant): hairU is the whole-unit stroke that renders to
+	// that device-pixel weight, and both the arcs (via strokeW) and the edge
+	// lines (via edgePxH, == pxLen(hairU)) use it, so they always match.
+	hairU := core.Unit(math.Round(float64(p.DeviceScale()) / p.PxPerUnitF()))
+	if hairU < 1 {
+		hairU = 1
 	}
-	hairH := p.ScreenHeightToLocal(1)
-	if hairH < 1 {
-		hairH = 1
-	}
-	// The arc strokes are a device-pixel weight (pxLen of a one-unit
-	// strokeW); draw the straight edge lines at the SAME pixel weight so the
-	// flat top/bottom don't come out thinner than the curves where the
-	// unit-height fill's cell snapping rounds differently (visible as a thin
-	// top line at fractional / re-denominated sizes). Cell surfaces fall
-	// back to the whole-unit fill.
-	edgePxH := p.UnitsToPx(hairH)
+	hairW, hairH := hairU, hairU
+	edgePxH := p.UnitsToPx(hairU)
 	if edgePxH < 1 {
 		edgePxH = 1
 	}
@@ -719,14 +719,24 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 		barEdgeY = rowY
 		tabEdgeY = rowY + rowH - hairH
 	}
-	hline := func(x0, x1, y core.Unit) {
+	// hlineExt draws the bar/tab edge line from x0 to x1, extended by an exact
+	// device-pixel amount on the left/right (padL/padR). The feet are nudged
+	// inward by one line thickness in device pixels (see below); their edge
+	// meets these lines a line-thickness further in, so the abutting run is
+	// extended to reach the shifted foot with no gap.
+	hlineExt := func(x0, x1 core.Unit, y core.Unit, padL, padR int) {
 		if x1 <= x0 {
 			return
 		}
-		if !p.FillRectPixels(x0, y, 0, 0, p.UnitSpanPxX(x0, x1), edgePxH, line) {
+		wPx := p.UnitSpanPxX(x0, x1) + padL + padR
+		if wPx <= 0 {
+			return
+		}
+		if !p.FillRectPixels(x0, y, -padL, 0, wPx, edgePxH, line) {
 			p.FillRect(core.UnitRect{X: x0, Y: y, Width: x1 - x0, Height: hairH}, ' ', line)
 		}
 	}
+	hline := func(x0, x1, y core.Unit) { hlineExt(x0, x1, y, 0, 0) }
 	// The curve radius is split by axis so a tab keeps its shape under
 	// re-denomination: the HORIZONTAL radii come from the cell width (the
 	// foot flares within the slash cell, the shoulder is a column and a
@@ -756,24 +766,26 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	// the given fill color, edged along the arc in the line color -
 	// antialiased by the backend when it can, scanline fills
 	// otherwise.
-	arc := func(x, y, rX, rY core.Unit, cRight, cBottom bool, fill style.CellStyle) {
+	arc := func(x, y, rX, rY core.Unit, cRight, cBottom bool, offXPx int, fill style.CellStyle) {
 		box := core.UnitRect{X: x, Y: y, Width: rX, Height: rY}
-		if p.DrawArcWedge(box, cRight, cBottom, 1, fill.WithFg(bar.Fg)) {
+		if p.DrawArcWedge(box, cRight, cBottom, hairU, offXPx, 0, fill.WithFg(bar.Fg)) {
 			return
 		}
 		fillArcWedge(p, x, y, rX, rY, cRight, cBottom, fill)
 		strokeArc(p, x, y, rX, rY, cRight, cBottom, line, hairW)
 	}
-	// Concave feet in the slash cells, convex shoulders carving the
-	// body's outer corners, joined by the straight edge segments into
-	// one continuous line between the two colors. The feet sit one
-	// stroke width toward the tab's interior: their edge line runs on
-	// the bar side of the arc while the shoulders' runs on the tab
-	// side, and the offset makes the two land in the same column at
-	// the tangent point.
-	hline(0, leadX+cw-rSmallX+hairW, barEdgeY)
-	arc(leadX+cw-rSmallX+hairW, footY, rSmallX, rSmallY, false, !top, tab)
-	arc(bodyLeft, shoY, rBigX, rBigY, true, top, bar)
+	// Concave feet in the slash cells, convex shoulders carving the body's outer
+	// corners, joined into one continuous line between the two colors. The
+	// shoulder (convex) and foot (concave) put their strokes on OPPOSITE sides
+	// of the shared body-edge tangent, so where they meet the outline would jog
+	// by exactly the stroke width. Cancel that by nudging each foot inward by
+	// exactly the line thickness in DEVICE PIXELS (edgePxH) - a rigid post-snap
+	// translation, identical on both sides at every sub-cell phase, so the seam
+	// is a clean continuous line AND the tab stays mirror-symmetric (a unit-space
+	// offset would snap differently per side/position and reintroduce a notch).
+	hlineExt(0, leadX+cw-rSmallX, barEdgeY, 0, edgePxH)
+	arc(leadX+cw-rSmallX, footY, rSmallX, rSmallY, false, !top, edgePxH, tab)
+	arc(bodyLeft, shoY, rBigX, rBigY, true, top, 0, bar)
 	// Straight vertical run on the tab's side where the two radii
 	// don't span the full row height.
 	gapLen := rowH - rSmallY - rBigY
@@ -786,12 +798,12 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 	}
 	if hasTrail {
 		hline(bodyLeft+rBigX, bodyRight-rBigX, tabEdgeY)
-		arc(bodyRight-rBigX, shoY, rBigX, rBigY, false, top, bar)
-		arc(bodyRight-hairW, footY, rSmallX, rSmallY, true, !top, tab)
+		arc(bodyRight-rBigX, shoY, rBigX, rBigY, false, top, 0, bar)
+		arc(bodyRight, footY, rSmallX, rSmallY, true, !top, -edgePxH, tab)
 		if gapLen > 0 {
 			p.FillRect(core.UnitRect{X: bodyRight - hairW, Y: gapY, Width: hairW, Height: gapLen}, ' ', line)
 		}
-		hline(bodyRight+rSmallX-hairW, stripW, barEdgeY)
+		hlineExt(bodyRight+rSmallX, stripW, barEdgeY, edgePxH, 0)
 		return
 	}
 	// Partial tab cut off before its trailing slash: sudden color

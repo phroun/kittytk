@@ -1246,10 +1246,13 @@ func (b *Backend) blendPx(x, y int, c color.RGBA, a float64) {
 // chosen corner, so silhouette curves come out antialiased. The part
 // of r outside the arc fills with the style's background; a stroke of
 // the given weight follows the arc in its foreground (0 = no stroke).
-func (b *Backend) DrawArcWedge(r core.UnitRect, centerRight, centerBottom bool, strokeW core.Unit, s style.CellStyle) {
+func (b *Backend) DrawArcWedge(r core.UnitRect, centerRight, centerBottom bool, strokeW core.Unit, offXPx, offYPx int, s style.CellStyle) {
 	fg, bg := b.styleColors(s)
-	x0, y0 := b.pxX(r.X), b.pxY(r.Y)
-	x1, y1 := b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height)
+	// offXPx/offYPx rigidly translate the snapped wedge by an exact device-pixel
+	// amount (both box edges and the ellipse centre move together, so the shape
+	// is unchanged - only its position shifts).
+	x0, y0 := b.pxX(r.X)+offXPx, b.pxY(r.Y)+offYPx
+	x1, y1 := b.pxX(r.X+r.Width)+offXPx, b.pxY(r.Y+r.Height)+offYPx
 	w, h := x1-x0, y1-y0
 	if w <= 0 || h <= 0 {
 		return
