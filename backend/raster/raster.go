@@ -818,28 +818,62 @@ func (b *Backend) renderTextImage(f *core.Font, s string, fg, bg color.RGBA, und
 // defines), honoring every active clip.
 func (b *Backend) compositeRGBA(xPx, yPx int, src *image.RGBA) {
 	sw, sh := src.Rect.Dx(), src.Rect.Dy()
-	for row := 0; row < sh; row++ {
-		for col := 0; col < sw; col++ {
-			s := src.RGBAAt(col, row)
-			if s.A == 0 {
+	if sw <= 0 || sh <= 0 {
+		return
+	}
+	dst := b.img
+
+	// When no clip is active (the common case for text), clamp the destination
+	// rectangle to the framebuffer once so the inner loop needs no per-pixel
+	// visibility test - it walks the Pix slices directly. Any clip falls back
+	// to the per-pixel pointVisible test, but still via direct indexing.
+	noClip := !b.pxClipActive && !b.hasClip && !b.hasRoundClip
+	col0, row0, col1, row1 := 0, 0, sw, sh
+	if noClip {
+		if xPx < 0 {
+			col0 = -xPx
+		}
+		if yPx < 0 {
+			row0 = -yPx
+		}
+		if xPx+col1 > b.w {
+			col1 = b.w - xPx
+		}
+		if yPx+row1 > b.h {
+			row1 = b.h - yPx
+		}
+		if col1 <= col0 || row1 <= row0 {
+			return
+		}
+	}
+
+	sp, dp := src.Pix, dst.Pix
+	for row := row0; row < row1; row++ {
+		so := src.PixOffset(src.Rect.Min.X+col0, src.Rect.Min.Y+row)
+		do := dst.PixOffset(xPx+col0, yPx+row)
+		for col := col0; col < col1; col++ {
+			sa := sp[so+3]
+			if sa == 0 {
+				so += 4
+				do += 4
 				continue
 			}
-			dx, dy := xPx+col, yPx+row
-			if !b.pointVisible(dx, dy) {
+			if !noClip && !b.pointVisible(xPx+col, yPx+row) {
+				so += 4
+				do += 4
 				continue
 			}
-			if s.A == 255 {
-				b.img.SetRGBA(dx, dy, s)
-				continue
+			if sa == 255 {
+				dp[do], dp[do+1], dp[do+2], dp[do+3] = sp[so], sp[so+1], sp[so+2], 255
+			} else {
+				inv := uint32(255 - sa)
+				dp[do] = uint8(uint32(sp[so]) + uint32(dp[do])*inv/255)
+				dp[do+1] = uint8(uint32(sp[so+1]) + uint32(dp[do+1])*inv/255)
+				dp[do+2] = uint8(uint32(sp[so+2]) + uint32(dp[do+2])*inv/255)
+				dp[do+3] = 255
 			}
-			d := b.img.RGBAAt(dx, dy)
-			inv := uint32(255 - s.A)
-			b.img.SetRGBA(dx, dy, color.RGBA{
-				R: uint8(uint32(s.R) + uint32(d.R)*inv/255),
-				G: uint8(uint32(s.G) + uint32(d.G)*inv/255),
-				B: uint8(uint32(s.B) + uint32(d.B)*inv/255),
-				A: 255,
-			})
+			so += 4
+			do += 4
 		}
 	}
 }
