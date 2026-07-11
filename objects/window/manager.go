@@ -420,6 +420,34 @@ func (m *WindowManager) ClearHover() {
 	m.clearWindowHover()
 }
 
+// pointOverOverlay reports whether a desktop-coordinate point is covered by a
+// registered popup (combobox dropdown, context menu) or the desktop's active
+// menu-bar dropdown. These float above every window, so window chrome (resize
+// cursors and edge highlights) and window content cursors must not show
+// through them.
+func (m *WindowManager) pointOverOverlay(x, y core.Unit) bool {
+	pt := core.UnitPoint{X: x, Y: y}
+	m.mu.RLock()
+	popups := make([]*PopupOverlay, len(m.popups))
+	copy(popups, m.popups)
+	desktop := m.desktop
+	m.mu.RUnlock()
+
+	for _, p := range popups {
+		if p.Bounds.Contains(pt) {
+			return true
+		}
+	}
+	if desktop != nil {
+		if g, ok := desktop.(interface{ ActiveMenuBounds() core.UnitRect }); ok {
+			if b := g.ActiveMenuBounds(); !b.IsEmpty() && b.Contains(pt) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // updateResizeHover highlights the size-sensitive edge(s) of the topmost
 // window under the pointer, clearing the highlight on every other window.
 // Called on mouse move when no drag or resize is in progress.
@@ -428,6 +456,10 @@ func (m *WindowManager) updateResizeHover(x, y core.Unit) {
 	windows := make([]*Window, len(m.windows))
 	copy(windows, m.windows)
 	m.mu.RUnlock()
+
+	// A dropdown menu or popup floats above the windows: no edge highlight
+	// shows through it.
+	overOverlay := m.pointOverOverlay(x, y)
 
 	var target *Window
 	edge := ResizeEdgeNone
@@ -438,9 +470,10 @@ func (m *WindowManager) updateResizeHover(x, y core.Unit) {
 		}
 		if win.Bounds().Contains(core.UnitPoint{X: x, Y: y}) {
 			target = win
-			// A modally-blocked window can't be resized, so it shows no
-			// edge highlight at all.
-			if !m.isModalBlocked(win) {
+			// A modally-blocked window can't be resized, and a point covered
+			// by a dropdown/popup belongs to that overlay: either way, no edge
+			// highlight.
+			if !overOverlay && !m.isModalBlocked(win) {
 				edge = m.detectResizeEdge(win, x, y)
 			}
 			break
@@ -509,6 +542,11 @@ func ResizeCursorForEdge(edge int) core.CursorShape {
 // cursor requested by the trinket under the pointer (e.g. a text I-beam),
 // or the default arrow.
 func (m *WindowManager) CursorAt(x, y core.Unit) core.CursorShape {
+	// A dropdown menu or popup floats above the windows: over it, no resize or
+	// trinket cursor from a window underneath shows through - just the arrow.
+	if m.pointOverOverlay(x, y) {
+		return core.CursorDefault
+	}
 	win := m.topWindowAt(x, y)
 	if win == nil {
 		return core.CursorDefault
