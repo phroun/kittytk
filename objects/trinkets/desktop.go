@@ -200,6 +200,13 @@ type Desktop struct {
 	needsFrame atomic.Bool
 	idleTicks  int
 
+	// Bounded damage accumulated between ticks (main surface only): when set
+	// and no full repaint was requested, the tick invalidates just this
+	// rectangle so the surface repaints and re-uploads only that region.
+	damageMu   sync.Mutex
+	hasDamage  bool
+	damageRect core.UnitRect
+
 	// Quit channel
 	quitChan chan struct{}
 
@@ -2568,6 +2575,58 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 // mutates without calling Update() still advances.
 const tickHeartbeatTicks = 20
 
+// InvalidateRect requests a partial repaint of a rectangle in main-surface
+// coordinates - the tick repaints (and re-uploads) only that region unless a
+// full repaint was also requested. A degenerate rect escalates to a full
+// repaint. Only ever called with main-surface rects (see IsMainSurfaceController).
+func (d *Desktop) InvalidateRect(r core.UnitRect) {
+	if r.Width <= 0 || r.Height <= 0 {
+		d.needsFrame.Store(true)
+		return
+	}
+	d.damageMu.Lock()
+	if d.hasDamage {
+		d.damageRect = unionDesktopRect(d.damageRect, r)
+	} else {
+		d.damageRect = r
+		d.hasDamage = true
+	}
+	d.damageMu.Unlock()
+}
+
+// IsMainSurfaceController reports whether pc is the desktop's own window
+// manager - i.e. content it manages composites on the main surface. Partial
+// (bounded) invalidation is restricted to this case; torn-off windows are
+// separate surfaces and take a full invalidate instead.
+func (d *Desktop) IsMainSurfaceController(pc core.PopupController) bool {
+	if pc == nil {
+		return false
+	}
+	d.mu.RLock()
+	wm := d.windowManager
+	d.mu.RUnlock()
+	return pc == core.PopupController(wm)
+}
+
+// unionDesktopRect returns the smallest rectangle covering both.
+func unionDesktopRect(a, b core.UnitRect) core.UnitRect {
+	x0, y0 := a.X, a.Y
+	if b.X < x0 {
+		x0 = b.X
+	}
+	if b.Y < y0 {
+		y0 = b.Y
+	}
+	x1, y1 := a.X+a.Width, a.Y+a.Height
+	if b.X+b.Width > x1 {
+		x1 = b.X + b.Width
+	}
+	if b.Y+b.Height > y1 {
+		y1 = b.Y + b.Height
+	}
+	return core.UnitRect{X: x0, Y: y0, Width: x1 - x0, Height: y1 - y0}
+}
+
 // scheduleTick keeps desktop timers firing. It repaints only when an Update()
 // arrived since the last tick (via the core repaint hook), with a slow
 // heartbeat fallback, so an idle desktop no longer burns a full frame every
@@ -2588,22 +2647,38 @@ func (d *Desktop) scheduleTick(p platform.Platform) {
 		torn := append([]*window.TearOffHost(nil), d.tornHosts...)
 		d.mu.RUnlock()
 
-		// Only repaint when something asked for one (an Update() since the last
-		// tick), with a slow heartbeat as a safety net for any animation that
-		// mutates without calling Update(). An idle desktop otherwise stops
-		// repainting instead of burning a full frame every tick.
-		repaint := d.needsFrame.Swap(false)
+		// Only repaint when something asked for one since the last tick: a full
+		// repaint (needsFrame, from a plain Update()) or bounded damage (a
+		// partial region, e.g. a blinking caret). A ~1s heartbeat is the safety
+		// net for anything that animates without signalling. An idle desktop
+		// otherwise stops repainting instead of burning a full frame per tick.
+		full := d.needsFrame.Swap(false)
+		d.damageMu.Lock()
+		hasDmg := d.hasDamage
+		dmg := d.damageRect
+		d.hasDamage = false
+		d.damageRect = core.UnitRect{}
+		d.damageMu.Unlock()
+
 		d.idleTicks++
-		if !repaint && d.idleTicks >= tickHeartbeatTicks {
-			repaint = true
+		if !full && !hasDmg && d.idleTicks >= tickHeartbeatTicks {
+			full = true
 		}
-		if repaint {
+		switch {
+		case full:
 			d.idleTicks = 0
 			if s != nil {
 				s.Invalidate(core.UnitRect{})
 			}
 			for _, h := range torn {
 				h.Invalidate()
+			}
+		case hasDmg:
+			// Bounded damage only ever targets the main surface; torn surfaces
+			// take a full invalidate via the full path above.
+			d.idleTicks = 0
+			if s != nil {
+				s.Invalidate(dmg)
 			}
 		}
 		d.scheduleTick(p)

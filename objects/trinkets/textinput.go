@@ -666,8 +666,44 @@ func (t *TextInput) ensureCaretTimer() {
 	t.caretOn = true
 	t.caretTimer = d.StartRepeatingTimer(500*time.Millisecond, func() {
 		t.caretOn = !t.caretOn
-		t.Update()
+		t.invalidateCaretRegion()
 	})
+}
+
+// invalidateCaretRegion requests a repaint for the blink. On the main desktop
+// surface it damages only this input's rectangle (a partial repaint); anywhere
+// else (a torn-off window, or no desktop) it falls back to a full repaint.
+func (t *TextInput) invalidateCaretRegion() {
+	if d := findDesktopFor(t); d != nil {
+		if r, ok := t.mainSurfaceRect(d); ok {
+			d.InvalidateRect(r)
+			return
+		}
+	}
+	t.Update()
+}
+
+// mainSurfaceRect returns this input's rectangle in main-surface (desktop)
+// coordinates, padded to cover the antialiased caret edges, or ok=false when
+// the input isn't on the main surface (so the caller repaints in full).
+func (t *TextInput) mainSurfaceRect(d *Desktop) (core.UnitRect, bool) {
+	pc := t.findPopupController()
+	if pc == nil || !d.IsMainSurfaceController(pc) {
+		return core.UnitRect{}, false
+	}
+	b := t.Bounds()
+	if b.Width <= 0 || b.Height <= 0 {
+		return core.UnitRect{}, false
+	}
+	tl := pc.MapToScreen(t.Self(), core.UnitPoint{X: 0, Y: 0})
+	br := pc.MapToScreen(t.Self(), core.UnitPoint{X: b.Width, Y: b.Height})
+	const pad = 2
+	x0, y0 := tl.X-pad, tl.Y-pad
+	x1, y1 := br.X+pad, br.Y+pad
+	if x1 <= x0 || y1 <= y0 {
+		return core.UnitRect{}, false
+	}
+	return core.UnitRect{X: x0, Y: y0, Width: x1 - x0, Height: y1 - y0}, true
 }
 
 func (t *TextInput) stopCaretTimer() {

@@ -218,9 +218,11 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 			dirty := s.dirty.Swap(false)
 			// fps=true runs a continuous repaint (burn) loop on the main
 			// window so the reading reflects a steady render rate; otherwise
-			// only dirty surfaces repaint (on-demand).
-			if dirty || (p.showFPS && w == p.main) {
-				p.paintAndPresent(w)
+			// only dirty surfaces repaint (on-demand). The burn loop always
+			// repaints in full.
+			burn := p.showFPS && w == p.main
+			if dirty || burn {
+				p.paintAndPresent(w, burn)
 			}
 		}
 
@@ -333,17 +335,40 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 
 // paintAndPresent runs the handler frame into the window's raster
 // backend and blits it.
-func (p *Platform) paintAndPresent(w *nativeWin) {
+func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 	s := w.surface
 	if s == nil || s.handler == nil || w.texture == nil {
 		return
 	}
+	full, dmg := s.takeDamage()
+	if forceFull {
+		full = true
+	}
+	if !full && (dmg.Width <= 0 || dmg.Height <= 0) {
+		// Dirty with no bounded region recorded: repaint everything.
+		full = true
+	}
+
 	w.backend.BeginFrame()
-	s.handler.Frame(core.NewPainter(w.backend))
+	if full {
+		s.handler.Frame(core.NewPainter(w.backend))
+	} else {
+		// Clip the whole tree to the damaged region: the persistent
+		// framebuffer keeps everything outside it, off-clip draws are rejected,
+		// and only this rectangle is re-uploaded below.
+		s.handler.Frame(core.NewPainter(w.backend).WithClip(dmg))
+	}
 	w.backend.EndFrame()
 
 	img := w.backend.Image()
-	_ = w.texture.Update(nil, unsafe.Pointer(&img.Pix[0]), img.Stride)
+	if x0, y0, x1, y1, ok := damageDevicePx(w.backend, full, dmg); ok {
+		off := img.PixOffset(x0, y0)
+		_ = w.texture.Update(
+			&sdl2.Rect{X: int32(x0), Y: int32(y0), W: int32(x1 - x0), H: int32(y1 - y0)},
+			unsafe.Pointer(&img.Pix[off]), img.Stride)
+	} else {
+		_ = w.texture.Update(nil, unsafe.Pointer(&img.Pix[0]), img.Stride)
+	}
 	if w.transparent {
 		// Alpha-0 clear so unpainted pixels (the frame's corner
 		// cutouts) stay transparent through the composite.
@@ -356,6 +381,16 @@ func (p *Platform) paintAndPresent(w *nativeWin) {
 	if p.showFPS && w == p.main {
 		p.fpsFrames++
 	}
+}
+
+// damageDevicePx returns the device-pixel sub-rectangle to re-upload for a
+// bounded repaint; ok=false means upload the whole texture (full repaint or a
+// degenerate region).
+func damageDevicePx(b *raster.Backend, full bool, dmg core.UnitRect) (x0, y0, x1, y1 int, ok bool) {
+	if full {
+		return 0, 0, 0, 0, false
+	}
+	return b.DevicePxRect(dmg)
 }
 
 // updateFPSTitle rewrites the main window's OS title with the measured frame
@@ -400,7 +435,7 @@ func (p *Platform) liveResize(id uint32, wPx, hPx int) {
 	w.applyShape()
 	if s := w.surface; s != nil && s.handler != nil {
 		s.handler.Resized(w.backend.Size())
-		p.paintAndPresent(w)
+		p.paintAndPresent(w, true) // a resize repaints the whole surface
 		s.dirty.Store(false)
 	}
 }
@@ -972,6 +1007,13 @@ type sdlSurface struct {
 	handler  platform.SurfaceHandler
 	dirty    atomic.Bool
 	closed   bool
+
+	// Damage accumulated since the last present: a full-surface flag (an empty
+	// Invalidate, the default) or the union of bounded regions. A bounded frame
+	// repaints (and re-uploads) only that rectangle.
+	damageMu   sync.Mutex
+	damageFull bool
+	damageRect core.UnitRect
 }
 
 func (s *sdlSurface) Size() core.UnitSize {
@@ -981,9 +1023,58 @@ func (s *sdlSurface) Metrics() core.CellMetrics {
 	return s.win.backend.Metrics()
 }
 func (s *sdlSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
-func (s *sdlSurface) Invalidate(core.UnitRect)             { s.dirty.Store(true) }
-func (s *sdlSurface) SetCursorVisible(bool)                {}
-func (s *sdlSurface) SetCursorPosition(x, y core.Unit)     {}
+
+// Invalidate marks the surface dirty and accumulates damage: an empty rect
+// (the common case) means the whole surface; a bounded rect unions into the
+// pending region so a partial repaint touches only what changed.
+func (s *sdlSurface) Invalidate(r core.UnitRect) {
+	s.damageMu.Lock()
+	if r.Width <= 0 || r.Height <= 0 {
+		s.damageFull = true
+	} else if !s.damageFull {
+		s.damageRect = unionUnitRect(s.damageRect, r)
+	}
+	s.damageMu.Unlock()
+	s.dirty.Store(true)
+}
+
+// takeDamage reads and clears the accumulated damage.
+func (s *sdlSurface) takeDamage() (full bool, rect core.UnitRect) {
+	s.damageMu.Lock()
+	full, rect = s.damageFull, s.damageRect
+	s.damageFull = false
+	s.damageRect = core.UnitRect{}
+	s.damageMu.Unlock()
+	return full, rect
+}
+
+// unionUnitRect returns the smallest rectangle covering both; a degenerate
+// operand is treated as the other.
+func unionUnitRect(a, b core.UnitRect) core.UnitRect {
+	if a.Width <= 0 || a.Height <= 0 {
+		return b
+	}
+	if b.Width <= 0 || b.Height <= 0 {
+		return a
+	}
+	x0, y0 := a.X, a.Y
+	if b.X < x0 {
+		x0 = b.X
+	}
+	if b.Y < y0 {
+		y0 = b.Y
+	}
+	x1, y1 := a.X+a.Width, a.Y+a.Height
+	if b.X+b.Width > x1 {
+		x1 = b.X + b.Width
+	}
+	if b.Y+b.Height > y1 {
+		y1 = b.Y + b.Height
+	}
+	return core.UnitRect{X: x0, Y: y0, Width: x1 - x0, Height: y1 - y0}
+}
+func (s *sdlSurface) SetCursorVisible(bool)            {}
+func (s *sdlSurface) SetCursorPosition(x, y core.Unit) {}
 
 // ScreenPositionPx implements platform.NativeSurface.
 func (s *sdlSurface) ScreenPositionPx() (int, int) {

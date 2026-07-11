@@ -233,6 +233,27 @@ func (b *Backend) SetFontSize(size int) {
 // Image exposes the framebuffer (substrates blit it; tests read it).
 func (b *Backend) Image() *image.RGBA { return b.img }
 
+// DevicePxRect maps a unit rectangle to device-pixel bounds on the
+// framebuffer, clamped to it - used for partial texture uploads when only a
+// damaged region was repainted. Returns ok=false if the rect is empty.
+func (b *Backend) DevicePxRect(r core.UnitRect) (x0, y0, x1, y1 int, ok bool) {
+	x0, y0 = b.pxX(r.X), b.pxY(r.Y)
+	x1, y1 = b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height)
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+	if x1 > b.w {
+		x1 = b.w
+	}
+	if y1 > b.h {
+		y1 = b.h
+	}
+	return x0, y0, x1, y1, x1 > x0 && y1 > y0
+}
+
 // WritePNG saves the framebuffer.
 func (b *Backend) WritePNG(path string) error {
 	f, err := os.Create(path)
