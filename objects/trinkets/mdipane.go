@@ -44,6 +44,18 @@ type MDIPane struct {
 	// Floating windows in z-order (back to front)
 	windows []*window.Window
 
+	// cycleOrder is the M-Tab sequence, kept separate from the visual z-order
+	// (windows) so cycling can raise a child to see it without committing the
+	// sequence. Most-recently-committed child is at the end. Committed only on a
+	// genuine child interaction or the idle lock-in - not by parent Next/Prev
+	// buttons or by stepping the run.
+	cycleOrder []*window.Window
+
+	// cycling is true while a NextWindow/PrevWindow run is in progress (the
+	// cycleOrder stays frozen); lastCycleAt drives the idle lock-in.
+	cycling     bool
+	lastCycleAt time.Time
+
 	// Active/focused window
 	activeWindow *window.Window
 
@@ -265,6 +277,7 @@ func (m *MDIPane) AddWindow(win *window.Window) {
 		}
 	}
 	m.windows = append(m.windows, win)
+	m.cycleOrder = append(m.cycleOrder, win)
 	handler := m.onWindowAdded
 	m.mu.Unlock()
 
@@ -319,6 +332,14 @@ func (m *MDIPane) RemoveWindow(win *window.Window) {
 	for i, w := range m.windows {
 		if w == win {
 			m.windows = append(m.windows[:i], m.windows[i+1:]...)
+			break
+		}
+	}
+
+	// Remove from the cycle sequence too
+	for i, w := range m.cycleOrder {
+		if w == win {
+			m.cycleOrder = append(m.cycleOrder[:i], m.cycleOrder[i+1:]...)
 			break
 		}
 	}
@@ -393,10 +414,54 @@ func (m *MDIPane) SetActiveWindow(win *window.Window) {
 	m.ActivateWindow(win)
 }
 
+// mdiCycleCommitTimeout is the idle gap after which an in-progress MDI cycle
+// run locks its landing spot into the sequence. MDI cycling can be driven by
+// the parent's own Next/Prev buttons (no modifier to release), so the timer is
+// the commit mechanism here rather than modifier release.
+const mdiCycleCommitTimeout = 2 * time.Second
+
+// bringToCycleFront moves win to the end (most-recent) of the cycle sequence.
+func (m *MDIPane) bringToCycleFront(win *window.Window) {
+	for i, w := range m.cycleOrder {
+		if w == win {
+			m.cycleOrder = append(m.cycleOrder[:i], m.cycleOrder[i+1:]...)
+			m.cycleOrder = append(m.cycleOrder, win)
+			return
+		}
+	}
+	m.cycleOrder = append(m.cycleOrder, win)
+}
+
+// endCycleSession ends an in-progress cycle run, committing the child it landed
+// on to the front of the sequence. A no-op when no run is in progress. Fired by
+// a genuine child interaction (a key the child handles, or a click) or the idle
+// lock-in - never by stepping the run or the parent's Next/Prev buttons.
+func (m *MDIPane) endCycleSession() {
+	m.mu.Lock()
+	if !m.cycling {
+		m.mu.Unlock()
+		return
+	}
+	m.cycling = false
+	if active := m.activeWindow; active != nil {
+		m.bringToCycleFront(active)
+	}
+	m.mu.Unlock()
+}
+
 // ActivateWindow brings a window to the front and makes it the active window.
 // When a window becomes active, MDIPane takes focus so that all keyboard
 // events (including Tab) are routed through MDIPane to the active window.
 func (m *MDIPane) ActivateWindow(win *window.Window) {
+	m.endCycleSession()
+	m.activate(win, true)
+}
+
+// activate brings a window to the front (visual z-order, always) and makes it
+// active. reorderCycle controls whether it is also promoted in the M-Tab
+// sequence: true for a normal activation, false while stepping a cycle run
+// (which raises the child to see it but must not commit the sequence).
+func (m *MDIPane) activate(win *window.Window, reorderCycle bool) {
 	m.mu.Lock()
 	if win == m.activeWindow {
 		m.mu.Unlock()
@@ -415,8 +480,13 @@ func (m *MDIPane) ActivateWindow(win *window.Window) {
 	oldActive := m.activeWindow
 	m.activeWindow = win
 
-	// Move to top of z-order
+	// Move to top of z-order (visual raise - always, so a cycled-to child is
+	// visible). Promote in the M-Tab sequence only on a real activation; a
+	// cycle step leaves the sequence frozen until the run commits.
 	m.bringToFront(win)
+	if reorderCycle {
+		m.bringToCycleFront(win)
+	}
 
 	handler := m.onActiveWindowChanged
 	m.mu.Unlock()
@@ -454,6 +524,7 @@ func (m *MDIPane) ActivateWindow(win *window.Window) {
 // This is used for focus-follows-click behavior where the window only
 // raises on mouse release within its bounds.
 func (m *MDIPane) FocusWindow(win *window.Window) {
+	m.endCycleSession()
 	m.mu.Lock()
 	if win == m.activeWindow {
 		m.mu.Unlock()
@@ -507,57 +578,65 @@ func (m *MDIPane) RaiseWindow(win *window.Window) {
 	m.Update()
 }
 
-// NextWindow activates the next window in z-order.
-func (m *MDIPane) NextWindow() {
-	m.mu.RLock()
-	windows := m.windows
-	active := m.activeWindow
-	m.mu.RUnlock()
+// NextWindow steps the M-Tab sequence forward.
+func (m *MDIPane) NextWindow() { m.cycle(true) }
 
-	if len(windows) <= 1 {
+// PrevWindow steps the M-Tab sequence backward.
+func (m *MDIPane) PrevWindow() { m.cycle(false) }
+
+// cycle steps the window-cycle run one place in the given direction. It walks
+// the LIVE cycle sequence (so an added/removed child is handled automatically),
+// locates the current selection by identity, and raises the target to see it
+// WITHOUT committing the sequence - stepping mutates neither the sequence nor
+// (asymmetrically) the list it is walking, so forward and backward are
+// symmetric. The landing spot is committed later, by endCycleSession.
+func (m *MDIPane) cycle(forward bool) {
+	now := time.Now()
+
+	m.mu.Lock()
+	wasCycling := m.cycling
+	gap := now.Sub(m.lastCycleAt)
+	m.mu.Unlock()
+
+	// Idle lock-in: a step long after the previous one is a fresh gesture, so
+	// lock the prior run's landing spot into the sequence first. MDI has no
+	// modifier-release to key off (the parent's Next/Prev buttons carry none),
+	// so the timer is the commit mechanism.
+	if wasCycling && gap > mdiCycleCommitTimeout {
+		m.endCycleSession()
+	}
+
+	m.mu.Lock()
+	seq := make([]*window.Window, len(m.cycleOrder))
+	copy(seq, m.cycleOrder)
+	active := m.activeWindow
+	m.lastCycleAt = now
+	m.cycling = true
+	m.mu.Unlock()
+
+	if len(seq) <= 1 {
 		return
 	}
 
-	// Find current index
 	currentIdx := -1
-	for i, w := range windows {
+	for i, w := range seq {
 		if w == active {
 			currentIdx = i
 			break
 		}
 	}
-
-	// Calculate next index (wrap around)
-	nextIdx := (currentIdx + 1) % len(windows)
-	m.ActivateWindow(windows[nextIdx])
-}
-
-// PrevWindow activates the previous window in z-order.
-func (m *MDIPane) PrevWindow() {
-	m.mu.RLock()
-	windows := m.windows
-	active := m.activeWindow
-	m.mu.RUnlock()
-
-	if len(windows) <= 1 {
-		return
+	if currentIdx < 0 {
+		currentIdx = len(seq) - 1
 	}
 
-	// Find current index
-	currentIdx := 0
-	for i, w := range windows {
-		if w == active {
-			currentIdx = i
-			break
-		}
+	var nextIdx int
+	if forward {
+		nextIdx = (currentIdx + 1) % len(seq)
+	} else {
+		nextIdx = (currentIdx - 1 + len(seq)) % len(seq)
 	}
-
-	// Calculate previous index (wrap around)
-	prevIdx := currentIdx - 1
-	if prevIdx < 0 {
-		prevIdx = len(windows) - 1
-	}
-	m.ActivateWindow(windows[prevIdx])
+	// Raise the target (visible) but leave the sequence frozen for the run.
+	m.activate(seq[nextIdx], false)
 }
 
 // MaximizeWindow maximizes a window to fill the MDI pane.
@@ -1312,6 +1391,10 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 
 		if active.HandleKeyPress(event) {
+			// A key the child itself acts on is a genuine child interaction:
+			// commit the cycle run's sequence. The M-Tab/M-S-Tab steps above
+			// return before here, so stepping never commits.
+			m.endCycleSession()
 			return true
 		}
 	}
