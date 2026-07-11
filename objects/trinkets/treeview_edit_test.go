@@ -176,9 +176,8 @@ func TestTreeRowEditClickOffAccepts(t *testing.T) {
 	}
 }
 
-// A settled single click on an editable cell of the ALREADY selected
-// row arms the click-to-edit timer; a second click (double click)
-// disarms it.
+// A drag-free click on an editable cell of the ALREADY selected row
+// flips straight into edit mode - no settle delay.
 func TestTreeClickToEdit(t *testing.T) {
 	tv := newEditableTree()
 	lay := tv.columnLayout()
@@ -196,39 +195,36 @@ func TestTreeClickToEdit(t *testing.T) {
 	if tv.clickEditItem == nil {
 		t.Fatal("press on selected editable cell did not become a candidate")
 	}
+	if tv.rowEditing {
+		t.Fatal("edit began on press; it must wait for the drag-free release")
+	}
 	tv.HandleMouseRelease(release)
-	gen := tv.clickEditGen
-	// Simulate the timer firing after the settle delay.
-	tv.fireClickEdit(gen, tv.RootItems()[0], tv.ColumnByID("size"))
 	if !tv.rowEditing || tv.editCol != tv.ColumnByID("size") {
-		t.Fatal("settled click did not flip the cell into edit mode")
+		t.Fatal("release did not flip the cell straight into edit mode")
 	}
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 
-	// Again - but this time a second click lands before the timer
-	// fires: the stale generation must not start an edit.
-	tv.HandleMousePress(press)
-	tv.HandleMouseRelease(release)
-	stale := tv.clickEditGen
-	tv.HandleMousePress(press) // the double click's second press
-	tv.HandleMouseRelease(release)
-	tv.fireClickEdit(stale, tv.RootItems()[0], tv.ColumnByID("size"))
-	if tv.rowEditing {
-		t.Error("stale click-to-edit generation fired after a double click")
-	}
-	tv.cancelClickEdit()
-
-	// A drag between press and release never arms.
+	// A drag between press and release never triggers it.
 	tv.HandleMousePress(press)
 	tv.HandleMouseRelease(core.MouseReleaseEvent{X: sizeX + 40, Y: rowY, Button: core.LeftButton})
-	if tv.clickEditTimer != nil {
-		t.Error("dragged release armed click-to-edit")
+	if tv.rowEditing {
+		t.Error("dragged release entered edit mode")
 	}
 
-	// A click on a NOT-yet-selected row never arms (it just selects).
+	// A click on a NOT-yet-selected row never triggers (it selects).
 	tv.SetCurrentIndex(0)
 	tv.HandleMousePress(core.MousePressEvent{X: sizeX, Y: 16 + 2*16 + 8, Button: core.LeftButton})
 	if tv.clickEditItem != nil {
 		t.Error("press on an unselected row became a click-to-edit candidate")
+	}
+	tv.HandleMouseRelease(core.MouseReleaseEvent{X: sizeX, Y: 16 + 2*16 + 8, Button: core.LeftButton})
+	if tv.rowEditing {
+		t.Error("selecting click entered edit mode")
+	}
+	// But the NEXT click on that now-selected row does.
+	tv.HandleMousePress(core.MousePressEvent{X: sizeX, Y: 16 + 2*16 + 8, Button: core.LeftButton})
+	tv.HandleMouseRelease(core.MouseReleaseEvent{X: sizeX, Y: 16 + 2*16 + 8, Button: core.LeftButton})
+	if !tv.rowEditing {
+		t.Error("second click on the newly selected row did not enter edit mode")
 	}
 }

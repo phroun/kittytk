@@ -1,8 +1,6 @@
 package trinkets
 
 import (
-	"time"
-
 	"github.com/phroun/kittytk/core"
 )
 
@@ -25,12 +23,8 @@ import (
 // NO column is editable, Enter keeps its classic Space behavior
 // (expand/collapse or nothing).
 //
-// A settled single CLICK on a cell of the already-selected row also
-// flips into edit mode: armed on a drag-free release, fired after a
-// delay long enough to be sure it is not half of a double click.
-
-// treeClickEditDelay is that settle time.
-const treeClickEditDelay = 450 * time.Millisecond
+// A CLICK on a cell of the already-selected row also flips straight
+// into edit mode (on a drag-free release).
 
 // treeClickEditSlop is how far the pointer may travel between press
 // and release before the click stops counting as a click.
@@ -313,14 +307,11 @@ func (t *TreeView) handleEditMouseRelease(event core.MouseReleaseEvent) bool {
 	return true
 }
 
-// --- click-to-edit (settled single click on the selected row) ---
+// --- click-to-edit (a click on the already-selected row) ---
 
 // noteClickEditPress records, at press time, whether this click landed
-// on an editable cell of the ALREADY selected row. Any press also
-// cancels a previously armed click-to-edit (that press IS the second
-// half of a double click).
+// on an editable cell of the ALREADY selected row.
 func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
-	t.cancelClickEdit()
 	t.clickEditItem = nil
 	if !t.multiColumn() || t.rowEditing {
 		return
@@ -350,13 +341,15 @@ func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
 	}
 }
 
-// armClickEdit starts the settle timer on a drag-free release over the
-// press-time candidate. A second click (double click), a drag, or any
-// state change before the timer fires disarms it.
+// armClickEdit begins the edit IMMEDIATELY on a drag-free release over
+// the press-time candidate - the second click on an already-selected
+// row flips straight into edit mode, no double-click settle delay.
 func (t *TreeView) armClickEdit(event core.MouseReleaseEvent) {
 	if t.clickEditItem == nil {
 		return
 	}
+	item, col := t.clickEditItem, t.clickEditCol
+	t.clickEditItem = nil
 	dx, dy := event.X-t.clickEditX, event.Y-t.clickEditY
 	if dx < 0 {
 		dx = -dx
@@ -365,35 +358,15 @@ func (t *TreeView) armClickEdit(event core.MouseReleaseEvent) {
 		dy = -dy
 	}
 	if dx > treeClickEditSlop || dy > treeClickEditSlop {
-		t.clickEditItem = nil
-		return
+		return // a drag, not a click
 	}
-	item, col := t.clickEditItem, t.clickEditCol
-	t.clickEditItem = nil
-	t.clickEditGen++
-	gen := t.clickEditGen
-	t.clickEditTimer = time.AfterFunc(treeClickEditDelay, func() {
-		t.fireClickEdit(gen, item, col)
-	})
-}
-
-// fireClickEdit is the timer body: begin the edit if nothing disarmed
-// it in the meantime.
-func (t *TreeView) fireClickEdit(gen int, item *TreeItem, col *TreeColumn) {
-	if gen != t.clickEditGen || t.rowEditing || item == nil || col == nil {
-		return
-	}
-	if t.CurrentItem() != item || col.Hidden || !col.Editable {
+	if t.rowEditing || t.CurrentItem() != item || col.Hidden || !col.Editable {
 		return
 	}
 	t.beginCellEdit(item, col)
 }
 
-// cancelClickEdit disarms any pending click-to-edit.
+// cancelClickEdit drops any press-time click-to-edit candidate.
 func (t *TreeView) cancelClickEdit() {
-	t.clickEditGen++
-	if t.clickEditTimer != nil {
-		t.clickEditTimer.Stop()
-		t.clickEditTimer = nil
-	}
+	t.clickEditItem = nil
 }

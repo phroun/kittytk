@@ -162,15 +162,12 @@ type TreeView struct {
 	editMouseDown bool
 	onCellEdited  func(item *TreeItem, column *TreeColumn, value string)
 
-	// Click-to-edit arming: a settled single click on an editable cell
-	// of the already-selected row flips into edit mode after a delay
-	// that rules out a double click.
-	clickEditItem  *TreeItem
-	clickEditCol   *TreeColumn
-	clickEditX     core.Unit
-	clickEditY     core.Unit
-	clickEditGen   int
-	clickEditTimer *time.Timer
+	// Click-to-edit: a drag-free click on an editable cell of the
+	// already-selected row flips straight into edit mode.
+	clickEditItem *TreeItem
+	clickEditCol  *TreeColumn
+	clickEditX    core.Unit
+	clickEditY    core.Unit
 
 	// Sort state (visual; the trinket reorders its row list, the app's
 	// item order is untouched): sorted=false means unsorted; sortedBy
@@ -1009,8 +1006,8 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 
 	// Row editor: a press inside it edits text; a press anywhere else
 	// ACCEPTS the value and the click proceeds. Also note whether this
-	// press could become a settled click-to-edit (and cancel any
-	// pending one - this press IS the double click it guarded against).
+	// press is a click-to-edit candidate (an editable cell of the
+	// already-selected row).
 	if t.handleEditMousePress(event) {
 		return true
 	}
@@ -1320,8 +1317,8 @@ func (t *TreeView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if t.handleEditMouseRelease(event) {
 		return true
 	}
-	// A drag-free release over the press-time candidate arms the
-	// settled click-to-edit timer.
+	// A drag-free release over the press-time candidate flips the
+	// cell straight into edit mode.
 	t.armClickEdit(event)
 	if t.handleMultiRelease() {
 		return true
