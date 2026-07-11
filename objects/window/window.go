@@ -1609,6 +1609,21 @@ func cursorShapeAtTrinket(trinket core.Trinket, pos core.UnitPoint) core.CursorS
 	return core.CursorDefault
 }
 
+// PaintModalDim darkens the whole window - content, titlebar, and border -
+// with a translucent black fill, clipped to the frame's rounded corners (a
+// plain rectangle when maximized or frameless). Called by the window manager
+// for a window suppressed by the modal stack. Graphical path only: on cell
+// surfaces FillRectPixelsAlpha no-ops.
+func (w *Window) PaintModalDim(p *core.Painter, localBounds core.UnitRect) {
+	rp := p
+	if !w.IsMaximized() && w.Flags()&WindowFlagFrameless == 0 {
+		rp = p.WithRoundedClipRegion(localBounds, windowCornerRadius)
+	}
+	rp.FillRectPixelsAlpha(0, 0, 0, 0,
+		p.UnitSpanPxX(0, localBounds.Width), p.UnitSpanPxY(0, localBounds.Height),
+		0, 0, 0, modalDimAlpha)
+}
+
 // paintResizeHover fills the hovered resize edges with a translucent white
 // band, clipped to the window's rounded corner radius. No-op on cell
 // surfaces (FillRectPixelsAlpha returns false there).

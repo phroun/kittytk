@@ -993,6 +993,67 @@ func (m *WindowManager) isChildOf(child, parent *Window) bool {
 	return false
 }
 
+// modalDimAlpha is the darkening applied over a window (and the wallpaper)
+// suppressed by the modal stack.
+const modalDimAlpha = 0.25
+
+// isModalBlocked reports whether an in-surface window is suppressed by the
+// modal stack: it is blocked when a modal sits above it - for a non-modal
+// window that means any modal at all; for a window that is itself a modal it
+// means a modal added after it. The top modal (and any descendant of it) is
+// never blocked, and a detached (torn-off) window lives on its own surface and
+// is never blocked here.
+func (m *WindowManager) isModalBlocked(win *Window) bool {
+	if win == nil || win.IsDetached() {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.isModalBlockedLocked(win)
+}
+
+// isModalBlockedLocked is isModalBlocked with m.mu already held.
+func (m *WindowManager) isModalBlockedLocked(win *Window) bool {
+	n := len(m.modalStack)
+	if n == 0 {
+		return false
+	}
+	top := m.modalStack[n-1]
+	return win != top && !m.isChildOf(win, top)
+}
+
+// beginBlockedTitleDrag starts a move drag when a modally-blocked window is
+// pressed on its draggable title area (not a titlebar button, not a resize
+// edge). Every other press on a blocked window is swallowed with no effect -
+// no edge resize, no button, no content, and no raise.
+func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePressEvent, bounds core.UnitRect) {
+	if win.Flags()&(WindowFlagNoTitle|WindowFlagNoMove) != 0 {
+		return
+	}
+	if m.detectResizeEdge(win, event.X, event.Y) != ResizeEdgeNone {
+		return // no edge resizing while blocked
+	}
+	metrics := core.DefaultCellMetrics()
+	titleTop := core.FindFrameBorderUnits(win)
+	if event.Y >= bounds.Y+titleTop+metrics.CellHeight {
+		return // below the title row
+	}
+	if win.buttonAtPosition(event.X-bounds.X, event.Y-bounds.Y) != TitleButtonNone {
+		return // no titlebar buttons while blocked
+	}
+	m.mu.Lock()
+	m.dragging = win
+	m.dragStartX = event.X
+	m.dragStartY = event.Y
+	m.dragOffsetX = event.X - bounds.X
+	m.dragOffsetY = event.Y - bounds.Y
+	m.dragNeedsButton = false
+	m.dragIsTearHandle = false
+	m.dragMoved = false
+	m.pressedWindow = nil
+	m.mu.Unlock()
+}
+
 // ShowModal shows a window as modal (blocks other windows).
 func (m *WindowManager) ShowModal(win *Window) {
 	m.mu.Lock()
@@ -1491,6 +1552,13 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				}
 			}
 
+			// Modally blocked: swallow the press, allowing only a title-bar
+			// drag to move the window out of the way.
+			if m.isModalBlocked(win) {
+				m.beginBlockedTitleDrag(win, event, bounds)
+				return true
+			}
+
 			// Check for resize edge first - resize operations raise immediately
 			resizeEdge := m.detectResizeEdge(win, event.X, event.Y)
 			if resizeEdge != ResizeEdgeNone {
@@ -1873,6 +1941,13 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		localEvent := event
 		localEvent.X -= bounds.X
 		localEvent.Y -= bounds.Y
+		// A modally-blocked window shows no hover at all: clear any stuck
+		// highlight and consume so it can't leak to windows below.
+		if m.isModalBlocked(hoverTarget) {
+			hoverTarget.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
+			m.RequestRepaint()
+			return true
+		}
 		// Over a resize edge a press resizes, so no widget under the
 		// pointer would fire: send an out-of-bounds move to clear all hover
 		// in the window (titlebar buttons and edge-adjacent content).
@@ -2032,8 +2107,9 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
-	// Pass to active window first (but not if minimized)
-	if active != nil && !active.IsMinimized() {
+	// Pass to active window first (but not if minimized, and not if a modal
+	// blocks it - keys belong to the modal on top).
+	if active != nil && !active.IsMinimized() && !m.isModalBlocked(active) {
 		if active.HandleKeyPress(event) {
 			return true
 		}
@@ -2176,6 +2252,19 @@ func (m *WindowManager) Paint(p *core.Painter) {
 	// Get client area to clip windows properly (avoid covering status bar)
 	clientArea := m.ClientArea()
 
+	// While a modal is up, darken the wallpaper area behind the windows. The
+	// modal (and any window painted over this) covers it; blocked windows add
+	// their own dim on top. Graphical path only (no-ops on cell surfaces).
+	m.mu.RLock()
+	modalUp := len(m.modalStack) > 0
+	m.mu.RUnlock()
+	if modalUp {
+		p.FillRectPixelsAlpha(clientArea.X, clientArea.Y, 0, 0,
+			p.UnitSpanPxX(clientArea.X, clientArea.X+clientArea.Width),
+			p.UnitSpanPxY(clientArea.Y, clientArea.Y+clientArea.Height),
+			0, 0, 0, modalDimAlpha)
+	}
+
 	// Paint windows from bottom to top, clipped to client area
 	for _, win := range windows {
 		if win.IsVisible() && !win.IsMinimized() {
@@ -2215,6 +2304,11 @@ func (m *WindowManager) Paint(p *core.Painter) {
 			// pixels-per-unit); restore the previous origin after.
 			psx, psy := windowPainter.SetSnapOrigin(bounds.X, bounds.Y)
 			win.Paint(windowPainter)
+			// A window suppressed by a modal is darkened in place (over its
+			// content, titlebar, and border), clipped to the frame shape.
+			if m.isModalBlocked(win) {
+				win.PaintModalDim(windowPainter, core.UnitRect{Width: bounds.Width, Height: bounds.Height})
+			}
 			windowPainter.SetSnapOrigin(psx, psy)
 		}
 	}
@@ -2306,6 +2400,9 @@ func (m *WindowManager) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		b := m.displayBounds(win)
 		if !win.IsVisible() || win.IsMinimized() || !b.Contains(pos) {
 			continue
+		}
+		if m.isModalBlocked(win) {
+			return true // blocked: consume, no scroll
 		}
 		local := event
 		local.X -= b.X
