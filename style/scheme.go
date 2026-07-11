@@ -50,6 +50,9 @@ type Scheme struct {
 	DisabledTextFG *CellStyle // FG only
 	Selection      *CellStyle // bright white on blue
 	Normal         *CellStyle // nil = WindowFG on WindowBG
+	LedgerOdd      *CellStyle // ledger-banded odd rows; nil = cyan on black
+	LedgerEven     *CellStyle // ledger-banded even rows; nil = white (silver) on dark gray
+	Header         *CellStyle // column header band; nil = silver on dark yellow (amber)
 
 	// =========================================================================
 	// Menu Related Colors
@@ -692,6 +695,31 @@ func (s *Scheme) GetNormal(active bool) CellStyle {
 	}
 	// nil = WindowFG on WindowBG
 	return DefaultStyle().WithFg(s.GetWindowFG(active)).WithBg(s.GetWindowBG(active))
+}
+
+// GetLedgerOdd returns the ledger banding style for odd rows
+// (1-based: the first row) in list/tree views with ledger mode on.
+func (s *Scheme) GetLedgerOdd() CellStyle {
+	if s.LedgerOdd != nil {
+		return *s.LedgerOdd
+	}
+	return DefaultStyle().WithFg(ColorCyan).WithBg(ColorBlack)
+}
+
+// GetLedgerEven returns the ledger banding style for even rows.
+func (s *Scheme) GetLedgerEven() CellStyle {
+	if s.LedgerEven != nil {
+		return *s.LedgerEven
+	}
+	return DefaultStyle().WithFg(ColorWhite).WithBg(ColorBrightBlack)
+}
+
+// GetHeader returns the column header band style (details views).
+func (s *Scheme) GetHeader() CellStyle {
+	if s.Header != nil {
+		return *s.Header
+	}
+	return DefaultStyle().WithFg(ColorWhite).WithBg(ColorYellow)
 }
 
 // --- Menu Colors ---

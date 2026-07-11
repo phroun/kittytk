@@ -366,4 +366,11 @@ func (a *app) wireDetails() {
 		}
 		_ = dtree.Set(fmt.Sprintf("fixed_right=%d", n))
 	})
+	ui.Checkbox("dledger").OnToggle(func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = dtree.Set("ledger")
+		} else {
+			_ = dtree.Set("!ledger")
+		}
+	})
 }

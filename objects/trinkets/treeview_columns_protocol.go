@@ -301,6 +301,7 @@ func treeViewProps() map[string]protocol.Property {
 
 		"caption":    stringProp("caption", (*TreeView).SetKeyCaption).Tip("Header caption over the key (tree) column."),
 		"showheader": boolProp("showheader", (*TreeView).SetShowHeader).Tip("Show the column header row.").Def("false"),
+		"ledger":     boolProp("ledger", (*TreeView).SetLedger).Tip("Alternate non-selected rows in the ledger colors.").Def("false"),
 		"showkey":    boolProp("showkey", (*TreeView).SetShowKey).Tip("Show the key (tree) column first.").Def("true"),
 		"fit_width":  boolProp("fit_width", (*TreeView).SetFitWidth).Tip("Squeeze columns to the width (no horizontal scrolling).").Def("true"),
 		"key_width":  intProp("key_width", (*TreeView).SetKeyWidth).Tip("Key column width in text cells (scroll mode).").Def("20"),

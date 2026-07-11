@@ -111,6 +111,7 @@ type TreeView struct {
 	showHeader bool
 	showKey    bool   // key column shown as the first visible column
 	keyCaption string // header caption over the key (tree) column
+	ledger     bool   // alternate non-selected rows in LedgerOdd/LedgerEven
 	fitWidth   bool // true: squeeze to width (no hscroll); false: pan
 	fixedLeft  int  // visible columns pinned outside the hscroll region
 	fixedRight int
@@ -575,6 +576,14 @@ func (t *TreeView) Paint(p *core.Painter) {
 			} else {
 				s = scheme.GetSelectedListItem()
 			}
+		} else if t.ledger {
+			// Ledger banding (non-selected rows only), 1-based: the
+			// first row is odd.
+			if itemIndex%2 == 0 {
+				s = scheme.GetLedgerOdd()
+			} else {
+				s = scheme.GetLedgerEven()
+			}
 		} else {
 			// Unselected items
 			s = style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
@@ -613,12 +622,10 @@ func (t *TreeView) Paint(p *core.Painter) {
 		// Draw text using font-aware rendering
 		font := t.EffectiveFont()
 		availableWidth := bounds.Width - x
-		displayText := item.Text
-		// Truncate if needed
-		for font.MeasureText(displayText) > availableWidth && len(displayText) > 0 {
-			displayText = displayText[:len(displayText)-1]
+		if availableWidth < 0 {
+			availableWidth = 0
 		}
-		p.DrawText(x, itemY, displayText, s, font)
+		p.DrawText(x, itemY, ellipsizeText(p, font, item.Text, availableWidth), s, font)
 	}
 
 	// Draw scrollbar if needed

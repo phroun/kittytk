@@ -402,6 +402,12 @@ func (t *TreeView) handleHeaderFocusKey(event core.KeyPressEvent) bool {
 // single-column tree - is shown as the first visible column.
 func (t *TreeView) SetShowKey(on bool) { t.showKey = on; t.Update() }
 
+// SetLedger turns ledger banding on: non-selected rows alternate the
+// scheme's LedgerOdd/LedgerEven colors (1-based: the first row is
+// odd). Selection colors are untouched, and the blank area below the
+// last item keeps the plain list background.
+func (t *TreeView) SetLedger(on bool) { t.ledger = on; t.Update() }
+
 // SetKeyCaption sets the header caption over the key (tree) column -
 // "Name" in a file listing.
 func (t *TreeView) SetKeyCaption(s string) { t.keyCaption = s; t.Update() }
@@ -472,7 +478,7 @@ func (t *TreeView) footerHeight() core.Unit {
 		return 0
 	}
 	metrics := t.EffectiveCellMetrics()
-	if core.FindSmoothPositioning(t.Self()) {
+	if core.FindGraphicalFrames(t.Self()) {
 		return metrics.CellWidth
 	}
 	return metrics.CellHeight
@@ -550,7 +556,14 @@ func (t *TreeView) columnLayout() treeColLayout {
 		}
 		widths[i] = c.clampWidth(c.Width)
 	}
-	dividers := n - 1
+	// A divider consumes one cell only on cell surfaces (it renders as a
+	// full '│' character there); pixel surfaces draw a hairline ON the
+	// span boundary and reserve nothing.
+	divCells := 1
+	if core.FindGraphicalFrames(t.Self()) {
+		divCells = 0
+	}
+	dividers := (n - 1) * divCells
 	if dividers < 0 {
 		dividers = 0
 	}
@@ -617,11 +630,11 @@ func (t *TreeView) columnLayout() treeColLayout {
 	// Widths of the pinned flanks (with their trailing/leading dividers).
 	leftCells := 0
 	for i := 0; i < fl; i++ {
-		leftCells += widths[i] + 1 // span + divider
+		leftCells += widths[i] + divCells // span + divider
 	}
 	rightCells := 0
 	for i := n - fr; i < n; i++ {
-		rightCells += 1 + widths[i] // divider + span
+		rightCells += divCells + widths[i] // divider + span
 	}
 	scrollCells := contentCells - leftCells - rightCells
 	if scrollCells < 0 {
@@ -635,7 +648,7 @@ func (t *TreeView) columnLayout() treeColLayout {
 	for i := fl; i < n-fr; i++ {
 		midCells += widths[i]
 		if i < n-fr-1 {
-			midCells++ // divider between scrolling spans
+			midCells += divCells // divider between scrolling spans
 		}
 	}
 	if !t.fitWidth && midCells > scrollCells {
@@ -672,7 +685,7 @@ func (t *TreeView) columnLayout() treeColLayout {
 		xCells += widths[i]
 		if i < n-1 {
 			sp.divX = core.Unit(xCells) * cw
-			xCells++
+			xCells += divCells
 		}
 		lay.spans = append(lay.spans, sp)
 	}
@@ -797,10 +810,11 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
-	// Header row. The internal focus zone lights it up: hzBar paints
-	// the WHOLE bar as one focused stop; hzItems highlights just the
-	// focused caption (or the chooser button) below.
-	headerStyle := bgStyle
+	// Header row, in the scheme's Header band colors (ledger or not).
+	// The internal focus zone lights it up: hzBar paints the WHOLE bar
+	// as one focused stop; hzItems highlights just the focused caption
+	// (or the chooser button) below.
+	headerStyle := scheme.GetHeader()
 	if lay.headerH > 0 {
 		if focused && t.headerZone == hzBar {
 			headerStyle = scheme.GetFocusedListItem()
@@ -875,6 +889,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		// items), the selected row shows the NON-focused selection
 		// color - the header owns the focus, the row is just selected.
 		rowFocused := focused && t.headerZone == hzContent
+		ledgerRow := false
 		var s style.CellStyle
 		switch {
 		case !item.Enabled:
@@ -883,12 +898,21 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			s = scheme.GetFocusedListItem()
 		case itemIndex == t.currentIndex:
 			s = scheme.GetSelectedListItem()
+		case t.ledger:
+			// Ledger banding (non-selected rows only), 1-based: the
+			// first visual row is odd.
+			ledgerRow = true
+			if itemIndex%2 == 0 {
+				s = scheme.GetLedgerOdd()
+			} else {
+				s = scheme.GetLedgerEven()
+			}
 		default:
 			s = bgStyle
 		}
 		rowStyles = append(rowStyles, s)
-		if itemIndex == t.currentIndex {
-			// Selection spans the full row, Finder/Explorer style.
+		if itemIndex == t.currentIndex || ledgerRow {
+			// Selection and ledger bands span the full row.
 			p.FillRect(core.UnitRect{X: 0, Y: itemY, Width: lay.contentW, Height: metrics.CellHeight}, ' ', s)
 		}
 
@@ -921,8 +945,10 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			continue
 		}
 		if p.Graphical() {
+			// No divider cell on pixel surfaces: the hairline sits ON
+			// the span boundary.
 			fr, fg, fb := scheme.GetListFG().RGBComponents()
-			p.FillRectPixelsAlpha(sp.divX+metrics.CellWidth/2, 0, 0, 0,
+			p.FillRectPixelsAlpha(sp.divX, 0, 0, 0,
 				1, p.UnitSpanPxY(0, divBottom), fr, fg, fb, 0.35)
 		} else {
 			for y := core.Unit(0); y < divBottom; y += metrics.CellHeight {
@@ -1033,14 +1059,39 @@ func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, it
 		x += metrics.CellWidth * 2
 	}
 	avail := sp.x + sp.w - x
-	for font.MeasureText(text) > avail && len(text) > 0 {
-		text = text[:len(text)-1]
+	if avail < 0 {
+		avail = 0
 	}
-	p.DrawText(x, itemY, text, s, font)
+	p.DrawText(x, itemY, ellipsizeText(p, font, text, avail), s, font)
+}
+
+// ellipsizeText fits text into avail, replacing a cut tail with an
+// ellipsis - "…" on pixel surfaces, the project's text-mode "..." on
+// cells. Rune-safe; returns the text unchanged when it already fits.
+func ellipsizeText(p *core.Painter, font *core.Font, text string, avail core.Unit) string {
+	if font.MeasureText(text) <= avail {
+		return text
+	}
+	ell := "…"
+	if !p.Graphical() {
+		ell = "..."
+	}
+	ellW := font.MeasureText(ell)
+	runes := []rune(text)
+	for len(runes) > 0 && font.MeasureText(string(runes))+ellW > avail {
+		runes = runes[:len(runes)-1]
+	}
+	if len(runes) == 0 {
+		if ellW <= avail {
+			return ell
+		}
+		return ""
+	}
+	return string(runes) + ell
 }
 
 // drawAligned draws one cell value inside a span with the column's
-// alignment, truncated to fit.
+// alignment, ellipsized to fit.
 func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.Unit, s style.CellStyle, font *core.Font, align string) {
 	metrics := t.EffectiveCellMetrics()
 	pad := metrics.CellWidth / 2
@@ -1048,9 +1099,7 @@ func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.
 	if avail < 0 {
 		avail = 0
 	}
-	for font.MeasureText(text) > avail && len(text) > 0 {
-		text = text[:len(text)-1]
-	}
+	text = ellipsizeText(p, font, text, avail)
 	tw := font.MeasureText(text)
 	x := sp.x
 	switch align {
@@ -1058,6 +1107,12 @@ func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.
 		x = sp.x + sp.w - tw - pad/2
 	case "center":
 		x = sp.x + (sp.w-tw)/2
+	default:
+		if p.Graphical() {
+			// Pixel surfaces run spans edge to edge (no divider cell);
+			// inset left-aligned text off the hairline.
+			x = sp.x + pad/2
+		}
 	}
 	if x < sp.x {
 		x = sp.x
@@ -1075,7 +1130,7 @@ func (t *TreeView) chooserButtonRect() (core.UnitRect, bool) {
 	}
 	metrics := t.EffectiveCellMetrics()
 	w := metrics.CellWidth
-	if core.FindSmoothPositioning(t.Self()) {
+	if core.FindGraphicalFrames(t.Self()) {
 		w *= 2
 	}
 	return core.UnitRect{
@@ -1202,7 +1257,7 @@ func (t *TreeView) openColumnChooser(keyboard bool) {
 	// Popup menus are not parented into the trinket tree; hand down the
 	// opener's display context (metrics + font), same as the menu bar.
 	m.inheritDisplayContext(t.EffectiveCellMetrics(), t.EffectiveFont())
-	m.setGraphicalHint(core.FindSmoothPositioning(t.Self()))
+	m.setGraphicalHint(core.FindGraphicalFrames(t.Self()))
 	if d, ok := t.desktopAncestor(); ok {
 		m.SetAccessibilityManager(d.AccessibilityManager())
 	}
@@ -1339,12 +1394,16 @@ func (t *TreeView) handleChooserKey(event core.KeyPressEvent) bool {
 // boundary tracks the mouse and the far edges stay put.
 func (t *TreeView) dividerAt(x core.Unit, lay treeColLayout) (col *TreeColumn, startW int, invert, ok bool) {
 	cw := t.EffectiveCellMetrics().CellWidth
+	grab0, grab1 := core.Unit(0), cw // TUI: the divider cell itself
+	if core.FindGraphicalFrames(t.Self()) {
+		grab0, grab1 = -cw/2, cw/2 // pixels: half a cell astride the line
+	}
 	slackLeft := t.fitWidth && len(lay.spans) > 0 && lay.spans[0].col == nil
 	for i, sp := range lay.spans {
 		if !lay.divVisible(sp) {
 			continue
 		}
-		if x < sp.divX || x >= sp.divX+cw {
+		if x < sp.divX+grab0 || x >= sp.divX+grab1 {
 			continue
 		}
 		if slackLeft {

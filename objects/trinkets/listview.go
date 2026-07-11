@@ -343,6 +343,15 @@ func (l *ListView) SetAlternateRowColors(alternate bool) {
 	l.Update()
 }
 
+// SetLedger turns ledger banding on: non-selected rows alternate the
+// scheme's LedgerOdd/LedgerEven colors (1-based: the first row is
+// odd). Selection colors are untouched, and the blank area below the
+// last item keeps the plain list background.
+func (l *ListView) SetLedger(on bool) {
+	l.alternateRowColors = on
+	l.Update()
+}
+
 // SetShowIcons sets whether to show icons.
 func (l *ListView) SetShowIcons(show bool) {
 	l.showIcons = show
@@ -424,9 +433,14 @@ func (l *ListView) Paint(p *core.Painter) {
 			} else {
 				s = scheme.GetSelectedListItem()
 			}
-		} else if l.alternateRowColors && itemIndex%2 == 1 {
-			// Alternate rows
-			s = style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
+		} else if l.alternateRowColors {
+			// Ledger banding (non-selected rows only), 1-based: the
+			// first row is odd.
+			if itemIndex%2 == 0 {
+				s = scheme.GetLedgerOdd()
+			} else {
+				s = scheme.GetLedgerEven()
+			}
 		} else {
 			// Unselected items
 			s = style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())

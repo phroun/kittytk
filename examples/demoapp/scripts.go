@@ -359,6 +359,7 @@ det=new tab caption="Details" children={
 			dhscroll=new checkbox caption="H-scroll (fit off)"
 			dpinl=new checkbox caption="Pin first 2"
 			dpinr=new checkbox caption="Pin last"
+			dledger=new checkbox caption="Ledger"
 		}
 	}
 }
@@ -410,6 +411,7 @@ dshowkey=w.t.det.dbox.drow.dshowkey
 dhscroll=w.t.det.dbox.drow.dhscroll
 dpinl=w.t.det.dbox.drow.dpinl
 dpinr=w.t.det.dbox.drow.dpinr
+dledger=w.t.det.dbox.drow.dledger
 binput=w.t.b.bw.brow.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont

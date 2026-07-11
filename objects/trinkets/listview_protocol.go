@@ -34,6 +34,7 @@ func init() {
 		Props: map[string]protocol.Property{
 			"selected":       intProp("selected", (*ListView).SetCurrentIndex).Tip("Selected row index (-1 = none).").Def("-1"),
 			"alternate_rows": boolProp("alternate_rows", (*ListView).SetAlternateRowColors).Tip("Shade alternate rows.").Def("false"),
+			"ledger":         boolProp("ledger", (*ListView).SetLedger).Tip("Alternate non-selected rows in the ledger colors.").Def("false"),
 		},
 		Append: func(parent, child any) error {
 			l, ok := parent.(*ListView)
