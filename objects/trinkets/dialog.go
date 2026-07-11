@@ -192,7 +192,7 @@ func (m *MessageBox) calculateSize() {
 	// wide on graphical surfaces. Reserve the icon gutter on the left (matching
 	// Paint's textX) and a margin on the right.
 	leftGutter := metrics.CellWidth * 6
-	rightMargin := metrics.CellWidth * 2
+	rightMargin := metrics.CellWidth * 4
 	var maxLineW core.Unit
 	for _, line := range lines {
 		if w := font.MeasureText(line); w > maxLineW {
