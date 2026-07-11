@@ -934,6 +934,77 @@ func (b *Backend) compositeRGBA(xPx, yPx int, src *image.RGBA) {
 	}
 }
 
+// compositeMaskTintPx composites a color-independent coverage mask (only the
+// mask's alpha channel is read) tinted with (tr,tg,tb) over the framebuffer at
+// (xPx,yPx): out = tint*cov + dst*(255-cov). This is the caller-tinted twin of
+// compositeRGBA - the terminal caches one grayscale glyph mask per shape and
+// tints it per cell, so color-varying content (e.g. a fire animation) stops
+// thrashing the per-color glyph cache.
+func (b *Backend) compositeMaskTintPx(xPx, yPx int, mask *image.RGBA, tr, tg, tb uint8) {
+	sw, sh := mask.Rect.Dx(), mask.Rect.Dy()
+	if sw <= 0 || sh <= 0 {
+		return
+	}
+	if b.clipRejects(xPx, yPx, xPx+sw, yPx+sh) {
+		return
+	}
+	dst := b.img
+	noClip := !b.pxClipActive && !b.hasClip && !b.hasRoundClip
+	col0, row0, col1, row1 := 0, 0, sw, sh
+	if noClip {
+		if xPx < 0 {
+			col0 = -xPx
+		}
+		if yPx < 0 {
+			row0 = -yPx
+		}
+		if xPx+col1 > b.w {
+			col1 = b.w - xPx
+		}
+		if yPx+row1 > b.h {
+			row1 = b.h - yPx
+		}
+		if col1 <= col0 || row1 <= row0 {
+			return
+		}
+	}
+	sp, dp := mask.Pix, dst.Pix
+	for row := row0; row < row1; row++ {
+		so := mask.PixOffset(mask.Rect.Min.X+col0, mask.Rect.Min.Y+row)
+		do := dst.PixOffset(xPx+col0, yPx+row)
+		for col := col0; col < col1; col++ {
+			cov := uint32(sp[so+3])
+			if cov == 0 {
+				so += 4
+				do += 4
+				continue
+			}
+			if !noClip && !b.pointVisible(xPx+col, yPx+row) {
+				so += 4
+				do += 4
+				continue
+			}
+			if cov == 255 {
+				dp[do], dp[do+1], dp[do+2], dp[do+3] = tr, tg, tb, 255
+			} else {
+				inv := 255 - cov
+				dp[do] = uint8((uint32(tr)*cov + uint32(dp[do])*inv) / 255)
+				dp[do+1] = uint8((uint32(tg)*cov + uint32(dp[do+1])*inv) / 255)
+				dp[do+2] = uint8((uint32(tb)*cov + uint32(dp[do+2])*inv) / 255)
+				dp[do+3] = 255
+			}
+			so += 4
+			do += 4
+		}
+	}
+}
+
+// DrawImageMaskTintPx composites a coverage mask tinted with (r,g,bl) at the
+// device-pixel anchor (see compositeMaskTintPx). Implements core.MaskTintDrawer.
+func (b *Backend) DrawImageMaskTintPx(xPx, yPx int, mask *image.RGBA, r, g, bl uint8) {
+	b.compositeMaskTintPx(xPx, yPx, mask, r, g, bl)
+}
+
 // blitRGBA copies a rendered image to (xPx, yPx), honoring every
 // active clip. Fully visible blits take a per-row copy.
 func (b *Backend) blitRGBA(xPx, yPx int, src *image.RGBA) {

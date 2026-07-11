@@ -204,6 +204,14 @@ type ImageDrawer interface {
 	DrawImagePx(xPx, yPx int, img image.Image)
 }
 
+// MaskTintDrawer is an optional RenderBackend capability: composite a
+// color-independent coverage mask (only its alpha is read) tinted with a solid
+// color. Lets a caller cache one grayscale glyph per shape and recolor it per
+// draw, so color-varying content doesn't re-rasterize a glyph per color.
+type MaskTintDrawer interface {
+	DrawImageMaskTintPx(xPx, yPx int, mask *image.RGBA, r, g, b uint8)
+}
+
 // DeviceScaler is an optional RenderBackend capability reporting the
 // device zoom: how many device pixels one unit covers at the base font
 // size (the raster backend's integer scale). Chrome that wants a
@@ -707,6 +715,22 @@ func (p *Painter) DrawImageOffset(x, y Unit, offXPx, offYPx int, img image.Image
 	ax, ay := p.deviceAnchor(sx, sy)
 	p.applyClip()
 	id.DrawImagePx(ax+offXPx, ay+offYPx, img)
+	return true
+}
+
+// DrawImageMaskTintOffset composites a coverage mask (only its alpha is read)
+// tinted with (r,g,b) at unit (x,y) plus a device-pixel offset - the recolor
+// twin of DrawImageOffset for cached grayscale glyphs. Returns false on
+// backends without MaskTintDrawer.
+func (p *Painter) DrawImageMaskTintOffset(x, y Unit, offXPx, offYPx int, mask *image.RGBA, r, g, b uint8) bool {
+	md, ok := p.backend.(MaskTintDrawer)
+	if !ok {
+		return false
+	}
+	sx, sy := p.toScreen(x, y)
+	ax, ay := p.deviceAnchor(sx, sy)
+	p.applyClip()
+	md.DrawImageMaskTintPx(ax+offXPx, ay+offYPx, mask, r, g, b)
 	return true
 }
 

@@ -93,11 +93,22 @@ type purfecTermGfx struct {
 
 	// Caches + engine for scaled glyph imagery.
 	engine     *text.Engine
-	textCur    map[string]*image.RGBA
-	textPrev   map[string]*image.RGBA
+	textCur    map[coverMaskKey]*image.RGBA
+	textPrev   map[coverMaskKey]*image.RGBA
 	glyphCur   map[purfecterm.GlyphCacheKey]*image.RGBA
 	glyphPrev  map[purfecterm.GlyphCacheKey]*image.RGBA
 	overlayCur map[string]*image.RGBA
+}
+
+// coverMaskKey identifies a cached glyph COVERAGE mask - deliberately
+// color-independent (no fg), so recoloring a glyph (an ls listing, a fire
+// animation) is a cache hit that just re-tints the same grayscale mask.
+type coverMaskKey struct {
+	str      string
+	bold     bool
+	italic   bool
+	wPx, hPx int
+	wide     bool
 }
 
 const gfxCacheMax = 4096
@@ -463,16 +474,19 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 // Text rendering with scaling (double lines, screen scale, flex)
 // ---------------------------------------------------------------
 
-// cellTextImage rasterizes one cell's text at an exact device-pixel
-// box, applying the gtk stretch/center rules, and caches the result.
-func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA, boxWPx, boxHPx int, ppu float64, wideCell bool, ch rune) *image.RGBA {
+// cellTextImage rasterizes one cell's glyph into a color-independent COVERAGE
+// mask (white ink, alpha = coverage) at an exact device-pixel box, applying the
+// gtk stretch/center rules, and caches it keyed WITHOUT color. Callers tint the
+// mask with the cell's foreground at draw time (DrawImageMaskTintOffset), so a
+// glyph shown in many colors rasterizes once and re-tints per cell.
+func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, boxWPx, boxHPx int, ppu float64, wideCell bool, ch rune) *image.RGBA {
 	if boxWPx <= 0 || boxHPx <= 0 {
 		return nil
 	}
 	if ppu <= 0 {
 		ppu = 1
 	}
-	key := fmt.Sprintf("%s|%t|%t|%02x%02x%02x|%d|%d|%t", str, bold, italic, fg.R, fg.G, fg.B, boxWPx, boxHPx, wideCell)
+	key := coverMaskKey{str: str, bold: bold, italic: italic, wPx: boxWPx, hPx: boxHPx, wide: wideCell}
 	if img, ok := t.gfx.textCur[key]; ok {
 		return img
 	}
@@ -510,9 +524,10 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA,
 		naturalW = 1
 	}
 	raw := image.NewRGBA(image.Rect(0, 0, naturalW, naturalH))
-	// Rasterize at the renderer's font_size-aware pixels-per-unit so the
-	// glyph fills its (font_size-scaled) cell box.
-	text.Render(raw, sp, 0, 0, ppu, fg)
+	// Rasterize a WHITE glyph at the renderer's font_size-aware pixels-per-unit:
+	// the result is a color-independent coverage mask (alpha = ink coverage);
+	// the draw path tints it with the cell's foreground.
+	text.Render(raw, sp, 0, 0, ppu, color.RGBA{255, 255, 255, 255})
 
 	// Stretch/center per the gtk rules.
 	out := image.NewRGBA(image.Rect(0, 0, boxWPx, boxHPx))
@@ -548,7 +563,7 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, fg color.RGBA,
 
 	if len(t.gfx.textCur) >= gfxCacheMax {
 		t.gfx.textPrev = t.gfx.textCur
-		t.gfx.textCur = map[string]*image.RGBA{}
+		t.gfx.textCur = map[coverMaskKey]*image.RGBA{}
 	}
 	t.gfx.textCur[key] = out
 	return out
@@ -566,11 +581,12 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg pur
 	yPx := int(math.Round(cellY*ppu)) + yOffPx
 	wide := cellVisualWidth > 1.0
 
+	frgb := pcRGBA(fg)
 	switch lineAttr {
 	case purfecterm.LineAttrDoubleTop, purfecterm.LineAttrDoubleBottom:
 		// Rendered at 2x height; only one half shows through the clip.
-		img := t.cellTextImage(str, cell.Bold, cell.Italic, pcRGBA(fg), boxW, contentH*2, ppu, wide, cell.Char)
-		if img == nil {
+		mask := t.cellTextImage(str, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char)
+		if mask == nil {
 			return
 		}
 		clip := p.WithClip(core.UnitRect{
@@ -580,13 +596,13 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg pur
 		if lineAttr == purfecterm.LineAttrDoubleBottom {
 			yPx -= contentH
 		}
-		clip.DrawImageOffset(0, 0, xPx, yPx, img)
+		clip.DrawImageMaskTintOffset(0, 0, xPx, yPx, mask, frgb.R, frgb.G, frgb.B)
 	default:
-		img := t.cellTextImage(str, cell.Bold, cell.Italic, pcRGBA(fg), boxW, contentH, ppu, wide, cell.Char)
-		if img == nil {
+		mask := t.cellTextImage(str, cell.Bold, cell.Italic, boxW, contentH, ppu, wide, cell.Char)
+		if mask == nil {
 			return
 		}
-		p.DrawImageOffset(0, 0, xPx, yPx, img)
+		p.DrawImageMaskTintOffset(0, 0, xPx, yPx, mask, frgb.R, frgb.G, frgb.B)
 	}
 }
 
@@ -1252,8 +1268,8 @@ func (t *PurfecTerm) stopGfxTimers() {
 
 func (t *PurfecTerm) rotateGfxCaches() {
 	if t.gfx.textCur == nil {
-		t.gfx.textCur = map[string]*image.RGBA{}
-		t.gfx.textPrev = map[string]*image.RGBA{}
+		t.gfx.textCur = map[coverMaskKey]*image.RGBA{}
+		t.gfx.textPrev = map[coverMaskKey]*image.RGBA{}
 		t.gfx.glyphCur = map[purfecterm.GlyphCacheKey]*image.RGBA{}
 		t.gfx.glyphPrev = map[purfecterm.GlyphCacheKey]*image.RGBA{}
 		t.gfx.overlayCur = map[string]*image.RGBA{}
