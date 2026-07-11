@@ -343,12 +343,17 @@ func (d *Desktop) showAboutDesktop() {
 	mb.ResizeToFitContent()
 	area := wm.ClientArea()
 	b := mb.Bounds()
-	mb.SetBounds(core.UnitRect{
-		X:      area.X + (area.Width-b.Width)/2,
-		Y:      area.Y + (area.Height-b.Height)/2,
-		Width:  b.Width,
-		Height: b.Height,
-	})
+	x := area.X + (area.Width-b.Width)/2
+	y := area.Y + (area.Height-b.Height)/2
+	// Snap the centered origin to the cell grid on the text/cell path (a
+	// half-cell position breaks TUI rendering); graphical smooth positioning
+	// keeps the exact center.
+	if !wm.SmoothPositioning() {
+		metrics := d.EffectiveCellMetrics()
+		x = metrics.RoundDownToCellX(x)
+		y = metrics.RoundDownToCellY(y)
+	}
+	mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
 }
 
 // SetBackend sets the render backend and initializes related components.
