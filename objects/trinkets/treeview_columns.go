@@ -929,9 +929,10 @@ func (t *TreeView) columnLayout() treeColLayout {
 			xCells = leftCells - hs
 		}
 		if i == n-fr && fr > 0 {
-			xCells = contentCells - rightCells + 1 // after the divider
-			// The divider left of the right flank sits at its fixed spot;
-			// record it on the previous span below via divX handling.
+			// After the flank's leading divider: a reserved cell in the
+			// TUI, nothing on pixel surfaces (the hairline sits ON the
+			// boundary - a hardcoded +1 left a one-cell gap there).
+			xCells = contentCells - rightCells + divCells
 		}
 		sp := colSpan{
 			col:   seq[i],
