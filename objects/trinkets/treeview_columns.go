@@ -251,12 +251,21 @@ func (t *TreeView) SetSorted(sorted bool, sortedBy int, descending bool) {
 
 // resortKeepingSelection regenerates the visual row list under the
 // current sort state, keeping the selected ITEM selected (its visual
-// index may change; its identity does not).
+// index may change; its identity does not). If the selected item was
+// IN VIEW before the operation, the viewport follows it to its new
+// row; if the user had scrolled it out of view themselves, the
+// viewport stays where they put it.
 func (t *TreeView) resortKeepingSelection() {
 	cur := t.CurrentItem()
+	wasVisible := cur != nil &&
+		t.currentIndex >= t.scrollOffset &&
+		t.currentIndex < t.scrollOffset+t.visibleCount()
 	t.rebuildFlatList()
 	if cur != nil {
 		t.restoreSelectionByItem(cur)
+		if wasVisible {
+			t.ensureVisible(t.currentIndex)
+		}
 	}
 	t.Update()
 }

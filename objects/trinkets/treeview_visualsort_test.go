@@ -1,6 +1,7 @@
 package trinkets
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/phroun/kittytk/core"
@@ -133,6 +134,40 @@ func TestTreeHeaderClickResortsBuiltIn(t *testing.T) {
 	tv.HandleMousePress(core.MousePressEvent{X: lay.spans[0].x + 8, Y: 4, Button: core.LeftButton})
 	if got := visualCaptions(tv)[0]; got != "dir" {
 		t.Errorf("first visual row after second click = %q, want dir", got)
+	}
+}
+
+// A resort (sort toggles, value-change reorders) follows the selected
+// item vertically ONLY when it was in view beforehand; a viewport the
+// user scrolled away from the selection stays where they put it.
+func TestTreeResortFollowsVisibleSelection(t *testing.T) {
+	tv := NewTreeView()
+	tv.SetShowHeader(true)
+	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	for i := 0; i < 40; i++ {
+		tv.AddRootItem(NewTreeItem(fmt.Sprintf("item%02d", i)))
+	}
+	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
+	tv.SetCurrentIndex(0) // item00 selected, visible at the top
+
+	// Descending: item00 drops to the last visual row; the viewport
+	// follows because the selection WAS visible.
+	tv.SetSorted(true, -1, true)
+	vc := tv.visibleCount()
+	if tv.currentIndex != 39 {
+		t.Fatalf("selection index after sort = %d, want 39", tv.currentIndex)
+	}
+	if tv.currentIndex < tv.scrollOffset || tv.currentIndex >= tv.scrollOffset+vc {
+		t.Errorf("viewport did not follow the visible selection: offset=%d idx=%d vc=%d",
+			tv.scrollOffset, tv.currentIndex, vc)
+	}
+
+	// The user scrolls the selection OUT of view; a resort must not
+	// yank the viewport back to it.
+	tv.scrollOffset = 0
+	tv.SetSorted(true, -1, true) // re-sort: selection stays at 39
+	if tv.scrollOffset != 0 {
+		t.Errorf("resort moved a user-scrolled viewport: offset=%d, want 0", tv.scrollOffset)
 	}
 }
 
