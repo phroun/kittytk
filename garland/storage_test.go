@@ -445,7 +445,7 @@ func TestSave(t *testing.T) {
 	cursor.InsertString("-", nil, true)
 
 	// Save
-	err = g.Save()
+	_, err = g.Save()
 	if err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestSaveNoSource(t *testing.T) {
 	lib, _ := Init(LibraryOptions{})
 	g, _ := lib.Open(FileOptions{DataString: "Hello World"})
 
-	err := g.Save()
+	_, err := g.Save()
 	if err != ErrNoDataSource {
 		t.Errorf("Save with no source returned %v, want ErrNoDataSource", err)
 	}
@@ -486,7 +486,7 @@ func TestSaveAs(t *testing.T) {
 	// SaveAs
 	fs := &localFileSystem{}
 	newPath := filepath.Join(tmpDir, "saved.txt")
-	err := g.SaveAs(fs, newPath)
+	_, err := g.SaveAs(fs, newPath)
 	if err != nil {
 		t.Fatalf("SaveAs failed: %v", err)
 	}
@@ -505,7 +505,7 @@ func TestSaveAsNilFS(t *testing.T) {
 	lib, _ := Init(LibraryOptions{})
 	g, _ := lib.Open(FileOptions{DataString: "Hello World"})
 
-	err := g.SaveAs(nil, "/tmp/test.txt")
+	_, err := g.SaveAs(nil, "/tmp/test.txt")
 	if err != ErrNotSupported {
 		t.Errorf("SaveAs with nil fs returned %v, want ErrNotSupported", err)
 	}

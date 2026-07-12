@@ -66,6 +66,13 @@ type NodeSnapshot struct {
 	dataHash       []byte // SHA-256 hash for verification
 	decorationHash []byte // SHA-256 hash for decoration verification
 
+	// placeholderReason records WHY this snapshot became a placeholder,
+	// captured at the moment the loss is discovered (cold-storage read
+	// failure, hash mismatch, source file changed on disk, ...). It is
+	// carried through to the ScarWarning when the block is scarred
+	// during a save. Empty unless storageState is StoragePlaceholder.
+	placeholderReason string
+
 	// originalFileOffset is the byte offset in the original file where this
 	// content came from. -1 if not from the original file (not eligible for warm storage).
 	originalFileOffset int64
@@ -88,6 +95,18 @@ type NodeSnapshot struct {
 	// lastAccessTime tracks when this snapshot's data was last accessed.
 	// Used for LRU-based memory management. Zero value means never accessed.
 	lastAccessTime time.Time
+}
+
+// becomePlaceholder marks the snapshot's data as lost, recording why.
+// The reason is kept from this moment of discovery until it is reported
+// back to the app (in a ScarWarning) when the block is scarred on save.
+// The first recorded reason wins: a placeholder re-touched by a later
+// failed access keeps the original cause.
+func (snap *NodeSnapshot) becomePlaceholder(reason string) {
+	if snap.storageState != StoragePlaceholder || snap.placeholderReason == "" {
+		snap.placeholderReason = reason
+	}
+	snap.storageState = StoragePlaceholder
 }
 
 // newNode creates a new node with the given ID and Garland reference.

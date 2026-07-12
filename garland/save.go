@@ -75,11 +75,35 @@ type saveSpan struct {
 	skip   bool  // bytes already correct at this offset - do not write
 }
 
+// ScarWarning reports one lost block that was written as a visible
+// scar during a save. The app should surface these to the user:
+// the save succeeded, but this data is gone.
+type ScarWarning struct {
+	Offset   int64  // byte offset of the scarred block in the saved content
+	Length   int64  // byte count of the lost block (the scar occupies exactly this)
+	Marker   string // the human-readable marker text
+	Appended bool   // marker did not fit in the block; it was appended at EOF
+
+	// Reason is why the data was lost, recorded at the moment the loss
+	// was discovered (e.g. "cold storage read failed: ...", "source
+	// file changed on disk (hash mismatch)"). Empty when the cause was
+	// never observed by the library.
+	Reason string
+}
+
+// SaveReport carries non-fatal outcomes of a save.
+type SaveReport struct {
+	// Scars lists blocks whose data was lost to storage failure and
+	// were written as visible scars instead. Empty on a clean save.
+	Scars []ScarWarning
+}
+
 // SaveWith overwrites the original file in place with the current
-// content. See the file header for the full design.
-func (g *Garland) SaveWith(opts SaveOptions) error {
+// content. See the file header for the full design. The report lists
+// any lost blocks that were scarred; the app should warn the user.
+func (g *Garland) SaveWith(opts SaveOptions) (SaveReport, error) {
 	if g.sourcePath == "" {
-		return ErrNoDataSource
+		return SaveReport{}, ErrNoDataSource
 	}
 
 	g.mu.Lock()
@@ -92,13 +116,16 @@ func (g *Garland) SaveWith(opts SaveOptions) error {
 	return g.saveInPlace(fs, opts)
 }
 
-func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
+func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) (SaveReport, error) {
 	// RULING: Save never refuses because data was lost. Placeholder
 	// leaves become visible scars first (same byte count, so no other
-	// offset moves), then the save proceeds normally.
-	if _, err := g.scarifyPlaceholders(); err != nil {
-		return err
+	// offset moves), then the save proceeds normally - and the scars
+	// are reported back so the app can warn the user.
+	scars, err := g.scarifyPlaceholders()
+	if err != nil {
+		return SaveReport{}, err
 	}
+	report := SaveReport{Scars: scars}
 
 	// A read handle on the old file is needed for warm sources and
 	// history migration. Reuse the warm-storage handle when present.
@@ -186,7 +213,7 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
 		collect(g.root.id)
 	}
 	if walkErr != nil {
-		return walkErr
+		return report, walkErr
 	}
 	newTotal := newCursor
 
@@ -233,13 +260,13 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
 				}
 				// Read it back while the old file is intact...
 				if err := g.readFromWarmStorageWithTrust(node.id, snap); err != nil {
-					return err
+					return report, err
 				}
 				// ...and push it to cold if a backend exists (else it
 				// simply stays in memory).
 				if g.lib.coldStorageBackend != nil && g.loadingStyle != MemoryOnly {
 					if err := g.chillSnapshot(node.id, key, snap); err != nil {
-						return err
+						return report, err
 					}
 				}
 			}
@@ -249,7 +276,7 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
 	// ---- Open the write handle: read-write, NO truncation ----
 	writeHandle, err := fs.Open(g.sourcePath, OpenModeReadWrite)
 	if err != nil {
-		return err
+		return report, err
 	}
 	defer fs.Close(writeHandle)
 
@@ -295,7 +322,7 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
 			continue
 		}
 		if err := writeSpan(sp); err != nil {
-			return err
+			return report, err
 		}
 	}
 
@@ -306,7 +333,7 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
 			continue
 		}
 		if err := writeSpan(sp); err != nil {
-			return err
+			return report, err
 		}
 	}
 
@@ -315,7 +342,7 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
 		if err := fs.Truncate(writeHandle, newTotal); err != nil {
 			// A stale tail is silent corruption - refuse rather than
 			// pretend the save succeeded.
-			return err
+			return report, err
 		}
 	}
 
@@ -344,7 +371,7 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
 		_ = g.captureSourceInfo()
 	}
 
-	return nil
+	return report, nil
 }
 
 // ---- Placeholder scarification ----
@@ -402,14 +429,16 @@ func scarBytes(blockLen int64, marker string) (block []byte, appendix []byte) {
 
 // scarifyPlaceholders converts every placeholder leaf of the current
 // revision into its visible scar (and gathers overflow markers to
-// append at the end). Returns true if anything changed; in that case
-// one new revision was recorded.
-func (g *Garland) scarifyPlaceholders() (bool, error) {
+// append at the end). Returns one warning per scarred block; when any
+// exist, one new revision was recorded.
+func (g *Garland) scarifyPlaceholders() ([]ScarWarning, error) {
 	type scarJob struct {
 		node *Node
 		snap *NodeSnapshot
+		off  int64
 	}
 	var jobs []scarJob
+	var off int64
 	var walk func(id NodeID)
 	walk = func(id NodeID) {
 		node := g.nodeRegistry[id]
@@ -426,14 +455,15 @@ func (g *Garland) scarifyPlaceholders() (bool, error) {
 			return
 		}
 		if snap.storageState == StoragePlaceholder && snap.byteCount > 0 {
-			jobs = append(jobs, scarJob{node, snap})
+			jobs = append(jobs, scarJob{node, snap, off})
 		}
+		off += snap.byteCount
 	}
 	if g.root != nil {
 		walk(g.root.id)
 	}
 	if len(jobs) == 0 {
-		return false, nil
+		return nil, nil
 	}
 
 	if g.transaction == nil {
@@ -441,10 +471,18 @@ func (g *Garland) scarifyPlaceholders() (bool, error) {
 	}
 
 	var appendices []byte
+	warnings := make([]ScarWarning, 0, len(jobs))
 	for _, j := range jobs {
 		marker := placeholderMarker(j.snap, j.node.ID())
 		block, appendix := scarBytes(j.snap.byteCount, marker)
 		appendices = append(appendices, appendix...)
+		warnings = append(warnings, ScarWarning{
+			Offset:   j.off,
+			Length:   j.snap.byteCount,
+			Marker:   marker,
+			Appended: appendix != nil,
+			Reason:   j.snap.placeholderReason,
+		})
 
 		// Replace the snapshot's content IN PLACE with the same byte
 		// count: history that referenced this snapshot lost the same
@@ -489,11 +527,11 @@ func (g *Garland) scarifyPlaceholders() (bool, error) {
 	if len(appendices) > 0 {
 		rootSnap := g.root.snapshotAt(g.currentFork, g.currentRevision)
 		if rootSnap == nil {
-			return false, ErrInternal
+			return nil, ErrInternal
 		}
 		newRootID, err := g.insertInternal(g.root, rootSnap, g.totalBytes, 0, appendices, nil, false)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		g.root = g.nodeRegistry[newRootID]
 		g.updateCountsFromRoot()
@@ -512,5 +550,5 @@ func (g *Garland) scarifyPlaceholders() (bool, error) {
 	}
 
 	g.recordMutation()
-	return true, nil
+	return warnings, nil
 }

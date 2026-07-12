@@ -137,12 +137,41 @@ const (
 // Close releases resources associated with the Garland.
 func (g *Garland) Close() error
 
-// Save overwrites the original file.
-// Caller asserts that this replaces any warm storage source.
-func (g *Garland) Save() error
+// Save overwrites the original file IN PLACE (no temp copy; the file
+// shrinks only as the final step) and preserves undo history. Warm
+// storage survives, re-homed to the new layout.
+func (g *Garland) Save() (SaveReport, error)
+
+// SaveWith is Save with explicit options (e.g. PreserveHistory=false).
+func (g *Garland) SaveWith(opts SaveOptions) (SaveReport, error)
 
 // SaveAs writes to a new location. Warm storage remains untouched.
-func (g *Garland) SaveAs(fs FileSystemInterface, name string) error
+// (Saving onto the original path routes through the in-place engine.)
+func (g *Garland) SaveAs(fs FileSystemInterface, name string) (SaveReport, error)
+
+// SaveOptions configures Save behavior.
+type SaveOptions struct {
+    // PreserveHistory migrates warm-backed undo history that the
+    // rewrite would overwrite into cold storage first. When false,
+    // overwritten history becomes placeholders on access (amputated,
+    // never silently corrupted).
+    PreserveHistory bool
+}
+
+// A save NEVER refuses because data was lost to a storage failure:
+// lost blocks are written as visible, exact-size scars and reported
+// back so the app decides how to deal with them.
+type SaveReport struct {
+    Scars []ScarWarning // empty on a clean save
+}
+
+type ScarWarning struct {
+    Offset   int64  // byte offset of the scarred block in the saved content
+    Length   int64  // byte count of the lost block
+    Marker   string // human-readable marker text written into the file
+    Appended bool   // marker did not fit in the block; appended at EOF
+    Reason   string // why the data was lost, captured at discovery time
+}
 ```
 
 ---

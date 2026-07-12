@@ -2037,13 +2037,28 @@ func (r *REPL) cmdSave() {
 		return
 	}
 
-	err := r.garland.Save()
+	report, err := r.garland.Save()
 	if err != nil {
 		fmt.Printf("Save error: %v\n", err)
 		return
 	}
+	printScarWarnings(report)
 
 	fmt.Println("File saved")
+}
+
+func printScarWarnings(report garland.SaveReport) {
+	for _, s := range report.Scars {
+		fmt.Printf("WARNING: lost block at offset %d (%d bytes) written as scar", s.Offset, s.Length)
+		if s.Appended {
+			fmt.Printf(" (marker appended at end of file)")
+		}
+		fmt.Println()
+		if s.Reason != "" {
+			fmt.Printf("  reason: %s\n", s.Reason)
+		}
+		fmt.Printf("  marker: %s\n", s.Marker)
+	}
 }
 
 func (r *REPL) cmdSaveAs(args []string) {
@@ -2057,11 +2072,12 @@ func (r *REPL) cmdSaveAs(args []string) {
 	}
 
 	path := strings.Join(args, " ")
-	err := r.garland.SaveAs(nil, path)
+	report, err := r.garland.SaveAs(nil, path)
 	if err != nil {
 		fmt.Printf("SaveAs error: %v\n", err)
 		return
 	}
+	printScarWarnings(report)
 
 	fmt.Printf("File saved to %s\n", path)
 }

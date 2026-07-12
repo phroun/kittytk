@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -151,7 +152,7 @@ func TestSaveInPlaceContract(t *testing.T) {
 	}
 	want := readBack(t, g)
 
-	if err := g.Save(); err != nil {
+	if _, err := g.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -200,7 +201,7 @@ func TestSaveGrowNoTruncate(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := readBack(t, g)
-	if err := g.Save(); err != nil {
+	if _, err := g.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if len(rfs.truncates) != 0 {
@@ -231,7 +232,7 @@ func TestSavePreservesHistoryWarm(t *testing.T) {
 	if _, _, err := c.OverwriteBytes(1500, []byte(saveDoc(1500))); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.SaveWith(SaveOptions{PreserveHistory: true}); err != nil {
+	if _, err := g.SaveWith(SaveOptions{PreserveHistory: true}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -285,7 +286,7 @@ func TestSaveRandomizedWarmRoundTrips(t *testing.T) {
 				case 3: // chill whatever is warm-eligible
 					chillCurrentWarmEligible(t, g)
 				case 4: // save + verify disk == model
-					if err := g.Save(); err != nil {
+					if _, err := g.Save(); err != nil {
 						t.Fatalf("op %d Save: %v", i, err)
 					}
 					onDisk, err := os.ReadFile(path)
@@ -301,7 +302,7 @@ func TestSaveRandomizedWarmRoundTrips(t *testing.T) {
 				}
 			}
 			// Final save + full read-back through whatever tiers remain.
-			if err := g.Save(); err != nil {
+			if _, err := g.Save(); err != nil {
 				t.Fatalf("final Save: %v", err)
 			}
 			onDisk, _ := os.ReadFile(path)
@@ -413,9 +414,14 @@ func TestSaveNeverRefusesOnPlaceholder(t *testing.T) {
 		}
 	}
 
-	// ...but Save must still succeed.
-	if err := g.Save(); err != nil {
+	// ...but Save must still succeed, and the report must tell the app
+	// exactly what was lost, where, and why.
+	report, err := g.Save()
+	if err != nil {
 		t.Fatalf("Save refused on placeholder: %v", err)
+	}
+	if len(report.Scars) == 0 {
+		t.Fatal("scarred save reported no ScarWarnings")
 	}
 
 	onDisk, err := os.ReadFile(path)
@@ -433,5 +439,33 @@ func TestSaveNeverRefusesOnPlaceholder(t *testing.T) {
 	}
 	if got := readBack(t, g); got != string(onDisk) {
 		t.Error("buffer != file after scarred save")
+	}
+
+	// Each warning must be structurally coherent with the saved file:
+	// sane bounds, marker text, and the reason captured at the moment
+	// the loss was discovered (here: cold storage destroyed).
+	for i, s := range report.Scars {
+		if s.Offset < 0 || s.Length <= 0 || s.Offset+s.Length > int64(len(onDisk)) {
+			t.Errorf("scar %d: bad bounds offset=%d length=%d (file %d bytes)",
+				i, s.Offset, s.Length, len(onDisk))
+			continue
+		}
+		if s.Marker == "" {
+			t.Errorf("scar %d: empty marker", i)
+		}
+		if s.Appended {
+			// Marker lives at EOF instead of inside the block.
+			if !bytes.Contains(onDisk, []byte("\n"+s.Marker)) {
+				t.Errorf("scar %d: appended marker %q not found at EOF region", i, s.Marker)
+			}
+		} else {
+			blockRegion := onDisk[s.Offset : s.Offset+s.Length]
+			if !bytes.Contains(blockRegion, []byte(s.Marker)) {
+				t.Errorf("scar %d: marker %q not inside its block region", i, s.Marker)
+			}
+		}
+		if !strings.Contains(s.Reason, "cold storage") {
+			t.Errorf("scar %d: reason %q does not identify the cold storage failure", i, s.Reason)
+		}
 	}
 }
