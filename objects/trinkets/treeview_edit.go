@@ -279,17 +279,26 @@ func (t *TreeView) dropEditorTrinkets() {
 
 // ensureEditColVisible scrolls the horizontal column region the
 // MINIMUM needed to reveal the edited column (scroll mode only).
-// Same conservative rule as the ScrollArea's EnsureRectVisible: no
-// movement at all when the cell is already fully in view; otherwise
-// align the nearer edge, prioritizing (never hiding) the left edge.
 func (t *TreeView) ensureEditColVisible() {
-	if t.fitWidth || !t.rowEditing || t.editCol == nil {
+	if !t.rowEditing || t.editCol == nil {
+		return
+	}
+	t.ensureColVisible(t.editCol)
+}
+
+// ensureColVisible scrolls the horizontal column region the MINIMUM
+// needed to reveal col (scroll mode only). Same conservative rule as
+// the ScrollArea's EnsureRectVisible: no movement at all when the
+// cell is already fully in view; otherwise align the nearer edge,
+// prioritizing (never hiding) the left edge.
+func (t *TreeView) ensureColVisible(col *TreeColumn) {
+	if t.fitWidth || col == nil {
 		return
 	}
 	lay := t.columnLayout()
 	cw := t.EffectiveCellMetrics().CellWidth
 	for _, sp := range lay.spans {
-		if !spanMatchesCol(sp, t.editCol) {
+		if !spanMatchesCol(sp, col) {
 			continue
 		}
 		if sp.fixed {
@@ -424,6 +433,44 @@ func (t *TreeView) stepEditRow(delta int) {
 	if it := t.CurrentItem(); it != nil && col != nil {
 		t.beginCellEdit(it, col)
 	}
+}
+
+// handleEditTargetKey rotates the Enter-target column with Left/Right
+// while the GRID holds the focus (content zone, no editor up) and
+// editing is available: the FocusedListItem highlight walks the
+// editable columns - choosing WHERE Enter or a click will edit -
+// without entering edit mode, and the chosen column is brought into
+// horizontal view conservatively. In an editable grid the arrows
+// belong to this; expand/collapse keeps +/-, Space, and the mouse.
+// Returns handled.
+func (t *TreeView) handleEditTargetKey(event core.KeyPressEvent) bool {
+	if event.Key != "Left" && event.Key != "Right" {
+		return false
+	}
+	if !t.multiColumn() || t.rowEditing || t.headerZone != hzContent {
+		return false
+	}
+	cols := t.editableColumns()
+	if len(cols) == 0 {
+		return false // not an editable grid: classic tree navigation
+	}
+	delta := 1
+	if event.Key == "Left" {
+		delta = -1
+	}
+	cur := t.enterTargetColumn()
+	idx := 0
+	for i, c := range cols {
+		if c == cur {
+			idx = i
+			break
+		}
+	}
+	next := cols[(idx+delta+len(cols))%len(cols)]
+	t.editLastCol = next
+	t.ensureColVisible(next)
+	t.Update()
+	return true
 }
 
 // handleEditKey routes keys while the row editor is up. Everything is
@@ -626,6 +673,63 @@ func (t *TreeView) handleEditMouseRelease(event core.MouseReleaseEvent) bool {
 
 // --- click-to-edit (a click on the already-selected row) ---
 
+// editableColumnAt resolves which editable column the point x (in a
+// content row) addresses: the column under x when it is editable -
+// with the tree-hosting cell counting only its caption's DISPLAYED
+// text zone (the ellipsis, when cut, excluded; two-cell minimum so
+// blank or tiny captions stay reachable), the Finder/Explorer
+// convention. Left of that (indent/expander/icon) and right of it
+// resolve to nil: the classic click/double-click regions. Selection
+// clicks and drags use this to move the Enter target with the mouse.
+func (t *TreeView) editableColumnAt(x core.Unit, item *TreeItem) *TreeColumn {
+	if !t.multiColumn() || item == nil {
+		return nil
+	}
+	metrics := t.EffectiveCellMetrics()
+	lay := t.columnLayout()
+	host := t.treeHostColumn()
+	for _, sp := range lay.spans {
+		col := sp.col
+		if col == nil {
+			if !t.keyEditable {
+				continue
+			}
+			col = treeKeyColumn
+		} else if !col.Editable {
+			continue
+		}
+		clip, ok := lay.spanClip(sp, metrics.CellHeight)
+		if !ok || x < clip.X || x >= clip.X+clip.Width {
+			continue
+		}
+		if sp.col == nil || (host != nil && sp.col == host) {
+			textX := sp.x + t.treeCellTextInset(item)
+			if x < textX {
+				continue
+			}
+			text := item.Text
+			if sp.col != nil {
+				text = sp.col.displayValue(item.Value(sp.col.ID))
+			}
+			font := t.EffectiveFont()
+			avail := sp.x + sp.w - textX
+			shown := strings.TrimSuffix(ellipsizeText(font, text, avail), "…")
+			zone := font.MeasureText(shown)
+			if min := 2 * metrics.CellWidth; zone < min {
+				zone = min
+			}
+			if zone > avail {
+				zone = avail
+			}
+			if x >= textX+zone {
+				continue
+			}
+		}
+		return col
+	}
+	return nil
+}
+
 // noteClickEditPress records, at press time, whether this click landed
 // on an editable cell of the ALREADY selected row.
 func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
@@ -642,59 +746,14 @@ func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
 	if row != t.currentIndex || row < 0 || row >= len(t.flatList) {
 		return
 	}
-	lay := t.columnLayout()
-	host := t.treeHostColumn()
-	for _, sp := range lay.spans {
-		col := sp.col
-		if col == nil {
-			if !t.keyEditable {
-				continue
-			}
-			col = treeKeyColumn
-		} else if !col.Editable {
-			continue
-		}
-		clip, ok := lay.spanClip(sp, metrics.CellHeight)
-		if !ok || event.X < clip.X || event.X >= clip.X+clip.Width {
-			continue
-		}
-		// The tree-hosting cell's edit target is the TEXT itself, the
-		// Finder/Explorer convention: from the caption's left edge to
-		// its DISPLAYED width (the ellipsis, when cut, excluded), with
-		// a two-cell minimum so blank or tiny captions stay clickable.
-		// Left of that (indent/expander/icon) and right of it are the
-		// classic click/double-click regions - the arrow keeps its
-		// click, double clicks expand/collapse.
-		if sp.col == nil || (host != nil && sp.col == host) {
-			item := t.flatList[row]
-			textX := sp.x + t.treeCellTextInset(item)
-			if event.X < textX {
-				continue
-			}
-			text := item.Text
-			if sp.col != nil {
-				text = sp.col.displayValue(item.Value(sp.col.ID))
-			}
-			font := t.EffectiveFont()
-			avail := sp.x + sp.w - textX
-			shown := ellipsizeText(font, text, avail)
-			shown = strings.TrimSuffix(shown, "…")
-			zone := font.MeasureText(shown)
-			if min := 2 * metrics.CellWidth; zone < min {
-				zone = min
-			}
-			if zone > avail {
-				zone = avail
-			}
-			if event.X >= textX+zone {
-				continue
-			}
-		}
-		t.clickEditItem = t.flatList[row]
-		t.clickEditCol = col
-		t.clickEditX, t.clickEditY = event.X, event.Y
+	item := t.flatList[row]
+	col := t.editableColumnAt(event.X, item)
+	if col == nil {
 		return
 	}
+	t.clickEditItem = item
+	t.clickEditCol = col
+	t.clickEditX, t.clickEditY = event.X, event.Y
 }
 
 // armClickEdit begins the edit IMMEDIATELY on a drag-free release over

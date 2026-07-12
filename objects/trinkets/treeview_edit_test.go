@@ -232,6 +232,122 @@ func TestTreeKeyEditorRespectsIndent(t *testing.T) {
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 }
 
+// In an editable grid, Left/Right rotate the Enter-target column
+// (with wrap) without opening the editor, bringing it into horizontal
+// view; a grid with nothing editable keeps the classic tree keys.
+func TestTreeArrowsRotateEnterTarget(t *testing.T) {
+	tv := newEditableTree() // size and kind editable, date not
+	tv.SetEditable(true)    // the key column joins the ring: key, size, kind
+
+	if got := tv.enterTargetColumn(); got != treeKeyColumn {
+		t.Fatalf("initial target = %v, want the key column", got)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Right"})
+	if got := tv.enterTargetColumn(); got != tv.ColumnByID("size") {
+		t.Fatalf("target after Right = %v, want size", got)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Right"})
+	if got := tv.enterTargetColumn(); got != tv.ColumnByID("kind") {
+		t.Fatalf("target after Right,Right = %v, want kind", got)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Right"}) // wraps
+	if got := tv.enterTargetColumn(); got != treeKeyColumn {
+		t.Fatalf("target after wrap = %v, want the key column", got)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Left"}) // wraps back
+	if got := tv.enterTargetColumn(); got != tv.ColumnByID("kind") {
+		t.Fatalf("target after Left wrap = %v, want kind", got)
+	}
+	if tv.rowEditing {
+		t.Fatal("rotation opened the editor")
+	}
+	// Enter now edits the rotated-to column.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	if !tv.rowEditing || tv.editCol != tv.ColumnByID("kind") {
+		t.Fatal("Enter did not edit the rotated-to column")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+
+	// A non-editable grid keeps the classic Left/Right tree keys.
+	plain := newColumnsTree(60, 10)
+	plain.SetCurrentIndex(0) // "Folder", expanded
+	folder := plain.CurrentItem()
+	plain.HandleKeyPress(core.KeyPressEvent{Key: "Left"})
+	if folder.Expanded {
+		t.Error("Left did not collapse in a non-editable grid")
+	}
+}
+
+// A selection click also selects the COLUMN as the Enter target when
+// it lands on an editable cell; on a non-editable cell only the row
+// changes. Drag-selection tracks both too, and never auto-enters edit
+// mode.
+func TestTreeMouseSelectsTargetColumn(t *testing.T) {
+	tv := newEditableTree() // size and kind editable, date not
+	lay := tv.columnLayout()
+	spanX := func(id string) core.Unit {
+		for _, sp := range lay.spans {
+			if sp.col != nil && sp.col.ID == id {
+				return sp.x + sp.w/2
+			}
+		}
+		t.Fatalf("no span for %q", id)
+		return 0
+	}
+	rowY := func(i int) core.Unit { return 16 + core.Unit(i)*16 + 8 }
+
+	// Click row 1's Kind cell: row AND column select.
+	tv.HandleMousePress(core.MousePressEvent{X: spanX("kind"), Y: rowY(1), Button: core.LeftButton})
+	tv.HandleMouseRelease(core.MouseReleaseEvent{X: spanX("kind"), Y: rowY(1), Button: core.LeftButton})
+	if tv.CurrentIndex() != 1 || tv.enterTargetColumn() != tv.ColumnByID("kind") {
+		t.Fatalf("kind click: row=%d target=%v", tv.CurrentIndex(), tv.enterTargetColumn())
+	}
+	if tv.rowEditing {
+		t.Fatal("first click on an unselected row entered edit mode")
+	}
+	// Click row 0's Date cell (non-editable): row changes, target stays.
+	tv.HandleMousePress(core.MousePressEvent{X: spanX("date"), Y: rowY(0), Button: core.LeftButton})
+	tv.HandleMouseRelease(core.MouseReleaseEvent{X: spanX("date"), Y: rowY(0), Button: core.LeftButton})
+	if tv.CurrentIndex() != 0 || tv.enterTargetColumn() != tv.ColumnByID("kind") {
+		t.Fatalf("date click: row=%d target=%v, want 0/kind", tv.CurrentIndex(), tv.enterTargetColumn())
+	}
+	// Drag from row 0's Date down over row 2's Size: selection follows
+	// the row, the target follows the editable column, and NO edit
+	// mode opens on the moved release.
+	tv.HandleMousePress(core.MousePressEvent{X: spanX("date"), Y: rowY(0), Button: core.LeftButton})
+	tv.HandleMouseMove(core.MouseMoveEvent{X: spanX("size"), Y: rowY(2), Buttons: 1})
+	tv.HandleMouseRelease(core.MouseReleaseEvent{X: spanX("size"), Y: rowY(2), Button: core.LeftButton})
+	if tv.CurrentIndex() != 2 || tv.enterTargetColumn() != tv.ColumnByID("size") {
+		t.Fatalf("drag: row=%d target=%v, want 2/size", tv.CurrentIndex(), tv.enterTargetColumn())
+	}
+	if tv.rowEditing {
+		t.Fatal("drag-selection auto-entered edit mode")
+	}
+}
+
+// Rotating the target scrolls it into view with the conservative rule.
+func TestTreeArrowRotationEnsuresVisible(t *testing.T) {
+	tv := newColumnsTree(30, 10) // content 29 cells
+	tv.SetFitWidth(false)
+	tv.SetKeyWidth(20) // natural: key 20 |1| size 10 |1| kind 12 = 44
+	tv.ColumnByID("size").Editable = true
+	tv.ColumnByID("kind").Editable = true
+	tv.SetCurrentIndex(0)
+
+	// The target starts on size (first editable); Right rotates to
+	// kind (cells 32..44), revealed at the max scroll of 15.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Right"})
+	if tv.enterTargetColumn() != tv.ColumnByID("kind") || tv.hScroll != 15 {
+		t.Fatalf("after Right: target=%v hScroll=%d, want kind/15", tv.enterTargetColumn(), tv.hScroll)
+	}
+	// Left back to size (cells 21..31): already inside the view at
+	// scroll 15 - conservative, no movement.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Left"})
+	if tv.enterTargetColumn() != tv.ColumnByID("size") || tv.hScroll != 15 {
+		t.Fatalf("after Left: target=%v hScroll=%d, want size/15 (no movement)", tv.enterTargetColumn(), tv.hScroll)
+	}
+}
+
 // Committing an edit keeps the edited row in view even when the user
 // scrolled elsewhere mid-edit and the new value re-sorts the row far
 // away - an explicit edit is an action ON that row.

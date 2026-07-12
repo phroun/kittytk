@@ -826,6 +826,11 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 	if t.handleHeaderFocusKey(event) {
 		return true
 	}
+	// In an editable grid, Left/Right rotate the Enter-target column
+	// (the FocusedListItem cell) without opening the editor.
+	if t.handleEditTargetKey(event) {
+		return true
+	}
 
 	current := t.CurrentItem()
 
@@ -1179,6 +1184,12 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		}
 
 		t.SetCurrentIndex(clickedIndex)
+		// The click also selects the COLUMN as the Enter target when
+		// it lands on an editable cell; a click on a non-editable
+		// cell keeps the previous target and changes only the row.
+		if col := t.editableColumnAt(event.X, item); col != nil {
+			t.editLastCol = col
+		}
 		return true
 	}
 
@@ -1333,8 +1344,17 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		index = len(t.flatList) - 1
 	}
 
-	if index >= 0 && index != t.currentIndex {
-		t.SetCurrentIndex(index)
+	if index >= 0 {
+		if index != t.currentIndex {
+			t.SetCurrentIndex(index)
+		}
+		// Drag-selection also tracks the COLUMN target over editable
+		// cells (non-editable cells keep the previous target). It
+		// never auto-enters edit mode: armClickEdit's slop check
+		// rejects a moved release, combo cells included.
+		if col := t.editableColumnAt(event.X, t.flatList[index]); col != nil {
+			t.editLastCol = col
+		}
 	}
 
 	return true
