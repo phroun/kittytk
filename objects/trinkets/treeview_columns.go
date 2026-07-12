@@ -643,6 +643,7 @@ type colSpan struct {
 type treeColLayout struct {
 	spans      []colSpan
 	headerH    core.Unit
+	blankCells int       // trailing blank right of the last span (natural)
 	contentW   core.Unit // width left of the scrollbar lane
 	scrollL    core.Unit // horizontal scroll region [scrollL, scrollR)
 	scrollR    core.Unit
@@ -838,6 +839,19 @@ func (t *TreeView) columnLayout() treeColLayout {
 	// Pin the divider between the scroll region and the right flank.
 	if fr > 0 && n-fr-1 >= 0 {
 		lay.spans[n-fr-1].divX = lay.scrollR
+	}
+	// The last span before the right flank (the very last span when
+	// nothing is pinned right) stretches over any trailing blank width
+	// - nothing sits between it and the region's edge, so its content
+	// must not ellipsize while free space goes unused. The blank's
+	// NATURAL size is recorded first: the fit-mode drag pool feeds on
+	// it (widths[] stay natural throughout).
+	if idx := n - 1 - fr; idx >= 0 {
+		last := &lay.spans[idx]
+		if end := last.x + last.w; end < lay.scrollR {
+			lay.blankCells = int((lay.scrollR - end) / cw)
+			last.w = lay.scrollR - last.x
+		}
 	}
 	return lay
 }
@@ -1622,8 +1636,17 @@ func (t *TreeView) beginFitDrag(x core.Unit, lay treeColLayout) bool {
 		t.colDragStartX = x
 		t.colDragL = left.col
 		t.colDragR = right.col
+		// Width snapshots come from the COLUMNS' natural widths (the
+		// last span may be stretched over the trailing blank); only
+		// the key span's auto width has no column to ask.
 		t.colDragLW = int(left.w / cw)
+		if left.col != nil {
+			t.colDragLW = left.col.clampWidth(left.col.Width)
+		}
 		t.colDragRW = int(right.w / cw)
+		if right.col != nil {
+			t.colDragRW = right.col.clampWidth(right.col.Width)
+		}
 		if slackLeft {
 			// Pool: the key's cells above the width the layout defends
 			// (below it the key starts reclaiming from other columns,
@@ -1637,9 +1660,9 @@ func (t *TreeView) beginFitDrag(x core.Unit, lay treeColLayout) bool {
 			}
 			t.colDragPool = int(lay.spans[0].w/cw) - floor
 		} else {
-			// Pool: the blank cells right of the last span.
-			last := lay.spans[len(lay.spans)-1]
-			t.colDragPool = int((lay.contentW - (last.x + last.w)) / cw)
+			// Pool: the NATURAL trailing blank (recorded before the
+			// last span was stretched over it for display).
+			t.colDragPool = lay.blankCells
 		}
 		if t.colDragPool < 0 {
 			t.colDragPool = 0

@@ -609,6 +609,37 @@ func TestTreeColumnPaintSmoke(t *testing.T) {
 	}
 }
 
+// The last column (before any pinned-right flank) stretches over
+// trailing blank width instead of ellipsizing its content while free
+// space sits unused to its right.
+func TestTreeLastColumnStretchesOverBlank(t *testing.T) {
+	tv := newColumnsTree(80, 10) // content 79 cells, natural 44
+	tv.SetFitWidth(false)
+	tv.SetKeyWidth(20)
+	lay := tv.columnLayout()
+	last := lay.spans[len(lay.spans)-1]
+	if last.x+last.w != lay.scrollR {
+		t.Errorf("last span ends at %d, want scrollR %d", last.x+last.w, lay.scrollR)
+	}
+	if lay.blankCells != 79-44 {
+		t.Errorf("blankCells = %d, want %d", lay.blankCells, 79-44)
+	}
+	// The natural column width is untouched (only the SPAN stretched).
+	if got := tv.ColumnByID("kind").Width; got != 12 {
+		t.Errorf("kind natural width = %d, want 12", got)
+	}
+
+	// With a pinned-right column, the last SCROLLING span claims the
+	// blank up to the pinned divider instead.
+	tv.SetFixedColumns(0, 1)
+	lay = tv.columnLayout()
+	n := len(lay.spans)
+	mid := lay.spans[n-2] // size: the last scrolling span
+	if mid.x+mid.w != lay.scrollR {
+		t.Errorf("last scrolling span ends at %d, want scrollR %d", mid.x+mid.w, lay.scrollR)
+	}
+}
+
 // The footer horizontal scrollbar's thumb lights in the hover color
 // under the pointer and stays lit through a drag - the vertical bar's
 // convention.
