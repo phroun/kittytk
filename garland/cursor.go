@@ -18,11 +18,18 @@ type CursorPosition struct {
 type Cursor struct {
 	garland *Garland
 
-	// Current position (always kept in sync across all three coordinate systems)
-	bytePos  int64
-	runePos  int64
-	line     int64
-	lineRune int64
+	// Current position. bytePos, runePos, and line are always kept in
+	// sync (they shift linearly under mutations elsewhere in the
+	// buffer). lineRune is maintained lazily: a mutation earlier on
+	// this cursor's own line re-anchors the column non-linearly, so
+	// adjustForMutation only marks it dirty and it is recomputed from
+	// bytePos on the next read - edits never pay a tree walk per
+	// passive cursor.
+	bytePos       int64
+	runePos       int64
+	line          int64
+	lineRune      int64
+	lineRuneDirty bool
 
 	// Version tracking for cursor history
 	lastFork     ForkID
@@ -84,11 +91,13 @@ func (c *Cursor) RunePos() int64 {
 // LinePos returns the cursor's line number and rune position within that line.
 // Both values are 0-indexed.
 func (c *Cursor) LinePos() (line, runeInLine int64) {
+	c.resolveStaleLineRune(false)
 	return c.line, c.lineRune
 }
 
 // Position returns the cursor's position in all coordinate systems.
 func (c *Cursor) Position() CursorPosition {
+	c.resolveStaleLineRune(false)
 	return CursorPosition{
 		BytePos:  c.bytePos,
 		RunePos:  c.runePos,
@@ -358,6 +367,7 @@ func (c *Cursor) updatePosition(bytePos, runePos, line, lineRune int64) {
 	c.runePos = runePos
 	c.line = line
 	c.lineRune = lineRune
+	c.lineRuneDirty = false
 
 	// Record position in history if version has changed
 	if c.garland != nil {
@@ -387,19 +397,35 @@ func (c *Cursor) updatePosition(bytePos, runePos, line, lineRune int64) {
 // byteDelta, runeDelta, lineDelta are the size changes (positive for insert, negative for delete).
 func (c *Cursor) adjustForMutation(mutationPos int64, byteDelta, runeDelta, lineDelta int64) {
 	if c.bytePos > mutationPos || (c.bytePos == mutationPos && byteDelta > 0) {
+		// Byte, rune, and line all shift LINEARLY when content changes
+		// before this cursor - O(1) with no tree access.
 		c.bytePos += byteDelta
 		c.runePos += runeDelta
-		// line and lineRune cannot be maintained by deltas alone: a
-		// newline inserted or removed EARLIER ON THIS CURSOR'S LINE
-		// changes lineRune non-linearly (it re-anchors against a new
-		// last-newline). Recompute both from the authoritative byte
-		// position. Callers hold the garland lock.
-		line, lineRune, err := c.garland.byteToLineRuneInternalUnlocked(c.bytePos)
-		if err == nil {
-			c.line, c.lineRune = line, lineRune
-		} else if lineDelta != 0 {
-			c.line += lineDelta
-		}
+		c.line += lineDelta
+		// lineRune is NOT delta-safe: a newline inserted or removed
+		// earlier on this cursor's own line re-anchors the column
+		// against a new last-newline. Resolve lazily on next read.
+		c.lineRuneDirty = true
+	}
+}
+
+// resolveStaleLineRune recomputes lineRune (and line, authoritatively)
+// from bytePos when a mutation left it stale. locked selects the
+// internal conversion for callers already holding the garland lock.
+func (c *Cursor) resolveStaleLineRune(locked bool) {
+	if !c.lineRuneDirty || c.garland == nil {
+		return
+	}
+	var line, lineRune int64
+	var err error
+	if locked {
+		line, lineRune, err = c.garland.byteToLineRuneInternalUnlocked(c.bytePos)
+	} else {
+		line, lineRune, err = c.garland.byteToLineRuneInternal(c.bytePos)
+	}
+	if err == nil {
+		c.line, c.lineRune = line, lineRune
+		c.lineRuneDirty = false
 	}
 }
 
@@ -410,11 +436,14 @@ func (c *Cursor) restorePosition(pos *CursorPosition) {
 		c.runePos = pos.RunePos
 		c.line = pos.Line
 		c.lineRune = pos.LineRune
+		c.lineRuneDirty = false
 	}
 }
 
 // snapshotPosition returns a copy of the cursor's current position.
+// Callers hold the garland lock (transaction start).
 func (c *Cursor) snapshotPosition() *CursorPosition {
+	c.resolveStaleLineRune(true)
 	return &CursorPosition{
 		BytePos:  c.bytePos,
 		RunePos:  c.runePos,

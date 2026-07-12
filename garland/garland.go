@@ -1778,19 +1778,23 @@ func (g *Garland) UndoSeek(revision RevisionID) error {
 	// Update counts from the root snapshot at this revision
 	g.updateCountsFromRoot()
 
-	// Restore cursor positions if they have recorded positions for this version
+	// Restore cursor positions if they have recorded positions for this
+	// version (following fork lineage - positions recorded before a
+	// branch live under the parent fork's key).
 	for _, cursor := range g.cursors {
-		if pos, ok := cursor.positionHistory[ForkRevision{g.currentFork, revision}]; ok {
+		if pos := g.cursorHistoryAt(cursor, g.currentFork, revision); pos != nil {
 			cursor.restorePosition(pos)
 		} else {
-			// Cursor didn't exist at this revision or hasn't moved since - clamp to valid range
+			// No record along the lineage: keep the byte position
+			// (clamped), but the OTHER coordinates were computed
+			// against the pre-seek content and must be reconciled
+			// against what is here now.
 			if cursor.bytePos > g.totalBytes {
 				cursor.bytePos = g.totalBytes
-				// Recalculate other coordinates
-				cursor.runePos = g.totalRunes
-				cursor.line = g.totalLines
-				cursor.lineRune = 0
 			}
+			cursor.runePos, _ = g.byteToRuneInternalUnlocked(cursor.bytePos)
+			cursor.line, cursor.lineRune, _ = g.byteToLineRuneInternalUnlocked(cursor.bytePos)
+			cursor.lineRuneDirty = false
 		}
 		// Update cursor's last known fork/revision
 		cursor.lastFork = g.currentFork
@@ -1855,24 +1859,41 @@ func (g *Garland) ForkSeek(fork ForkID) error {
 	// Update counts from the root snapshot at this version
 	g.updateCountsFromRoot()
 
-	// Update cursor positions
+	// Update cursor positions (lineage-aware, same as UndoSeek).
 	for _, cursor := range g.cursors {
-		if pos, ok := cursor.positionHistory[ForkRevision{fork, targetRevision}]; ok {
+		if pos := g.cursorHistoryAt(cursor, fork, targetRevision); pos != nil {
 			cursor.restorePosition(pos)
 		} else {
-			// Clamp cursor to valid range
 			if cursor.bytePos > g.totalBytes {
 				cursor.bytePos = g.totalBytes
-				cursor.runePos = g.totalRunes
-				cursor.line = g.totalLines
-				cursor.lineRune = 0
 			}
+			cursor.runePos, _ = g.byteToRuneInternalUnlocked(cursor.bytePos)
+			cursor.line, cursor.lineRune, _ = g.byteToLineRuneInternalUnlocked(cursor.bytePos)
+			cursor.lineRuneDirty = false
 		}
 		cursor.lastFork = fork
 		cursor.lastRevision = targetRevision
 	}
 
 	return nil
+}
+
+// cursorHistoryAt finds a cursor's recorded position at (fork, rev),
+// following fork ancestry the way node snapshots resolve: a revision
+// at or below a fork's branch point is shared with the parent lineage
+// (positions recorded before the branch were keyed under the parent
+// fork). Returns nil when the cursor has no record along the lineage.
+func (g *Garland) cursorHistoryAt(c *Cursor, fork ForkID, rev RevisionID) *CursorPosition {
+	for {
+		if pos, ok := c.positionHistory[ForkRevision{fork, rev}]; ok {
+			return pos
+		}
+		fi, ok := g.forks[fork]
+		if !ok || fi.ParentFork == fork || rev > fi.ParentRevision {
+			return nil
+		}
+		fork = fi.ParentFork
+	}
 }
 
 // GetForkInfo returns information about a specific fork.
@@ -4420,6 +4441,7 @@ func (g *Garland) recordCursorPositionsInHistory() {
 	for _, cursor := range g.cursors {
 		// Always update position - cursor may have moved since last record
 		// This captures the position just before the mutation occurs
+		cursor.resolveStaleLineRune(true) // history must store real columns
 		cursor.positionHistory[key] = &CursorPosition{
 			BytePos:  cursor.bytePos,
 			RunePos:  cursor.runePos,
