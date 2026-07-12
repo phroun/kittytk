@@ -1,0 +1,630 @@
+package garland
+
+import (
+	"sync"
+	"time"
+)
+
+// CursorPosition stores a cursor's position in all coordinate systems.
+type CursorPosition struct {
+	BytePos  int64
+	RunePos  int64
+	Line     int64
+	LineRune int64
+}
+
+// Cursor represents a position within a Garland with its own ready state.
+// Cursors automatically update when content changes before their position.
+type Cursor struct {
+	garland *Garland
+
+	// Current position (always kept in sync across all three coordinate systems)
+	bytePos  int64
+	runePos  int64
+	line     int64
+	lineRune int64
+
+	// Version tracking for cursor history
+	lastFork     ForkID
+	lastRevision RevisionID
+
+	// Cursor's own position history (sparse, only recorded when cursor moves after version change)
+	positionHistory map[ForkRevision]*CursorPosition
+
+	// Ready state
+	ready     bool
+	readyMu   sync.Mutex
+	readyCond *sync.Cond
+
+	// Cursor mode determines auto-region behavior
+	mode CursorMode
+
+	// Active optimized region (nil if none)
+	region *OptimizedRegionHandle
+}
+
+// newCursor creates a new cursor at position 0.
+func newCursor(g *Garland) *Cursor {
+	c := &Cursor{
+		garland:         g,
+		bytePos:         0,
+		runePos:         0,
+		line:            0,
+		lineRune:        0,
+		lastFork:        g.currentFork,
+		lastRevision:    g.currentRevision,
+		positionHistory: make(map[ForkRevision]*CursorPosition),
+		ready:           false,
+		mode:            CursorModeHuman,
+		region:          nil,
+	}
+	c.readyCond = sync.NewCond(&c.readyMu)
+
+	// Record initial position
+	c.positionHistory[ForkRevision{g.currentFork, g.currentRevision}] = &CursorPosition{
+		BytePos:  0,
+		RunePos:  0,
+		Line:     0,
+		LineRune: 0,
+	}
+
+	return c
+}
+
+// BytePos returns the cursor's absolute byte position.
+func (c *Cursor) BytePos() int64 {
+	return c.bytePos
+}
+
+// RunePos returns the cursor's absolute rune position.
+func (c *Cursor) RunePos() int64 {
+	return c.runePos
+}
+
+// LinePos returns the cursor's line number and rune position within that line.
+// Both values are 0-indexed.
+func (c *Cursor) LinePos() (line, runeInLine int64) {
+	return c.line, c.lineRune
+}
+
+// Position returns the cursor's position in all coordinate systems.
+func (c *Cursor) Position() CursorPosition {
+	return CursorPosition{
+		BytePos:  c.bytePos,
+		RunePos:  c.runePos,
+		Line:     c.line,
+		LineRune: c.lineRune,
+	}
+}
+
+// IsReady returns true if the read-ahead threshold has been met
+// relative to this cursor's position.
+func (c *Cursor) IsReady() bool {
+	c.readyMu.Lock()
+	defer c.readyMu.Unlock()
+	return c.ready
+}
+
+// WaitReady blocks until the cursor becomes ready.
+func (c *Cursor) WaitReady() error {
+	c.readyMu.Lock()
+	defer c.readyMu.Unlock()
+
+	for !c.ready {
+		c.readyCond.Wait()
+	}
+	return nil
+}
+
+// setReady marks the cursor as ready and wakes any waiting goroutines.
+func (c *Cursor) setReady(ready bool) {
+	c.readyMu.Lock()
+	defer c.readyMu.Unlock()
+
+	c.ready = ready
+	if ready {
+		c.readyCond.Broadcast()
+	}
+}
+
+// Mode returns the cursor's current mode.
+func (c *Cursor) Mode() CursorMode {
+	return c.mode
+}
+
+// SetMode sets the cursor's mode.
+// Changing mode does not affect any currently active optimized region.
+func (c *Cursor) SetMode(mode CursorMode) {
+	c.mode = mode
+}
+
+// HasOptimizedRegion returns true if the cursor has an active optimized region.
+func (c *Cursor) HasOptimizedRegion() bool {
+	return c.region != nil
+}
+
+// OptimizedRegionSerial returns the serial number of the cursor's active region,
+// or -1 if no region is active. Useful for debugging region lifecycle.
+func (c *Cursor) OptimizedRegionSerial() int64 {
+	if c.region == nil {
+		return -1
+	}
+	return int64(c.region.serial)
+}
+
+// OptimizedRegionBounds returns the content bounds of the active region.
+// Returns (0, 0, false) if no region is active.
+func (c *Cursor) OptimizedRegionBounds() (start, end int64, ok bool) {
+	if c.region == nil {
+		return 0, 0, false
+	}
+	start, end = c.region.ContentBounds()
+	return start, end, true
+}
+
+// OptimizedRegionGraceWindow returns the grace window bounds of the active region.
+// Returns (0, 0, false) if no region is active.
+func (c *Cursor) OptimizedRegionGraceWindow() (start, end int64, ok bool) {
+	if c.region == nil {
+		return 0, 0, false
+	}
+	start, end = c.region.GraceWindow()
+	return start, end, true
+}
+
+// BeginOptimizedRegion explicitly starts an optimized region at the specified bounds.
+// This works regardless of cursor mode and dissolves any existing region first.
+func (c *Cursor) BeginOptimizedRegion(startByte, endByte int64) error {
+	if c.garland == nil {
+		return ErrCursorNotFound
+	}
+	return c.garland.beginOptimizedRegionForCursor(c, startByte, endByte)
+}
+
+// SeekByte moves the cursor to an absolute byte position.
+// Blocks indefinitely until the position is available during lazy loading.
+// Use SeekByteWithTimeout for timeout control, or check IsByteReady first for non-blocking.
+func (c *Cursor) SeekByte(pos int64) error {
+	return c.SeekByteWithTimeout(pos, -1) // -1 = block indefinitely
+}
+
+// SeekByteWithTimeout moves the cursor to an absolute byte position with timeout control.
+// If timeout is 0, returns ErrNotReady immediately if position not available.
+// If timeout is negative, blocks indefinitely.
+// If timeout is positive, waits up to that duration before returning ErrTimeout.
+func (c *Cursor) SeekByteWithTimeout(pos int64, timeout time.Duration) error {
+	if c.garland == nil {
+		return ErrCursorNotFound
+	}
+
+	// Wait for position to be available
+	if err := c.garland.waitForBytePosition(pos, timeout); err != nil {
+		return err
+	}
+
+	// Convert byte position to other coordinate systems
+	runePos, err := c.garland.byteToRuneInternal(pos)
+	if err != nil {
+		return err
+	}
+
+	line, lineRune, err := c.garland.byteToLineRuneInternal(pos)
+	if err != nil {
+		return err
+	}
+
+	c.updatePosition(pos, runePos, line, lineRune)
+	return nil
+}
+
+// SeekRune moves the cursor to an absolute rune position.
+// Blocks indefinitely until the position is available during lazy loading.
+// Use SeekRuneWithTimeout for timeout control, or check IsRuneReady first for non-blocking.
+func (c *Cursor) SeekRune(pos int64) error {
+	return c.SeekRuneWithTimeout(pos, -1) // -1 = block indefinitely
+}
+
+// SeekRuneWithTimeout moves the cursor to an absolute rune position with timeout control.
+// If timeout is 0, returns ErrNotReady immediately if position not available.
+// If timeout is negative, blocks indefinitely.
+// If timeout is positive, waits up to that duration before returning ErrTimeout.
+func (c *Cursor) SeekRuneWithTimeout(pos int64, timeout time.Duration) error {
+	if c.garland == nil {
+		return ErrCursorNotFound
+	}
+
+	// Wait for position to be available
+	if err := c.garland.waitForRunePosition(pos, timeout); err != nil {
+		return err
+	}
+
+	// Convert rune position to byte position
+	bytePos, err := c.garland.runeToByteInternal(pos)
+	if err != nil {
+		return err
+	}
+
+	line, lineRune, err := c.garland.byteToLineRuneInternal(bytePos)
+	if err != nil {
+		return err
+	}
+
+	c.updatePosition(bytePos, pos, line, lineRune)
+	return nil
+}
+
+// SeekLine moves the cursor to a line and rune-within-line position.
+// Line and rune are both 0-indexed. The newline is the last character of its line.
+// Blocks indefinitely until the position is available during lazy loading.
+// Use SeekLineWithTimeout for timeout control, or check IsLineReady first for non-blocking.
+func (c *Cursor) SeekLine(line, runeInLine int64) error {
+	return c.SeekLineWithTimeout(line, runeInLine, -1) // -1 = block indefinitely
+}
+
+// SeekLineWithTimeout moves the cursor to a line and rune-within-line position with timeout control.
+// If timeout is 0, returns ErrNotReady immediately if position not available.
+// If timeout is negative, blocks indefinitely.
+// If timeout is positive, waits up to that duration before returning ErrTimeout.
+func (c *Cursor) SeekLineWithTimeout(line, runeInLine int64, timeout time.Duration) error {
+	if c.garland == nil {
+		return ErrCursorNotFound
+	}
+
+	// Wait for line to be available
+	if err := c.garland.waitForLine(line, timeout); err != nil {
+		return err
+	}
+
+	// Convert line:rune to byte position
+	bytePos, err := c.garland.lineRuneToByteInternal(line, runeInLine)
+	if err != nil {
+		return err
+	}
+
+	runePos, err := c.garland.byteToRuneInternal(bytePos)
+	if err != nil {
+		return err
+	}
+
+	c.updatePosition(bytePos, runePos, line, runeInLine)
+	return nil
+}
+
+// SeekRelativeBytes moves the cursor relative to its current byte position.
+// Positive delta moves forward, negative moves backward.
+// Clamps to valid range [0, byteCount].
+func (c *Cursor) SeekRelativeBytes(delta int64) error {
+	if c.garland == nil {
+		return ErrCursorNotFound
+	}
+
+	newPos := c.bytePos + delta
+	if newPos < 0 {
+		newPos = 0
+	}
+	// Clamp to byte count (will be validated by SeekByte)
+	return c.SeekByte(newPos)
+}
+
+// SeekRelativeRunes moves the cursor relative to its current rune position.
+// Positive delta moves forward, negative moves backward.
+// Clamps to valid range [0, runeCount].
+func (c *Cursor) SeekRelativeRunes(delta int64) error {
+	if c.garland == nil {
+		return ErrCursorNotFound
+	}
+
+	newPos := c.runePos + delta
+	if newPos < 0 {
+		newPos = 0
+	}
+	// Clamp to rune count (will be validated by SeekRune)
+	return c.SeekRune(newPos)
+}
+
+// SeekByWord moves the cursor by n words.
+// Positive n moves forward, negative n moves backward.
+// A word is defined as a sequence of alphanumeric/underscore characters,
+// or a sequence of non-whitespace non-word characters.
+// Returns the number of words actually moved (may be less than requested at boundaries).
+func (c *Cursor) SeekByWord(n int) (int, error) {
+	if c.garland == nil {
+		return 0, ErrCursorNotFound
+	}
+	return c.garland.seekByWordAt(c, n)
+}
+
+// SeekLineStart moves the cursor to the beginning of the current line.
+func (c *Cursor) SeekLineStart() error {
+	if c.garland == nil {
+		return ErrCursorNotFound
+	}
+	// Simply set lineRune to 0 and recalculate byte/rune positions
+	return c.SeekLine(c.line, 0)
+}
+
+// SeekLineEnd moves the cursor to the end of the current line.
+// The cursor is positioned after the last character before the newline (or at EOF).
+func (c *Cursor) SeekLineEnd() error {
+	if c.garland == nil {
+		return ErrCursorNotFound
+	}
+	return c.garland.seekLineEndAt(c)
+}
+
+// updatePosition updates the cursor's position and records history if needed.
+func (c *Cursor) updatePosition(bytePos, runePos, line, lineRune int64) {
+	c.bytePos = bytePos
+	c.runePos = runePos
+	c.line = line
+	c.lineRune = lineRune
+
+	// Record position in history if version has changed
+	if c.garland != nil {
+		currentFork := c.garland.currentFork
+		currentRev := c.garland.currentRevision
+
+		if c.lastFork != currentFork || c.lastRevision != currentRev {
+			c.positionHistory[ForkRevision{currentFork, currentRev}] = &CursorPosition{
+				BytePos:  bytePos,
+				RunePos:  runePos,
+				Line:     line,
+				LineRune: lineRune,
+			}
+			c.lastFork = currentFork
+			c.lastRevision = currentRev
+		}
+	}
+
+	// Update highest seek position
+	if c.garland != nil && bytePos > c.garland.highestSeekPos {
+		c.garland.highestSeekPos = bytePos
+	}
+}
+
+// adjustForMutation adjusts cursor position after a mutation.
+// mutationPos is where the mutation occurred (byte position).
+// byteDelta, runeDelta, lineDelta are the size changes (positive for insert, negative for delete).
+func (c *Cursor) adjustForMutation(mutationPos int64, byteDelta, runeDelta, lineDelta int64) {
+	if c.bytePos > mutationPos {
+		c.bytePos += byteDelta
+		c.runePos += runeDelta
+		// Line position adjustment is more complex - only adjust if mutation was on a prior line
+		// For simplicity, we adjust lineRune only, as line number changes depend on newline insertions
+		// If the mutation added/removed newlines before our line, adjust line number
+		if lineDelta != 0 {
+			c.line += lineDelta
+		}
+	} else if c.bytePos == mutationPos && byteDelta > 0 {
+		// Insert at cursor position - cursor stays at same logical position
+		// but the content shifted, so coordinates shift too
+		c.bytePos += byteDelta
+		c.runePos += runeDelta
+		if lineDelta != 0 {
+			c.line += lineDelta
+		}
+	}
+}
+
+// restorePosition restores the cursor to a previously recorded position.
+func (c *Cursor) restorePosition(pos *CursorPosition) {
+	if pos != nil {
+		c.bytePos = pos.BytePos
+		c.runePos = pos.RunePos
+		c.line = pos.Line
+		c.lineRune = pos.LineRune
+	}
+}
+
+// snapshotPosition returns a copy of the cursor's current position.
+func (c *Cursor) snapshotPosition() *CursorPosition {
+	return &CursorPosition{
+		BytePos:  c.bytePos,
+		RunePos:  c.runePos,
+		Line:     c.line,
+		LineRune: c.lineRune,
+	}
+}
+
+// InsertBytes inserts raw bytes at the cursor position.
+// If insertBefore is true, insertion occurs before any existing
+// cursors/decorations at this position; otherwise after.
+// After insertion, cursor advances to the end of the inserted content.
+func (c *Cursor) InsertBytes(data []byte, decorations []RelativeDecoration, insertBefore bool) (ChangeResult, error) {
+	if c.garland == nil {
+		return ChangeResult{}, ErrCursorNotFound
+	}
+	result, err := c.garland.insertBytesAt(c, c.bytePos, data, decorations, insertBefore)
+	if err != nil {
+		return result, err
+	}
+	// Advance cursor to end of inserted content
+	c.SeekByte(c.bytePos + int64(len(data)))
+	return result, nil
+}
+
+// InsertString inserts a string at the cursor position.
+// Relative decoration positions are measured in runes.
+// If insertBefore is true, insertion occurs before any existing
+// cursors/decorations at this position; otherwise after.
+// After insertion, cursor advances to the end of the inserted content.
+func (c *Cursor) InsertString(data string, decorations []RelativeDecoration, insertBefore bool) (ChangeResult, error) {
+	if c.garland == nil {
+		return ChangeResult{}, ErrCursorNotFound
+	}
+	result, err := c.garland.insertStringAt(c, c.bytePos, data, decorations, insertBefore)
+	if err != nil {
+		return result, err
+	}
+	// Advance cursor to end of inserted content
+	c.SeekByte(c.bytePos + int64(len(data)))
+	return result, nil
+}
+
+// DeleteBytes deletes `length` bytes starting at cursor position.
+// Returns decorations from the deleted range.
+// If includeLineDecorations is true, also returns (but does not move)
+// decorations from partially affected lines.
+func (c *Cursor) DeleteBytes(length int64, includeLineDecorations bool) ([]RelativeDecoration, ChangeResult, error) {
+	if c.garland == nil {
+		return nil, ChangeResult{}, ErrCursorNotFound
+	}
+	return c.garland.deleteBytesAt(c, c.bytePos, length, includeLineDecorations)
+}
+
+// OverwriteBytes replaces `length` bytes at cursor position with new data.
+// This is more efficient than separate delete + insert for binary editing.
+// The operation properly accounts for changes in line counts (newlines)
+// and rune counts (UTF-8 sequences).
+// Returns decorations that were in the overwritten range.
+// Cursor position is not changed after the operation.
+func (c *Cursor) OverwriteBytes(length int64, newData []byte) ([]RelativeDecoration, ChangeResult, error) {
+	if c.garland == nil {
+		return nil, ChangeResult{}, ErrCursorNotFound
+	}
+	return c.garland.overwriteBytesAt(c, c.bytePos, length, newData)
+}
+
+// OverwriteBytesWithDecorations replaces bytes with new data, adding decorations.
+// - decorationsToAdd: decorations to add to the new content (relative to new content start)
+// - insertBefore: if true, displaced decorations consolidate to end; if false, to start
+// Returns the original decorations from the overwritten range with their original relative positions.
+func (c *Cursor) OverwriteBytesWithDecorations(length int64, newData []byte, decorationsToAdd []RelativeDecoration, insertBefore bool) ([]RelativeDecoration, ChangeResult, error) {
+	if c.garland == nil {
+		return nil, ChangeResult{}, ErrCursorNotFound
+	}
+	return c.garland.overwriteBytesAtInternal(c, c.bytePos, length, newData, decorationsToAdd, insertBefore)
+}
+
+// MoveBytes moves a byte range to a new location.
+// All addresses are interpreted as positions in the original document before any changes.
+// Source and destination ranges cannot overlap for Move.
+// Decorations in the source range move with the content.
+// Decorations in the destination range are consolidated and returned.
+// - srcStart, srcEnd: source byte range [srcStart, srcEnd)
+// - dstStart, dstEnd: destination byte range to replace [dstStart, dstEnd)
+// - insertBefore: if true, displaced decorations consolidate to end of new content
+// Returns MoveResult with the displaced decorations from the destination range.
+func (c *Cursor) MoveBytes(srcStart, srcEnd, dstStart, dstEnd int64, insertBefore bool) (MoveResult, error) {
+	if c.garland == nil {
+		return MoveResult{}, ErrCursorNotFound
+	}
+	return c.garland.moveBytesAt(c, srcStart, srcEnd, dstStart, dstEnd, insertBefore)
+}
+
+// CopyBytes copies a byte range to a new location.
+// All addresses are interpreted as positions in the original document before any changes.
+// Source and destination ranges may overlap for Copy (source is snapshotted first).
+// - srcStart, srcEnd: source byte range [srcStart, srcEnd)
+// - dstStart, dstEnd: destination byte range to replace [dstStart, dstEnd)
+// - decorationsToAdd: decorations to add to the copied content (like Insert)
+// - insertBefore: if true, displaced decorations consolidate to end of new content
+// Returns CopyResult with the displaced decorations from the destination range.
+func (c *Cursor) CopyBytes(srcStart, srcEnd, dstStart, dstEnd int64, decorationsToAdd []RelativeDecoration, insertBefore bool) (CopyResult, error) {
+	if c.garland == nil {
+		return CopyResult{}, ErrCursorNotFound
+	}
+	return c.garland.copyBytesAt(c, srcStart, srcEnd, dstStart, dstEnd, decorationsToAdd, insertBefore)
+}
+
+// DeleteRunes deletes `length` runes starting at cursor position.
+// Returns decorations from the deleted range.
+// If includeLineDecorations is true, also returns (but does not move)
+// decorations from partially affected lines.
+func (c *Cursor) DeleteRunes(length int64, includeLineDecorations bool) ([]RelativeDecoration, ChangeResult, error) {
+	if c.garland == nil {
+		return nil, ChangeResult{}, ErrCursorNotFound
+	}
+	return c.garland.deleteRunesAt(c, c.runePos, length, includeLineDecorations)
+}
+
+// TruncateToEOF deletes everything from cursor position to end of file.
+func (c *Cursor) TruncateToEOF() (ChangeResult, error) {
+	if c.garland == nil {
+		return ChangeResult{}, ErrCursorNotFound
+	}
+	return c.garland.truncateAt(c, c.bytePos)
+}
+
+// ReadBytes reads `length` bytes starting at cursor position.
+// After reading, cursor advances past the read data.
+func (c *Cursor) ReadBytes(length int64) ([]byte, error) {
+	if c.garland == nil {
+		return nil, ErrCursorNotFound
+	}
+	data, err := c.garland.readBytesAt(c.bytePos, length)
+	if err != nil {
+		return nil, err
+	}
+	// Advance cursor by actual bytes read
+	c.SeekByte(c.bytePos + int64(len(data)))
+	return data, nil
+}
+
+// ReadString reads `length` runes starting at cursor position as a string.
+// After reading, cursor advances past the read data.
+func (c *Cursor) ReadString(length int64) (string, error) {
+	if c.garland == nil {
+		return "", ErrCursorNotFound
+	}
+	data, err := c.garland.readStringAt(c.runePos, length)
+	if err != nil {
+		return "", err
+	}
+	// Advance cursor by actual runes read
+	c.SeekRune(c.runePos + int64(len([]rune(data))))
+	return data, nil
+}
+
+// ReadLine reads the entire line the cursor is on.
+// Note: Does NOT advance cursor (line-oriented reading is typically peek-like).
+func (c *Cursor) ReadLine() (string, error) {
+	if c.garland == nil {
+		return "", ErrCursorNotFound
+	}
+	return c.garland.readLineAt(c.line)
+}
+
+// BackDeleteBytes deletes `length` bytes BEFORE the cursor position.
+// Cursor moves to the start of the deleted range (its new position).
+// Returns decorations from the deleted range.
+func (c *Cursor) BackDeleteBytes(length int64, includeLineDecorations bool) ([]RelativeDecoration, ChangeResult, error) {
+	if c.garland == nil {
+		return nil, ChangeResult{}, ErrCursorNotFound
+	}
+	if length <= 0 {
+		return nil, ChangeResult{Fork: c.garland.currentFork, Revision: c.garland.currentRevision}, nil
+	}
+	// Calculate start position (clamp to 0)
+	startPos := c.bytePos - length
+	if startPos < 0 {
+		length = c.bytePos
+		startPos = 0
+	}
+	// Move cursor to start of delete range
+	c.SeekByte(startPos)
+	// Perform delete at new position
+	return c.garland.deleteBytesAt(c, startPos, length, includeLineDecorations)
+}
+
+// BackDeleteRunes deletes `length` runes BEFORE the cursor position.
+// Cursor moves to the start of the deleted range (its new position).
+// Returns decorations from the deleted range.
+func (c *Cursor) BackDeleteRunes(length int64, includeLineDecorations bool) ([]RelativeDecoration, ChangeResult, error) {
+	if c.garland == nil {
+		return nil, ChangeResult{}, ErrCursorNotFound
+	}
+	if length <= 0 {
+		return nil, ChangeResult{Fork: c.garland.currentFork, Revision: c.garland.currentRevision}, nil
+	}
+	// Calculate start position (clamp to 0)
+	startRunePos := c.runePos - length
+	if startRunePos < 0 {
+		length = c.runePos
+		startRunePos = 0
+	}
+	// Move cursor to start of delete range
+	c.SeekRune(startRunePos)
+	// Perform delete at new position
+	return c.garland.deleteRunesAt(c, startRunePos, length, includeLineDecorations)
+}
