@@ -153,14 +153,17 @@ type TreeView struct {
 	// In-place row editing (see treeview_edit.go). The editor is a
 	// spun-into-existence TextInput floating over one cell; the tree
 	// keeps real focus and forwards input while it is up.
-	rowEditing    bool
-	editCol       *TreeColumn
-	editLastCol   *TreeColumn // resumed on the next edit session
-	editItem      *TreeItem
-	editOrig      string
-	editBox       *TextInput
-	editMouseDown bool
-	onCellEdited  func(item *TreeItem, column *TreeColumn, value string)
+	rowEditing     bool
+	editCol        *TreeColumn
+	editLastCol    *TreeColumn // resumed on the next edit session
+	editItem       *TreeItem
+	editOrig       string
+	editBox        *TextInput // free-text cells
+	editCombo      *ComboBox  // enum cells (closed until Space/click)
+	editComboMagic bool       // combo row 0 is the not-in-enum original
+	editMouseDown  bool
+	keyEditable    bool // SetEditable: the KEY column joins the edit ring
+	onCellEdited   func(item *TreeItem, column *TreeColumn, value string)
 
 	// Click-to-edit: a drag-free click on an editable cell of the
 	// already-selected row flips straight into edit mode.

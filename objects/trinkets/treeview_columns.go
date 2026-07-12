@@ -58,6 +58,37 @@ type TreeColumn struct {
 	// Editable lets this column's cells be edited in place: Enter on
 	// a row opens the row editor (see treeview_edit.go).
 	Editable bool
+	// Enum, when non-empty, makes an editable column a CHOICE: the
+	// cell editor becomes a ComboBox over these options, and cells
+	// always DISPLAY an option's Value. On the wire the column's
+	// enum= property points at a collection of option objects.
+	Enum []TreeEnumOption
+	// EnumStore selects what the data field stores when an option is
+	// chosen: "value" (the default) or "key".
+	EnumStore string
+}
+
+// TreeEnumOption is one enum choice: a stable Key and the shown Value.
+type TreeEnumOption struct {
+	Key   string
+	Value string
+}
+
+// displayValue maps a stored cell value to what the cell SHOWS: a
+// key-storing enum column looks the key up and shows the option's
+// Value; everything else (including a value-storing enum column,
+// whose stored text IS the display) shows the raw text. An unknown
+// key falls back to the raw text.
+func (c *TreeColumn) displayValue(raw string) string {
+	if len(c.Enum) == 0 || c.EnumStore != "key" {
+		return raw
+	}
+	for _, o := range c.Enum {
+		if o.Key == raw {
+			return o.Value
+		}
+	}
+	return raw
 }
 
 // NewTreeColumn creates a column with sensible defaults (resizable,
@@ -69,7 +100,7 @@ func NewTreeColumn(id, caption string, width int) *TreeColumn {
 	return &TreeColumn{
 		ID: id, Caption: caption, Width: width,
 		MinWidth: 3, Align: "left", Resizable: true, Optional: true,
-		SortProxy: -1,
+		SortProxy: -1, EnumStore: "value",
 	}
 }
 
@@ -818,7 +849,7 @@ func (t *TreeView) neededCells(col *TreeColumn) int {
 	}
 	host := t.treeHostColumn() == col // carries expander + indent
 	for _, it := range t.flatList {
-		w := font.MeasureText(it.Value(col.ID))
+		w := font.MeasureText(col.displayValue(it.Value(col.ID)))
 		if host {
 			w += core.Unit(it.Level()*t.indentWidth+1) * cw
 		}
@@ -1024,8 +1055,15 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		}
 		rowStyles = append(rowStyles, s)
 		if itemIndex == t.currentIndex || ledgerRow {
-			// Selection and ledger bands span the full row.
-			p.FillRect(core.UnitRect{X: 0, Y: itemY, Width: lay.contentW, Height: metrics.CellHeight}, ' ', s)
+			// Selection and ledger bands span the full row. On pixel
+			// surfaces they run under the scrollbar lane too (the slim
+			// scrollbar overlays them); the TUI reserves that column
+			// for the full-cell scrollbar glyphs.
+			rowW := lay.contentW
+			if p.Graphical() {
+				rowW = bounds.Width
+			}
+			p.FillRect(core.UnitRect{X: 0, Y: itemY, Width: rowW, Height: metrics.CellHeight}, ' ', s)
 		}
 
 		host := t.treeHostColumn()
@@ -1041,9 +1079,9 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			case sp.col == host:
 				// Key column hidden: this column carries the expander
 				// and indent (and is forced left-aligned for it).
-				t.paintTreeCell(cp, item, sp, itemY, s, metrics, font, item.Value(sp.col.ID))
+				t.paintTreeCell(cp, item, sp, itemY, s, metrics, font, sp.col.displayValue(item.Value(sp.col.ID)))
 			default:
-				t.drawAligned(cp, item.Value(sp.col.ID), sp, itemY, s, font, sp.col.Align)
+				t.drawAligned(cp, sp.col.displayValue(item.Value(sp.col.ID)), sp, itemY, s, font, sp.col.Align)
 			}
 		}
 	}

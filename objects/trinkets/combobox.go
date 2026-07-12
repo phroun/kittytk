@@ -70,6 +70,33 @@ type ComboBox struct {
 	onCurrentIndexChanged func(index int)
 	onCurrentTextChanged  func(text string)
 	onActivated           func(index int)
+
+	// Embedded-host bridge (SetEmbedHost): an unparented box hosted
+	// inside another trinket (the TreeView's enum cell editor) borrows
+	// the host's ancestry - the popup-controller walk and the screen
+	// mapping that places/directs the drop-down. embedOrigin reports
+	// this box's current origin in the host's local space.
+	embedHost   core.Trinket
+	embedOrigin func() core.UnitPoint
+}
+
+// SetEmbedHost lends this (unparented) box a host trinket's ancestry:
+// the popup controller and the drop-down's screen geometry resolve as
+// if the box sat at origin() within the host, so the popup drops the
+// same direction (and scrolls the same way) as a natively placed box.
+func (c *ComboBox) SetEmbedHost(host core.Trinket, origin func() core.UnitPoint) {
+	c.embedHost = host
+	c.embedOrigin = origin
+}
+
+// mapToScreen maps a box-local point to screen space, through the
+// embed host when one is set.
+func (c *ComboBox) mapToScreen(pc core.PopupController, local core.UnitPoint) core.UnitPoint {
+	if c.embedHost != nil && c.embedOrigin != nil {
+		o := c.embedOrigin()
+		return pc.MapToScreen(c.embedHost, core.UnitPoint{X: o.X + local.X, Y: o.Y + local.Y})
+	}
+	return pc.MapToScreen(c.Self(), local)
 }
 
 // NewComboBox creates a new combo box.
@@ -487,8 +514,12 @@ func (c *ComboBox) findPopupController() core.PopupController {
 		return pc
 	}
 
-	// Walk up parent chain looking for a trinket with a popup controller
-	current := c.Parent()
+	// Walk up the parent chain looking for a trinket with a popup
+	// controller. An embedded box has no parent: start AT its host.
+	var current any = c.Parent()
+	if c.embedHost != nil {
+		current = c.embedHost
+	}
 	for current != nil {
 		if trinket, ok := current.(core.Trinket); ok {
 			if getter, ok := trinket.(interface{ PopupController() core.PopupController }); ok {
@@ -560,8 +591,8 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 
 	// Get the trinket's positions on screen (the local point is in the
 	// trinket's own denomination; MapToScreen exchanges at boundaries)
-	trinketBottomPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: metrics.CellHeight})
-	trinketTopPos := pc.MapToScreen(c, core.UnitPoint{X: 0, Y: 0})
+	trinketBottomPos := c.mapToScreen(pc, core.UnitPoint{X: 0, Y: metrics.CellHeight})
+	trinketTopPos := c.mapToScreen(pc, core.UnitPoint{X: 0, Y: 0})
 
 	// Calculate available space below and above the trinket
 	spaceBelow := screenBounds.Y + screenBounds.Height - trinketBottomPos.Y
@@ -1374,7 +1405,7 @@ func (c *ComboBox) handlePopupMouseMove(event core.MouseMoveEvent, popupBounds c
 	// the list yet.
 	overSelf := false
 	if pc := c.findPopupController(); pc != nil {
-		topLeft := pc.MapToScreen(c, core.UnitPoint{})
+		topLeft := c.mapToScreen(pc, core.UnitPoint{})
 		selfH := c.Bounds().Height
 		if selfH <= 0 {
 			selfH = c.screenMetrics().CellHeight

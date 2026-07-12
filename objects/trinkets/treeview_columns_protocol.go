@@ -41,6 +41,29 @@ type wireCollection struct {
 // wireKeyed lets collection members expose their map key.
 type wireKeyed interface{ WireKey() string }
 
+// wireOption is one enum choice: key=... value="...". Collections of
+// options back a column's enum= property.
+type wireOption struct {
+	key   string
+	value string
+}
+
+func (o *wireOption) WireKey() string { return o.key }
+
+// enumOptions converts this collection's members into the column enum
+// option list (every member must be an option).
+func (c *wireCollection) enumOptions() ([]TreeEnumOption, error) {
+	opts := make([]TreeEnumOption, 0, len(c.members))
+	for _, m := range c.members {
+		o, ok := m.(*wireOption)
+		if !ok {
+			return nil, fmt.Errorf("enum: collection members must be options, got %T", m)
+		}
+		opts = append(opts, TreeEnumOption{Key: o.key, Value: o.value})
+	}
+	return opts, nil
+}
+
 // Member returns the member stored under key ("" keys are skipped).
 func (c *wireCollection) Member(key string) any {
 	for _, m := range c.members {
@@ -246,6 +269,35 @@ func init() {
 			"numeric":   colFlag("numeric", func(c *TreeColumn, b bool) { c.Numeric = b }).Tip("Sort by each cell's numeric equivalent (parsed once per value).").Def("false"),
 			"sortproxy": colInt("sortproxy", func(c *TreeColumn, n int) { c.SortProxy = n }).Tip("Column index whose values actually sort when this column is chosen (-1 = itself).").Def("-1"),
 			"editable":  colFlag("editable", func(c *TreeColumn, b bool) { c.Editable = b }).Tip("Cells in this column can be edited in place (Enter opens the row editor).").Def("false"),
+			"enum": protocol.NewProperty("int", wprop("enum", func(ctx *protocol.BindContext, c *wireColumn, v *protocol.Value, f protocol.FlagState) error {
+				n, err := protocol.AsInt("enum", v, f)
+				if err != nil {
+					return err
+				}
+				coll, ok := ctx.LookupRef(uint64(n)).(*wireCollection)
+				if !ok {
+					return fmt.Errorf("enum: %d is not a collection on this connection", n)
+				}
+				opts, err := coll.enumOptions()
+				if err != nil {
+					return err
+				}
+				c.target().Enum = opts
+				c.refresh()
+				return nil
+			})).Tip("Wire ID of a collection of option objects; the cell editor becomes a choice box."),
+			"enum_store": protocol.NewProperty("enum", colProp("enum_store", func(c *wireColumn, v *protocol.Value, f protocol.FlagState) error {
+				w, err := protocol.AsWord("enum_store", v, f)
+				if err != nil {
+					return err
+				}
+				switch w {
+				case "key", "value":
+					c.target().EnumStore = w
+					return nil
+				}
+				return fmt.Errorf("enum_store: expected key or value")
+			})).OneOf("key", "value").Def("value").Tip("What a chosen option stores in the data field (cells always DISPLAY the option value)."),
 		},
 		Append: func(parent, child any) error {
 			p := parent.(*wireColumn)
@@ -266,6 +318,29 @@ func init() {
 				return nil
 			}
 			return fmt.Errorf("column: children must be cells, got %T", child)
+		},
+	})
+
+	protocol.RegisterType("option", &protocol.TypeSpec{
+		Virtual: true,
+		New:     func() any { return &wireOption{} },
+		Props: map[string]protocol.Property{
+			"key": protocol.NewProperty("word", wprop("key", func(_ *protocol.BindContext, o *wireOption, v *protocol.Value, f protocol.FlagState) error {
+				w, err := protocol.AsWord("key", v, f)
+				if err != nil {
+					return err
+				}
+				o.key = w
+				return nil
+			})).Tip("Stable option key."),
+			"value": protocol.NewProperty("string", wprop("value", func(_ *protocol.BindContext, o *wireOption, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("value", v, f)
+				if err != nil {
+					return err
+				}
+				o.value = s
+				return nil
+			})).Tip("Displayed option value."),
 		},
 	})
 
@@ -303,6 +378,7 @@ func treeViewProps() map[string]protocol.Property {
 		"indent_width": intProp("indent_width", (*TreeView).SetIndentWidth).Tip("Indent width per tree level."),
 
 		"caption":    stringProp("caption", (*TreeView).SetKeyCaption).Tip("Header caption over the key (tree) column."),
+		"editable":   boolProp("editable", (*TreeView).SetEditable).Tip("The key (tree) column joins the row editor (edits the item caption).").Def("false"),
 		"showheader": boolProp("showheader", (*TreeView).SetShowHeader).Tip("Show the column header row.").Def("false"),
 		"ledger":     boolProp("ledger", (*TreeView).SetLedger).Tip("Alternate non-selected rows in the ledger colors.").Def("false"),
 		"showkey":    boolProp("showkey", (*TreeView).SetShowKey).Tip("Show the key (tree) column first.").Def("true"),

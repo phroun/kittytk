@@ -340,7 +340,11 @@ func (a *app) wireDetails() {
 	dtree.On("edit", func(ev *protocol.Event) {
 		col, _ := ev.Int("column")
 		value, _ := ev.Text("value")
-		a.setStatus(fmt.Sprintf("Details: edited column %d -> %q", col, value))
+		colName := fmt.Sprintf("column %d", col)
+		if col < 0 {
+			colName = "Name" // the key column reports index -1
+		}
+		a.setStatus(fmt.Sprintf("Details: edited %s -> %q", colName, value))
 	})
 
 	// Feature toggles: key column visibility, the horizontal-scroll

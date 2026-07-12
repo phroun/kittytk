@@ -342,7 +342,7 @@ new tab caption="Vertical Tabs" children={
 
 det=new tab caption="Details" children={
 	dbox=new panel layout=vbox spacing=0 children={
-		dtree=new treeview caption="Name" showheader sorted sortedby=-1 stretch=1 align=fill children={
+		dtree=new treeview caption="Name" showheader sorted sortedby=-1 editable stretch=1 align=fill children={
 			dsizec=new column id=size caption="Size" width=10 align=right sortable sortproxy=4
 			dkindc=new column id=kind caption="Kind" width=14 sortable editable
 			dmodc=new column id=modified caption="Date Modified" width=24 sortable
@@ -404,6 +404,12 @@ dkindc=w.t.det.dbox.dtree.dkindc
 dmodc=w.t.det.dbox.dtree.dmodc
 dtagsc=w.t.det.dbox.dtree.dtagsc
 drawc=w.t.det.dbox.dtree.drawc
+kinds=new collection of=options children={
+	new option key=png value="PNG image"
+	new option key=folder value="Folder"
+	new option key=arj value="ARJ Archive"
+	new option key=txt value="Text"
+}
 ds1=w.t.det.dbox.dtree.ds1
 ds2=w.t.det.dbox.dtree.ds2
 dpc=w.t.det.dbox.dtree.dpc
@@ -631,5 +637,9 @@ func detailsValuesScript(id func(name string) uint64) string {
 		// plain byte counts, so "sort by Size" compares 2048-style
 		// numbers while the visible cells keep their "2 KB" captions.
 		"ds1": "318464", "ds2": "75776", "dpc": "--", "dpcin": "--", "darj": "101376",
-	})
+	}) + fmt.Sprintf(
+		// Kind becomes a CHOICE column: its cell editor is a combo
+		// over the kinds collection (the values above are option
+		// values, so no magic entry appears).
+		"set dkindc enum=%d enum_store=value\n", id("kinds"))
 }

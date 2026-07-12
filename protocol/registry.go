@@ -34,6 +34,28 @@ type BindContext struct {
 	onSub    map[uint64]map[string][]func() // trinketID -> event type -> on-subscribe hooks
 	suppress int
 	stash    map[string]any
+	refs     map[uint64]any // virtual wire objects by ID, for pointer properties
+}
+
+// RegisterRef records a virtual wire object under its wire ID so
+// POINTER PROPERTIES on this connection can reach it later (a tree
+// column's enum= names a collection built earlier). The factory calls
+// this for every virtual object it constructs.
+func (c *BindContext) RegisterRef(id uint64, target any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refs == nil {
+		c.refs = make(map[uint64]any)
+	}
+	c.refs[id] = target
+}
+
+// LookupRef resolves a wire ID registered with RegisterRef (nil if
+// unknown on this connection).
+func (c *BindContext) LookupRef(id uint64) any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.refs[id]
 }
 
 // Stash returns the connection-scoped value under key, creating it
@@ -356,6 +378,9 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 		if aware, ok := o.target.(interface{ SetWireID(uint64) }); ok {
 			aware.SetWireID(o.virtualID)
 		}
+		// And every virtual object is reachable by ID for pointer
+		// properties (a column's enum= naming a collection).
+		f.ctx.RegisterRef(o.virtualID, o.target)
 	}
 	if spec.Bind != nil {
 		spec.Bind(f.ctx, o.target)
