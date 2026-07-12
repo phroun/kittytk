@@ -347,7 +347,7 @@ det=new tab caption="Details" children={
 			dkindc=new column id=kind caption="Kind" width=14 sortable editable
 			dmodc=new column id=modified caption="Date Modified" width=24 sortable
 			dtagsc=new column id=tags caption="Tags" width=8 editable
-			drawc=new column id=rawsize caption="Raw Size" width=10 align=right numeric hidden
+			drawc=new column id=rawsize caption="Raw Size" width=10 align=right numeric hidden !optional
 			ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
 			ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"
 			dpc=new item caption="PC12" expanded children={
