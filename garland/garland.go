@@ -3054,18 +3054,13 @@ func (g *Garland) ByteToLineRune(bytePos int64) (line, runeInLine int64, err err
 	return g.byteToLineRuneInternal(bytePos)
 }
 
+// byteToRuneInternal is the locking wrapper over the single
+// implementation in byteToRuneInternalUnlocked (the RWMutex is not
+// reentrant; paths already holding the lock call the Unlocked core).
 func (g *Garland) byteToRuneInternal(bytePos int64) (int64, error) {
-	if bytePos == 0 {
-		return 0, nil
-	}
-
-	result, err := g.findLeafByByte(bytePos)
-	if err != nil {
-		return 0, err
-	}
-
-	// Absolute rune position = leaf's rune start + rune offset within leaf
-	return result.LeafRuneStart + result.RuneOffset, nil
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.byteToRuneInternalUnlocked(bytePos)
 }
 
 // byteToRuneInternalUnlocked is the unlocked version for use when caller already holds the lock.
@@ -3097,90 +3092,16 @@ func (g *Garland) runeToByteInternal(runePos int64) (int64, error) {
 	return result.LeafByteStart + result.ByteOffset, nil
 }
 
+// byteToLineRuneInternal is the locking wrapper over the single
+// implementation in byteToLineRuneInternalUnlocked. It used to carry a
+// full duplicate of the conversion (which is how the cross-leaf
+// final-line bug existed twice); one body, one place for fixes - and
+// the read lock now covers the WHOLE conversion instead of being
+// taken piecemeal by each tree lookup.
 func (g *Garland) byteToLineRuneInternal(bytePos int64) (int64, int64, error) {
-	if bytePos == 0 {
-		return 0, 0, nil
-	}
-
-	result, err := g.findLeafByByte(bytePos)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	snap := result.Snapshot
-
-	// Handle position at the end of a leaf (ByteOffset == len(data)) or in empty leaf
-	// We need to look at the previous byte to determine line position
-	if (result.ByteOffset == int64(len(snap.data)) || len(snap.data) == 0) && bytePos > 0 {
-		// Find the leaf containing the last byte of actual content
-		prevResult, err := g.findLeafByByte(bytePos - 1)
-		if err != nil {
-			return 0, 0, err
-		}
-		prevSnap := prevResult.Snapshot
-
-		// Check if the last character is a newline
-		lastByte := prevSnap.data[len(prevSnap.data)-1]
-		if lastByte == '\n' {
-			// We're on a new line after the newline
-			// Count all lines up to and including this leaf
-			absoluteLine := g.countLinesBeforeLeaf(result.LeafByteStart) + snap.lineCount
-			return absoluteLine, 0, nil
-		}
-
-		// We're at the end of the last line (after last non-newline char)
-		// Find line info from the previous leaf
-		line := int64(0)
-		lineRuneStart := int64(0)
-		prevOffset := int64(len(prevSnap.data)) // We're at the end of this leaf
-
-		for i := len(prevSnap.lineStarts) - 1; i >= 0; i-- {
-			if prevSnap.lineStarts[i].ByteOffset <= prevOffset {
-				line = int64(i)
-				lineRuneStart = prevSnap.lineStarts[i].RuneOffset
-				break
-			}
-		}
-
-		absoluteLine := g.countLinesBeforeLeaf(prevResult.LeafByteStart) + line
-		runeInLine := prevSnap.runeCount - lineRuneStart
-		if line == 0 {
-			// The final line may SPAN leaves: when the previous leaf has
-			// no newline of its own, runes carried on this line from
-			// earlier leaves must be included, exactly as the normal
-			// (mid-leaf) case does below.
-			runeInLine += prevResult.RunesOnLineBeforeLeaf
-		}
-
-		return absoluteLine, runeInLine, nil
-	}
-
-	// Normal case: find which line within the leaf
-	line := int64(0)
-	lineRuneStart := int64(0)
-
-	// Find the line that contains our byte offset
-	for i := len(snap.lineStarts) - 1; i >= 0; i-- {
-		if snap.lineStarts[i].ByteOffset <= result.ByteOffset {
-			line = int64(i)
-			lineRuneStart = snap.lineStarts[i].RuneOffset
-			break
-		}
-	}
-
-	// Calculate absolute line number
-	absoluteLine := g.countLinesBeforeLeaf(result.LeafByteStart) + line
-
-	// Calculate rune position within the line
-	runeInLine := result.RuneOffset - lineRuneStart
-
-	// If we're on line 0 of this leaf (which might be a continuation from a previous leaf),
-	// add the runes that came before this leaf on the same line.
-	if line == 0 {
-		runeInLine += result.RunesOnLineBeforeLeaf
-	}
-
-	return absoluteLine, runeInLine, nil
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.byteToLineRuneInternalUnlocked(bytePos)
 }
 
 // byteToLineRuneInternalUnlocked is the unlocked version for use when caller already holds the lock.
@@ -3308,8 +3229,8 @@ func (g *Garland) seekByWordAt(c *Cursor, n int) (int, error) {
 			moved++
 		}
 		if moved > 0 {
-			runePos, _ := g.byteToRuneInternal(currentBytePos)
-			line, lineRune, _ := g.byteToLineRuneInternal(currentBytePos)
+			runePos, _ := g.byteToRuneInternalUnlocked(currentBytePos)
+			line, lineRune, _ := g.byteToLineRuneInternalUnlocked(currentBytePos)
 			c.updatePosition(currentBytePos, runePos, line, lineRune)
 		}
 	} else {
@@ -3327,8 +3248,8 @@ func (g *Garland) seekByWordAt(c *Cursor, n int) (int, error) {
 			moved++
 		}
 		if moved > 0 {
-			runePos, _ := g.byteToRuneInternal(currentBytePos)
-			line, lineRune, _ := g.byteToLineRuneInternal(currentBytePos)
+			runePos, _ := g.byteToRuneInternalUnlocked(currentBytePos)
+			line, lineRune, _ := g.byteToLineRuneInternalUnlocked(currentBytePos)
 			c.updatePosition(currentBytePos, runePos, line, lineRune)
 		}
 	}
@@ -3544,16 +3465,16 @@ func (g *Garland) seekLineEndAt(c *Cursor) error {
 			endPos = 0
 		}
 
-		runePos, _ := g.byteToRuneInternal(endPos)
-		_, lineRune, _ := g.byteToLineRuneInternal(endPos)
+		runePos, _ := g.byteToRuneInternalUnlocked(endPos)
+		_, lineRune, _ := g.byteToLineRuneInternalUnlocked(endPos)
 		c.updatePosition(endPos, runePos, currentLine, lineRune)
 		return nil
 	}
 
 	// We're on the last line - go to EOF
 	endPos := g.totalBytes
-	runePos, _ := g.byteToRuneInternal(endPos)
-	_, lineRune, _ := g.byteToLineRuneInternal(endPos)
+	runePos, _ := g.byteToRuneInternalUnlocked(endPos)
+	_, lineRune, _ := g.byteToLineRuneInternalUnlocked(endPos)
 	c.updatePosition(endPos, runePos, currentLine, lineRune)
 	return nil
 }
