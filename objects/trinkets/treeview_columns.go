@@ -607,6 +607,41 @@ func (t *TreeView) treeLinePrefix(item *TreeItem) []rune {
 	return out
 }
 
+// drawTreeLineCell paints one connector cell. The TUI uses the box
+// glyphs; pixel surfaces draw the same segments as real 1px lines in
+// the glyph's position, spanning the whole cell so consecutive rows
+// and columns connect without font gaps.
+func (t *TreeView) drawTreeLineCell(p *core.Painter, x, y core.Unit, r rune, s style.CellStyle, metrics core.CellMetrics) {
+	if !p.Graphical() {
+		p.DrawCell(x, y, r, s)
+		return
+	}
+	cw, ch := metrics.CellWidth, metrics.CellHeight
+	cx := x + cw/2 // the glyph's vertical stroke position
+	cy := y + ch/2 // the glyph's horizontal stroke position
+	fr, fg, fb := s.Fg.RGBComponents()
+	vert := func(from, to core.Unit) {
+		p.FillRectPixelsAlpha(cx, from, 0, 0, 1, p.UnitSpanPxY(from, to), fr, fg, fb, 1)
+	}
+	horiz := func(from core.Unit) {
+		p.FillRectPixelsAlpha(from, cy, 0, 0, p.UnitSpanPxX(from, x+cw), 1, fr, fg, fb, 1)
+	}
+	switch r {
+	case '│':
+		vert(y, y+ch)
+	case '├':
+		vert(y, y+ch)
+		horiz(cx)
+	case '└':
+		// The elbow's vertical leg meets the horizontal stroke (one
+		// extra pixel so the corner is closed).
+		p.FillRectPixelsAlpha(cx, y, 0, 0, 1, p.UnitSpanPxY(y, cy)+1, fr, fg, fb, 1)
+		horiz(cx)
+	case '─':
+		horiz(x)
+	}
+}
+
 // hasNextVisualSibling reports whether another sibling follows item in
 // the VISUAL (sorted) order - the state that picks ├ vs └ and runs the
 // │ continuation through deeper rows.
@@ -1377,7 +1412,7 @@ func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, it
 	if t.treeLines {
 		for ci, r := range t.treeLinePrefix(item) {
 			if r != ' ' {
-				p.DrawCell(sp.x+core.Unit(ci)*metrics.CellWidth, itemY, r, s)
+				t.drawTreeLineCell(p, sp.x+core.Unit(ci)*metrics.CellWidth, itemY, r, s, metrics)
 			}
 		}
 	}

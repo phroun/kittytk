@@ -671,7 +671,7 @@ func (t *TreeView) Paint(p *core.Painter) {
 		if t.treeLines {
 			for ci, r := range t.treeLinePrefix(item) {
 				if r != ' ' {
-					p.DrawCell(core.Unit(ci)*metrics.CellWidth, itemY, r, s)
+					t.drawTreeLineCell(p, core.Unit(ci)*metrics.CellWidth, itemY, r, s, metrics)
 				}
 			}
 		}
