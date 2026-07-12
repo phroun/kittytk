@@ -250,33 +250,53 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) (SaveRep
 			protectFrom = newTotal
 		}
 	}
-	if opts.PreserveHistory {
-		for _, node := range g.nodeRegistry {
-			if node == nil {
+	// ---- Protect / invalidate history the rewrite disturbs ----
+	// INVARIANT: originalFileOffset >= 0 promises the file CURRENTLY
+	// holds the snapshot's bytes at that offset - the skip logic and
+	// warm reads trust it blindly. The rewrite breaks that promise for
+	// every snapshot outside the current view whose region intersects
+	// [protectFrom, EOF), so each one must be handled, whatever its
+	// storage state:
+	//   - warm + PreserveHistory: bytes are read back while the old
+	//     file is intact and migrated to cold (or held in memory).
+	//   - warm without PreserveHistory: the only copy is about to be
+	//     overwritten - marked lost NOW (undo history is amputated,
+	//     never silently corrupted).
+	//   - memory/cold: the bytes are safe elsewhere; only the stale
+	//     offset must be cleared, so no later save (after an undo or
+	//     fork seek makes this snapshot current again) can skip-trust
+	//     a file region that holds different bytes.
+	for _, node := range g.nodeRegistry {
+		if node == nil {
+			continue
+		}
+		for key, snap := range node.history {
+			if snap == nil || !snap.isLeaf || currentSnaps[snap] {
 				continue
 			}
-			for key, snap := range node.history {
-				if snap == nil || !snap.isLeaf || snap.storageState != StorageWarm {
-					continue
-				}
-				if currentSnaps[snap] {
-					continue // protected by the write ordering
-				}
-				if snap.originalFileOffset+snap.byteCount <= protectFrom {
-					continue // rewrite never touches its bytes
-				}
-				// Read it back while the old file is intact...
-				if err := g.readFromWarmStorageWithTrust(node.id, snap); err != nil {
-					return report, err
-				}
-				// ...and push it to cold if a backend exists (else it
-				// simply stays in memory).
-				if g.lib.coldStorageBackend != nil && g.loadingStyle != MemoryOnly {
-					if err := g.chillSnapshot(node.id, key, snap); err != nil {
+			if snap.originalFileOffset < 0 ||
+				snap.originalFileOffset+snap.byteCount <= protectFrom {
+				continue // rewrite never touches its bytes
+			}
+			if snap.storageState == StorageWarm {
+				if opts.PreserveHistory {
+					// Read it back while the old file is intact...
+					if err := g.readFromWarmStorageWithTrust(node.id, snap); err != nil {
 						return report, err
 					}
+					// ...and push it to cold if a backend exists (else
+					// it simply stays in memory).
+					if g.lib.coldStorageBackend != nil && g.loadingStyle != MemoryOnly {
+						if err := g.chillSnapshot(node.id, key, snap); err != nil {
+							return report, err
+						}
+					}
+				} else {
+					g.markSnapshotLost(snap,
+						"backing bytes overwritten by save without PreserveHistory")
 				}
 			}
+			snap.originalFileOffset = -1
 		}
 	}
 

@@ -27,6 +27,8 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 	"unicode/utf8"
@@ -374,16 +376,45 @@ type diffHarness struct {
 	known  []ForkID              // every fork ever observed
 	dead   map[ForkID]bool       // soft-deleted forks
 	pruned map[ForkID]RevisionID // each fork's own PrunedUpTo watermark
+
+	// Storage-tier mode: the buffer is backed by a real temp file with
+	// a cold-storage backend and SMALL leaves, and the op mix gains
+	// chill / thaw / in-place save. Storage state is invisible to the
+	// model - every tier transition must preserve every invariant.
+	tiered bool
+	path   string // source file path (tiered mode)
 }
 
 func newDiffHarness(t *testing.T, seed int64, initial string) *diffHarness {
-	lib, err := Init(LibraryOptions{})
-	if err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	g, err := lib.Open(FileOptions{DataString: initial})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
+	return newDiffHarnessMode(t, seed, initial, false)
+}
+
+func newDiffHarnessMode(t *testing.T, seed int64, initial string, tiered bool) *diffHarness {
+	var g *Garland
+	var path string
+	if tiered {
+		dir := t.TempDir()
+		path = filepath.Join(dir, "doc.txt")
+		if err := os.WriteFile(path, []byte(initial), 0644); err != nil {
+			t.Fatal(err)
+		}
+		lib, err := Init(LibraryOptions{ColdStoragePath: filepath.Join(dir, "cold")})
+		if err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		g, err = lib.Open(FileOptions{FilePath: path, MaxLeafSize: 128})
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+	} else {
+		lib, err := Init(LibraryOptions{})
+		if err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		g, err = lib.Open(FileOptions{DataString: initial})
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
 	}
 	h := &diffHarness{
 		t:       t,
@@ -398,6 +429,8 @@ func newDiffHarness(t *testing.T, seed int64, initial string) *diffHarness {
 		pruned:  map[ForkID]RevisionID{},
 	}
 	h.known = append(h.known, h.fork)
+	h.tiered = tiered
+	h.path = path
 	for i := 0; i < 3; i++ {
 		h.curs = append(h.curs, g.NewCursor())
 	}
@@ -1088,6 +1121,72 @@ func min64(a, b int64) int64 {
 
 // ---------- the test ----------
 
+// ---------- storage-tier ops (tiered mode only) ----------
+//
+// Storage state is INVISIBLE: no chill, thaw, or in-place save may
+// change content, counts, decorations, or cursor coherence. In
+// non-tiered mode these ops delegate to a plain op so the op-stream
+// consumes the same random draws either way.
+
+func (h *diffHarness) opChill() {
+	if !h.tiered {
+		h.opSeek()
+		return
+	}
+	levels := []ChillLevel{ChillInactiveForks, ChillOldHistory, ChillUnusedData, ChillEverything}
+	lvl := levels[h.rnd.Intn(len(levels))]
+	h.logf("Chill(%d)", lvl)
+	if err := h.g.Chill(lvl); err != nil {
+		h.fail("Chill(%d): %v", lvl, err)
+	}
+	h.check("after chill", true)
+}
+
+func (h *diffHarness) opThaw() {
+	if !h.tiered {
+		h.opSeek()
+		return
+	}
+	if h.rnd.Intn(2) == 0 {
+		h.logf("Thaw()")
+		if err := h.g.Thaw(); err != nil {
+			h.fail("Thaw: %v", err)
+		}
+	} else {
+		size := int64(len(h.model.data))
+		a := h.rnd.Int63n(size + 1)
+		b := a + h.rnd.Int63n(size-a+1)
+		h.logf("ThawRange(%d,%d)", a, b)
+		if err := h.g.ThawRange(a, b); err != nil {
+			h.fail("ThawRange(%d,%d): %v", a, b, err)
+		}
+	}
+	h.check("after thaw", true)
+}
+
+func (h *diffHarness) opSave() {
+	if !h.tiered {
+		h.opInsert()
+		return
+	}
+	h.logf("Save()")
+	report, err := h.g.Save()
+	if err != nil {
+		h.fail("Save: %v", err)
+	}
+	if len(report.Scars) != 0 {
+		h.fail("Save produced scars with no data loss: %+v", report.Scars)
+	}
+	onDisk, err := os.ReadFile(h.path)
+	if err != nil {
+		h.fail("read back saved file: %v", err)
+	}
+	if !bytes.Equal(onDisk, h.model.data) {
+		h.fail("file != model after save\n got %q\nwant %q", onDisk, h.model.data)
+	}
+	h.check("after save", true)
+}
+
 func TestDifferentialRandomOps(t *testing.T) {
 	seeds := make([]int64, 64)
 	for i := range seeds {
@@ -1096,15 +1195,19 @@ func TestDifferentialRandomOps(t *testing.T) {
 	_ = seeds
 	for _, seed := range seeds {
 		seed := seed
+		// Even seeds run TIERED: file-backed with cold storage and
+		// 128-byte leaves, adding chill/thaw/save to the op mix so
+		// every operation also runs against warm/cold-resident trees.
+		tiered := seed%2 == 0
 		t.Run(fmt.Sprintf("seed%d", seed), func(t *testing.T) {
-			h := newDiffHarness(t, seed, "Hello, World!\nSecond line\n中文 αβγ\n")
+			h := newDiffHarnessMode(t, seed, "Hello, World!\nSecond line\n中文 αβγ\n", tiered)
 			h.check("initial", true)
 			for i := 0; i < 400; i++ {
 				if len(h.model.data) > 8192 {
 					h.opDelete()
 					continue
 				}
-				switch h.rnd.Intn(22) {
+				switch h.rnd.Intn(25) {
 				case 0, 1, 2:
 					h.opInsert()
 				case 3, 4:
@@ -1137,6 +1240,12 @@ func TestDifferentialRandomOps(t *testing.T) {
 					h.opWordSeek()
 				case 21:
 					h.opLineEnds()
+				case 22:
+					h.opChill()
+				case 23:
+					h.opThaw()
+				case 24:
+					h.opSave()
 				}
 			}
 			if len(h.soft) > 0 {
