@@ -236,6 +236,14 @@ type Loader struct {
 	// Channel source
 	dataChan chan []byte
 
+	// pendingTail holds an incomplete UTF-8 sequence (at most 3 bytes)
+	// cut from the end of the last chunk, so a rune split across two
+	// channel sends never lands split across two leaves (which would
+	// corrupt rune/line counts). Flushed verbatim at end of stream, so
+	// binary (non-UTF-8) content is passed through byte-for-byte.
+	// Touched only by the loader goroutine.
+	pendingTail []byte
+
 	// Control
 	stopChan chan struct{}
 }

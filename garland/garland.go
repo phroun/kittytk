@@ -4,6 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 )
 
 // LoadingStyle determines which storage tiers are available.
@@ -2489,7 +2490,15 @@ func (g *Garland) channelLoaderRoutine() {
 			return
 		case data, ok := <-g.loader.dataChan:
 			if !ok {
-				// Channel closed - mark as complete and finalize streaming
+				// Channel closed - flush any held-back partial-rune tail
+				// verbatim (a tail that never completed is the stream's
+				// real final bytes - binary or truncated UTF-8 either
+				// way, they belong in the buffer).
+				if len(g.loader.pendingTail) > 0 {
+					g.appendStreamData(g.loader.pendingTail)
+					g.loader.pendingTail = nil
+				}
+				// Mark as complete and finalize streaming
 				g.mu.Lock()
 				g.countComplete = true
 				g.loader.eofReached = true
@@ -2513,7 +2522,21 @@ func (g *Garland) channelLoaderRoutine() {
 				return
 			}
 			if len(data) > 0 {
-				g.appendStreamData(data)
+				// Rejoin any partial rune held back from the previous
+				// chunk, and hold back a new incomplete tail so leaf
+				// boundaries never split a UTF-8 sequence. For non-UTF-8
+				// (binary) tails trimToRuneBoundary keeps everything.
+				if len(g.loader.pendingTail) > 0 {
+					data = append(append([]byte(nil), g.loader.pendingTail...), data...)
+					g.loader.pendingTail = nil
+				}
+				if cut := trimToRuneBoundary(data); cut < len(data) {
+					g.loader.pendingTail = append([]byte(nil), data[cut:]...)
+					data = data[:cut]
+				}
+				if len(data) > 0 {
+					g.appendStreamData(data)
+				}
 			}
 		}
 	}
@@ -3237,10 +3260,10 @@ func (g *Garland) lineRuneToByteInternal(line, runeInLine int64) (int64, error) 
 	return result.LeafResult.LeafByteStart + result.LeafResult.ByteOffset, nil
 }
 
-// seekByWordAt moves the cursor by n words.
+// seekByWordAt moves the cursor by n words under the given style.
 // Positive n moves forward, negative moves backward.
 // Returns the number of words actually moved.
-func (g *Garland) seekByWordAt(c *Cursor, n int) (int, error) {
+func (g *Garland) seekByWordAt(c *Cursor, n int, style WordStyle) (int, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
@@ -3257,7 +3280,7 @@ func (g *Garland) seekByWordAt(c *Cursor, n int) (int, error) {
 		currentBytePos := c.bytePos
 		for moved < n {
 			// Find the next word boundary from currentBytePos
-			nextWordStart, err := g.findNextWordBoundary(currentBytePos, true)
+			nextWordStart, err := g.findNextWordBoundary(currentBytePos, true, style)
 			if err != nil || nextWordStart == currentBytePos {
 				// No more words or at end
 				break
@@ -3276,7 +3299,7 @@ func (g *Garland) seekByWordAt(c *Cursor, n int) (int, error) {
 		currentBytePos := c.bytePos
 		for moved < wordsToMove {
 			// Find the previous word boundary from currentBytePos
-			prevWordStart, err := g.findNextWordBoundary(currentBytePos, false)
+			prevWordStart, err := g.findNextWordBoundary(currentBytePos, false, style)
 			if err != nil || prevWordStart == currentBytePos {
 				// No more words or at beginning
 				break
@@ -3294,9 +3317,29 @@ func (g *Garland) seekByWordAt(c *Cursor, n int) (int, error) {
 	return moved, nil
 }
 
-// findNextWordBoundary finds the byte position of the next/previous word boundary.
-// forward=true finds next word start, forward=false finds previous word start.
-func (g *Garland) findNextWordBoundary(fromByte int64, forward bool) (int64, error) {
+// wordClassOf buckets a rune for word-motion purposes under a style:
+// 0 = separator (never a stop), 1 = word character, 2 = punctuation
+// run (its own kind of word - WordStyleVi only; under WordStyleSimple
+// punctuation is a separator).
+func wordClassOf(r rune, style WordStyle) int {
+	switch {
+	case unicode.IsSpace(r):
+		return 0
+	case isWordChar(r):
+		return 1
+	case style == WordStyleVi:
+		return 2
+	default:
+		return 0
+	}
+}
+
+// findNextWordBoundary finds the byte position of the next/previous word
+// start under the given style. forward=true finds the next word start,
+// forward=false the previous one. A "word" is a maximal run of a single
+// non-separator class: with WordStyleSimple only letters/digits/_ form
+// words; with WordStyleVi punctuation runs are words of their own.
+func (g *Garland) findNextWordBoundary(fromByte int64, forward bool, style WordStyle) (int64, error) {
 	totalBytes := g.totalBytes
 
 	if forward {
@@ -3304,27 +3347,30 @@ func (g *Garland) findNextWordBoundary(fromByte int64, forward bool) (int64, err
 			return fromByte, nil
 		}
 
-		// Skip the rest of the current word run - only when the cursor
-		// is ON a word character. Starting from whitespace/punctuation
-		// must land on the NEXT word start, not consume it and land on
-		// the word after that.
+		// Skip the rest of the current run - only when the cursor is ON
+		// a non-separator. Starting from a separator must land on the
+		// NEXT word start, not consume it and land on the one after.
 		pos := fromByte
-		for pos < totalBytes {
-			r, size, err := g.runeAtByte(pos)
-			if err != nil || !isWordChar(r) {
-				break
+		if r, size, err := g.runeAtByte(pos); err == nil {
+			if cls := wordClassOf(r, style); cls != 0 {
+				pos += int64(size)
+				for pos < totalBytes {
+					r, size, err := g.runeAtByte(pos)
+					if err != nil || wordClassOf(r, style) != cls {
+						break
+					}
+					pos += int64(size)
+				}
 			}
-			pos += int64(size)
 		}
 
-		// Now skip whitespace/non-word to find next word start
+		// Now skip separators to find the next word start.
 		for pos < totalBytes {
 			r, size, err := g.runeAtByte(pos)
 			if err != nil {
 				break
 			}
-			if isWordChar(r) {
-				// Found start of next word
+			if wordClassOf(r, style) != 0 {
 				return pos, nil
 			}
 			pos += int64(size)
@@ -3340,26 +3386,32 @@ func (g *Garland) findNextWordBoundary(fromByte int64, forward bool) (int64, err
 
 	pos := fromByte
 
-	// First, move back to skip any whitespace/non-word chars before cursor
+	// First, move back over any separators before the cursor.
 	for pos > 0 {
 		r, size, err := g.runeBeforeByte(pos)
 		if err != nil {
 			break
 		}
-		if isWordChar(r) {
+		if wordClassOf(r, style) != 0 {
 			break
 		}
 		pos -= int64(size)
 	}
 
-	// Now move back through the word to find its start
+	// Now move back through the run (of whatever non-separator class
+	// precedes the cursor) to find its start.
+	runClass := -1
 	for pos > 0 {
 		r, size, err := g.runeBeforeByte(pos)
 		if err != nil {
 			break
 		}
-		if !isWordChar(r) {
-			// Found start of word
+		cls := wordClassOf(r, style)
+		if runClass == -1 {
+			runClass = cls
+		}
+		if cls == 0 || cls != runClass {
+			// Found start of the run
 			return pos, nil
 		}
 		pos -= int64(size)

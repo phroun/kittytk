@@ -182,12 +182,18 @@ func (c *Cursor) OptimizedRegionGraceWindow() (start, end int64, ok bool) {
 }
 
 // BeginOptimizedRegion explicitly starts an optimized region at the specified bounds.
-// This works regardless of cursor mode and dissolves any existing region first.
+//
+// QUARANTINED: optimized regions are unfinished scaffolding. The edit
+// paths never route through an active region, so a region created here
+// holds FIXED bounds that go stale on the next checkpoint/transaction -
+// a live corruption hazard. Until the feature is either fully wired in
+// or removed, this returns ErrNotSupported. (RULING 2026-07-12: keep
+// the scaffolding, block the entry point.)
 func (c *Cursor) BeginOptimizedRegion(startByte, endByte int64) error {
 	if c.garland == nil {
 		return ErrCursorNotFound
 	}
-	return c.garland.beginOptimizedRegionForCursor(c, startByte, endByte)
+	return ErrNotSupported
 }
 
 // SeekByte moves the cursor to an absolute byte position.
@@ -331,16 +337,37 @@ func (c *Cursor) SeekRelativeRunes(delta int64) error {
 	return c.SeekRune(newPos)
 }
 
-// SeekByWord moves the cursor by n words.
+// WordStyle selects the word-boundary semantics for word motions.
+type WordStyle int
+
+const (
+	// WordStyleSimple: a word is a run of letters/digits/underscore;
+	// punctuation and whitespace are separators (never stops).
+	WordStyleSimple WordStyle = iota
+
+	// WordStyleVi: like vi's w/b - punctuation runs are words of
+	// their own, so both word-character runs and punctuation runs are
+	// stops; only whitespace separates.
+	WordStyleVi
+)
+
+// SeekByWord moves the cursor by n words using WordStyleSimple.
 // Positive n moves forward, negative n moves backward.
-// A word is defined as a sequence of alphanumeric/underscore characters,
-// or a sequence of non-whitespace non-word characters.
-// Returns the number of words actually moved (may be less than requested at boundaries).
+// Returns the number of words actually moved (may be less than
+// requested at the buffer boundaries). Use SeekByWordStyle to choose
+// different word semantics.
 func (c *Cursor) SeekByWord(n int) (int, error) {
+	return c.SeekByWordStyle(n, WordStyleSimple)
+}
+
+// SeekByWordStyle moves the cursor by n words under the given
+// WordStyle. Positive n moves forward, negative n moves backward.
+// Returns the number of words actually moved.
+func (c *Cursor) SeekByWordStyle(n int, style WordStyle) (int, error) {
 	if c.garland == nil {
 		return 0, ErrCursorNotFound
 	}
-	return c.garland.seekByWordAt(c, n)
+	return c.garland.seekByWordAt(c, n, style)
 }
 
 // SeekLineStart moves the cursor to the beginning of the current line.

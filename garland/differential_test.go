@@ -265,22 +265,29 @@ func (s *refState) matchesRegex(from int64, re *regexp.Regexp, whole bool) [][2]
 // the next word START; from outside a word it lands on the very next
 // word start. Backward lands on the start of the current (or previous)
 // word. A move that only reaches EOF (no further word) still counts as
-// one move if the cursor advanced. NOTE: the doc comment also promises
-// punctuation-run "words"; the implementation does not do that -
-// flagged for ruling.
+// one move if the cursor advanced. RULING 2026-07-12: semantics are
+// selected per call via WordStyle - WordStyleSimple (punctuation is a
+// separator; the SeekByWord default) or WordStyleVi (punctuation runs
+// are words of their own, like vi's w/b).
 
-func (s *refState) nextWordStart(pos int64) int64 {
+func (s *refState) nextWordStart(pos int64, style WordStyle) int64 {
 	d := s.data
-	for pos < int64(len(d)) {
+	if pos < int64(len(d)) {
 		r, sz := utf8.DecodeRune(d[pos:])
-		if !isWordChar(r) {
-			break
+		if cls := wordClassOf(r, style); cls != 0 {
+			pos += int64(sz)
+			for pos < int64(len(d)) {
+				r, sz := utf8.DecodeRune(d[pos:])
+				if wordClassOf(r, style) != cls {
+					break
+				}
+				pos += int64(sz)
+			}
 		}
-		pos += int64(sz)
 	}
 	for pos < int64(len(d)) {
 		r, sz := utf8.DecodeRune(d[pos:])
-		if isWordChar(r) {
+		if wordClassOf(r, style) != 0 {
 			return pos
 		}
 		pos += int64(sz)
@@ -288,18 +295,23 @@ func (s *refState) nextWordStart(pos int64) int64 {
 	return pos
 }
 
-func (s *refState) prevWordStart(pos int64) int64 {
+func (s *refState) prevWordStart(pos int64, style WordStyle) int64 {
 	d := s.data
 	for pos > 0 {
 		r, sz := utf8.DecodeLastRune(d[:pos])
-		if isWordChar(r) {
+		if wordClassOf(r, style) != 0 {
 			break
 		}
 		pos -= int64(sz)
 	}
+	runClass := -1
 	for pos > 0 {
 		r, sz := utf8.DecodeLastRune(d[:pos])
-		if !isWordChar(r) {
+		cls := wordClassOf(r, style)
+		if runClass == -1 {
+			runClass = cls
+		}
+		if cls == 0 || cls != runClass {
 			break
 		}
 		pos -= int64(sz)
@@ -307,7 +319,7 @@ func (s *refState) prevWordStart(pos int64) int64 {
 	return pos
 }
 
-func (s *refState) wordSeek(pos int64, n int) (int64, int) {
+func (s *refState) wordSeek(pos int64, n int, style WordStyle) (int64, int) {
 	moved := 0
 	steps := n
 	if steps < 0 {
@@ -316,9 +328,9 @@ func (s *refState) wordSeek(pos int64, n int) (int64, int) {
 	for i := 0; i < steps; i++ {
 		var next int64
 		if n > 0 {
-			next = s.nextWordStart(pos)
+			next = s.nextWordStart(pos, style)
 		} else {
-			next = s.prevWordStart(pos)
+			next = s.prevWordStart(pos, style)
 		}
 		if next == pos {
 			break
@@ -1018,17 +1030,21 @@ func (h *diffHarness) opWordSeek() {
 	if h.rnd.Intn(2) == 0 {
 		n = -n
 	}
-	h.logf("c%d.SeekByWord(%d) from %d", actor, n, pos)
-	moved, err := h.curs[actor].SeekByWord(n)
-	if err != nil {
-		h.fail("SeekByWord(%d): %v", n, err)
+	style := WordStyleSimple
+	if h.rnd.Intn(2) == 0 {
+		style = WordStyleVi
 	}
-	wantPos, wantMoved := h.model.wordSeek(pos, n)
+	h.logf("c%d.SeekByWordStyle(%d, %v) from %d", actor, n, style, pos)
+	moved, err := h.curs[actor].SeekByWordStyle(n, style)
+	if err != nil {
+		h.fail("SeekByWordStyle(%d, %v): %v", n, style, err)
+	}
+	wantPos, wantMoved := h.model.wordSeek(pos, n, style)
 	if moved != wantMoved {
-		h.fail("SeekByWord(%d) from %d moved %d, want %d", n, pos, moved, wantMoved)
+		h.fail("SeekByWordStyle(%d, %v) from %d moved %d, want %d", n, style, pos, moved, wantMoved)
 	}
 	if got := h.curs[actor].BytePos(); got != wantPos {
-		h.fail("SeekByWord(%d) from %d landed %d, want %d (content %q)", n, pos, got, wantPos, h.model.data)
+		h.fail("SeekByWordStyle(%d, %v) from %d landed %d, want %d (content %q)", n, style, pos, got, wantPos, h.model.data)
 	}
 	h.model.cursors[actor] = wantPos
 	h.check("after wordseek", true)

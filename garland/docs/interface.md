@@ -265,6 +265,24 @@ func (c *Cursor) SeekRune(pos int64) error
 // Line and rune are both 0-indexed. Newline is the last character of its line.
 func (c *Cursor) SeekLine(line, runeInLine int64) error
 
+// SeekByWord moves by n words (negative = backward) using
+// WordStyleSimple; returns how many words were actually moved.
+func (c *Cursor) SeekByWord(n int) (int, error)
+
+// SeekByWordStyle selects the word semantics per call.
+func (c *Cursor) SeekByWordStyle(n int, style WordStyle) (int, error)
+
+type WordStyle int
+
+const (
+    // WordStyleSimple: words are runs of letters/digits/underscore;
+    // punctuation and whitespace are separators.
+    WordStyleSimple WordStyle = iota
+    // WordStyleVi: like vi's w/b - punctuation runs are words of
+    // their own; only whitespace separates.
+    WordStyleVi
+)
+
 // Position queries
 
 // BytePos returns the cursor's absolute byte position.
