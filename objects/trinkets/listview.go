@@ -411,9 +411,10 @@ func (l *ListView) Paint(p *core.Painter) {
 	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
-	visibleCount := int(bounds.Height / metrics.CellHeight)
+	visibleCount := l.visibleCount() // clamped: never negative
 
-	// Draw items
+	// Draw items (styles collected for the vertical edge fades).
+	rowStyles := make([]style.CellStyle, 0, visibleCount)
 	for i := 0; i < visibleCount; i++ {
 		itemIndex := l.scrollOffset + i
 		if itemIndex >= len(l.items) {
@@ -445,6 +446,8 @@ func (l *ListView) Paint(p *core.Painter) {
 			// Unselected items
 			s = style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
 		}
+
+		rowStyles = append(rowStyles, s)
 
 		// Draw row background
 		p.FillRect(core.UnitRect{
@@ -482,9 +485,62 @@ func (l *ListView) Paint(p *core.Painter) {
 		p.DrawText(x, itemY, displayText, s, font)
 	}
 
+	// Vertical edge fades over the content (under the scrollbar).
+	l.paintVScrollFades(p, rowStyles, visibleCount)
+
 	// Draw scrollbar if needed
 	if len(l.items) > visibleCount {
 		l.paintScrollbar(p, visibleCount)
+	}
+}
+
+// paintVScrollFades fades the top/bottom edges when more items lie
+// beyond them (pixel surfaces only), banded so each pixel row blends
+// toward the background of the ITEM row under it - selection bar,
+// ledger band, or plain - the TreeView's horizontal fade, turned
+// vertical. No corner treatment: the list only scrolls one way.
+func (l *ListView) paintVScrollFades(p *core.Painter, rowStyles []style.CellStyle, visibleCount int) {
+	if !p.Graphical() {
+		return
+	}
+	maxScroll := len(l.items) - visibleCount
+	showTop := l.scrollOffset > 0
+	showBottom := maxScroll > 0 && l.scrollOffset < maxScroll
+	if !showTop && !showBottom {
+		return
+	}
+	bounds := l.Bounds()
+	metrics := l.EffectiveCellMetrics()
+	wtPx := p.UnitSpanPxY(0, metrics.CellHeight) // one row deep
+	if hvPx := p.UnitSpanPxY(0, bounds.Height); wtPx > hvPx/2 {
+		wtPx = hvPx / 2
+	}
+	if wtPx <= 0 {
+		return
+	}
+	wPx := p.UnitSpanPxX(0, bounds.Width)
+	rowPx := p.UnitSpanPxY(0, metrics.CellHeight)
+	totalPx := p.UnitSpanPxY(0, bounds.Height)
+	listBG := l.GetScheme().GetListBG()
+	bgAt := func(px int) style.Color {
+		if rowPx > 0 {
+			if idx := px / rowPx; idx >= 0 && idx < len(rowStyles) {
+				return rowStyles[idx].Bg
+			}
+		}
+		return listBG
+	}
+	alphaAt := func(d int) float64 { return 1.0 - (float64(d)+0.5)/float64(wtPx) }
+	for j := 0; j < wtPx; j++ {
+		a := alphaAt(j)
+		if showTop {
+			r, g, b := bgAt(j).RGBComponents()
+			p.FillRectPixelsAlpha(0, 0, 0, j, wPx, 1, r, g, b, a)
+		}
+		if showBottom {
+			r, g, b := bgAt(totalPx - 1 - j).RGBComponents()
+			p.FillRectPixelsAlpha(0, bounds.Height, 0, -j-1, wPx, 1, r, g, b, a)
+		}
 	}
 }
 

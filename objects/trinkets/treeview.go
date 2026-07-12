@@ -622,8 +622,16 @@ func (t *TreeView) Paint(p *core.Painter) {
 
 	visibleCount := int(bounds.Height / metrics.CellHeight)
 
+	// GUI: paint one extra partial row into any leftover strip rather
+	// than leaving it blank (never counted as visible for scrolling).
+	rows := visibleCount
+	if p.Graphical() && t.scrollOffset+visibleCount < len(t.flatList) &&
+		core.Unit(visibleCount)*metrics.CellHeight < bounds.Height {
+		rows++
+	}
+
 	// Draw items
-	for i := 0; i < visibleCount; i++ {
+	for i := 0; i < rows; i++ {
 		itemIndex := t.scrollOffset + i
 		if itemIndex >= len(t.flatList) {
 			break

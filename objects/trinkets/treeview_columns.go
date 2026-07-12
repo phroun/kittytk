@@ -1163,8 +1163,22 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		enterCol = t.enterTargetColumn()
 	}
 	visibleCount := t.visibleCount()
-	rowStyles := make([]style.CellStyle, 0, visibleCount)
-	for i := 0; i < visibleCount; i++ {
+	rows := visibleCount
+	// GUI: one extra PARTIAL row peeks into the leftover strip / under
+	// the footer scrollbar instead of leaving that space blank (the bar
+	// overlays it). It never joins visibleCount, so the scrolling math
+	// does not treat the clipped row as visible.
+	if p.Graphical() && t.scrollOffset+visibleCount < len(t.flatList) &&
+		lay.headerH+core.Unit(visibleCount)*metrics.CellHeight < bounds.Height {
+		rows++
+	}
+	// Per-row fade colors for the horizontal-scroll edge fades: usually
+	// the row band, but the Enter-target's FocusedListItem segment can
+	// sit exactly at a scroll-region edge - the fade there must blend
+	// toward the CELL's color, not the band behind it.
+	fadeL := make([]style.Color, 0, rows)
+	fadeR := make([]style.Color, 0, rows)
+	for i := 0; i < rows; i++ {
 		itemIndex := t.scrollOffset + i
 		if itemIndex >= len(t.flatList) {
 			break
@@ -1215,7 +1229,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		default:
 			s = bgStyle
 		}
-		rowStyles = append(rowStyles, s)
+		fadeLBG, fadeRBG := s.Bg, s.Bg
 		if itemIndex == t.currentIndex || ledgerRow {
 			// Selection and ledger bands span the full row. On pixel
 			// surfaces they run under the scrollbar lane too (the slim
@@ -1260,6 +1274,14 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				if segW > 0 {
 					p.FillRect(core.UnitRect{X: segX, Y: itemY, Width: segW, Height: metrics.CellHeight}, ' ', cellStyle)
 					targetSegX, targetSegW = segX, segW
+					// The segment under a fade zone retints that row's
+					// fade: blend toward the cell, not the row band.
+					if segX <= lay.scrollL && lay.scrollL < segX+segW {
+						fadeLBG = cellStyle.Bg
+					}
+					if segX < lay.scrollR && lay.scrollR <= segX+segW {
+						fadeRBG = cellStyle.Bg
+					}
 				}
 			}
 			cp := p.WithClip(clip)
@@ -1287,6 +1309,8 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				}
 			}
 		}
+		fadeL = append(fadeL, fadeLBG)
+		fadeR = append(fadeR, fadeRBG)
 	}
 
 	// Dividers, over the rows, down to the footer row (the reserved
@@ -1327,7 +1351,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 
 	// Edge fades over the scrolled content (under the scrollbars),
 	// banded so each fade matches the background it covers.
-	t.paintHScrollFades(p, lay, headerStyle, rowStyles, bgStyle)
+	t.paintHScrollFades(p, lay, headerStyle, fadeL, fadeR, bgStyle)
 	paintDividers(true)
 	if lay.headerH > 0 {
 		t.paintChooserButton(p, lay, headerStyle)
@@ -1350,7 +1374,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 // header's background, the selected row with the selection color, the
 // other rows and the empty area with the list background - so every
 // strip fades into exactly what it covers. Pixel surfaces only.
-func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerStyle style.CellStyle, rowStyles []style.CellStyle, bgStyle style.CellStyle) {
+func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerStyle style.CellStyle, fadeL, fadeR []style.Color, bgStyle style.CellStyle) {
 	if !p.Graphical() || t.fitWidth {
 		return
 	}
@@ -1369,23 +1393,25 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 	}
 	bottom := t.Bounds().Height - t.footerHeight()
 
-	// Vertical bands, top to bottom, each with its own fade color.
+	// Vertical bands, top to bottom. Each side of a band carries its
+	// own fade color: they differ when the Enter-target's cell fill
+	// sits at one scroll-region edge but not the other.
 	type band struct {
 		y0, y1 core.Unit
-		bg     style.Color
+		l, r   style.Color
 	}
 	var bands []band
 	y := core.Unit(0)
 	if lay.headerH > 0 {
-		bands = append(bands, band{0, lay.headerH, headerStyle.Bg})
+		bands = append(bands, band{0, lay.headerH, headerStyle.Bg, headerStyle.Bg})
 		y = lay.headerH
 	}
-	for _, rs := range rowStyles {
-		bands = append(bands, band{y, y + metrics.CellHeight, rs.Bg})
+	for i := range fadeL {
+		bands = append(bands, band{y, y + metrics.CellHeight, fadeL[i], fadeR[i]})
 		y += metrics.CellHeight
 	}
 	if y < bottom {
-		bands = append(bands, band{y, bottom, bgStyle.Bg})
+		bands = append(bands, band{y, bottom, bgStyle.Bg, bgStyle.Bg})
 	}
 
 	alphaAt := func(d int) float64 { return 1.0 - (float64(d)+0.5)/float64(wtPx) }
@@ -1394,14 +1420,15 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 		if hPx <= 0 {
 			continue
 		}
-		r, g, bl := b.bg.RGBComponents()
+		lr, lg, lb := b.l.RGBComponents()
+		rr, rg, rb := b.r.RGBComponents()
 		for j := 0; j < wtPx; j++ {
 			a := alphaAt(j)
 			if showLeft {
-				p.FillRectPixelsAlpha(lay.scrollL, b.y0, j, 0, 1, hPx, r, g, bl, a)
+				p.FillRectPixelsAlpha(lay.scrollL, b.y0, j, 0, 1, hPx, lr, lg, lb, a)
 			}
 			if showRight {
-				p.FillRectPixelsAlpha(lay.scrollR, b.y0, -j-1, 0, 1, hPx, r, g, bl, a)
+				p.FillRectPixelsAlpha(lay.scrollR, b.y0, -j-1, 0, 1, hPx, rr, rg, rb, a)
 			}
 		}
 	}
