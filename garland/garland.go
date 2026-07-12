@@ -1773,6 +1773,15 @@ func (g *Garland) UndoSeek(revision RevisionID) error {
 	if revInfo == nil {
 		return ErrRevisionNotFound
 	}
+	// findRevisionInfo walks BACK through revisions when the exact one
+	// is missing (e.g. pruned away on an ancestor before this fork
+	// branched). Installing a lower revision's tree while stamping the
+	// requested revision number would bind (fork, revision) to the
+	// wrong content - refuse instead: the requested revision no longer
+	// exists.
+	if revInfo.Revision != revision {
+		return ErrRevisionNotFound
+	}
 
 	// Restore the root to what it was at this revision
 	if revInfo.RootID != 0 {
@@ -1853,9 +1862,19 @@ func (g *Garland) ForkSeek(fork ForkID) error {
 
 	// Get revision info to restore the correct root
 	revInfo := g.findRevisionInfo(fork, targetRevision)
+	if revInfo == nil {
+		// Nothing reachable on the target lineage at or below the
+		// common revision. Proceeding would keep the CURRENT fork's
+		// root while stamping the target fork's coordinates - refuse.
+		return ErrRevisionNotFound
+	}
+	// The computed common revision may have been pruned away; land on
+	// the nearest surviving ancestor revision instead, and make the
+	// stamped revision match the tree actually installed.
+	targetRevision = revInfo.Revision
 
-	// Restore the root if we found revision info
-	if revInfo != nil && revInfo.RootID != 0 {
+	// Restore the root
+	if revInfo.RootID != 0 {
 		if rootNode, ok := g.nodeRegistry[revInfo.RootID]; ok {
 			g.root = rootNode
 		}
@@ -1959,9 +1978,16 @@ func (g *Garland) Prune(keepFromRevision RevisionID) error {
 	// Set the watermark
 	forkInfo.PrunedUpTo = keepFromRevision
 
-	// Clean up revisionInfo for this fork
+	// Other live forks that branched from this one still resolve their
+	// inherited revisions through THIS fork's revisionInfo and cursor
+	// records. Pruning is this fork's own view only - shared history
+	// survives while anything depends on it (same contract as
+	// DeleteFork).
 	for forkRev := range g.revisionInfo {
 		if forkRev.Fork == g.currentFork && forkRev.Revision < keepFromRevision {
+			if g.revisionNeededByOthers(g.currentFork, forkRev.Revision) {
+				continue
+			}
 			delete(g.revisionInfo, forkRev)
 		}
 	}
@@ -1979,13 +2005,55 @@ func (g *Garland) Prune(keepFromRevision RevisionID) error {
 	return nil
 }
 
-// pruneCursorHistory removes position history entries for pruned revisions.
+// pruneCursorHistory removes position history entries for pruned
+// revisions, sparing those still reachable by other live forks.
 func (g *Garland) pruneCursorHistory(cursor *Cursor, fork ForkID, prunedUpTo RevisionID) {
 	for forkRev := range cursor.positionHistory {
 		if forkRev.Fork == fork && forkRev.Revision < prunedUpTo {
+			if g.revisionNeededByOthers(fork, forkRev.Revision) {
+				continue
+			}
 			delete(cursor.positionHistory, forkRev)
 		}
 	}
+}
+
+// revisionNeededByOthers reports whether revision rev of fork f is
+// still reachable by some OTHER live (non-deleted) fork. A fork D
+// reaches (f, rev) when its lineage passes through f at or above rev -
+// the reach into an ancestor is the MINIMUM branch revision along the
+// path, since each hop only inherits up to its own branch point - AND
+// D has not pruned its own view past rev. This is exactly the set of
+// revisions the snapshot GC marks on D's behalf, so revisionInfo and
+// snapshots stay alive or die together. The walk passes straight
+// through soft-deleted intermediate forks: their lineage metadata
+// persists precisely so descendants keep working.
+func (g *Garland) revisionNeededByOthers(f ForkID, rev RevisionID) bool {
+	for _, other := range g.forks {
+		if other == nil || other.Deleted || other.ID == f {
+			continue
+		}
+		if other.PrunedUpTo > rev {
+			continue // pruned its own view past this revision
+		}
+		cur := other
+		reach := RevisionID(0)
+		haveReach := false
+		for cur != nil && cur.ParentFork != cur.ID {
+			if !haveReach || cur.ParentRevision < reach {
+				reach = cur.ParentRevision
+				haveReach = true
+			}
+			if cur.ParentFork == f {
+				if reach >= rev {
+					return true
+				}
+				break
+			}
+			cur = g.forks[cur.ParentFork]
+		}
+	}
+	return false
 }
 
 // DeleteFork soft-deletes a fork, preventing further navigation to it.
@@ -2024,31 +2092,23 @@ func (g *Garland) DeleteFork(fork ForkID) error {
 	// Mark as deleted
 	forkInfo.Deleted = true
 
-	// Clean up cursor history for this fork
+	// Keep only entries some other live fork still reaches -
+	// TRANSITIVELY: a live grandchild whose parent is itself deleted
+	// still resolves its inherited revisions through this fork's
+	// entries. Descendants restore cursors through ancestor keys the
+	// same way, so cursor history follows the same rule.
 	for _, cursor := range g.cursors {
 		if cursor != nil {
 			for forkRev := range cursor.positionHistory {
-				if forkRev.Fork == fork {
+				if forkRev.Fork == fork && !g.revisionNeededByOthers(fork, forkRev.Revision) {
 					delete(cursor.positionHistory, forkRev)
 				}
 			}
 		}
 	}
 
-	// Clean up revisionInfo for this fork's unique revisions only.
-	// Find the highest revision that any child fork needs from this fork.
-	maxNeededRevision := RevisionID(0)
-	for _, otherFork := range g.forks {
-		if !otherFork.Deleted && otherFork.ParentFork == fork {
-			if otherFork.ParentRevision > maxNeededRevision {
-				maxNeededRevision = otherFork.ParentRevision
-			}
-		}
-	}
-
-	// Only delete revisionInfo for revisions beyond what child forks need
 	for forkRev := range g.revisionInfo {
-		if forkRev.Fork == fork && forkRev.Revision > maxNeededRevision {
+		if forkRev.Fork == fork && !g.revisionNeededByOthers(fork, forkRev.Revision) {
 			delete(g.revisionInfo, forkRev)
 		}
 	}
@@ -2274,55 +2334,46 @@ func (g *Garland) isAtHead() bool {
 // findCommonRevision finds a common revision between two forks.
 // Returns the revision in the target fork that corresponds to the source position.
 func (g *Garland) findCommonRevision(sourceFork ForkID, sourceRev RevisionID, targetFork ForkID) RevisionID {
-	// Walk up the ancestry of both forks to find common ancestor
-	// For now, simple approach: if target fork is descendant of source, use sourceRev
-	// If source fork is descendant of target, find where source forked from target
-
-	targetInfo := g.forks[targetFork]
-
-	// Check if target fork descended from source fork
-	current := targetFork
-	for current != 0 {
-		info := g.forks[current]
-		if info.ParentFork == sourceFork {
-			// Target descended from source at info.ParentRevision
-			if sourceRev <= info.ParentRevision {
-				return sourceRev
+	// reachInto computes, for the starting fork and every ancestor of
+	// it, the highest revision of that fork reachable from the start:
+	// the MINIMUM of the branch revisions along the path (each hop only
+	// inherits its parent's history up to its own branch point), capped
+	// by `limit` for the starting fork itself.
+	reachInto := func(start ForkID, limit RevisionID) map[ForkID]RevisionID {
+		out := map[ForkID]RevisionID{start: limit}
+		reach := limit
+		cur := g.forks[start]
+		for cur != nil && cur.ParentFork != cur.ID {
+			if cur.ParentRevision < reach {
+				reach = cur.ParentRevision
 			}
-			return info.ParentRevision
+			out[cur.ParentFork] = reach
+			cur = g.forks[cur.ParentFork]
 		}
-		if current == info.ParentFork {
-			break // reached root
-		}
-		current = info.ParentFork
+		return out
 	}
+	src := reachInto(sourceFork, sourceRev)
+	tgtInfo := g.forks[targetFork]
+	tgt := reachInto(targetFork, tgtInfo.HighestRevision)
 
-	// Check if source fork descended from target fork
-	sourceInfo := g.forks[sourceFork]
-	current = sourceFork
-	for current != 0 {
-		info := g.forks[current]
-		if info.ParentFork == targetFork {
-			// Source descended from target at info.ParentRevision
-			return info.ParentRevision
+	// Walk up from the target: the first fork on its ancestry chain
+	// that the source also reaches is the junction. The shared revision
+	// visible from both sides is the smaller of the two reaches.
+	cur := targetFork
+	for {
+		if sr, ok := src[cur]; ok {
+			tr := tgt[cur]
+			if sr < tr {
+				return sr
+			}
+			return tr
 		}
-		if current == info.ParentFork {
+		fi := g.forks[cur]
+		if fi == nil || fi.ParentFork == cur {
 			break
 		}
-		current = info.ParentFork
+		cur = fi.ParentFork
 	}
-
-	// Both forks share a common ancestor - find it
-	// Use targetInfo's parent revision as a safe fallback
-	if targetInfo.ParentFork == sourceInfo.ParentFork {
-		// Siblings - use the earlier of the two divergence points
-		if targetInfo.ParentRevision < sourceInfo.ParentRevision {
-			return targetInfo.ParentRevision
-		}
-		return sourceInfo.ParentRevision
-	}
-
-	// Default: start of target fork
 	return 0
 }
 

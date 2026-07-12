@@ -189,6 +189,14 @@ type diffHarness struct {
 	soft    []string
 	fork    ForkID
 	rev     RevisionID
+
+	// Fork-graph bookkeeping for prune/delete/fork-seek ops.
+	// CONTRACT under test: destroying history on one fork (Prune,
+	// DeleteFork) must never damage revisions another live fork can
+	// still reach - shared data survives while anything depends on it.
+	known  []ForkID              // every fork ever observed
+	dead   map[ForkID]bool       // soft-deleted forks
+	pruned map[ForkID]RevisionID // each fork's own PrunedUpTo watermark
 }
 
 func newDiffHarness(t *testing.T, seed int64, initial string) *diffHarness {
@@ -209,7 +217,10 @@ func newDiffHarness(t *testing.T, seed int64, initial string) *diffHarness {
 		rnd:     rand.New(rand.NewSource(seed)),
 		fork:    g.CurrentFork(),
 		rev:     g.CurrentRevision(),
+		dead:    map[ForkID]bool{},
+		pruned:  map[ForkID]RevisionID{},
 	}
+	h.known = append(h.known, h.fork)
 	for i := 0; i < 3; i++ {
 		h.curs = append(h.curs, g.NewCursor())
 	}
@@ -245,6 +256,11 @@ func joinLines(ss []string) string {
 func (h *diffHarness) noteMutation(res ChangeResult) {
 	if res.Fork != h.fork {
 		h.parents[res.Fork] = ForkRevision{h.fork, h.rev}
+		h.known = append(h.known, res.Fork)
+		// A fork inherits its parent's effective floor at branch time:
+		// revisions the parent had already pruned are gone for good and
+		// were never part of the child's reachable history.
+		h.pruned[res.Fork] = h.pruned[h.fork]
 		h.logf("  -> branched fork %d from (fork %d, rev %d)", res.Fork, h.fork, h.rev)
 	}
 	h.fork, h.rev = res.Fork, res.Revision
@@ -512,10 +528,13 @@ func (h *diffHarness) opSeek() {
 }
 
 func (h *diffHarness) opUndoRedo() {
-	if h.rev == 0 {
+	// Only the current fork's OWN watermark limits seeking; an
+	// ancestor's prune must not affect this fork (contract).
+	low := h.pruned[h.fork]
+	if h.rev <= low {
 		return
 	}
-	target := RevisionID(h.rnd.Int63n(int64(h.rev)))
+	target := low + RevisionID(h.rnd.Int63n(int64(h.rev-low)))
 	h.logf("UndoSeek(%d) from (fork %d, rev %d)", target, h.fork, h.rev)
 	if err := h.g.UndoSeek(target); err != nil {
 		h.fail("UndoSeek(%d): %v", target, err)
@@ -551,6 +570,96 @@ func (h *diffHarness) opUndoRedo() {
 	}
 }
 
+// liveOtherForks returns every known, non-deleted fork except the
+// current one.
+func (h *diffHarness) liveOtherForks() []ForkID {
+	var out []ForkID
+	for _, f := range h.known {
+		if f != h.fork && !h.dead[f] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func (h *diffHarness) opForkSeek() {
+	candidates := h.liveOtherForks()
+	if len(candidates) == 0 {
+		return
+	}
+	target := candidates[h.rnd.Intn(len(candidates))]
+	h.logf("ForkSeek(%d) from (fork %d, rev %d)", target, h.fork, h.rev)
+	if err := h.g.ForkSeek(target); err != nil {
+		if err == ErrRevisionNotFound {
+			// Legitimate: everything reachable on the target lineage at
+			// or below the common revision was pruned. Must be a clean
+			// rejection - current state untouched.
+			h.logf("  -> rejected: %v", err)
+			h.check("after rejected forkseek", true)
+			return
+		}
+		h.fail("ForkSeek(%d): %v", target, err)
+	}
+	f, r := h.g.CurrentFork(), h.g.CurrentRevision()
+	h.logf("  -> landed (fork %d, rev %d), %d bytes", f, r, h.g.ByteCount().Value)
+	if f != target {
+		h.fail("ForkSeek(%d) landed on fork %d", target, f)
+	}
+	want, ok := h.expectedStateAt(f, r)
+	if !ok {
+		h.fail("harness: no snapshot for forkseek landing (fork %d, rev %d)", f, r)
+	}
+	h.fork, h.rev = f, r
+	h.model = want.clone()
+	h.check("after forkseek", false) // cursor restore policy observed, coherence hard
+}
+
+func (h *diffHarness) opPrune() {
+	low := h.pruned[h.fork]
+	if h.rev <= low {
+		return
+	}
+	// keep in (low, rev]: always advances the watermark, never past the
+	// current revision.
+	keep := low + 1 + RevisionID(h.rnd.Int63n(int64(h.rev-low)))
+	h.logf("Prune(%d) on (fork %d, rev %d)", keep, h.fork, h.rev)
+	if err := h.g.Prune(keep); err != nil {
+		h.fail("Prune(%d): %v", keep, err)
+	}
+	h.pruned[h.fork] = keep
+	// Pruning history must not disturb any current observable state.
+	h.check("after prune", true)
+
+	// Negative probe: seeking below the watermark must fail and leave
+	// the state untouched.
+	if h.rnd.Intn(2) == 0 {
+		bad := RevisionID(h.rnd.Int63n(int64(keep)))
+		if err := h.g.UndoSeek(bad); err == nil {
+			h.fail("UndoSeek(%d) below prune watermark %d succeeded", bad, keep)
+		}
+		h.check("after rejected undo", true)
+	}
+}
+
+func (h *diffHarness) opDeleteFork() {
+	candidates := h.liveOtherForks()
+	if len(candidates) == 0 {
+		return
+	}
+	target := candidates[h.rnd.Intn(len(candidates))]
+	h.logf("DeleteFork(%d) while on (fork %d, rev %d)", target, h.fork, h.rev)
+	if err := h.g.DeleteFork(target); err != nil {
+		h.fail("DeleteFork(%d): %v", target, err)
+	}
+	h.dead[target] = true
+	// Navigation to the deleted fork must now be rejected.
+	if err := h.g.ForkSeek(target); err == nil {
+		h.fail("ForkSeek(%d) to deleted fork succeeded", target)
+	}
+	// Deleting another fork must not disturb the current fork's state.
+	h.check("after deletefork", true)
+}
+
 func min64(a, b int64) int64 {
 	if a < b {
 		return a
@@ -576,7 +685,7 @@ func TestDifferentialRandomOps(t *testing.T) {
 					h.opDelete()
 					continue
 				}
-				switch h.rnd.Intn(14) {
+				switch h.rnd.Intn(17) {
 				case 0, 1, 2:
 					h.opInsert()
 				case 3, 4:
@@ -593,6 +702,12 @@ func TestDifferentialRandomOps(t *testing.T) {
 					h.opMoveCopy()
 				case 13:
 					h.opTransaction()
+				case 14:
+					h.opPrune()
+				case 15:
+					h.opDeleteFork()
+				case 16:
+					h.opForkSeek()
 				}
 			}
 			if len(h.soft) > 0 {
