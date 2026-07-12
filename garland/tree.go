@@ -430,8 +430,10 @@ func (g *Garland) splitLeaf(node *Node, snap *NodeSnapshot, bytePos int64) (Node
 	leftData := snap.data[:splitPos]
 	rightData := snap.data[splitPos:]
 
-	// Partition decorations (decorations at exact split point go to right)
-	leftDecs, rightDecs := partitionDecorations(snap.decorations, splitPos, true)
+	// Partition decorations (decorations at exact split point go to the
+	// right leaf - a pure split keeps every mark in the leaf that
+	// contains its byte; insertBefore=true yields no boundary marks)
+	leftDecs, _, rightDecs := partitionDecorations(snap.decorations, splitPos, true)
 
 	// Create left leaf
 	g.nextNodeID++
@@ -602,8 +604,12 @@ func (g *Garland) insertIntoLeaf(
 	leftData := snap.data[:splitPos]
 	rightData := snap.data[splitPos:]
 
-	// Partition existing decorations based on insertBefore flag
-	leftDecs, rightDecs := partitionDecorations(snap.decorations, splitPos, insertBefore)
+	// Partition existing decorations based on insertBefore flag.
+	// Boundary marks (exactly at the insert point, not sliding) home
+	// into the middle leaf at offset 0: same absolute address, and the
+	// no-mark-at-leaf-end storage invariant holds.
+	leftDecs, boundaryDecs, rightDecs := partitionDecorations(snap.decorations, splitPos, insertBefore)
+	absoluteDecs = append(absoluteDecs, boundaryDecs...)
 
 	// Note: rightDecs positions are already adjusted to be relative to rightData
 	// by partitionDecorations (subtracted splitPos). No further adjustment needed

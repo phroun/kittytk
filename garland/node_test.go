@@ -250,7 +250,7 @@ func TestPartitionDecorationsEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test with insertBefore=true (decorations at pos go right)
-			left, right := partitionDecorations(tt.decorations, tt.pos, true)
+			left, _, right := partitionDecorations(tt.decorations, tt.pos, true)
 			if len(left) != tt.wantLeft {
 				t.Errorf("left count = %d, want %d", len(left), tt.wantLeft)
 			}
@@ -268,7 +268,7 @@ func TestPartitionDecorationsPositionAdjustment(t *testing.T) {
 		{Key: "c", Position: 25},
 	}
 
-	left, right := partitionDecorations(decorations, 10, true)
+	left, _, right := partitionDecorations(decorations, 10, true)
 
 	if len(left) != 1 || left[0].Position != 5 {
 		t.Error("Left decoration position should remain unchanged")

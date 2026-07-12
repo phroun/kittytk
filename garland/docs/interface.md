@@ -238,7 +238,10 @@ func (c *Cursor) InsertString(data string, decorations []RelativeDecoration,
 
 ```go
 // DeleteBytes deletes `length` bytes starting at cursor position.
-// Returns decorations from the deleted range.
+// Returns decorations from the deleted range AS A REPORT: marks are
+// never deleted with a range - they collapse to the deletion point
+// and survive. The caller decides which reported marks to remove
+// explicitly (Decorate with a nil Address).
 // If includeLineDecorations is true, also returns (but does not move)
 // decorations from partially affected lines.
 func (c *Cursor) DeleteBytes(length int64, includeLineDecorations bool) (

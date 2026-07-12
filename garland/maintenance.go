@@ -417,6 +417,11 @@ func (g *Garland) updateChildReference(parentID, oldChildID, newChildID NodeID) 
 		byteCount: snap.byteCount,
 		runeCount: snap.runeCount,
 		lineCount: snap.lineCount,
+		// A reference swap keeps the subtree's content identical, so
+		// the trailing-partial-line rune count carries over; dropping
+		// it (zero) poisons every cross-leaf column conversion that
+		// passes through this node.
+		runesAfterLastNewline: snap.runesAfterLastNewline,
 	}
 
 	if snap.leftID == oldChildID {

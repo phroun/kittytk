@@ -302,12 +302,24 @@ func computeDecorationHash(decorations []Decoration) []byte {
 // When insertBefore=true: decorations at pos go to right (will be shifted)
 // When insertBefore=false: decorations at pos go to left (stay in place)
 // Right decorations have their positions adjusted by -pos.
-func partitionDecorations(decorations []Decoration, pos int64, insertBefore bool) (left, right []Decoration) {
+// partitionDecorations splits a leaf's decorations around an insert at
+// pos. Marks strictly before pos stay in the left piece; marks
+// strictly after go to the right piece (rebased). A mark EXACTLY at
+// pos is governed by insertBefore: true slides it past the inserted
+// content (right piece), false keeps it at its absolute address, which
+// is the FIRST BYTE OF THE INSERTED CONTENT - returned in boundary so
+// the caller homes it at offset 0 of the middle (inserted) leaf.
+// Storage invariant: a mark never lives at a leaf's end offset (only
+// an EOF mark on the final leaf may), so the left piece never receives
+// boundary marks.
+func partitionDecorations(decorations []Decoration, pos int64, insertBefore bool) (left, boundary, right []Decoration) {
 	for _, d := range decorations {
-		goesToLeft := d.Position < pos || (!insertBefore && d.Position == pos)
-		if goesToLeft {
+		switch {
+		case d.Position < pos:
 			left = append(left, d)
-		} else {
+		case d.Position == pos && !insertBefore:
+			boundary = append(boundary, Decoration{Key: d.Key, Position: 0})
+		default:
 			right = append(right, Decoration{
 				Key:      d.Key,
 				Position: d.Position - pos,

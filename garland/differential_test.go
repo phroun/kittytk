@@ -13,7 +13,8 @@ package garland
 //   - Lines are 0-based; a newline is the last character of its line;
 //     the position after a trailing newline is line N+1, rune 0.
 //   - One decoration per key (map semantics).
-//   - Decorations deleted with a range reappear on undo.
+//   - Marks are NEVER deleted by a range delete: they collapse to the
+//     deletion point and are reported to the caller.
 //   - Cursors are part of undo history (phase 1: observed and logged,
 //     not hard-asserted, until the exact restore rule is pinned down).
 //   - Invalid UTF-8 only needs to count consistently (phase 1 sticks
@@ -144,7 +145,10 @@ func (s *refState) insert(actor int, pos int64, piece []byte, insertBefore bool)
 	s.cursors[actor] = pos + n
 }
 
-// del applies a deletion of [pos, pos+n) and returns removed keys.
+// del applies a deletion of [pos, pos+n) and returns the keys that
+// were IN the deleted range. RULING: marks are never deleted with a
+// range - they collapse to the deletion point and survive; the
+// returned list is a report for the caller.
 func (s *refState) del(actor int, pos, n int64) []string {
 	end := pos + n
 	if end > int64(len(s.data)) {
@@ -156,7 +160,7 @@ func (s *refState) del(actor int, pos, n int64) []string {
 		switch {
 		case d >= pos && d < end:
 			removed = append(removed, k)
-			delete(s.decs, k)
+			s.decs[k] = pos // collapse to the deletion point
 		case d >= end:
 			s.decs[k] = d - (end - pos)
 		}
@@ -317,7 +321,9 @@ func (h *diffHarness) check(tag string, cursorsHard bool) {
 		}
 		wantLine, wantLR := m.lineOf(m.cursors[i])
 		if line, lr := c.LinePos(); line != wantLine || lr != wantLR {
-			h.fail("%s: cursor %d linePos = %d:%d, want %d:%d", tag, i, line, lr, wantLine, wantLR)
+			cl, cr, cerr := h.g.ByteToLineRune(m.cursors[i])
+			h.fail("%s: cursor %d linePos = %d:%d, want %d:%d (fresh conversion says %d:%d,%v; pos=%d content=%q)",
+				tag, i, line, lr, wantLine, wantLR, cl, cr, cerr, m.cursors[i], m.data)
 		}
 	}
 
@@ -522,13 +528,13 @@ func min64(a, b int64) int64 {
 // ---------- the test ----------
 
 func TestDifferentialRandomOps(t *testing.T) {
-	seeds := []int64{1, 2, 3, 4}
+	seeds := []int64{1, 2, 3, 4, 5, 6, 7, 8}
 	for _, seed := range seeds {
 		seed := seed
 		t.Run(fmt.Sprintf("seed%d", seed), func(t *testing.T) {
 			h := newDiffHarness(t, seed, "Hello, World!\nSecond line\n中文 αβγ\n")
 			h.check("initial", true)
-			for i := 0; i < 300; i++ {
+			for i := 0; i < 400; i++ {
 				if len(h.model.data) > 8192 {
 					h.opDelete()
 					continue

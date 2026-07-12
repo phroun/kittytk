@@ -3144,6 +3144,13 @@ func (g *Garland) byteToLineRuneInternal(bytePos int64) (int64, int64, error) {
 
 		absoluteLine := g.countLinesBeforeLeaf(prevResult.LeafByteStart) + line
 		runeInLine := prevSnap.runeCount - lineRuneStart
+		if line == 0 {
+			// The final line may SPAN leaves: when the previous leaf has
+			// no newline of its own, runes carried on this line from
+			// earlier leaves must be included, exactly as the normal
+			// (mid-leaf) case does below.
+			runeInLine += prevResult.RunesOnLineBeforeLeaf
+		}
 
 		return absoluteLine, runeInLine, nil
 	}
@@ -3224,6 +3231,13 @@ func (g *Garland) byteToLineRuneInternalUnlocked(bytePos int64) (int64, int64, e
 
 		absoluteLine := g.countLinesBeforeLeaf(prevResult.LeafByteStart) + line
 		runeInLine := prevSnap.runeCount - lineRuneStart
+		if line == 0 {
+			// The final line may SPAN leaves: when the previous leaf has
+			// no newline of its own, runes carried on this line from
+			// earlier leaves must be included, exactly as the normal
+			// (mid-leaf) case does below.
+			runeInLine += prevResult.RunesOnLineBeforeLeaf
+		}
 
 		return absoluteLine, runeInLine, nil
 	}
@@ -3697,6 +3711,17 @@ func (g *Garland) deleteBytesAt(c *Cursor, pos int64, length int64, includeLineD
 	g.totalBytes -= deletedBytes
 	g.totalRunes -= deletedRunes
 	g.totalLines -= deletedLines
+
+	// Marks are NEVER deleted with a range: they collapse to the
+	// deletion point and stay alive; the returned list is a REPORT so
+	// the tool author can decide which ones to remove explicitly.
+	// deleteRange dropped them from their leaves - re-home each at the
+	// deletion point (right-anchored placement).
+	for _, d := range deletedDecs {
+		if newRootID, err := g.addDecorationInternal(d.Key, pos); err == nil {
+			g.root = g.nodeRegistry[newRootID]
+		}
+	}
 
 	// Adjust cursors after deletion point
 	for _, cursor := range g.cursors {
