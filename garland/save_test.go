@@ -314,3 +314,124 @@ func TestSaveRandomizedWarmRoundTrips(t *testing.T) {
 		})
 	}
 }
+
+// TestScarBytesFormat pins the exact scar layout ruling:
+//   - marker fits (with leading+trailing newline): "\n" + marker +
+//     "="-padding + "\n", exactly blockLen bytes, no appendix;
+//   - no room: "\n" + "="s + "\n" (or "\n\n" / "\n" for 2/1 bytes) and
+//     the marker moves to an appendix with a leading newline.
+func TestScarBytesFormat(t *testing.T) {
+	marker := "[Missing 42 bytes from original file address 7]"
+	ml := int64(len(marker))
+
+	// Exact fit: marker + 2 newlines.
+	block, app := scarBytes(ml+2, marker)
+	if app != nil {
+		t.Errorf("exact fit produced appendix %q", app)
+	}
+	if string(block) != "\n"+marker+"\n" {
+		t.Errorf("exact fit block = %q", block)
+	}
+
+	// Roomy fit: padding is '=', final byte newline.
+	block, app = scarBytes(ml+10, marker)
+	if app != nil {
+		t.Errorf("roomy fit produced appendix")
+	}
+	if int64(len(block)) != ml+10 {
+		t.Fatalf("block len %d, want %d", len(block), ml+10)
+	}
+	if block[0] != '\n' || block[len(block)-1] != '\n' {
+		t.Error("block must start and end with newline")
+	}
+	if string(block[1:1+ml]) != marker {
+		t.Error("marker not at start of block")
+	}
+	for _, b := range block[1+ml : int64(len(block))-1] {
+		if b != '=' {
+			t.Errorf("padding byte %q, want '='", b)
+		}
+	}
+
+	// One byte short of fitting: filler + appendix.
+	block, app = scarBytes(ml+1, marker)
+	if string(app) != "\n"+marker {
+		t.Errorf("appendix = %q", app)
+	}
+	if block[0] != '\n' || block[len(block)-1] != '\n' {
+		t.Error("filler must start and end with newline")
+	}
+	for _, b := range block[1 : len(block)-1] {
+		if b != '=' {
+			t.Errorf("filler byte %q, want '='", b)
+		}
+	}
+
+	// Tiny blocks.
+	if block, _ := scarBytes(2, marker); string(block) != "\n\n" {
+		t.Errorf("2-byte filler = %q, want \\n\\n", block)
+	}
+	if block, _ := scarBytes(1, marker); string(block) != "\n" {
+		t.Errorf("1-byte filler = %q, want \\n", block)
+	}
+	if block, _ := scarBytes(5, marker); string(block) != "\n===\n" {
+		t.Errorf("5-byte filler = %q, want \\n===\\n", block)
+	}
+}
+
+// TestSaveNeverRefusesOnPlaceholder: destroy a cold block behind the
+// buffer's back, then Save. The save must succeed, the hole must be a
+// visible scar of the same size, and everything else must survive.
+func TestSaveNeverRefusesOnPlaceholder(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.txt")
+	coldDir := filepath.Join(dir, "cold")
+	content := saveDoc(4096)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := Init(LibraryOptions{ColdStoragePath: coldDir})
+	g, err := lib.Open(FileOptions{FilePath: path, MaxLeafSize: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+
+	// Chill everything to cold, then destroy the cold store.
+	if err := g.Chill(ChillEverything); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(coldDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reads now fail and mark leaves as placeholders...
+	c := g.NewCursor()
+	if err := c.SeekByte(0); err == nil {
+		if _, err := c.ReadBytes(100); err == nil {
+			t.Skip("cold data unexpectedly still readable")
+		}
+	}
+
+	// ...but Save must still succeed.
+	if err := g.Save(); err != nil {
+		t.Fatalf("Save refused on placeholder: %v", err)
+	}
+
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same total size (every scar is byte-for-byte the lost block).
+	if len(onDisk) != len(content) {
+		t.Fatalf("file size %d after scarred save, want %d", len(onDisk), len(content))
+	}
+	// The file must carry the visible marker and the buffer must match
+	// the file exactly.
+	if !bytes.Contains(onDisk, []byte("[Missing ")) {
+		t.Error("scarred file carries no visible marker")
+	}
+	if got := readBack(t, g); got != string(onDisk) {
+		t.Error("buffer != file after scarred save")
+	}
+}

@@ -604,6 +604,11 @@ func (g *Garland) SaveAs(fs FileSystemInterface, name string) error {
 		return g.saveInPlace(fs, SaveOptions{PreserveHistory: true})
 	}
 
+	// RULING: saving never refuses because data was lost - scar
+	// placeholders first, then stream.
+	if _, err := g.scarifyPlaceholders(); err != nil {
+		return err
+	}
 	return g.streamWriteToFile(fs, name)
 }
 

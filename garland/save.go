@@ -1,5 +1,7 @@
 package garland
 
+import "fmt"
+
 // save.go - the in-place save engine.
 //
 // DESIGN CONSTRAINT: saving must never require a second copy of the
@@ -91,6 +93,13 @@ func (g *Garland) SaveWith(opts SaveOptions) error {
 }
 
 func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
+	// RULING: Save never refuses because data was lost. Placeholder
+	// leaves become visible scars first (same byte count, so no other
+	// offset moves), then the save proceeds normally.
+	if _, err := g.scarifyPlaceholders(); err != nil {
+		return err
+	}
+
 	// A read handle on the old file is needed for warm sources and
 	// history migration. Reuse the warm-storage handle when present.
 	readHandle := g.sourceHandle
@@ -317,6 +326,14 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
 		if sp.warm {
 			// Still warm, now against the rewritten file.
 			g.updateWarmVerification(sp.node.id)
+		} else if sp.skip && sp.snap.storageState == StorageCold &&
+			g.loadingStyle == AllStorage && g.sourceHandle != nil {
+			// A skipped cold span's bytes are provably in the file at
+			// this offset - after a save the file is the better backing
+			// store (the cold block may even be gone; a scarred save
+			// proceeds regardless). Flip it to warm.
+			sp.snap.storageState = StorageWarm
+			g.updateWarmVerification(sp.node.id)
 		}
 	}
 
@@ -328,4 +345,172 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) error {
 	}
 
 	return nil
+}
+
+// ---- Placeholder scarification ----
+//
+// RULING: Save must NEVER refuse because data was lost (a placeholder
+// leaf). The user's surviving work gets written, and the hole is
+// scarred VISIBLY, at the exact size of the missing block so no other
+// byte in the file moves:
+//
+//   - If the marker fits in the block (with a leading and a trailing
+//     newline): "\n" + marker + "===...=" padding + "\n", exactly
+//     blockLen bytes.
+//   - If not, the block is filled with "\n" + "==...=" + "\n" (or
+//     "\n\n" for two bytes, "\n" for one) and the marker is appended
+//     at the END of the document instead, with a leading newline.
+//
+// Scarification mutates the buffer to match what will be written -
+// the scar becomes real, readable content (one revision; the pre-scar
+// revision remains reachable through undo, still erroring on access).
+
+// placeholderMarker builds the human-readable marker for a lost block.
+func placeholderMarker(snap *NodeSnapshot, nodeID NodeID) string {
+	if snap.originalFileOffset >= 0 {
+		return fmt.Sprintf("[Missing %d bytes from original file address %d]",
+			snap.byteCount, snap.originalFileOffset)
+	}
+	return fmt.Sprintf("[Missing %d bytes from buffer fragment %d]",
+		snap.byteCount, nodeID)
+}
+
+// scarBytes renders the in-block scar per the ruling. When the marker
+// does not fit, the returned appendix is the marker to add at the end
+// of the document (with its leading newline included).
+func scarBytes(blockLen int64, marker string) (block []byte, appendix []byte) {
+	if blockLen >= int64(len(marker))+2 {
+		block = make([]byte, blockLen)
+		block[0] = '\n'
+		copy(block[1:], marker)
+		for i := int64(len(marker)) + 1; i < blockLen-1; i++ {
+			block[i] = '='
+		}
+		block[blockLen-1] = '\n'
+		return block, nil
+	}
+	block = make([]byte, blockLen)
+	for i := range block {
+		block[i] = '='
+	}
+	if blockLen >= 1 {
+		block[0] = '\n'
+		block[blockLen-1] = '\n' // for blockLen 1 this is the same byte
+	}
+	return block, []byte("\n" + marker)
+}
+
+// scarifyPlaceholders converts every placeholder leaf of the current
+// revision into its visible scar (and gathers overflow markers to
+// append at the end). Returns true if anything changed; in that case
+// one new revision was recorded.
+func (g *Garland) scarifyPlaceholders() (bool, error) {
+	type scarJob struct {
+		node *Node
+		snap *NodeSnapshot
+	}
+	var jobs []scarJob
+	var walk func(id NodeID)
+	walk = func(id NodeID) {
+		node := g.nodeRegistry[id]
+		if node == nil {
+			return
+		}
+		snap := node.snapshotAt(g.currentFork, g.currentRevision)
+		if snap == nil {
+			return
+		}
+		if !snap.isLeaf {
+			walk(snap.leftID)
+			walk(snap.rightID)
+			return
+		}
+		if snap.storageState == StoragePlaceholder && snap.byteCount > 0 {
+			jobs = append(jobs, scarJob{node, snap})
+		}
+	}
+	if g.root != nil {
+		walk(g.root.id)
+	}
+	if len(jobs) == 0 {
+		return false, nil
+	}
+
+	if g.transaction == nil {
+		g.recordCursorPositionsInHistory()
+	}
+
+	var appendices []byte
+	for _, j := range jobs {
+		marker := placeholderMarker(j.snap, j.node.ID())
+		block, appendix := scarBytes(j.snap.byteCount, marker)
+		appendices = append(appendices, appendix...)
+
+		// Replace the snapshot's content IN PLACE with the same byte
+		// count: history that referenced this snapshot lost the same
+		// data, and byte-for-byte replacement keeps every offset in
+		// the tree valid. Only rune/line aggregates change.
+		ns := createLeafSnapshot(block, j.snap.decorations, -1)
+		ns.storageState = StorageMemory
+		*j.snap = *ns
+	}
+
+	// Recompute internal aggregate weights along the whole current
+	// view (rune/line counts changed under same byte counts).
+	var fix func(id NodeID) *NodeSnapshot
+	fix = func(id NodeID) *NodeSnapshot {
+		node := g.nodeRegistry[id]
+		if node == nil {
+			return nil
+		}
+		snap := node.snapshotAt(g.currentFork, g.currentRevision)
+		if snap == nil || snap.isLeaf {
+			return snap
+		}
+		left := fix(snap.leftID)
+		right := fix(snap.rightID)
+		if left == nil || right == nil {
+			return snap
+		}
+		snap.byteCount = left.byteCount + right.byteCount
+		snap.runeCount = left.runeCount + right.runeCount
+		snap.lineCount = left.lineCount + right.lineCount
+		if right.lineCount > 0 {
+			snap.runesAfterLastNewline = right.runesAfterLastNewline
+		} else {
+			snap.runesAfterLastNewline = left.runesAfterLastNewline + right.runeCount
+		}
+		return snap
+	}
+	fix(g.root.id)
+	g.updateCountsFromRoot()
+
+	// Overflow markers land at the very end of the document.
+	if len(appendices) > 0 {
+		rootSnap := g.root.snapshotAt(g.currentFork, g.currentRevision)
+		if rootSnap == nil {
+			return false, ErrInternal
+		}
+		newRootID, err := g.insertInternal(g.root, rootSnap, g.totalBytes, 0, appendices, nil, false)
+		if err != nil {
+			return false, err
+		}
+		g.root = g.nodeRegistry[newRootID]
+		g.updateCountsFromRoot()
+	}
+
+	// Cursor byte positions are still valid (in-block scars are
+	// byte-neutral; the appendix is past every cursor except EOF ones),
+	// but rune/line coordinates under them may have changed.
+	for _, cursor := range g.cursors {
+		if cursor.bytePos > g.totalBytes {
+			cursor.bytePos = g.totalBytes
+		}
+		cursor.runePos, _ = g.byteToRuneInternalUnlocked(cursor.bytePos)
+		cursor.line, cursor.lineRune, _ = g.byteToLineRuneInternalUnlocked(cursor.bytePos)
+		cursor.lineRuneDirty = false
+	}
+
+	g.recordMutation()
+	return true, nil
 }
