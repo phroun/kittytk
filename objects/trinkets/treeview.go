@@ -146,9 +146,10 @@ type TreeView struct {
 	colDragPool       int // slack cells consumable before reclaim would kick in
 
 	// Horizontal scrollbar (footer row) drag state.
-	hbarDragging    bool
-	hbarDragStartX  core.Unit
-	hbarDragStartHS int
+	hbarDragging     bool
+	hbarThumbHovered bool // pointer over the footer thumb (hover color)
+	hbarDragStartX   core.Unit
+	hbarDragStartHS  int
 
 	// In-place row editing (see treeview_edit.go). The editor is a
 	// spun-into-existence TextInput floating over one cell; the tree
@@ -1217,6 +1218,11 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// thumb - unless this tree owns the scrollbar drag.
 	if over := t.scrollbarDragging || (event.Buttons == 0 && t.overScrollbarThumb(event.X, event.Y)); over != t.scrollbarThumbHovered {
 		t.scrollbarThumbHovered = over
+		t.Update()
+	}
+	// Footer horizontal scrollbar thumb: the same hover convention.
+	if over := t.hbarDragging || (event.Buttons == 0 && t.overHBarThumb(event.X, event.Y)); over != t.hbarThumbHovered {
+		t.hbarThumbHovered = over
 		t.Update()
 	}
 	// Chooser-button hover follows the standard convention.

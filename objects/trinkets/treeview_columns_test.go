@@ -609,6 +609,40 @@ func TestTreeColumnPaintSmoke(t *testing.T) {
 	}
 }
 
+// The footer horizontal scrollbar's thumb lights in the hover color
+// under the pointer and stays lit through a drag - the vertical bar's
+// convention.
+func TestTreeHBarThumbHover(t *testing.T) {
+	tv := newColumnsTree(30, 10)
+	tv.SetFitWidth(false)
+	tv.SetKeyWidth(20)
+	lay := tv.columnLayout()
+	_, _, x0, x1, ok := tv.hScrollbarGeometry(lay)
+	if !ok {
+		t.Fatal("no horizontal scrollbar geometry")
+	}
+	y := tv.Bounds().Height - tv.footerHeight() + 2
+
+	tv.HandleMouseMove(core.MouseMoveEvent{X: (x0 + x1) / 2, Y: y})
+	if !tv.hbarThumbHovered {
+		t.Fatal("thumb hover not detected")
+	}
+	tv.HandleMouseMove(core.MouseMoveEvent{X: x1 + 16, Y: y})
+	if tv.hbarThumbHovered {
+		t.Error("hover did not clear off the thumb")
+	}
+	// While dragging, the thumb stays lit wherever the pointer goes.
+	tv.HandleMousePress(core.MousePressEvent{X: (x0 + x1) / 2, Y: y, Button: core.LeftButton})
+	if !tv.hbarDragging {
+		t.Fatal("thumb press did not start the drag")
+	}
+	tv.HandleMouseMove(core.MouseMoveEvent{X: x0, Y: 8, Buttons: 1})
+	if !tv.hbarThumbHovered {
+		t.Error("dragging thumb lost the hover state")
+	}
+	tv.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+}
+
 // recordingPopupController captures the registered popup so tests can
 // drive its handlers.
 type recordingPopupController struct {

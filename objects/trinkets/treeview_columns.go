@@ -1965,7 +1965,7 @@ func (t *TreeView) paintHScrollbar(p *core.Painter, lay treeColLayout) {
 	footerH := t.footerHeight()
 	y := t.Bounds().Height - footerH
 	trackStyle := scheme.GetScrollbar()
-	thumbStyle := scheme.GetScrollbarThumbState(false)
+	thumbStyle := scheme.GetScrollbarThumbState(t.hbarThumbHovered || t.hbarDragging)
 
 	if p.Graphical() {
 		// The slim band: hairline track stripe centered, thumb inset a
@@ -1983,6 +1983,21 @@ func (t *TreeView) paintHScrollbar(p *core.Painter, lay treeColLayout) {
 	for x := thumbX0; x < thumbX1; x += metrics.CellWidth {
 		p.DrawCell(x, y, '█', thumbStyle)
 	}
+}
+
+// overHBarThumb reports whether the point sits on the footer
+// horizontal scrollbar's thumb (drives its hover color).
+func (t *TreeView) overHBarThumb(x, y core.Unit) bool {
+	footerH := t.footerHeight()
+	if footerH == 0 || !t.multiColumn() {
+		return false
+	}
+	bounds := t.Bounds()
+	if y < bounds.Height-footerH || y >= bounds.Height {
+		return false
+	}
+	_, _, thumbX0, thumbX1, ok := t.hScrollbarGeometry(t.columnLayout())
+	return ok && x >= thumbX0 && x < thumbX1
 }
 
 // handleHBarPress starts a thumb drag or pages on a track click in
