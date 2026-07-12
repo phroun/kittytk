@@ -1169,8 +1169,10 @@ func (h *diffHarness) opSave() {
 		h.opInsert()
 		return
 	}
-	h.logf("Save()")
-	report, err := h.g.Save()
+	opts := SaveOptions{PreserveHistory: true}
+	opts.Concurrent = h.rnd.Intn(2) == 0
+	h.logf("SaveWith(Concurrent=%v)", opts.Concurrent)
+	report, err := h.g.SaveWith(opts)
 	if err != nil {
 		h.fail("Save: %v", err)
 	}

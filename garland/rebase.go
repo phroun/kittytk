@@ -101,6 +101,7 @@ func (g *Garland) RebaseOnFile(fs FileSystemInterface, name string) (RebaseRepor
 }
 
 func (g *Garland) rebaseLocked(fs FileSystemInterface, path string) (RebaseReport, error) {
+	g.awaitNoSaveLocked() // rebase reads the file a save may be rewriting
 	if g.transaction != nil {
 		return RebaseReport{}, ErrTransactionPending
 	}

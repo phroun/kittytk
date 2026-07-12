@@ -414,6 +414,29 @@ type Garland struct {
 	// maintenanceInFlight guards against stacking CheckMemoryPressure
 	// goroutines (one per mutation would each scan the node registry).
 	maintenanceInFlight int32
+
+	// Concurrent-save coordination. saveMu serializes saves (Save,
+	// SaveWith, SaveAs) against each other. saveInFlight is true while
+	// a Concurrent save's unlocked rewrite phase runs; operations that
+	// would invalidate its pinned plan (Prune, DeleteFork, Rebase,
+	// Close - the ones that destroy cold blocks or rewrite the file)
+	// wait on saveCond until it clears. All three are guarded by mu
+	// except saveMu, which is independent.
+	saveMu       sync.Mutex
+	saveInFlight bool
+	saveCond     *sync.Cond
+}
+
+// awaitNoSaveLocked blocks until no Concurrent save rewrite is in
+// flight. Caller must hold the write lock (which Wait releases while
+// blocked, letting the save finish).
+func (g *Garland) awaitNoSaveLocked() {
+	for g.saveInFlight {
+		if g.saveCond == nil {
+			return
+		}
+		g.saveCond.Wait()
+	}
 }
 
 // Open creates or loads a Garland from various sources.
@@ -565,6 +588,11 @@ func (lib *Library) Open(options FileOptions) (*Garland, error) {
 
 // Close releases resources associated with the Garland.
 func (g *Garland) Close() error {
+	// Let any in-flight concurrent save finish before tearing down.
+	g.mu.Lock()
+	g.awaitNoSaveLocked()
+	g.mu.Unlock()
+
 	// Stop source file watching
 	g.DisableSourceWatch()
 
@@ -604,6 +632,11 @@ func (g *Garland) SaveAs(fs FileSystemInterface, name string) (SaveReport, error
 	if fs == nil {
 		return SaveReport{}, ErrNotSupported
 	}
+
+	// Serialize against other saves (including an in-flight
+	// concurrent save's unlocked rewrite phase).
+	g.saveMu.Lock()
+	defer g.saveMu.Unlock()
 
 	// Full lock: streaming may thaw chilled snapshots, which mutates them.
 	g.mu.Lock()
@@ -1927,6 +1960,7 @@ func (g *Garland) ListForks() []ForkInfo {
 func (g *Garland) Prune(keepFromRevision RevisionID) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.awaitNoSaveLocked() // pruning destroys cold blocks a save may be reading
 
 	forkInfo := g.forks[g.currentFork]
 	if forkInfo == nil {
@@ -2035,6 +2069,7 @@ func (g *Garland) revisionNeededByOthers(f ForkID, rev RevisionID) bool {
 func (g *Garland) DeleteFork(fork ForkID) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.awaitNoSaveLocked() // fork GC destroys cold blocks a save may be reading
 
 	// Can't delete current fork
 	if fork == g.currentFork {

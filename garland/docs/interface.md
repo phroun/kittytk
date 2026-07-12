@@ -156,14 +156,38 @@ type SaveOptions struct {
     // overwritten history becomes placeholders on access (amputated,
     // never silently corrupted).
     PreserveHistory bool
+
+    // Concurrent (opt-in) runs the rewrite WITHOUT holding the buffer
+    // lock: the app may keep reading/editing on its op goroutine while
+    // the save writes (only Prune, DeleteFork, Rebase, Close, and
+    // other saves wait). Cost: displaced warm spans are EVACUATED
+    // first (cold storage if available, else memory); with no cold
+    // backend and a hard memory limit the save transparently falls
+    // back to the locked zero-copy path.
+    Concurrent bool
+}
+
+// MemoryPressure reports the buffer's memory standing - the signal
+// for an app-side "hot-write mode": when SaveableBytes dominates and
+// ResidentBytes approaches the hard limit, saving is the only relief
+// ("to keep editing, I need to save before I run out of RAM").
+func (g *Garland) MemoryPressure() MemoryPressureInfo
+
+type MemoryPressureInfo struct {
+    ResidentBytes  int64 // leaf bytes currently in memory
+    EvictableBytes int64 // chillable to warm/cold right now
+    SaveableBytes  int64 // only a Save can make these evictable
+    SoftLimitBytes int64 // configured limits (0 = none)
+    HardLimitBytes int64
 }
 
 // A save NEVER refuses because data was lost to a storage failure:
 // lost blocks are written as visible, exact-size scars and reported
 // back so the app decides how to deal with them.
 type SaveReport struct {
-    Scars     []ScarWarning    // empty on a clean save
-    Integrity []IntegrityEvent // block-level events since the last save
+    Scars      []ScarWarning    // empty on a clean save
+    Integrity  []IntegrityEvent // block-level events since the last save
+    Concurrent bool             // whether the save actually ran lock-free
 }
 
 type ScarWarning struct {

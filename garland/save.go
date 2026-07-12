@@ -59,6 +59,19 @@ type SaveOptions struct {
 	// placeholders - undo history may be amputated, but never silently
 	// corrupted.
 	PreserveHistory bool
+
+	// Concurrent (opt-in) runs the rewrite WITHOUT holding the buffer
+	// lock: the app may keep reading and editing on its op goroutine
+	// while the save writes (only Prune, DeleteFork, Rebase, Close,
+	// and other saves wait for it). The cost is that every warm span
+	// the rewrite displaces must first be EVACUATED - to cold storage
+	// when a backend exists, else into memory - because the file
+	// cannot be both the old layout (for live warm reads) and the new
+	// layout (being written) at once. When there is no cold backend
+	// and the evacuation would push memory past the configured hard
+	// limit, the save transparently falls back to the locked zero-copy
+	// path (SaveReport.Concurrent reports what actually ran).
+	Concurrent bool
 }
 
 // saveSpan describes one leaf of the current revision in the new file
@@ -103,6 +116,12 @@ type SaveReport struct {
 	// and hard losses. A successful save drains the pending log here;
 	// IntegrityEvents() peeks at it between saves.
 	Integrity []IntegrityEvent
+
+	// Concurrent reports whether the save actually ran without holding
+	// the buffer lock. A SaveOptions.Concurrent request falls back to
+	// the locked zero-copy path (Concurrent=false here) when the
+	// required evacuation cannot be afforded.
+	Concurrent bool
 }
 
 // SaveWith overwrites the original file in place with the current
@@ -113,13 +132,22 @@ func (g *Garland) SaveWith(opts SaveOptions) (SaveReport, error) {
 		return SaveReport{}, ErrNoDataSource
 	}
 
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	// One save at a time - a second Save (or SaveAs) blocks here until
+	// the in-flight one finishes, whichever mode either uses.
+	g.saveMu.Lock()
+	defer g.saveMu.Unlock()
 
 	fs := g.sourceFS
 	if fs == nil {
 		fs = g.lib.defaultFS
 	}
+
+	if opts.Concurrent {
+		return g.saveConcurrent(fs, opts)
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	return g.saveInPlace(fs, opts)
 }
 
@@ -250,54 +278,8 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) (SaveRep
 			protectFrom = newTotal
 		}
 	}
-	// ---- Protect / invalidate history the rewrite disturbs ----
-	// INVARIANT: originalFileOffset >= 0 promises the file CURRENTLY
-	// holds the snapshot's bytes at that offset - the skip logic and
-	// warm reads trust it blindly. The rewrite breaks that promise for
-	// every snapshot outside the current view whose region intersects
-	// [protectFrom, EOF), so each one must be handled, whatever its
-	// storage state:
-	//   - warm + PreserveHistory: bytes are read back while the old
-	//     file is intact and migrated to cold (or held in memory).
-	//   - warm without PreserveHistory: the only copy is about to be
-	//     overwritten - marked lost NOW (undo history is amputated,
-	//     never silently corrupted).
-	//   - memory/cold: the bytes are safe elsewhere; only the stale
-	//     offset must be cleared, so no later save (after an undo or
-	//     fork seek makes this snapshot current again) can skip-trust
-	//     a file region that holds different bytes.
-	for _, node := range g.nodeRegistry {
-		if node == nil {
-			continue
-		}
-		for key, snap := range node.history {
-			if snap == nil || !snap.isLeaf || currentSnaps[snap] {
-				continue
-			}
-			if snap.originalFileOffset < 0 ||
-				snap.originalFileOffset+snap.byteCount <= protectFrom {
-				continue // rewrite never touches its bytes
-			}
-			if snap.storageState == StorageWarm {
-				if opts.PreserveHistory {
-					// Read it back while the old file is intact...
-					if err := g.readFromWarmStorageWithTrust(node.id, snap); err != nil {
-						return report, err
-					}
-					// ...and push it to cold if a backend exists (else
-					// it simply stays in memory).
-					if g.lib.coldStorageBackend != nil && g.loadingStyle != MemoryOnly {
-						if err := g.chillSnapshot(node.id, key, snap); err != nil {
-							return report, err
-						}
-					}
-				} else {
-					g.markSnapshotLost(snap,
-						"backing bytes overwritten by save without PreserveHistory")
-				}
-			}
-			snap.originalFileOffset = -1
-		}
+	if err := g.invalidateDisturbedHistory(currentSnaps, protectFrom, opts); err != nil {
+		return report, err
 	}
 
 	// ---- Open the write handle: read-write, NO truncation ----
@@ -400,6 +382,61 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) (SaveRep
 
 	report.Integrity = g.drainIntegrityEvents()
 	return report, nil
+}
+
+// invalidateDisturbedHistory protects / invalidates history snapshots
+// the rewrite disturbs. INVARIANT: originalFileOffset >= 0 promises
+// the file CURRENTLY holds the snapshot's bytes at that offset - the
+// skip logic and warm reads trust it blindly. The rewrite breaks that
+// promise for every snapshot outside the current view whose region
+// intersects [protectFrom, EOF), so each one must be handled, whatever
+// its storage state:
+//   - warm + PreserveHistory: bytes are read back while the old file
+//     is intact and migrated to cold (or held in memory).
+//   - warm without PreserveHistory: the only copy is about to be
+//     overwritten - marked lost NOW (undo history is amputated, never
+//     silently corrupted).
+//   - memory/cold: the bytes are safe elsewhere; only the stale
+//     offset must be cleared, so no later save (after an undo or fork
+//     seek makes this snapshot current again) can skip-trust a file
+//     region that holds different bytes.
+//
+// Caller must hold the write lock.
+func (g *Garland) invalidateDisturbedHistory(currentSnaps map[*NodeSnapshot]bool, protectFrom int64, opts SaveOptions) error {
+	for _, node := range g.nodeRegistry {
+		if node == nil {
+			continue
+		}
+		for key, snap := range node.history {
+			if snap == nil || !snap.isLeaf || currentSnaps[snap] {
+				continue
+			}
+			if snap.originalFileOffset < 0 ||
+				snap.originalFileOffset+snap.byteCount <= protectFrom {
+				continue // rewrite never touches its bytes
+			}
+			if snap.storageState == StorageWarm {
+				if opts.PreserveHistory {
+					// Read it back while the old file is intact...
+					if err := g.readFromWarmStorageWithTrust(node.id, snap); err != nil {
+						return err
+					}
+					// ...and push it to cold if a backend exists (else
+					// it simply stays in memory).
+					if g.lib.coldStorageBackend != nil && g.loadingStyle != MemoryOnly {
+						if err := g.chillSnapshot(node.id, key, snap); err != nil {
+							return err
+						}
+					}
+				} else {
+					g.markSnapshotLost(snap,
+						"backing bytes overwritten by save without PreserveHistory")
+				}
+			}
+			snap.originalFileOffset = -1
+		}
+	}
+	return nil
 }
 
 // ---- Placeholder scarification ----
