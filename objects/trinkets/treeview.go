@@ -829,15 +829,10 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 	headerH := t.headerHeight()
 
 	if p.Graphical() {
-		trackU, thumbU, posU := t.scrollbarUnits(visibleCount)
+		// No track stripe: the hairline reads as another column
+		// divider next to the real ones. The bare thumb is the bar.
+		_, thumbU, posU := t.scrollbarUnits(visibleCount)
 		laneX := t.Bounds().Width - metrics.CellWidth
-		stripeX := laneX + metrics.CellWidth/2
-		p.FillRect(core.UnitRect{
-			X:      stripeX,
-			Y:      headerH,
-			Width:  1,
-			Height: core.Unit(trackU + 0.5),
-		}, '▒', trackStyle.WithBg(style.ColorTransparent))
 		p.FillRect(core.UnitRect{
 			X:      laneX + 1,
 			Y:      headerH + core.Unit(posU+0.5),
@@ -849,10 +844,10 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 
 	scrollbarX, thumbStart, thumbHeight, trackHeight := t.scrollbarGeometry(visibleCount)
 
-	// Draw scrollbar track
+	// Draw scrollbar track (the ScrollArea's shaded fill, not a line).
 	for i := 0; i < trackHeight; i++ {
 		y := headerH + core.Unit(i)*metrics.CellHeight
-		p.DrawCell(scrollbarX, y, '│', trackStyle)
+		p.DrawCell(scrollbarX, y, '░', trackStyle)
 	}
 
 	// Draw scrollbar thumb

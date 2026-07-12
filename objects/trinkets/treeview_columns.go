@@ -1458,17 +1458,19 @@ func (t *TreeView) paintVScrollFades(p *core.Painter, lay treeColLayout, rowBand
 	bounds := t.Bounds()
 	metrics := t.EffectiveCellMetrics()
 	top := lay.headerH
-	bottom := bounds.Height - t.footerHeight()
+	// The bottom fade anchors at the TRUE bottom and runs through the
+	// partial peek strip in one continuous gradient (a fade stopping
+	// at the footer would let the peek row snap back to full
+	// brightness below it); the footer bar overlays the deep end.
+	bottom := bounds.Height
 	regionPx := p.UnitSpanPxY(top, bottom)
-	wtPx := p.UnitSpanPxY(0, metrics.CellHeight) // one row deep
-	if wtPx > regionPx/2 {
-		wtPx = regionPx / 2
-	}
-	if wtPx <= 0 {
-		return
+	rowDeep := p.UnitSpanPxY(0, metrics.CellHeight)
+	leftover := bottom - (top + core.Unit(t.visibleCount())*metrics.CellHeight)
+	if leftover < 0 {
+		leftover = 0
 	}
 	wPx := p.UnitSpanPxX(0, bounds.Width)
-	rowPx := p.UnitSpanPxY(0, metrics.CellHeight)
+	rowPx := rowDeep
 	bgAt := func(px int) style.Color {
 		if rowPx > 0 {
 			if idx := px / rowPx; idx >= 0 && idx < len(rowBands) {
@@ -1477,17 +1479,29 @@ func (t *TreeView) paintVScrollFades(p *core.Painter, lay treeColLayout, rowBand
 		}
 		return bgStyle.Bg
 	}
-	alphaAt := func(d int) float64 { return 1.0 - (float64(d)+0.5)/float64(wtPx) }
-	for j := 0; j < wtPx; j++ {
-		a := alphaAt(j)
-		if showTop {
-			r, g, b := bgAt(j).RGBComponents()
-			p.FillRectPixelsAlpha(0, top, 0, j, wPx, 1, r, g, b, a)
+	fade := func(deep int, topSide bool) {
+		if deep > regionPx/2 {
+			deep = regionPx / 2
 		}
-		if showBottom {
-			r, g, b := bgAt(regionPx - 1 - j).RGBComponents()
-			p.FillRectPixelsAlpha(0, bottom, 0, -j-1, wPx, 1, r, g, b, a)
+		if deep <= 0 {
+			return
 		}
+		for j := 0; j < deep; j++ {
+			a := 1.0 - (float64(j)+0.5)/float64(deep)
+			if topSide {
+				r, g, b := bgAt(j).RGBComponents()
+				p.FillRectPixelsAlpha(0, top, 0, j, wPx, 1, r, g, b, a)
+			} else {
+				r, g, b := bgAt(regionPx - 1 - j).RGBComponents()
+				p.FillRectPixelsAlpha(0, bottom, 0, -j-1, wPx, 1, r, g, b, a)
+			}
+		}
+	}
+	if showTop {
+		fade(rowDeep, true)
+	}
+	if showBottom {
+		fade(rowDeep+p.UnitSpanPxY(0, leftover), false)
 	}
 }
 
@@ -2285,17 +2299,16 @@ func (t *TreeView) paintHScrollbar(p *core.Painter, lay treeColLayout) {
 	thumbStyle := scheme.GetScrollbarThumbState((t.hbarThumbHovered || t.hbarDragging) && p.Graphical())
 
 	if p.Graphical() {
-		// The slim band: hairline track stripe centered, thumb inset a
-		// unit on each side - the vertical bar's treatment, sideways.
-		stripeY := y + footerH/2
-		p.FillRect(core.UnitRect{X: trackX0, Y: stripeY, Width: trackX1 - trackX0, Height: 1},
-			'▒', trackStyle.WithBg(style.ColorTransparent))
+		// The slim band: bare thumb only, inset a unit on each side.
+		// No track stripe - it reads as another column divider next
+		// to the real ones.
 		p.FillRect(core.UnitRect{X: thumbX0, Y: y + 1, Width: thumbX1 - thumbX0, Height: footerH - 2},
 			' ', thumbStyle.WithBg(thumbStyle.Fg))
 		return
 	}
+	// TUI track: the ScrollArea's shaded fill, not a line.
 	for x := trackX0; x < trackX1; x += metrics.CellWidth {
-		p.DrawCell(x, y, '─', trackStyle)
+		p.DrawCell(x, y, '░', trackStyle)
 	}
 	for x := thumbX0; x < thumbX1; x += metrics.CellWidth {
 		p.DrawCell(x, y, '█', thumbStyle)
