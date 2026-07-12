@@ -1460,6 +1460,13 @@ func (t *TreeView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
 // HandleMouseWheel handles mouse wheel scrolling.
 func (t *TreeView) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	// While a choice editor's drop-down is popped open, the tree does
+	// NOT scroll - a grid moving under an anchored popup is nothing
+	// but edge cases. The popup itself still takes the wheel (routed
+	// to the overlay, not through here) when its items overflow.
+	if t.rowEditing && t.editCombo != nil && t.editCombo.IsOpen() {
+		return true
+	}
 	if len(t.flatList) == 0 {
 		return false
 	}
