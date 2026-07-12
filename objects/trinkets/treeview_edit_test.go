@@ -177,6 +177,61 @@ func TestTreeRowEditClickOffAccepts(t *testing.T) {
 	}
 }
 
+// The tree-hosting cell's editor starts where the caption text starts
+// (past the indent, expander, and icon), lining up with the value it
+// replaces - for the key column and, with the key hidden, the host
+// data column.
+func TestTreeKeyEditorRespectsIndent(t *testing.T) {
+	tv := newEditableTree()
+	tv.SetEditable(true)
+	parent := tv.RootItems()[0]
+	parent.Expanded = true
+	child := NewTreeItem("nested")
+	child.SetValue("size", "9 KB")
+	child.SetValue("kind", "File")
+	parent.AddChild(child)
+	tv.rebuildFlatList()
+	tv.SetCurrentItem(child) // level 1
+	cw := tv.EffectiveCellMetrics().CellWidth
+
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // key column first
+	if tv.editCol != treeKeyColumn {
+		t.Fatal("precondition: editing the key column")
+	}
+	r, ok := tv.editorRect()
+	if !ok {
+		t.Fatal("editor rect unavailable")
+	}
+	lay := tv.columnLayout()
+	wantX := lay.spans[0].x + core.Unit(1*tv.indentWidth+1)*cw
+	if r.X != wantX {
+		t.Errorf("key editor X = %d, want %d (indent+expander inset)", r.X, wantX)
+	}
+	if r.X+r.Width != lay.spans[0].x+lay.spans[0].w {
+		t.Errorf("key editor right edge moved: %d", r.X+r.Width)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+
+	// Key hidden: the first data column hosts the apparatus, and ITS
+	// editor gets the same inset.
+	tv.SetShowKey(false)
+	tv.SetCurrentItem(child)
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	if tv.editCol != tv.ColumnByID("size") {
+		t.Fatalf("edit ring without key did not start on size")
+	}
+	r, ok = tv.editorRect()
+	if !ok {
+		t.Fatal("host editor rect unavailable")
+	}
+	lay = tv.columnLayout()
+	wantX = lay.spans[0].x + core.Unit(1*tv.indentWidth+1)*cw
+	if r.X != wantX {
+		t.Errorf("host editor X = %d, want %d", r.X, wantX)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+}
+
 // While the row editor is up, the Edit menu's focus inspection sees
 // the CELL EDITOR as the edit target (pass-through via the tree, which
 // holds the real focus); with the editor closed the tree is no target.

@@ -97,6 +97,18 @@ func (t *TreeView) setCellValue(item *TreeItem, col *TreeColumn, v string) {
 	item.SetValue(col.ID, v)
 }
 
+// treeCellTextInset is where the caption text begins within a
+// tree-hosting cell: the indent, the expander cell, and the icon
+// (when the item has one) - mirroring paintTreeCell exactly.
+func (t *TreeView) treeCellTextInset(item *TreeItem) core.Unit {
+	cw := t.EffectiveCellMetrics().CellWidth
+	inset := core.Unit(item.Level()*t.indentWidth+1) * cw
+	if item.Icon != nil && len(item.Icon.Cells) > 0 {
+		inset += cw * 2
+	}
+	return inset
+}
+
 // spanMatchesCol matches a layout span to an edit-ring column (the
 // key sentinel matches the nil key span).
 func spanMatchesCol(sp colSpan, col *TreeColumn) bool {
@@ -474,6 +486,7 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 	}
 	metrics := t.EffectiveCellMetrics()
 	lay := t.columnLayout()
+	host := t.treeHostColumn()
 	for _, sp := range lay.spans {
 		if !spanMatchesCol(sp, t.editCol) {
 			continue
@@ -483,7 +496,21 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 			return core.UnitRect{}, false
 		}
 		y := lay.headerH + core.Unit(row)*metrics.CellHeight
-		return core.UnitRect{X: clip.X, Y: y, Width: clip.Width, Height: metrics.CellHeight}, true
+		r := core.UnitRect{X: clip.X, Y: y, Width: clip.Width, Height: metrics.CellHeight}
+		// A tree-hosting cell's editor starts where the caption TEXT
+		// starts - past the indent, expander, and icon - so it lines
+		// up with the value it replaces.
+		if sp.col == nil || (host != nil && sp.col == host) {
+			if textX := sp.x + t.treeCellTextInset(t.editItem); textX > r.X {
+				d := textX - r.X
+				if d >= r.Width {
+					return core.UnitRect{}, false // fully in the apparatus clip
+				}
+				r.X += d
+				r.Width -= d
+			}
+		}
+		return r, true
 	}
 	return core.UnitRect{}, false
 }
@@ -614,14 +641,12 @@ func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
 		if !ok || event.X < clip.X || event.X >= clip.X+clip.Width {
 			continue
 		}
-		// The tree-hosting cell's indent/expander region (left of the
-		// caption text) is never an edit target: the arrow keeps its
-		// click, and a double click there keeps the classic
+		// The tree-hosting cell's indent/expander/icon region (left of
+		// the caption text) is never an edit target: the arrow keeps
+		// its click, and a double click there keeps the classic
 		// expand/collapse.
 		if sp.col == nil || (host != nil && sp.col == host) {
-			item := t.flatList[row]
-			textX := sp.x + core.Unit(item.Level()*t.indentWidth+1)*metrics.CellWidth
-			if event.X < textX {
+			if event.X < sp.x+t.treeCellTextInset(t.flatList[row]) {
 				continue
 			}
 		}
