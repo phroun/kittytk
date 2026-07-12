@@ -96,6 +96,13 @@ type SaveReport struct {
 	// Scars lists blocks whose data was lost to storage failure and
 	// were written as visible scars instead. Empty on a clean save.
 	Scars []ScarWarning
+
+	// Integrity lists block-level integrity events discovered since
+	// the last successful save: external edits that slid, moved, or
+	// modified warm-backed blocks (recovered or adopted without loss),
+	// and hard losses. A successful save drains the pending log here;
+	// IntegrityEvents() peeks at it between saves.
+	Integrity []IntegrityEvent
 }
 
 // SaveWith overwrites the original file in place with the current
@@ -371,6 +378,7 @@ func (g *Garland) saveInPlace(fs FileSystemInterface, opts SaveOptions) (SaveRep
 		_ = g.captureSourceInfo()
 	}
 
+	report.Integrity = g.drainIntegrityEvents()
 	return report, nil
 }
 
@@ -495,6 +503,38 @@ func (g *Garland) scarifyPlaceholders() ([]ScarWarning, error) {
 
 	// Recompute internal aggregate weights along the whole current
 	// view (rune/line counts changed under same byte counts).
+	g.fixCurrentAggregates()
+
+	// Overflow markers land at the very end of the document.
+	if len(appendices) > 0 {
+		rootSnap := g.root.snapshotAt(g.currentFork, g.currentRevision)
+		if rootSnap == nil {
+			return nil, ErrInternal
+		}
+		newRootID, err := g.insertInternal(g.root, rootSnap, g.totalBytes, 0, appendices, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		g.root = g.nodeRegistry[newRootID]
+		g.updateCountsFromRoot()
+	}
+
+	// Cursor byte positions are still valid (in-block scars are
+	// byte-neutral; the appendix is past every cursor except EOF ones),
+	// but rune/line coordinates under them may have changed.
+	g.reconcileCursorCoordinates()
+
+	g.recordMutation()
+	return warnings, nil
+}
+
+// fixCurrentAggregates recomputes the internal aggregate weights of
+// the whole current view after leaf content was replaced in place
+// (rune/line counts changed under identical byte counts).
+func (g *Garland) fixCurrentAggregates() {
+	if g.root == nil {
+		return
+	}
 	var fix func(id NodeID) *NodeSnapshot
 	fix = func(id NodeID) *NodeSnapshot {
 		node := g.nodeRegistry[id]
@@ -522,24 +562,12 @@ func (g *Garland) scarifyPlaceholders() ([]ScarWarning, error) {
 	}
 	fix(g.root.id)
 	g.updateCountsFromRoot()
+}
 
-	// Overflow markers land at the very end of the document.
-	if len(appendices) > 0 {
-		rootSnap := g.root.snapshotAt(g.currentFork, g.currentRevision)
-		if rootSnap == nil {
-			return nil, ErrInternal
-		}
-		newRootID, err := g.insertInternal(g.root, rootSnap, g.totalBytes, 0, appendices, nil, false)
-		if err != nil {
-			return nil, err
-		}
-		g.root = g.nodeRegistry[newRootID]
-		g.updateCountsFromRoot()
-	}
-
-	// Cursor byte positions are still valid (in-block scars are
-	// byte-neutral; the appendix is past every cursor except EOF ones),
-	// but rune/line coordinates under them may have changed.
+// reconcileCursorCoordinates recomputes every cursor's rune/line
+// coordinates from its (still valid) byte position after leaf content
+// was replaced byte-for-byte.
+func (g *Garland) reconcileCursorCoordinates() {
 	for _, cursor := range g.cursors {
 		if cursor.bytePos > g.totalBytes {
 			cursor.bytePos = g.totalBytes
@@ -548,7 +576,4 @@ func (g *Garland) scarifyPlaceholders() ([]ScarWarning, error) {
 		cursor.line, cursor.lineRune, _ = g.byteToLineRuneInternalUnlocked(cursor.bytePos)
 		cursor.lineRuneDirty = false
 	}
-
-	g.recordMutation()
-	return warnings, nil
 }

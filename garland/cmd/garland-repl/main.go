@@ -2048,6 +2048,13 @@ func (r *REPL) cmdSave() {
 }
 
 func printScarWarnings(report garland.SaveReport) {
+	for _, ev := range report.Integrity {
+		fmt.Printf("INTEGRITY [%s]: block at offset %d (%d bytes, file offset %d)\n",
+			ev.Kind, ev.BufferOffset, ev.Length, ev.FileOffset)
+		if ev.Detail != "" {
+			fmt.Printf("  %s\n", ev.Detail)
+		}
+	}
 	for _, s := range report.Scars {
 		fmt.Printf("WARNING: lost block at offset %d (%d bytes) written as scar", s.Offset, s.Length)
 		if s.Appended {

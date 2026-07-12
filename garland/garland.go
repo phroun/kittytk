@@ -404,6 +404,12 @@ type Garland struct {
 	sourceState      *sourceState
 	warmVerification map[NodeID]*warmVerificationState
 
+	// integrityLog accumulates block-level integrity events (slides,
+	// swaps, adoptions, losses) from the moment each is discovered
+	// until they are reported: peeked via IntegrityEvents, drained
+	// into the next successful save's SaveReport.
+	integrityLog []IntegrityEvent
+
 	// maintenanceInFlight guards against stacking CheckMemoryPressure
 	// goroutines (one per mutation would each scan the node registry).
 	maintenanceInFlight int32
@@ -613,7 +619,10 @@ func (g *Garland) SaveAs(fs FileSystemInterface, name string) (SaveReport, error
 	if err != nil {
 		return SaveReport{}, err
 	}
-	return SaveReport{Scars: scars}, g.streamWriteToFile(fs, name)
+	if err := g.streamWriteToFile(fs, name); err != nil {
+		return SaveReport{Scars: scars}, err
+	}
+	return SaveReport{Scars: scars, Integrity: g.drainIntegrityEvents()}, nil
 }
 
 // streamWriteToFile writes the document to a file using streaming (no full materialization).
@@ -1215,7 +1224,7 @@ func (g *Garland) thawSnapshot(nodeID NodeID, forkRev ForkRevision, snap *NodeSn
 	blockName := formatBlockName(nodeID, forkRev)
 	data, err := g.lib.coldStorageBackend.Get(g.id, blockName)
 	if err != nil {
-		snap.becomePlaceholder("cold storage read failed: " + err.Error())
+		g.markSnapshotLost(snap, "cold storage read failed: "+err.Error())
 		return err
 	}
 
@@ -1223,7 +1232,7 @@ func (g *Garland) thawSnapshot(nodeID NodeID, forkRev ForkRevision, snap *NodeSn
 	if len(snap.dataHash) > 0 {
 		actualHash := computeHash(data)
 		if !hashesEqual(snap.dataHash, actualHash) {
-			snap.becomePlaceholder("cold storage block corrupted (hash mismatch)")
+			g.markSnapshotLost(snap, "cold storage block corrupted (hash mismatch)")
 			return ErrColdStorageFailure
 		}
 	}
@@ -1369,14 +1378,14 @@ func (g *Garland) readFromWarmStorageWithTrust(nodeID NodeID, snap *NodeSnapshot
 	// Seek to the original position
 	err := g.sourceFS.SeekByte(g.sourceHandle, snap.originalFileOffset)
 	if err != nil {
-		snap.becomePlaceholder("source file seek failed: " + err.Error())
+		g.markSnapshotLost(snap, "source file seek failed: "+err.Error())
 		return err
 	}
 
 	// Read the data
 	data, err := g.sourceFS.ReadBytes(g.sourceHandle, int(snap.byteCount))
 	if err != nil {
-		snap.becomePlaceholder("source file read failed: " + err.Error())
+		g.markSnapshotLost(snap, "source file read failed: "+err.Error())
 		return err
 	}
 
@@ -1384,10 +1393,12 @@ func (g *Garland) readFromWarmStorageWithTrust(nodeID NodeID, snap *NodeSnapshot
 	if shouldVerify && len(snap.dataHash) > 0 {
 		actualHash := computeHash(data)
 		if !hashesEqual(snap.dataHash, actualHash) {
-			// Warm storage mismatch - file was modified
+			// The file changed under this block. Notify the app, then
+			// investigate before declaring the data lost: an external
+			// edit may have slid, moved, or locally modified it - all
+			// of which triage can resolve without a loss.
 			g.handleWarmStorageMismatch(nodeID)
-			snap.becomePlaceholder("source file changed on disk (hash mismatch)")
-			return ErrWarmStorageMismatch
+			return g.triageWarmMismatch(nodeID, snap, data, actualHash)
 		}
 		// Verification passed - update tracking
 		g.updateWarmVerification(nodeID)
@@ -1426,48 +1437,6 @@ func (g *Garland) handleWarmStorageMismatch(nodeID NodeID) {
 			go g.sourceState.changeHandler(g, SourceStatusModified, info)
 		}
 	}
-}
-
-// readFromWarmStorage reads data from the original file for warm storage (legacy, always verifies).
-func (g *Garland) readFromWarmStorage(snap *NodeSnapshot) error {
-	if g.sourceHandle == nil || g.sourceFS == nil {
-		return ErrWarmStorageMismatch
-	}
-
-	// Seek to the original position
-	err := g.sourceFS.SeekByte(g.sourceHandle, snap.originalFileOffset)
-	if err != nil {
-		snap.becomePlaceholder("source file seek failed: " + err.Error())
-		return err
-	}
-
-	// Read the data
-	data, err := g.sourceFS.ReadBytes(g.sourceHandle, int(snap.byteCount))
-	if err != nil {
-		snap.becomePlaceholder("source file read failed: " + err.Error())
-		return err
-	}
-
-	// Verify hash if present
-	if len(snap.dataHash) > 0 {
-		actualHash := computeHash(data)
-		if !hashesEqual(snap.dataHash, actualHash) {
-			// Warm storage mismatch - file was modified
-			snap.becomePlaceholder("source file changed on disk (hash mismatch)")
-			return ErrWarmStorageMismatch
-		}
-	}
-
-	snap.data = data
-	snap.storageState = StorageMemory
-
-	// Update memory tracking
-	g.updateMemoryTracking(int64(len(data)))
-
-	// Mark as recently accessed
-	g.touchSnapshot(snap)
-
-	return nil
 }
 
 // NewCursor creates a new cursor at position 0.

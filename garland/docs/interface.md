@@ -162,7 +162,8 @@ type SaveOptions struct {
 // lost blocks are written as visible, exact-size scars and reported
 // back so the app decides how to deal with them.
 type SaveReport struct {
-    Scars []ScarWarning // empty on a clean save
+    Scars     []ScarWarning    // empty on a clean save
+    Integrity []IntegrityEvent // block-level events since the last save
 }
 
 type ScarWarning struct {
@@ -172,6 +173,36 @@ type ScarWarning struct {
     Appended bool   // marker did not fit in the block; appended at EOF
     Reason   string // why the data was lost, captured at discovery time
 }
+
+// Block-level integrity forensics: when a warm block's bytes on disk
+// stop matching expectations, the mismatch is triaged before being
+// declared a loss - slide (external insert/delete shifted the block;
+// re-homed), swap (external move; backing offsets exchanged), soft
+// adopt (surrounding blocks verify, so the file's bytes are adopted as
+// a deliberate external edit - a future save preserves them), or hard
+// loss (placeholder, scarred on save). Every outcome is recorded at
+// the moment of discovery.
+type IntegrityKind int
+
+const (
+    IntegrityBlockSlid             IntegrityKind = iota // recovered: re-homed
+    IntegrityBlockSwapped                               // recovered: external move
+    IntegrityBlockAdopted                               // soft: external edit adopted
+    IntegrityBlockAdoptedDuplicate                      // soft: adopted; duplicates another block (move/copy suspected)
+    IntegrityBlockLost                                  // hard: placeholder, will scar
+)
+
+type IntegrityEvent struct {
+    Kind         IntegrityKind
+    BufferOffset int64  // block's buffer offset at discovery (-1 unknown)
+    FileOffset   int64  // backing position in the source file
+    Length       int64
+    Detail       string // specifics: shift distance, duplicate location, cause
+}
+
+// IntegrityEvents peeks at events accumulated since the last
+// successful save; the save itself drains them into SaveReport.Integrity.
+func (g *Garland) IntegrityEvents() []IntegrityEvent
 ```
 
 ---
