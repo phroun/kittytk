@@ -858,6 +858,12 @@ func (t *TreeView) neededCells(col *TreeColumn) int {
 		}
 	}
 	cells := int((maxW + cw/2 + cw - 1) / cw) // half-cell pad, ceil
+	if col.Editable && len(col.Enum) > 0 {
+		// A choice column's editor is a ComboBox: keep room for its
+		// drop-down arrow even while not editing, so entering edit
+		// mode never truncates the value.
+		cells++
+	}
 	if cells < col.MinWidth {
 		cells = col.MinWidth
 	}

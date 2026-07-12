@@ -245,6 +245,145 @@ func TestTreeRowFillUnderScrollbarLane(t *testing.T) {
 	}
 }
 
+// A double click on an EDITABLE cell enters edit mode WITHOUT also
+// expanding/collapsing; the classic toggle survives on non-editable
+// cells and on the tree cell's indent/expander region.
+func TestTreeDoubleClickEditableSuppressed(t *testing.T) {
+	tv := NewTreeView()
+	tv.SetShowHeader(true)
+	tv.SetEditable(true) // the key column itself is editable
+	size := NewTreeColumn("size", "Size", 10)
+	size.Editable = true
+	kind := NewTreeColumn("kind", "Kind", 12) // NOT editable
+	tv.AddColumn(size)
+	tv.AddColumn(kind)
+	// A level-1 folder, so its key cell has an indent PAD region left
+	// of the expander arrow (level 0 has no padding before the arrow).
+	top := NewTreeItem("top")
+	top.Expanded = true
+	folder := NewTreeItem("Folder")
+	folder.AddChild(NewTreeItem("inner"))
+	folder.SetValue("size", "--")
+	folder.SetValue("kind", "Folder")
+	top.AddChild(folder)
+	tv.AddRootItem(top)
+	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
+
+	cw := tv.EffectiveCellMetrics().CellWidth
+	lay := tv.columnLayout()
+	var sizeX, kindX, keyTextX, keyPadX core.Unit
+	for _, sp := range lay.spans {
+		switch {
+		case sp.col == nil:
+			keyPadX = sp.x + 4 // inside the level-1 indent, left of the arrow
+			// Text starts after indent(2 cells) + expander(1 cell).
+			keyTextX = sp.x + 3*cw + 4
+		case sp.col.ID == "size":
+			sizeX = sp.x + sp.w/2
+		case sp.col.ID == "kind":
+			kindX = sp.x + sp.w/2
+		}
+	}
+	rowY := core.Unit(16 + 1*16 + 8) // the folder's visual row (index 1)
+	dbl := func(x core.Unit) {
+		tv.HandleMousePress(core.MousePressEvent{X: x, Y: rowY, Button: core.LeftButton})
+		tv.HandleMouseRelease(core.MouseReleaseEvent{X: x, Y: rowY, Button: core.LeftButton})
+		tv.HandleMousePress(core.MousePressEvent{X: x, Y: rowY, Button: core.LeftButton})
+		tv.HandleMouseRelease(core.MouseReleaseEvent{X: x, Y: rowY, Button: core.LeftButton})
+	}
+
+	// Editable Size cell: the double click edits, never toggles.
+	dbl(sizeX)
+	if folder.Expanded {
+		t.Error("double click on an editable cell also expanded the row")
+	}
+	if !tv.rowEditing || tv.editCol != tv.ColumnByID("size") {
+		t.Fatal("double click on editable cell did not enter edit mode")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+
+	// Non-editable Kind cell: classic toggle.
+	dbl(kindX)
+	if !folder.Expanded {
+		t.Error("double click on a non-editable cell did not expand")
+	}
+	if tv.rowEditing {
+		t.Fatal("double click on non-editable cell entered edit mode")
+	}
+
+	// The key cell's indent padding (left of the arrow): classic
+	// toggle even though the key column is editable.
+	dbl(keyPadX)
+	if folder.Expanded {
+		t.Error("double click on the indent padding did not collapse")
+	}
+	if tv.rowEditing {
+		t.Fatal("indent-padding double click entered edit mode")
+	}
+
+	// The key cell's TEXT: edits (the key is editable here).
+	dbl(keyTextX)
+	if folder.Expanded {
+		t.Error("double click on the key text also expanded")
+	}
+	if !tv.rowEditing || tv.editCol != treeKeyColumn {
+		t.Fatal("double click on the key text did not edit the caption")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+}
+
+// An editable enum column's measured width keeps one extra cell for
+// the combo editor's drop-down arrow, even while not editing.
+func TestTreeEnumColumnReservesArrowRoom(t *testing.T) {
+	tv := NewTreeView()
+	plain := NewTreeColumn("a", "Kind", 8)
+	choice := NewTreeColumn("b", "Kind", 8)
+	choice.Editable = true
+	choice.Enum = []TreeEnumOption{{Key: "x", Value: "X"}}
+	tv.AddColumn(plain)
+	tv.AddColumn(choice)
+	it := NewTreeItem("row")
+	it.SetValue("a", "PNG image")
+	it.SetValue("b", "PNG image")
+	tv.AddRootItem(it)
+	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
+
+	if got, want := tv.neededCells(choice), tv.neededCells(plain)+1; got != want {
+		t.Errorf("choice column needs %d cells, want %d (plain+1 for the arrow)", got, want)
+	}
+}
+
+// MOUSE click-to-edit on a choice cell pops the drop-down immediately
+// (keyboard entry leaves it closed for Tab/arrow pass-through).
+func TestTreeClickToEditComboPopsOpen(t *testing.T) {
+	tv, _ := newEnumTree("png")
+	lay := tv.columnLayout()
+	var kindX core.Unit
+	for _, sp := range lay.spans {
+		if sp.col == tv.ColumnByID("kind") {
+			kindX = sp.x + sp.w/2
+		}
+	}
+	rowY := core.Unit(16 + 8) // row 0, already selected
+	tv.HandleMousePress(core.MousePressEvent{X: kindX, Y: rowY, Button: core.LeftButton})
+	tv.HandleMouseRelease(core.MouseReleaseEvent{X: kindX, Y: rowY, Button: core.LeftButton})
+	if tv.editCombo == nil {
+		t.Fatal("click-to-edit did not mount the combo")
+	}
+	if !tv.editCombo.IsOpen() {
+		t.Error("mouse entry did not pop the drop-down open")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // close popup
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // end edit
+
+	// Keyboard entry stays closed.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	if tv.editCombo == nil || tv.editCombo.IsOpen() {
+		t.Error("keyboard entry should mount the combo CLOSED")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+}
+
 // Enum options travel the wire: a collection of options built first,
 // then pointed at by the column's enum= (a pointer property resolved
 // through the connection's reference registry); enum_store selects the

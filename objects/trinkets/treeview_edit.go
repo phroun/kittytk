@@ -599,6 +599,7 @@ func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
 		return
 	}
 	lay := t.columnLayout()
+	host := t.treeHostColumn()
 	for _, sp := range lay.spans {
 		col := sp.col
 		if col == nil {
@@ -612,6 +613,17 @@ func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
 		clip, ok := lay.spanClip(sp, metrics.CellHeight)
 		if !ok || event.X < clip.X || event.X >= clip.X+clip.Width {
 			continue
+		}
+		// The tree-hosting cell's indent/expander region (left of the
+		// caption text) is never an edit target: the arrow keeps its
+		// click, and a double click there keeps the classic
+		// expand/collapse.
+		if sp.col == nil || (host != nil && sp.col == host) {
+			item := t.flatList[row]
+			textX := sp.x + core.Unit(item.Level()*t.indentWidth+1)*metrics.CellWidth
+			if event.X < textX {
+				continue
+			}
 		}
 		t.clickEditItem = t.flatList[row]
 		t.clickEditCol = col
@@ -643,6 +655,12 @@ func (t *TreeView) armClickEdit(event core.MouseReleaseEvent) {
 		return
 	}
 	t.beginCellEdit(item, col)
+	// MOUSE entry into a choice cell pops the drop-down immediately -
+	// the pointer came here to pick a value. (Keyboard entry leaves it
+	// closed so Tab and Up/Down can still pass to other cells/rows.)
+	if t.editCombo != nil {
+		t.editCombo.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	}
 }
 
 // cancelClickEdit drops any press-time click-to-edit candidate.

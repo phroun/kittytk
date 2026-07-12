@@ -1155,6 +1155,16 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 		t.lastClickIndex = clickedIndex
 
 		if isDoubleClick {
+			// A double click on an EDITABLE cell belongs to click-to-
+			// edit (the release opens the editor): suppress the expand/
+			// collapse so both don't fire at once. The classic toggle
+			// stays on non-editable parts of the row and on the tree
+			// cell's indent/expander region left of the caption text
+			// (noteClickEditPress never claims those).
+			if t.clickEditItem != nil {
+				t.lastClickIndex = -1
+				return true
+			}
 			// Double-click: toggle expand/collapse if not leaf, then activate
 			if !item.IsLeaf() {
 				t.ToggleItem(item)
