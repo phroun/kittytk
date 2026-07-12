@@ -719,10 +719,16 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 }
 
 // visibleCount returns the number of visible rows.
+// visibleCount is never negative: a layout squeeze below one row means
+// zero visible items, not a negative count.
 func (l *ListView) visibleCount() int {
 	bounds := l.Bounds()
 	metrics := l.EffectiveCellMetrics()
-	return int(bounds.Height / metrics.CellHeight)
+	n := int(bounds.Height / metrics.CellHeight)
+	if n < 0 {
+		n = 0
+	}
+	return n
 }
 
 // SetBounds resizes the list and re-clamps its scroll offset (the

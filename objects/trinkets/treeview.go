@@ -714,10 +714,17 @@ func (t *TreeView) Paint(p *core.Painter) {
 
 // visibleCount returns the number of visible content rows (the header
 // row and the horizontal-scrollbar footer row are not content rows).
+// Never negative: squeezed below its own chrome the tree simply has
+// zero content rows (a negative count reaches make() in the paint
+// path and panics).
 func (t *TreeView) visibleCount() int {
 	bounds := t.Bounds()
 	metrics := t.EffectiveCellMetrics()
-	return int((bounds.Height - t.headerHeight() - t.footerHeight()) / metrics.CellHeight)
+	n := int((bounds.Height - t.headerHeight() - t.footerHeight()) / metrics.CellHeight)
+	if n < 0 {
+		n = 0
+	}
+	return n
 }
 
 // scrollbarGeometry returns scrollbar dimensions and thumb position.
