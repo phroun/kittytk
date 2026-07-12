@@ -203,6 +203,38 @@ type IntegrityEvent struct {
 // IntegrityEvents peeks at events accumulated since the last
 // successful save; the save itself drains them into SaveReport.Integrity.
 func (g *Garland) IntegrityEvents() []IntegrityEvent
+
+// Rebase: deliberate reconciliation against a file ("file changed on
+// disk - reload or keep your version?" -> rebase takes the FILE as
+// the new base). Blocks are anchor-matched by hash (piecewise shifts
+// followed), keeping identity/decorations/warm backing for matched
+// content; placeholders whose bytes still exist in the file heal;
+// everything else (external edits, resized blocks - kind
+// IntegrityBlockResized points here - and unsaved local edits: the
+// disk wins) is adopted and reported. One recorded mutation:
+// UndoSeek(report.PreviousRevision) is "keep your version" after the
+// fact. Source tracking is re-baselined - a fresh starting point.
+func (g *Garland) Rebase() (RebaseReport, error)
+
+// RebaseOn does the same against a DIFFERENT file, which becomes the
+// buffer's source (path, handle, warm backing all switch).
+func (g *Garland) RebaseOn(fs FileSystemInterface, name string) (RebaseReport, error)
+
+type RebaseReport struct {
+    Adopted          []RebaseRegion // regions taken from the file
+    BytesKept        int64
+    BytesAdopted     int64
+    BlocksKept       int
+    BlocksHealed     int   // lost placeholders recovered from the file
+    OldSize, NewSize int64
+    NoChange         bool  // already identical; nothing recorded
+    PreviousRevision RevisionID // undo target for "keep your version"
+}
+
+type RebaseRegion struct {
+    Offset int64 // in the new buffer (== file offset)
+    Length int64
+}
 ```
 
 ---

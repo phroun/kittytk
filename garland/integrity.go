@@ -71,6 +71,14 @@ const (
 	// matched expectations and no relocation was found. The block is a
 	// placeholder and will be written as a scar by the next save.
 	IntegrityBlockLost
+
+	// IntegrityBlockResized: an external edit INSIDE this block changed
+	// its length - its old bytes no longer exist contiguously anywhere,
+	// so reads fail (placeholder), but the situation is precisely
+	// diagnosed: the neighbor before verifies at its recorded offset
+	// and the neighbor after verifies shifted by the file's size
+	// change. Rebase() will adopt the resized content cleanly.
+	IntegrityBlockResized
 )
 
 // String returns a short human-readable name for the kind.
@@ -86,6 +94,8 @@ func (k IntegrityKind) String() string {
 		return "adopted-duplicate"
 	case IntegrityBlockLost:
 		return "lost"
+	case IntegrityBlockResized:
+		return "resized"
 	}
 	return "unknown"
 }
@@ -228,27 +238,44 @@ func (g *Garland) triageWarmMismatch(nodeID NodeID, snap *NodeSnapshot, got []by
 	}
 
 	// ---- 1. Slide: did an external insert/delete shift the block? ----
+	var delta, curSize int64 = 0, -1
 	if g.sourceState != nil {
-		if curSize, err := fs.FileSize(fh); err == nil {
-			if delta := curSize - g.sourceState.originalSize; delta != 0 {
-				cand := snap.originalFileOffset + delta
-				if cand >= 0 && cand+snap.byteCount <= curSize {
-					if d := readAt(cand, snap.byteCount); d != nil &&
-						hashesEqual(snap.dataHash, computeHash(d)) {
-						snap.originalFileOffset = cand
-						g.installRecoveredData(nodeID, snap, d)
-						g.logIntegrityEvent(IntegrityEvent{
-							Kind:         IntegrityBlockSlid,
-							BufferOffset: bufOff,
-							FileOffset:   cand,
-							Length:       snap.byteCount,
-							Detail: fmt.Sprintf(
-								"content found intact %+d bytes away (external insert/delete earlier in the file); re-homed",
-								delta),
-						})
-						return nil
+		if sz, err := fs.FileSize(fh); err == nil {
+			curSize = sz
+			delta = curSize - g.sourceState.originalSize
+		}
+	}
+	if delta != 0 {
+		cand := snap.originalFileOffset + delta
+		if cand >= 0 && cand+snap.byteCount <= curSize {
+			if d := readAt(cand, snap.byteCount); d != nil &&
+				hashesEqual(snap.dataHash, computeHash(d)) {
+				oldOff := snap.originalFileOffset
+				snap.originalFileOffset = cand
+				g.installRecoveredData(nodeID, snap, d)
+				// Everything file-backed at or beyond this block slid by
+				// the same amount - re-home it all in one pass so each
+				// following block does not stumble through its own
+				// mismatch triage. (Blocks re-homed wrongly - multiple
+				// distinct external edits - still verify on access and
+				// triage individually.)
+				rehomed := 0
+				for _, sp := range spans {
+					if sp.snap != snap && sp.snap.originalFileOffset >= oldOff {
+						sp.snap.originalFileOffset += delta
+						rehomed++
 					}
 				}
+				g.logIntegrityEvent(IntegrityEvent{
+					Kind:         IntegrityBlockSlid,
+					BufferOffset: bufOff,
+					FileOffset:   cand,
+					Length:       snap.byteCount,
+					Detail: fmt.Sprintf(
+						"content found intact %+d bytes away (external insert/delete earlier in the file); re-homed along with %d following blocks",
+						delta, rehomed),
+				})
+				return nil
 			}
 		}
 	}
@@ -314,11 +341,11 @@ func (g *Garland) triageWarmMismatch(nodeID NodeID, snap *NodeSnapshot, got []by
 			}
 		}
 	}
-	verifies := func(sp *leafSpan) bool {
+	verifiesAt := func(sp *leafSpan, shift int64) bool {
 		if sp == nil {
 			return true // vacuous: no preserved block on that side
 		}
-		d := readAt(sp.snap.originalFileOffset, sp.snap.byteCount)
+		d := readAt(sp.snap.originalFileOffset+shift, sp.snap.byteCount)
 		if d == nil {
 			return false
 		}
@@ -330,6 +357,7 @@ func (g *Garland) triageWarmMismatch(nodeID NodeID, snap *NodeSnapshot, got []by
 		}
 		return false
 	}
+	verifies := func(sp *leafSpan) bool { return verifiesAt(sp, 0) }
 	if verifies(prev) && verifies(next) {
 		kind := IntegrityBlockAdopted
 		detail := "surrounding blocks verify; adopted the file's bytes as a deliberate external edit (this block's previous content is gone, but saving will no longer destroy the modification)"
@@ -348,6 +376,37 @@ func (g *Garland) triageWarmMismatch(nodeID NodeID, snap *NodeSnapshot, got []by
 			Detail:       detail,
 		})
 		return nil
+	}
+
+	// ---- 3b. Resized: an external edit INSIDE this block changed its
+	// length. Signature: the neighbor before verifies at its recorded
+	// offset, the neighbor after verifies shifted by the file's size
+	// change, and both are byte-adjacent to us - so the entire length
+	// change is confined to our region. The old bytes no longer exist
+	// contiguously anywhere (no candidate offset can ever match), so
+	// reads must fail - but the app is told that a deliberate Rebase()
+	// will adopt the resized content cleanly, instead of a bare loss.
+	if delta != 0 {
+		prevAdjacent := prev == nil && snap.originalFileOffset == 0 ||
+			prev != nil && prev.snap.originalFileOffset+prev.snap.byteCount == snap.originalFileOffset
+		nextAdjacent := next == nil && g.sourceState != nil &&
+			snap.originalFileOffset+snap.byteCount == g.sourceState.originalSize ||
+			next != nil && next.snap.originalFileOffset == snap.originalFileOffset+snap.byteCount
+		if prevAdjacent && nextAdjacent && snap.byteCount+delta >= 0 &&
+			verifies(prev) && verifiesAt(next, delta) {
+			reason := fmt.Sprintf(
+				"external edit inside this block changed its length by %+d bytes; Rebase() can adopt the file's new content",
+				delta)
+			snap.becomePlaceholder(reason)
+			g.logIntegrityEvent(IntegrityEvent{
+				Kind:         IntegrityBlockResized,
+				BufferOffset: bufOff,
+				FileOffset:   snap.originalFileOffset,
+				Length:       snap.byteCount,
+				Detail:       reason,
+			})
+			return ErrWarmStorageMismatch
+		}
 	}
 
 	// ---- 4. Hard loss ----

@@ -209,6 +209,9 @@ func (r *REPL) handleCommand(input string) bool {
 	case "saveas":
 		r.cmdSaveAs(args)
 
+	case "rebase":
+		r.cmdRebase(args)
+
 	case "chill":
 		r.cmdChill(args)
 
@@ -2045,6 +2048,37 @@ func (r *REPL) cmdSave() {
 	printScarWarnings(report)
 
 	fmt.Println("File saved")
+}
+
+func (r *REPL) cmdRebase(args []string) {
+	if !r.ensureGarland() {
+		return
+	}
+	var report garland.RebaseReport
+	var err error
+	if len(args) > 0 {
+		report, err = r.garland.RebaseOn(nil, strings.Join(args, " "))
+	} else {
+		report, err = r.garland.Rebase()
+	}
+	if err != nil {
+		fmt.Printf("Rebase error: %v\n", err)
+		return
+	}
+	if report.NoChange {
+		fmt.Println("Rebase: buffer already matches the file (no change)")
+	} else {
+		fmt.Printf("Rebase: %d bytes kept (%d blocks), %d bytes adopted, size %d -> %d\n",
+			report.BytesKept, report.BlocksKept, report.BytesAdopted,
+			report.OldSize, report.NewSize)
+		fmt.Printf("  'keep your version': undoseek %d\n", report.PreviousRevision)
+	}
+	if report.BlocksHealed > 0 {
+		fmt.Printf("  %d previously lost blocks healed from the file\n", report.BlocksHealed)
+	}
+	for _, reg := range report.Adopted {
+		fmt.Printf("  adopted [%d..%d)\n", reg.Offset, reg.Offset+reg.Length)
+	}
 }
 
 func printScarWarnings(report garland.SaveReport) {
