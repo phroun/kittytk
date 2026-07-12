@@ -1789,9 +1789,26 @@ func hasSelection(ea editActor) bool {
 	return true
 }
 
+// editActorProvider lets a focused trinket DELEGATE the standard Edit
+// actions to an inner editor it hosts. The TreeView's in-place row
+// editor is the model case: the tree keeps the real focus and forwards
+// input, so while the editor is up the tree advertises IT as the edit
+// target - the Edit menu (and its enabled states) then operate on the
+// cell editor exactly as they would on a plain TextInput.
+type editActorProvider interface {
+	editActorTarget() (editActor, bool)
+}
+
 // focusedEditActor returns the focused trinket as an editActor, if it is one.
+// A provider that currently hosts an inner editor supersedes the trinket's
+// own capabilities; a provider with no active editor falls through.
 func (d *Desktop) focusedEditActor() (editActor, bool) {
 	if fw := d.FocusedTrinket(); fw != nil {
+		if p, ok := fw.(editActorProvider); ok {
+			if ea, active := p.editActorTarget(); active {
+				return ea, true
+			}
+		}
 		if ea, ok := fw.(editActor); ok {
 			return ea, true
 		}

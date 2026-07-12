@@ -3,6 +3,7 @@ package trinkets
 import (
 	"testing"
 
+	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 )
 
@@ -174,6 +175,98 @@ func TestTreeRowEditClickOffAccepts(t *testing.T) {
 	if tv.CurrentIndex() != 2 {
 		t.Errorf("the click did not proceed to select row 2: index=%d", tv.CurrentIndex())
 	}
+}
+
+// While the row editor is up, the Edit menu's focus inspection sees
+// the CELL EDITOR as the edit target (pass-through via the tree, which
+// holds the real focus); with the editor closed the tree is no target.
+func TestTreeEditActorPassThrough(t *testing.T) {
+	b, _ := raster.New(320, 200) // raster backend: real internal clipboard
+	d := NewDesktop()
+	d.SetBackend(b)
+	tv := newEditableTree()
+	tv.SetParent(d)
+	tv.SetFocus()
+
+	// The Edit menu inspects the FOCUSED trinket (the tree - it holds
+	// real focus while editing) through editActorProvider; exercise
+	// that seam exactly as focusedEditActor consumes it.
+	prov, isProvider := core.Trinket(tv.Self()).(editActorProvider)
+	if !isProvider {
+		t.Fatal("TreeView does not implement editActorProvider")
+	}
+	if _, active := prov.editActorTarget(); active {
+		t.Fatal("tree with no open editor claimed to be an edit target")
+	}
+	// And a closed-editor tree is no plain editActor either: every
+	// standard Edit item stays disabled.
+	if _, isActor := core.Trinket(tv.Self()).(editActor); isActor {
+		t.Fatal("TreeView must not be an unconditional editActor")
+	}
+
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})  // header bar -> content
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // open the editor
+	if !tv.rowEditing {
+		t.Fatal("precondition: row editor open")
+	}
+	ea, ok := prov.editActorTarget()
+	if !ok {
+		t.Fatal("editActorTarget did not surface the cell editor")
+	}
+	// The pass-through target IS the TextInput: Select All + Copy land
+	// on it, and the clipboard resolves through the tree's desktop.
+	ea.SelectAll()
+	if tv.editBox.SelectedText() != "1 KB" {
+		t.Errorf("SelectAll via Edit-menu target selected %q", tv.editBox.SelectedText())
+	}
+	ea.Copy()
+	if got := d.Clipboard(); got != "1 KB" {
+		t.Errorf("clipboard after Copy = %q, want %q", got, "1 KB")
+	}
+	// Paste replaces the selection through the same bridge.
+	d.SetClipboard("2 MB")
+	ea.Paste()
+	if got := tv.editBox.Text(); got != "2 MB" {
+		t.Errorf("editor text after Paste = %q, want %q", got, "2 MB")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+	if _, active := prov.editActorTarget(); active {
+		t.Error("closed editor still reported as the edit target")
+	}
+}
+
+// Right-clicking inside the row editor opens the TextInput's own
+// context menu on the tree's popup controller, positioned through the
+// tree's ancestry (the unparented editor borrows it).
+func TestTreeEditContextMenu(t *testing.T) {
+	tv := newEditableTree()
+	host := &recordingPopupController{}
+	parent := NewPanel()
+	parent.SetPopupController(host)
+	tv.SetParent(parent)
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	if !tv.rowEditing {
+		t.Fatal("precondition: row editor open")
+	}
+	r, ok := tv.editorRect()
+	if !ok {
+		t.Fatal("precondition: editor visible")
+	}
+	press := core.MousePressEvent{X: r.X + 4, Y: r.Y + 4, Button: core.RightButton}
+	if !tv.HandleMousePress(press) {
+		t.Fatal("right-click inside the editor not handled")
+	}
+	if host.popup == nil {
+		t.Fatal("no context menu popup registered")
+	}
+	// The recording controller's MapToScreen is identity, so the menu
+	// opens exactly at the click point - proving the editor's local
+	// coordinates were mapped through the tree with the cell origin.
+	if host.popup.Bounds.X != press.X || host.popup.Bounds.Y != press.Y {
+		t.Errorf("context menu at %d,%d want %d,%d",
+			host.popup.Bounds.X, host.popup.Bounds.Y, press.X, press.Y)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 }
 
 // Switching edit columns brings the editor into view with the

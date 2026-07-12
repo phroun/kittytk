@@ -987,6 +987,18 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 
 // HandleMousePress handles mouse clicks.
 func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
+	// A right-click inside the open row editor belongs to the editor:
+	// it opens the TextInput's own context menu (Cut/Copy/Paste/...).
+	if event.Button == core.RightButton && t.rowEditing && t.editBox != nil {
+		if r, ok := t.editorRect(); ok &&
+			event.X >= r.X && event.X < r.X+r.Width &&
+			event.Y >= r.Y && event.Y < r.Y+r.Height {
+			ev := event
+			ev.X -= r.X
+			ev.Y -= r.Y
+			return t.editBox.HandleMousePress(ev)
+		}
+	}
 	if event.Button != core.LeftButton {
 		return false
 	}

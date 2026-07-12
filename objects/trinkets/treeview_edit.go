@@ -39,6 +39,17 @@ func (t *TreeView) SetOnCellEdited(fn func(item *TreeItem, column *TreeColumn, v
 // RowEditing reports whether the in-place row editor is open.
 func (t *TreeView) RowEditing() bool { return t.rowEditing }
 
+// editActorTarget implements editActorProvider: while the row editor
+// is up, the Edit menu's Cut/Copy/Paste/Select All (and their enabled
+// states) operate on the cell editor exactly as on a plain TextInput.
+// With no editor open the tree is not an edit target.
+func (t *TreeView) editActorTarget() (editActor, bool) {
+	if t.rowEditing && t.editBox != nil {
+		return t.editBox, true
+	}
+	return nil, false
+}
+
 // editableColumns returns the VISIBLE editable columns in display
 // order - the row editor's Tab order.
 func (t *TreeView) editableColumns() []*TreeColumn {
@@ -90,6 +101,13 @@ func (t *TreeView) beginCellEdit(item *TreeItem, col *TreeColumn) {
 	// The editor believes it is focused (live caret); the TREE keeps
 	// the real focus and forwards input, like the column chooser.
 	ed.SetFocus()
+	// Borrowed ancestry: the unparented editor resolves its desktop
+	// (clipboard), popup controller (context menu overlay), and screen
+	// mapping through the tree, offset by the live cell origin.
+	ed.SetEmbedHost(t.Self(), func() core.UnitPoint {
+		r, _ := t.editorRect()
+		return core.UnitPoint{X: r.X, Y: r.Y}
+	})
 	t.editBox = ed
 	t.editItem = item
 	t.editCol = col

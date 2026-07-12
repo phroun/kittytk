@@ -59,6 +59,15 @@ type TextInput struct {
 	// consecutive fast clicks; lastClickTime gates the streak.
 	lastClickTime time.Time
 	clickStreak   int
+
+	// Embedded-host bridge (SetEmbedHost): an unparented input hosted
+	// inside another trinket (the TreeView's row editor) borrows the
+	// host's ancestry for everything a parent chain normally provides -
+	// the desktop/clipboard lookup, the popup controller walk, and the
+	// screen mapping that places the context menu. embedOrigin reports
+	// this input's current origin in the host's local space.
+	embedHost   core.Trinket
+	embedOrigin func() core.UnitPoint
 }
 
 // EchoMode controls how text is displayed.
@@ -1172,11 +1181,29 @@ func (t *TextInput) AccessibleInfo() core.AccessibleInfo {
 // Clipboard actions + context menu
 // ---------------------------------------------------------------
 
+// SetEmbedHost lends this (unparented) input a host trinket's ancestry:
+// desktop/clipboard lookup, popup-controller walk, and context-menu
+// screen mapping all resolve as if the input sat at origin() within
+// the host. The TreeView's in-place row editor is the model user.
+func (t *TextInput) SetEmbedHost(host core.Trinket, origin func() core.UnitPoint) {
+	t.embedHost = host
+	t.embedOrigin = origin
+}
+
+// envAnchor is the trinket whose ancestry resolves this input's
+// environment: the embed host when set, else the input itself.
+func (t *TextInput) envAnchor() core.Trinket {
+	if t.embedHost != nil {
+		return t.embedHost
+	}
+	return t.Self()
+}
+
 // clipboardAccess finds the clipboard for this trinket: the desktop
 // when the trinket lives in one, otherwise the popup controller (a
 // torn-off window's host bridges the platform clipboard).
 func (t *TextInput) clipboardAccess() (get func() string, set func(string)) {
-	if d := findDesktopFor(t); d != nil {
+	if d := findDesktopFor(t.envAnchor()); d != nil {
 		return d.Clipboard, d.SetClipboard
 	}
 	type clipper interface {
@@ -1219,7 +1246,7 @@ func (t *TextInput) Paste() {
 	if t.readOnly {
 		return
 	}
-	if d := findDesktopFor(t); d != nil {
+	if d := findDesktopFor(t.envAnchor()); d != nil {
 		d.ReadClipboardAsync(func(s string) { t.pasteText(s) })
 		return
 	}
@@ -1271,7 +1298,13 @@ func (t *TextInput) findPopupController() core.PopupController {
 	if pc := t.PopupController(); pc != nil {
 		return pc
 	}
-	for current := t.Parent(); current != nil; {
+	// An embedded input has no parent of its own: the walk starts AT
+	// its host (which may carry a controller or inherit one above).
+	var current any = t.Parent()
+	if t.embedHost != nil {
+		current = t.embedHost
+	}
+	for current != nil {
 		trinket, ok := current.(core.Trinket)
 		if !ok {
 			break
@@ -1305,7 +1338,17 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 		}
 	}
 	height += 4 // padding
-	at := pc.MapToScreen(t.Self(), core.UnitPoint{X: event.X, Y: event.Y})
+	// Screen placement: an embedded input maps through its HOST (its
+	// own parentless bounds mean nothing to the controller).
+	local := core.UnitPoint{X: event.X, Y: event.Y}
+	target := t.Self()
+	if t.embedHost != nil && t.embedOrigin != nil {
+		o := t.embedOrigin()
+		local.X += o.X
+		local.Y += o.Y
+		target = t.embedHost
+	}
+	at := pc.MapToScreen(target, local)
 	screen := pc.ScreenBounds()
 	if at.X+gfxMenuWidth > screen.X+screen.Width {
 		at.X = screen.X + screen.Width - gfxMenuWidth
