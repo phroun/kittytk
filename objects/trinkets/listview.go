@@ -725,6 +725,34 @@ func (l *ListView) visibleCount() int {
 	return int(bounds.Height / metrics.CellHeight)
 }
 
+// SetBounds resizes the list and re-clamps its scroll offset (the
+// embedded base cannot dispatch HandleResize to us - the ScrollArea
+// override pattern).
+func (l *ListView) SetBounds(bounds core.UnitRect) {
+	old := l.Bounds().Size()
+	l.TrinketBase.SetBounds(bounds)
+	if old != bounds.Size() {
+		l.HandleResize(old, bounds.Size())
+	}
+}
+
+// HandleResize re-clamps the scroll offset: growing the view while
+// scrolled down must pull the content back into the freed space
+// rather than strand a blank tail behind the vanished scrollbar.
+func (l *ListView) HandleResize(oldSize, newSize core.UnitSize) {
+	maxScroll := len(l.items) - l.visibleCount()
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if l.scrollOffset > maxScroll {
+		l.scrollOffset = maxScroll
+	}
+	if l.scrollOffset < 0 {
+		l.scrollOffset = 0
+	}
+	l.Update()
+}
+
 // HandleMousePress handles mouse clicks.
 func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	if event.Button != core.LeftButton {
