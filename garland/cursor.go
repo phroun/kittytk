@@ -498,6 +498,9 @@ func (c *Cursor) InsertBytes(data []byte, decorations []RelativeDecoration, inse
 	if c.garland == nil {
 		return ChangeResult{}, ErrCursorNotFound
 	}
+	if err := validateRelativeDecorations(decorations); err != nil {
+		return ChangeResult{}, err
+	}
 	result, err := c.garland.insertBytesAt(c, c.bytePos, data, decorations, insertBefore)
 	if err != nil {
 		return result, err
@@ -515,6 +518,9 @@ func (c *Cursor) InsertBytes(data []byte, decorations []RelativeDecoration, inse
 func (c *Cursor) InsertString(data string, decorations []RelativeDecoration, insertBefore bool) (ChangeResult, error) {
 	if c.garland == nil {
 		return ChangeResult{}, ErrCursorNotFound
+	}
+	if err := validateRelativeDecorations(decorations); err != nil {
+		return ChangeResult{}, err
 	}
 	result, err := c.garland.insertStringAt(c, c.bytePos, data, decorations, insertBefore)
 	if err != nil {
@@ -557,11 +563,18 @@ func (c *Cursor) OverwriteBytesWithDecorations(length int64, newData []byte, dec
 	if c.garland == nil {
 		return nil, ChangeResult{}, ErrCursorNotFound
 	}
+	if err := validateRelativeDecorations(decorationsToAdd); err != nil {
+		return nil, ChangeResult{}, err
+	}
 	return c.garland.overwriteBytesAtInternal(c, c.bytePos, length, newData, decorationsToAdd, insertBefore)
 }
 
 // MoveBytes moves a byte range to a new location.
-// All addresses are interpreted as positions in the original document before any changes.
+// All four addresses are interpreted in the document AS IT STANDS AT
+// THE MOMENT OF THIS CALL: the operation is internally composite
+// (extract, delete destination, insert), and the implementation
+// adjusts for its own intermediate shifts - the caller never
+// compensates. (Not "as opened": prior edits are already reflected.)
 // Source and destination ranges cannot overlap for Move.
 // Decorations in the source range move with the content.
 // Decorations in the destination range are consolidated and returned.
@@ -577,7 +590,9 @@ func (c *Cursor) MoveBytes(srcStart, srcEnd, dstStart, dstEnd int64, insertBefor
 }
 
 // CopyBytes copies a byte range to a new location.
-// All addresses are interpreted as positions in the original document before any changes.
+// All four addresses are interpreted in the document AS IT STANDS AT
+// THE MOMENT OF THIS CALL (see MoveBytes; the operation compensates
+// for its own intermediate shifts, never the caller).
 // Source and destination ranges may overlap for Copy (source is snapshotted first).
 // - srcStart, srcEnd: source byte range [srcStart, srcEnd)
 // - dstStart, dstEnd: destination byte range to replace [dstStart, dstEnd)
@@ -587,6 +602,9 @@ func (c *Cursor) MoveBytes(srcStart, srcEnd, dstStart, dstEnd int64, insertBefor
 func (c *Cursor) CopyBytes(srcStart, srcEnd, dstStart, dstEnd int64, decorationsToAdd []RelativeDecoration, insertBefore bool) (CopyResult, error) {
 	if c.garland == nil {
 		return CopyResult{}, ErrCursorNotFound
+	}
+	if err := validateRelativeDecorations(decorationsToAdd); err != nil {
+		return CopyResult{}, err
 	}
 	return c.garland.copyBytesAt(c, srcStart, srcEnd, dstStart, dstEnd, decorationsToAdd, insertBefore)
 }

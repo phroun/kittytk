@@ -214,7 +214,17 @@ const (
     IntegrityBlockAdopted                               // soft: external edit adopted
     IntegrityBlockAdoptedDuplicate                      // soft: adopted; duplicates another block (move/copy suspected)
     IntegrityBlockLost                                  // hard: placeholder, will scar
+    IntegrityDecorationsLost                            // marks lost on thaw; content intact
 )
+
+// Decoration keys are IDENTIFIERS (RULING): non-empty ASCII letters,
+// digits, '_', '.', '#', '-' only. Every write-side API rejects other
+// characters with ErrInvalidDecorationKey, which keeps the cold-storage
+// .dec encoding framing-safe by construction. Failure to restore a
+// block's decorations on thaw (side block missing / hash mismatch /
+// corrupt encoding) is reported as an IntegrityDecorationsLost event -
+// content thaws fine, marks never vanish silently.
+func ValidDecorationKey(key string) bool
 
 type IntegrityEvent struct {
     Kind         IntegrityKind

@@ -55,7 +55,7 @@ func TestMarkOnLineCrossingNodes(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Set a mark using line:rune address
-			markKey := "test_" + tc.name
+			markKey := markTestKey("test_", tc.name)
 			_, err := g.Decorate([]DecorationEntry{
 				{Key: markKey, Address: &AbsoluteAddress{Mode: LineRuneMode, Line: tc.line, LineRune: tc.rune_}},
 			})
@@ -133,7 +133,7 @@ func TestMarkAtNodeBoundaryOnLine(t *testing.T) {
 
 	for _, tc := range boundaryTests {
 		t.Run(tc.name, func(t *testing.T) {
-			markKey := "boundary_" + tc.name
+			markKey := markTestKey("boundary_", tc.name)
 			_, err := g.Decorate([]DecorationEntry{
 				{Key: markKey, Address: &AbsoluteAddress{Mode: LineRuneMode, Line: 1, LineRune: tc.runeInLine}},
 			})
@@ -161,4 +161,19 @@ func TestMarkAtNodeBoundaryOnLine(t *testing.T) {
 			}
 		})
 	}
+}
+
+// markTestKey turns a human-readable subtest name into a legal
+// decoration key (keys are identifiers - see ValidDecorationKey).
+func markTestKey(prefix, name string) string {
+	out := []byte(prefix)
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if ValidDecorationKey(string(c)) {
+			out = append(out, c)
+		} else {
+			out = append(out, '_')
+		}
+	}
+	return string(out)
 }

@@ -1202,9 +1202,12 @@ func encodeDecorations(decs []Decoration) []byte {
 }
 
 // decodeDecorations parses decorations from the cold storage format.
-func decodeDecorations(data []byte) []Decoration {
+// STRICT: keys are validated identifiers and positions are pure
+// digits, so any deviation is corruption and is reported as an error
+// rather than silently "recovered" into wrong decorations.
+func decodeDecorations(data []byte) ([]Decoration, error) {
 	if len(data) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var decs []Decoration
@@ -1216,9 +1219,12 @@ func decodeDecorations(data []byte) []Decoration {
 			keyEnd++
 		}
 		if keyEnd >= len(data) {
-			break // Malformed data
+			return nil, ErrColdStorageFailure // truncated record
 		}
 		key := string(data[i:keyEnd])
+		if !ValidDecorationKey(key) {
+			return nil, ErrColdStorageFailure
+		}
 
 		// Find newline (end of position)
 		posStart := keyEnd + 1
@@ -1226,15 +1232,22 @@ func decodeDecorations(data []byte) []Decoration {
 		for posEnd < len(data) && data[posEnd] != '\n' {
 			posEnd++
 		}
-		if posEnd > posStart {
-			posStr := string(data[posStart:posEnd])
-			pos := parseUint64(posStr)
-			decs = append(decs, Decoration{Key: key, Position: int64(pos)})
+		if posEnd == posStart || posEnd >= len(data) {
+			return nil, ErrColdStorageFailure // empty or unterminated position
 		}
+		var pos uint64
+		for j := posStart; j < posEnd; j++ {
+			c := data[j]
+			if c < '0' || c > '9' {
+				return nil, ErrColdStorageFailure
+			}
+			pos = pos*10 + uint64(c-'0')
+		}
+		decs = append(decs, Decoration{Key: key, Position: int64(pos)})
 
 		i = posEnd + 1
 	}
-	return decs
+	return decs, nil
 }
 
 // parseUint64 parses a uint64 from a base-10 encoded string.
@@ -1281,19 +1294,36 @@ func (g *Garland) thawSnapshot(nodeID NodeID, forkRev ForkRevision, snap *NodeSn
 	// Mark as recently accessed
 	g.touchSnapshot(snap)
 
-	// Try to restore decorations if they were stored
+	// Try to restore decorations if they were stored. Any failure -
+	// block missing while a hash says it existed, hash mismatch, or a
+	// corrupt encoding - is reported as an integrity event: the CONTENT
+	// thawed fine, but its marks are gone, and the app deserves to know
+	// rather than have them vanish silently.
 	decBlockName := blockName + ".dec"
 	decData, err := g.lib.coldStorageBackend.Get(g.id, decBlockName)
-	if err == nil && len(decData) > 0 {
-		// Verify decoration hash if present
+	decsLost := ""
+	if err != nil || len(decData) == 0 {
 		if len(snap.decorationHash) > 0 {
-			actualHash := computeHash(decData)
-			if hashesEqual(snap.decorationHash, actualHash) {
-				snap.decorations = decodeDecorations(decData)
-			}
-		} else {
-			snap.decorations = decodeDecorations(decData)
+			decsLost = "decoration block missing from cold storage"
 		}
+	} else if len(snap.decorationHash) > 0 &&
+		!hashesEqual(snap.decorationHash, computeHash(decData)) {
+		decsLost = "decoration block corrupted (hash mismatch)"
+	} else if decs, derr := decodeDecorations(decData); derr != nil {
+		decsLost = "decoration block corrupted (malformed encoding)"
+	} else {
+		snap.decorations = decs
+	}
+	if decsLost != "" {
+		g.logIntegrityEvent(IntegrityEvent{
+			Kind:         IntegrityDecorationsLost,
+			BufferOffset: -1,
+			FileOffset:   snap.originalFileOffset,
+			Length:       snap.byteCount,
+			Detail:       decsLost,
+		})
+	}
+	if len(decData) > 0 && decsLost == "" {
 
 		// Add restored decorations to cache for existence checking
 		// Note: The offset is unknown, so we set it to 0 as a hint
@@ -5095,6 +5125,11 @@ func formatGarlandID(id uint64) string {
 func (g *Garland) Decorate(entries []DecorationEntry) (ChangeResult, error) {
 	if len(entries) == 0 {
 		return ChangeResult{Fork: g.currentFork, Revision: g.currentRevision}, nil
+	}
+	for _, e := range entries {
+		if !ValidDecorationKey(e.Key) {
+			return ChangeResult{}, ErrInvalidDecorationKey
+		}
 	}
 
 	g.mu.Lock()

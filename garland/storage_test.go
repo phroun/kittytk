@@ -625,7 +625,10 @@ func TestDecorationEncodeDecode(t *testing.T) {
 	t.Logf("Encoded decorations: %d bytes", len(encoded))
 
 	// Test decoding
-	decoded := decodeDecorations(encoded)
+	decoded, decErr := decodeDecorations(encoded)
+	if decErr != nil {
+		t.Fatalf("decodeDecorations: %v", decErr)
+	}
 	if len(decoded) != len(decs) {
 		t.Fatalf("Decoded count mismatch: got %d, want %d", len(decoded), len(decs))
 	}

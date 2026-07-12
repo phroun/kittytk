@@ -72,6 +72,12 @@ const (
 	// placeholder and will be written as a scar by the next save.
 	IntegrityBlockLost
 
+	// IntegrityDecorationsLost: a block's CONTENT thawed fine but its
+	// decorations could not be restored from cold storage (side block
+	// missing, hash mismatch, or corrupt encoding). The marks in that
+	// block are gone; everything else is intact.
+	IntegrityDecorationsLost
+
 	// IntegrityBlockResized: an external edit INSIDE this block changed
 	// its length - its old bytes no longer exist contiguously anywhere,
 	// so reads fail (placeholder), but the situation is precisely
@@ -94,6 +100,8 @@ func (k IntegrityKind) String() string {
 		return "adopted-duplicate"
 	case IntegrityBlockLost:
 		return "lost"
+	case IntegrityDecorationsLost:
+		return "decorations-lost"
 	case IntegrityBlockResized:
 		return "resized"
 	}
