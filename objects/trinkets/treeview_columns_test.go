@@ -343,19 +343,29 @@ func TestTreeColumnDividerDrag(t *testing.T) {
 		t.Fatalf("fit-mode drag: dragging=%v fit=%v slackRight=%v, want true/true/false",
 			tv.colDragging, tv.colDragFit, tv.colDragSlackRight)
 	}
-	// Drag RIGHT 4 cells -> Kind narrows by 4, its cells return to the
-	// key; Size stays put, and Kind's right edge stays put.
+	// Drag RIGHT 4 cells -> Kind narrows by 4 and Size widens by the
+	// same 4, so the key's width - and every line but the grabbed one,
+	// including Kind's right edge - stays put by construction.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 4*8, Y: 4, Buttons: 1})
 	if got := tv.ColumnByID("kind").Width; got != 8 {
 		t.Errorf("right drag: kind width=%d, want 8", got)
 	}
-	if got := tv.ColumnByID("size").Width; got != 10 {
-		t.Errorf("right drag touched the left column: size=%d, want 10", got)
+	if got := tv.ColumnByID("size").Width; got != 14 {
+		t.Errorf("right drag: size=%d, want 14 (compensates kind's give)", got)
 	}
-	// Far right: stops at Kind's minimum (3), never squeezing Size.
+	if lr := tv.columnLayout(); lr.spans[0].divX != lay.spans[0].divX ||
+		lr.spans[1].divX != divX+4*8 || lr.spans[2].divX != lay.spans[2].divX {
+		t.Errorf("right drag moved a line it must not: key|size %d->%d, grabbed %d->%d (want %d), kind| %d->%d",
+			lay.spans[0].divX, lr.spans[0].divX, divX, lr.spans[1].divX, divX+4*8,
+			lay.spans[2].divX, lr.spans[2].divX)
+	}
+	// Far right: stops at Kind's minimum (3); Size holds the transfer.
 	tv.HandleMouseMove(core.MouseMoveEvent{X: divX + 2 + 100*8, Y: 4, Buttons: 1})
 	if got := tv.ColumnByID("kind").Width; got != 3 {
 		t.Errorf("right drag clamp: kind width=%d, want 3", got)
+	}
+	if got := tv.ColumnByID("size").Width; got != 19 {
+		t.Errorf("right drag clamp: size=%d, want 19", got)
 	}
 	// LEFT 10 cells (from the press point): all funded by the key's
 	// slack pool - Kind widens, Size untouched.

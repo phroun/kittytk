@@ -1867,19 +1867,36 @@ func (t *TreeView) applyFitDrag(x core.Unit) {
 		// column is the mechanism.
 		right := t.colDragR
 		if delta >= 0 {
-			// Rightward: narrow the right column; its cells return to
-			// the key. (Widening the left column instead would not
-			// move the grabbed line - the key would just absorb it.)
+			// Rightward: the left column widens with exactly the cells
+			// the right column gives up, so the key's auto width never
+			// changes and every line but the grabbed one stays put BY
+			// CONSTRUCTION (routing the cells through the key instead
+			// lets its re-fit nudge unrelated lines backward). Only
+			// when the key itself is the left neighbor do the cells
+			// return to it - dragging ITS divider is how key slack
+			// refills - and a non-resizable left column keeps that
+			// classic key-absorb behavior too.
 			c := delta
 			if room := t.colDragRW - right.MinWidth; c > room {
 				c = room
+			}
+			l := t.colDragL
+			transfer := l != nil && l.Resizable
+			if transfer && l.MaxWidth > 0 {
+				if lim := l.MaxWidth - t.colDragLW; c > lim {
+					c = lim
+				}
 			}
 			if c < 0 {
 				c = 0
 			}
 			right.Width = t.colDragRW - c
-			if t.colDragL != nil {
-				t.colDragL.Width = t.colDragLW
+			if l != nil {
+				if transfer {
+					l.Width = t.colDragLW + c
+				} else {
+					l.Width = t.colDragLW
+				}
 			}
 		} else {
 			// Leftward: widen the right column - the pool pays first,
