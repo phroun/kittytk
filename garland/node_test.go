@@ -308,7 +308,6 @@ func TestComputeHash(t *testing.T) {
 	}
 }
 
-
 func TestLineStartTracking(t *testing.T) {
 	// Test that line starts are correctly tracked
 	data := []byte("line0\nline1\nline2")
