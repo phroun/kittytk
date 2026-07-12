@@ -671,7 +671,13 @@ func TestTreeHBarThumbHover(t *testing.T) {
 	if !tv.hbarThumbHovered {
 		t.Error("dragging thumb lost the hover state")
 	}
-	tv.HandleMouseRelease(core.MouseReleaseEvent{Button: core.LeftButton})
+	// Ending the drag must not strand a lit thumb: with no graphical
+	// environment (TUI - no free mouse moves arrive to clear it), the
+	// hover state clears on release.
+	tv.HandleMouseRelease(core.MouseReleaseEvent{X: x0, Y: 8, Button: core.LeftButton})
+	if tv.hbarThumbHovered {
+		t.Error("hover state stranded lit after the drag ended (TUI leak)")
+	}
 }
 
 // recordingPopupController captures the registered popup so tests can

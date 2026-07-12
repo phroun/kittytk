@@ -890,7 +890,10 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Left":
+	// Shift+Left/Right always mean the classic tree navigation, even
+	// on editable grids where the plain arrows rotate the Enter-target
+	// column (handleEditTargetKey lets shifted arrows through).
+	case "Left", "S-Left":
 		if current != nil {
 			if current.Expanded && !current.IsLeaf() {
 				t.CollapseItem(current)
@@ -900,7 +903,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Right":
+	case "Right", "S-Right":
 		if current != nil {
 			if !current.Expanded && !current.IsLeaf() {
 				t.ExpandItem(current)
@@ -948,6 +951,13 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		// With editable columns, Enter opens the in-place row editor;
 		// without any, it behaves exactly like Space.
 		if t.startRowEdit() {
+			// Entering edit DIRECTLY on a choice cell pops its
+			// drop-down - the arrowed target advertised a picker and
+			// Enter accepted the offer. (Tabbing to a choice cell
+			// from another column stays closed.)
+			if t.editCombo != nil {
+				t.editCombo.HandleKeyPress(core.KeyPressEvent{Key: " "})
+			}
 			return true
 		}
 		if current != nil {
@@ -961,6 +971,16 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case " ", "Space":
+		// On a CHOICE Enter-target, Space enters edit and pops the
+		// drop-down (a text target keeps Space's classic toggle -
+		// Space never begins a text edit).
+		if col := t.enterTargetColumn(); col != nil && col != treeKeyColumn &&
+			len(col.Enum) > 0 && t.headerZone == hzContent && t.startRowEdit() {
+			if t.editCombo != nil {
+				t.editCombo.HandleKeyPress(core.KeyPressEvent{Key: " "})
+			}
+			return true
+		}
 		if current != nil {
 			if !current.IsLeaf() {
 				t.ToggleItem(current)
@@ -1371,10 +1391,17 @@ func (t *TreeView) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// A drag-free release over the press-time candidate flips the
 	// cell straight into edit mode.
 	t.armClickEdit(event)
-	if t.handleMultiRelease() {
+	if t.handleMultiRelease(event) {
 		return true
 	}
 	if t.isDragging || t.scrollbarDragging {
+		if t.scrollbarDragging {
+			// Same stale-hover guard as the footer thumb: recompute from
+			// the release point, and clear outright in TUI where no move
+			// events arrive to do it later.
+			t.scrollbarThumbHovered = core.FindGraphicalFrames(t.Self()) &&
+				t.overScrollbarThumb(event.X, event.Y)
+		}
 		t.isDragging = false
 		t.scrollbarDragging = false
 		t.smoothScrollbarDrag = false

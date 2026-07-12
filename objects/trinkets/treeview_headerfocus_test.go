@@ -98,3 +98,35 @@ func TestTreeHeaderFocusZones(t *testing.T) {
 		t.Errorf("content Down did not move the selection")
 	}
 }
+
+// Drilled into the header items, an initial S-Tab wraps around to the
+// LAST stop (the chooser) instead of climbing back to the bar, so the
+// machine keeps the focus; a Tab from there exits down into the rows.
+// Left before the first stop keeps its climb back to the bar.
+func TestTreeHeaderItemsShiftTabWraps(t *testing.T) {
+	tv := newColumnsTree(60, 10)
+	host := &recordingPopupController{}
+	parent := NewPanel()
+	parent.SetPopupController(host)
+	tv.SetParent(parent)
+	key := func(k string) { tv.HandleKeyPress(core.KeyPressEvent{Key: k}) }
+
+	tv.HandleFocusIn() // -> hzBar
+	key("Enter")       // -> hzItems, first stop
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Tab", Modifiers: core.ShiftModifier})
+	last := tv.headerStopCount() - 1
+	if tv.headerZone != hzItems || tv.headerFocusIdx != last {
+		t.Fatalf("S-Tab at the first stop: zone=%d idx=%d, want items/%d",
+			tv.headerZone, tv.headerFocusIdx, last)
+	}
+	key("Tab")
+	if tv.headerZone != hzContent {
+		t.Fatalf("Tab from the wrapped-to last stop should exit to content, zone=%d", tv.headerZone)
+	}
+
+	tv.setHeaderZone(hzItems, 0)
+	key("Left")
+	if tv.headerZone != hzBar {
+		t.Errorf("Left before the first stop should climb to the bar, zone=%d", tv.headerZone)
+	}
+}

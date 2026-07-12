@@ -440,12 +440,15 @@ func (t *TreeView) stepEditRow(delta int) {
 // editing is available: the FocusedListItem highlight walks the
 // editable columns - choosing WHERE Enter or a click will edit -
 // without entering edit mode, and the chosen column is brought into
-// horizontal view conservatively. In an editable grid the arrows
-// belong to this; expand/collapse keeps +/-, Space, and the mouse.
-// Returns handled.
+// horizontal view conservatively. In an editable grid the plain
+// arrows belong to this; expand/collapse keeps Shift+Left/Right,
+// +/-, Space, and the mouse. Returns handled.
 func (t *TreeView) handleEditTargetKey(event core.KeyPressEvent) bool {
 	if event.Key != "Left" && event.Key != "Right" {
 		return false
+	}
+	if event.Modifiers&core.ShiftModifier != 0 {
+		return false // Shift+Left/Right are the classic expand/collapse
 	}
 	if !t.multiColumn() || t.rowEditing || t.headerZone != hzContent {
 		return false

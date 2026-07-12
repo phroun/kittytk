@@ -348,6 +348,38 @@ func TestTreeArrowRotationEnsuresVisible(t *testing.T) {
 	}
 }
 
+// Shift+Left/Right keep the classic expand/collapse everywhere: on an
+// editable grid (where the plain arrows rotate the Enter-target) and
+// in either spelling ("S-Right" or Right + the shift modifier).
+func TestTreeShiftArrowsExpandCollapse(t *testing.T) {
+	tv := newEditableTree()
+	alpha := tv.RootItems()[0]
+	alpha.AddChild(NewTreeItem("a1"))
+	tv.rebuildFlatList()
+	tv.SetCurrentIndex(0)
+
+	// Plain Right rotates the target and must NOT expand the folder.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Right"})
+	if alpha.Expanded {
+		t.Fatal("plain Right expanded the folder on an editable grid")
+	}
+	if tv.enterTargetColumn() != tv.ColumnByID("kind") {
+		t.Fatalf("plain Right did not rotate the target: %v", tv.enterTargetColumn())
+	}
+
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Right"})
+	if !alpha.Expanded {
+		t.Fatal("S-Right did not expand the folder")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Left", Modifiers: core.ShiftModifier})
+	if alpha.Expanded {
+		t.Fatal("shifted Left did not collapse the folder")
+	}
+	if tv.enterTargetColumn() != tv.ColumnByID("kind") {
+		t.Errorf("shifted arrows moved the Enter-target: %v", tv.enterTargetColumn())
+	}
+}
+
 // Committing an edit keeps the edited row in view even when the user
 // scrolled elsewhere mid-edit and the new value re-sorts the row far
 // away - an explicit edit is an action ON that row.

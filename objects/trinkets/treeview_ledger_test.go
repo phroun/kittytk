@@ -169,9 +169,10 @@ func TestTreeChooserDimsSelection(t *testing.T) {
 			r, g, bl, fR, fG, fB)
 	}
 
-	// Same principle while the cell editor is up: the editor is the
-	// focus, the row shows the non-focused selection color. (Editable
-	// column added here so Enter opens the editor.)
+	// While the cell editor is up, the row UNDER it wears the
+	// FocusedListRow band - distinct from the editor floating over it
+	// and from a plain resting selection. (Editable column added here
+	// so Enter opens the editor.)
 	tv.ColumnByID("size").Editable = true
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
 	if !tv.rowEditing {
@@ -179,27 +180,28 @@ func TestTreeChooserDimsSelection(t *testing.T) {
 	}
 	// Sample row 0 at x=150 (inside the key column, past its text and
 	// outside the Size cell the editor covers).
+	rowR, rowG, rowB := scheme.GetFocusedListRow().Bg.RGBComponents()
 	b.Clear(style.DefaultStyle())
 	tv.Paint(core.NewPainter(b))
 	c := b.Image().RGBAAt(150, 16+8)
-	if c.R != sR || c.G != sG || c.B != sB {
-		t.Errorf("selection bg while editing = %d,%d,%d want non-focused %d,%d,%d",
-			c.R, c.G, c.B, sR, sG, sB)
+	if c.R != rowR || c.G != rowG || c.B != rowB {
+		t.Errorf("row band while editing = %d,%d,%d want FocusedListRow %d,%d,%d",
+			c.R, c.G, c.B, rowR, rowG, rowB)
 	}
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
-	// With an editable column present, the focused row band is now
-	// FocusedListRow (the Enter-target Size cell alone would carry
-	// FocusedListItem); x=150 sits in the key column - the band.
-	rowR, rowG, rowB := scheme.GetFocusedListRow().Bg.RGBComponents()
-	if r, g, bl := paintRowBG(); r != rowR || g != rowG || bl != rowB {
-		t.Errorf("selection bg after editor close = %d,%d,%d want FocusedListRow %d,%d,%d",
-			r, g, bl, rowR, rowG, rowB)
+	// Back out of edit mode the editable grid's focused row carries
+	// the plain selection bar (the Enter-target Size cell alone would
+	// wear FocusedListItem); x=150 sits in the key column - the band.
+	if r, g, bl := paintRowBG(); r != sR || g != sG || bl != sB {
+		t.Errorf("selection bg after editor close = %d,%d,%d want SelectedListItem %d,%d,%d",
+			r, g, bl, sR, sG, sB)
 	}
 }
 
 // With editing available, the focused selected row wears the
-// FocusedListRow band while the Enter-target cell alone carries
-// FocusedListItem; the header's internal focus stop wears the
+// SelectedListItem band while the Enter-target cell alone carries
+// FocusedListItem; while the editor is up the row band switches to
+// FocusedListRow; the header's internal focus stop wears the
 // FocusedListButton face (it is a control, not a list item).
 func TestTreeFocusedListRowAndTarget(t *testing.T) {
 	b, _ := raster.New(480, 160)
@@ -227,6 +229,7 @@ func TestTreeFocusedListRowAndTarget(t *testing.T) {
 	}
 	paint() // prime the theme
 	scheme := tv.GetScheme()
+	selR, selG, selB := scheme.GetSelectedListItem().Bg.RGBComponents()
 	rowR, rowG, rowB := scheme.GetFocusedListRow().Bg.RGBComponents()
 	itR, itG, itB := scheme.GetFocusedListItem().Bg.RGBComponents()
 
@@ -238,11 +241,11 @@ func TestTreeFocusedListRowAndTarget(t *testing.T) {
 			sizeSp = sp
 		}
 	}
-	// Key column (not the target): the FocusedListRow band.
+	// Key column (not the target): the plain selection bar.
 	c := b.Image().RGBAAt(150, 16+8)
-	if c.R != rowR || c.G != rowG || c.B != rowB {
-		t.Errorf("row band = %d,%d,%d want FocusedListRow %d,%d,%d",
-			c.R, c.G, c.B, rowR, rowG, rowB)
+	if c.R != selR || c.G != selG || c.B != selB {
+		t.Errorf("row band = %d,%d,%d want SelectedListItem %d,%d,%d",
+			c.R, c.G, c.B, selR, selG, selB)
 	}
 	// Inside the Size cell (the Enter target): FocusedListItem.
 	c = b.Image().RGBAAt(int(sizeSp.x+sizeSp.w/2), 16+8)
@@ -250,6 +253,16 @@ func TestTreeFocusedListRowAndTarget(t *testing.T) {
 		t.Errorf("Enter-target cell = %d,%d,%d want FocusedListItem %d,%d,%d",
 			c.R, c.G, c.B, itR, itG, itB)
 	}
+	// While EDITING, the row under the editor wears FocusedListRow.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // edit Size
+	paint()
+	c = b.Image().RGBAAt(150, 16+8) // key column, outside the editor
+	if c.R != rowR || c.G != rowG || c.B != rowB {
+		t.Errorf("row band while editing = %d,%d,%d want FocusedListRow %d,%d,%d",
+			c.R, c.G, c.B, rowR, rowG, rowB)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+
 	// Header bar focus stop: the FocusedListButton face.
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab"}) // content -> bar
 	paint()
@@ -263,7 +276,7 @@ func TestTreeFocusedListRowAndTarget(t *testing.T) {
 
 // On the tree-apparatus column, the Enter-target highlight covers only
 // the caption's CLICKABLE zone (displayed text, two-cell minimum) -
-// the space right of the text stays in the FocusedListRow band.
+// the space right of the text stays in the SelectedListItem band.
 func TestTreeTargetZoneOnTreeColumn(t *testing.T) {
 	b, _ := raster.New(480, 160)
 	d := NewDesktop()
@@ -284,7 +297,7 @@ func TestTreeTargetZoneOnTreeColumn(t *testing.T) {
 	b.Clear(style.DefaultStyle())
 	tv.Paint(core.NewPainter(b)) // prime the theme
 	scheme := tv.GetScheme()
-	rowR, rowG, rowB := scheme.GetFocusedListRow().Bg.RGBComponents()
+	rowR, rowG, rowB := scheme.GetSelectedListItem().Bg.RGBComponents()
 	itR, itG, itB := scheme.GetFocusedListItem().Bg.RGBComponents()
 
 	b.Clear(style.DefaultStyle())
@@ -299,11 +312,11 @@ func TestTreeTargetZoneOnTreeColumn(t *testing.T) {
 	}
 	c = b.Image().RGBAAt(int(zx+zw+16), 16+8) // right of the zone
 	if c.R != rowR || c.G != rowG || c.B != rowB {
-		t.Errorf("right of zone = %d,%d,%d want FocusedListRow %d,%d,%d", c.R, c.G, c.B, rowR, rowG, rowB)
+		t.Errorf("right of zone = %d,%d,%d want SelectedListItem %d,%d,%d", c.R, c.G, c.B, rowR, rowG, rowB)
 	}
 	c = b.Image().RGBAAt(2, 16+8) // apparatus, left of the text
 	if c.R != rowR || c.G != rowG || c.B != rowB {
-		t.Errorf("apparatus = %d,%d,%d want FocusedListRow %d,%d,%d", c.R, c.G, c.B, rowR, rowG, rowB)
+		t.Errorf("apparatus = %d,%d,%d want SelectedListItem %d,%d,%d", c.R, c.G, c.B, rowR, rowG, rowB)
 	}
 }
 

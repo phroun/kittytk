@@ -476,9 +476,11 @@ func isShiftTab(event core.KeyPressEvent) bool {
 //	bar:    Enter/Space drill in - Tab -> content - S-Tab releases
 //	        backward - Down -> content - Escape -> content
 //	items:  Tab/Right next stop (past the chooser -> content) -
-//	        S-Tab/Left previous (before the first -> bar) -
-//	        Enter/Space activates (sort cycle, or opens the chooser) -
-//	        Escape -> bar
+//	        S-Tab previous (before the first -> WRAP to the last
+//	        stop, so the machine keeps the focus and a Tab from
+//	        there exits down into the rows) - Left previous (before
+//	        the first -> bar) - Enter/Space activates (sort cycle,
+//	        or opens the chooser) - Escape -> bar
 func (t *TreeView) handleHeaderFocusKey(event core.KeyPressEvent) bool {
 	if t.headerHeight() == 0 {
 		return false
@@ -512,7 +514,14 @@ func (t *TreeView) handleHeaderFocusKey(event core.KeyPressEvent) bool {
 	case hzItems:
 		n := t.headerStopCount()
 		switch {
-		case shiftTab || event.Key == "Left":
+		case shiftTab:
+			if t.headerFocusIdx == 0 {
+				t.setHeaderZone(hzItems, n-1) // wrap to the chooser end
+			} else {
+				t.setHeaderZone(hzItems, t.headerFocusIdx-1)
+			}
+			return true
+		case event.Key == "Left":
 			if t.headerFocusIdx == 0 {
 				t.setHeaderZone(hzBar, 0)
 			} else {
@@ -1076,15 +1085,22 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(scheme.GetListBG())
 		case itemIndex == t.currentIndex && rowFocused:
 			if t.hasEditableColumns() {
-				// Editing available: the row band wears FocusedListRow;
-				// the Enter-target cell alone carries FocusedListItem
-				// (painted per-span below).
-				s = scheme.GetFocusedListRow()
+				// Editable grid: the plain selection bar carries the
+				// row; the Enter-target cell alone wears
+				// FocusedListItem (painted per-span below).
+				s = scheme.GetSelectedListItem()
 			} else {
 				s = scheme.GetFocusedListItem()
 			}
 		case itemIndex == t.currentIndex:
-			s = scheme.GetSelectedListItem()
+			if t.rowEditing {
+				// The row UNDER the live editor wears FocusedListRow -
+				// distinct from the editor floating over it AND from a
+				// plain resting selection.
+				s = scheme.GetFocusedListRow()
+			} else {
+				s = scheme.GetSelectedListItem()
+			}
 		case t.ledger:
 			// Ledger banding (non-selected rows only), 1-based: the
 			// first visual row is odd.
@@ -1123,6 +1139,8 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			// zone the mouse resolver uses), leaving the apparatus and
 			// the space right of the text in the row style.
 			cellStyle := s
+			targetSegW := core.Unit(0)
+			var targetSegX core.Unit
 			if itemIndex == t.currentIndex && rowFocused && enterCol != nil &&
 				spanMatchesCol(sp, enterCol) {
 				cellStyle = scheme.GetFocusedListItem()
@@ -1139,6 +1157,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				}
 				if segW > 0 {
 					p.FillRect(core.UnitRect{X: segX, Y: itemY, Width: segW, Height: metrics.CellHeight}, ' ', cellStyle)
+					targetSegX, targetSegW = segX, segW
 				}
 			}
 			cp := p.WithClip(clip)
@@ -1151,6 +1170,19 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				t.paintTreeCell(cp, item, sp, itemY, s, cellStyle, metrics, font, sp.col.displayValue(item.Value(sp.col.ID)))
 			default:
 				t.drawAligned(cp, sp.col.displayValue(item.Value(sp.col.ID)), sp, itemY, cellStyle, font, sp.col.Align)
+			}
+			// A CHOICE Enter-target advertises its editor: the combo's
+			// down arrow, right-aligned in the highlight (over the
+			// content, like a real combo box's arrow).
+			if targetSegW > 0 && enterCol != treeKeyColumn && len(enterCol.Enum) > 0 {
+				arrow := "▼"
+				ax := targetSegX + targetSegW - font.MeasureText(arrow)
+				if p.Graphical() {
+					ax -= 2
+				}
+				if ax >= targetSegX {
+					cp.DrawText(ax, itemY, arrow, cellStyle, font)
+				}
 			}
 		}
 	}
@@ -1963,7 +1995,7 @@ func (t *TreeView) handleMultiMove(event core.MouseMoveEvent) bool {
 
 // handleMultiRelease ends a divider or footer-scrollbar drag.
 // Returns handled.
-func (t *TreeView) handleMultiRelease() bool {
+func (t *TreeView) handleMultiRelease(event core.MouseReleaseEvent) bool {
 	handled := false
 	if t.colDragging {
 		t.colDragging = false
@@ -1974,6 +2006,11 @@ func (t *TreeView) handleMultiRelease() bool {
 	}
 	if t.hbarDragging {
 		t.hbarDragging = false
+		// The drag kept the thumb lit; recompute hover from the release
+		// point. TUI clears it outright: no move events arrive outside
+		// a drag there, so a stale hover would stay lit forever.
+		t.hbarThumbHovered = core.FindGraphicalFrames(t.Self()) &&
+			t.overHBarThumb(event.X, event.Y)
 		handled = true
 	}
 	return handled
@@ -2029,7 +2066,10 @@ func (t *TreeView) paintHScrollbar(p *core.Painter, lay treeColLayout) {
 	footerH := t.footerHeight()
 	y := t.Bounds().Height - footerH
 	trackStyle := scheme.GetScrollbar()
-	thumbStyle := scheme.GetScrollbarThumbState(t.hbarThumbHovered || t.hbarDragging)
+	// Hover/drag lighting is graphical-only, like every other thumb:
+	// TUI gets no free mouse-move events, so a lit state could never
+	// clear there.
+	thumbStyle := scheme.GetScrollbarThumbState((t.hbarThumbHovered || t.hbarDragging) && p.Graphical())
 
 	if p.Graphical() {
 		// The slim band: hairline track stripe centered, thumb inset a

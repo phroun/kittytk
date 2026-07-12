@@ -63,8 +63,14 @@ func TestTreeEnumComboEditLifecycle(t *testing.T) {
 	if tv.editCombo == nil || tv.editBox != nil {
 		t.Fatal("enum column did not mount a combo editor")
 	}
-	if tv.editCombo.IsOpen() {
-		t.Fatal("combo editor must start CLOSED")
+	// Direct Enter on the choice target pops the drop-down; close it
+	// to exercise the closed-state behavior below.
+	if !tv.editCombo.IsOpen() {
+		t.Fatal("direct Enter did not pop the drop-down")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+	if tv.editCombo.IsOpen() || !tv.rowEditing {
+		t.Fatal("popup Escape should close the drop-down and keep editing")
 	}
 	if tv.editComboMagic {
 		t.Fatal("stored value is a listed option: no magic entry expected")
@@ -116,7 +122,8 @@ func TestTreeEnumComboEditLifecycle(t *testing.T) {
 // unchanged - and gone once a listed option is stored.
 func TestTreeEnumMagicEntry(t *testing.T) {
 	tv, _ := newEnumTree("weird")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})  // edit + popup
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // close popup
 	if !tv.editComboMagic {
 		t.Fatal("unlisted stored value did not create the magic entry")
 	}
@@ -128,9 +135,9 @@ func TestTreeEnumMagicEntry(t *testing.T) {
 	if got := tv.RootItems()[0].Value("kind"); got != "weird" {
 		t.Errorf("magic commit rewrote the value: %q", got)
 	}
-	// Pick a real option (magic sits at 0; options follow).
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // reopen editor
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	// Pick a real option (magic sits at 0; options follow). Enter
+	// reopens the editor with the drop-down already popped.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"}) // onto "PNG image"
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // commit row
@@ -142,15 +149,77 @@ func TestTreeEnumMagicEntry(t *testing.T) {
 	if tv.editComboMagic {
 		t.Error("magic entry survived after a listed option was stored")
 	}
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // close popup
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // end edit
+}
+
+// Enter DIRECTLY on a choice Enter-target pops the drop-down; arriving
+// at a choice cell via Tab from another column leaves it closed.
+func TestTreeEnterPopsTargetedCombo(t *testing.T) {
+	// Direct Enter on the (only-editable) enum column: pops open.
+	tv, _ := newEnumTree("png")
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	if tv.editCombo == nil || !tv.editCombo.IsOpen() {
+		t.Fatal("Enter on a choice target did not pop the drop-down")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // close popup
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // end edit
+
+	// Tab-arrival stays closed: text column first, then Tab to enum.
+	tv2 := newEditableTree() // size, kind editable (text)
+	kind := tv2.ColumnByID("kind")
+	kind.Enum = []TreeEnumOption{{Key: "f", Value: "File"}}
+	kind.EnumStore = "key"
+	host := &recordingPopupController{}
+	parent := NewPanel()
+	parent.SetPopupController(host)
+	tv2.SetParent(parent)
+	tv2.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // edits size (text)
+	if tv2.editBox == nil {
+		t.Fatal("precondition: text editor on size")
+	}
+	tv2.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // onto the enum kind
+	if tv2.editCombo == nil {
+		t.Fatal("Tab did not mount the combo")
+	}
+	if tv2.editCombo.IsOpen() {
+		t.Error("Tab-arrival popped the drop-down; it must stay closed")
+	}
+	tv2.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+}
+
+// Space on a CHOICE Enter-target also enters edit and pops the
+// drop-down; on a TEXT target it keeps the classic toggle (Space
+// never begins a text edit).
+func TestTreeSpacePopsTargetedCombo(t *testing.T) {
+	tv, _ := newEnumTree("png")
+	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	if !tv.rowEditing || tv.editCombo == nil || !tv.editCombo.IsOpen() {
+		t.Fatal("Space on a choice target did not open the combo editor")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // close popup
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // end edit
+
+	tv2 := newEditableTree() // Enter-target starts on size (text)
+	alpha := tv2.RootItems()[0]
+	alpha.AddChild(NewTreeItem("a1"))
+	alpha.Expanded = true
+	tv2.rebuildFlatList()
+	tv2.SetCurrentIndex(0)
+	tv2.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	if tv2.rowEditing {
+		t.Fatal("Space began a text edit; it must keep the classic toggle")
+	}
+	if alpha.Expanded {
+		t.Error("Space on a text target did not collapse the folder")
+	}
 }
 
 // Escape cancels: from the open popup it reverts the highlight; from
 // the closed combo it dismisses the row edit without writing.
 func TestTreeEnumEscapeCancels(t *testing.T) {
 	tv, _ := newEnumTree("png")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})  // edit + popup
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})   // highlight "Text"
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // popup: revert+close
 	if tv.editCombo.IsOpen() || !tv.rowEditing {
@@ -425,11 +494,13 @@ func TestTreeClickToEditComboPopsOpen(t *testing.T) {
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // close popup
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // end edit
 
-	// Keyboard entry stays closed.
+	// Direct keyboard Enter on the choice target also pops it open
+	// (only Tab-arrival from another column stays closed).
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
-	if tv.editCombo == nil || tv.editCombo.IsOpen() {
-		t.Error("keyboard entry should mount the combo CLOSED")
+	if tv.editCombo == nil || !tv.editCombo.IsOpen() {
+		t.Error("keyboard Enter on a choice target should pop the drop-down")
 	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 }
 
