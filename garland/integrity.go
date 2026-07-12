@@ -77,7 +77,7 @@ const (
 	// so reads fail (placeholder), but the situation is precisely
 	// diagnosed: the neighbor before verifies at its recorded offset
 	// and the neighbor after verifies shifted by the file's size
-	// change. Rebase() will adopt the resized content cleanly.
+	// change. RebaseOnSource() will adopt the resized content cleanly.
 	IntegrityBlockResized
 )
 
@@ -384,7 +384,7 @@ func (g *Garland) triageWarmMismatch(nodeID NodeID, snap *NodeSnapshot, got []by
 	// change, and both are byte-adjacent to us - so the entire length
 	// change is confined to our region. The old bytes no longer exist
 	// contiguously anywhere (no candidate offset can ever match), so
-	// reads must fail - but the app is told that a deliberate Rebase()
+	// reads must fail - but the app is told that a deliberate RebaseOnSource()
 	// will adopt the resized content cleanly, instead of a bare loss.
 	if delta != 0 {
 		prevAdjacent := prev == nil && snap.originalFileOffset == 0 ||
@@ -395,7 +395,7 @@ func (g *Garland) triageWarmMismatch(nodeID NodeID, snap *NodeSnapshot, got []by
 		if prevAdjacent && nextAdjacent && snap.byteCount+delta >= 0 &&
 			verifies(prev) && verifiesAt(next, delta) {
 			reason := fmt.Sprintf(
-				"external edit inside this block changed its length by %+d bytes; Rebase() can adopt the file's new content",
+				"external edit inside this block changed its length by %+d bytes; RebaseOnSource() can adopt the file's new content",
 				delta)
 			snap.becomePlaceholder(reason)
 			g.logIntegrityEvent(IntegrityEvent{

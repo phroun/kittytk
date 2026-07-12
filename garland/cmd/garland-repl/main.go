@@ -2057,9 +2057,9 @@ func (r *REPL) cmdRebase(args []string) {
 	var report garland.RebaseReport
 	var err error
 	if len(args) > 0 {
-		report, err = r.garland.RebaseOn(nil, strings.Join(args, " "))
+		report, err = r.garland.RebaseOnFile(nil, strings.Join(args, " "))
 	} else {
-		report, err = r.garland.Rebase()
+		report, err = r.garland.RebaseOnSource()
 	}
 	if err != nil {
 		fmt.Printf("Rebase error: %v\n", err)

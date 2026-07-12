@@ -25,9 +25,14 @@ import "unicode/utf8"
 //   - Source-change tracking is re-baselined: warm trust is reset and
 //     verified fresh, giving a clean starting point.
 //
-// RebaseOn(fs, name) does the same against a DIFFERENT file, which
-// then becomes the buffer's source (path, handle, and warm backing
-// all switch to it).
+// RebaseOnFile(fs, name) does the same against a DIFFERENT file,
+// which then becomes the buffer's source (path, handle, and warm
+// backing all switch to it).
+//
+// NAMING: the bare "Rebase" name is deliberately left unclaimed - it
+// is reserved for a possible future git-style rebase of the HISTORY
+// tree (replaying one fork's revisions onto another base). These two
+// methods rebase the CONTENT onto a file.
 
 // RebaseRegion is one contiguous region of the new buffer whose
 // content came from the file rather than from preserved blocks.
@@ -61,9 +66,9 @@ type RebaseReport struct {
 	PreviousRevision RevisionID
 }
 
-// Rebase reconciles the buffer against its own source file. See the
-// file header for semantics.
-func (g *Garland) Rebase() (RebaseReport, error) {
+// RebaseOnSource reconciles the buffer against its own source file.
+// See the file header for semantics.
+func (g *Garland) RebaseOnSource() (RebaseReport, error) {
 	if g.sourcePath == "" {
 		return RebaseReport{}, ErrNoDataSource
 	}
@@ -76,10 +81,10 @@ func (g *Garland) Rebase() (RebaseReport, error) {
 	return g.rebaseLocked(fs, g.sourcePath)
 }
 
-// RebaseOn reconciles the buffer against the named file, which then
-// becomes the buffer's source (path, handle, and warm backing switch
-// to it). A nil fs uses the library default.
-func (g *Garland) RebaseOn(fs FileSystemInterface, name string) (RebaseReport, error) {
+// RebaseOnFile reconciles the buffer against the named file, which
+// then becomes the buffer's source (path, handle, and warm backing
+// switch to it). A nil fs uses the library default.
+func (g *Garland) RebaseOnFile(fs FileSystemInterface, name string) (RebaseReport, error) {
 	if name == "" {
 		return RebaseReport{}, ErrNoDataSource
 	}

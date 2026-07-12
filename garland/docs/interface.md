@@ -214,11 +214,11 @@ func (g *Garland) IntegrityEvents() []IntegrityEvent
 // disk wins) is adopted and reported. One recorded mutation:
 // UndoSeek(report.PreviousRevision) is "keep your version" after the
 // fact. Source tracking is re-baselined - a fresh starting point.
-func (g *Garland) Rebase() (RebaseReport, error)
+func (g *Garland) RebaseOnSource() (RebaseReport, error)
 
 // RebaseOn does the same against a DIFFERENT file, which becomes the
 // buffer's source (path, handle, warm backing all switch).
-func (g *Garland) RebaseOn(fs FileSystemInterface, name string) (RebaseReport, error)
+func (g *Garland) RebaseOnFile(fs FileSystemInterface, name string) (RebaseReport, error)
 
 type RebaseReport struct {
     Adopted          []RebaseRegion // regions taken from the file

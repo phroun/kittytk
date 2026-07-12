@@ -55,7 +55,7 @@ func TestRebaseAdoptsResizedBlock(t *testing.T) {
 	}
 
 	// Deliberate rebase adopts the resized content.
-	report, err := g.Rebase()
+	report, err := g.RebaseOnSource()
 	if err != nil {
 		t.Fatalf("Rebase: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestRebaseNoChange(t *testing.T) {
 	}
 	revBefore := g.CurrentRevision()
 
-	report, err := g.Rebase()
+	report, err := g.RebaseOnSource()
 	if err != nil {
 		t.Fatalf("Rebase: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestRebaseHealsPlaceholder(t *testing.T) {
 		}
 	}
 
-	report, err := g.Rebase()
+	report, err := g.RebaseOnSource()
 	if err != nil {
 		t.Fatalf("Rebase: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestRebaseDiscardsLocalEdits(t *testing.T) {
 		t.Fatal("edit did not take")
 	}
 
-	report, err := g.Rebase()
+	report, err := g.RebaseOnSource()
 	if err != nil {
 		t.Fatalf("Rebase: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestRebasePiecewiseShifts(t *testing.T) {
 		return out
 	})
 
-	report, err := g.Rebase()
+	report, err := g.RebaseOnSource()
 	if err != nil {
 		t.Fatalf("Rebase: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestRebaseOnForeignFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := g.RebaseOn(nil, otherPath)
+	report, err := g.RebaseOnFile(nil, otherPath)
 	if err != nil {
 		t.Fatalf("RebaseOn: %v", err)
 	}
