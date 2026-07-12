@@ -1117,22 +1117,28 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				continue
 			}
 			// The Enter-target cell on the focused selected row wears
-			// FocusedListItem over the FocusedListRow band - exactly
-			// the rect its editor would fill (the tree-hosting cell's
-			// apparatus stays in the row style).
+			// FocusedListItem over the FocusedListRow band. A data
+			// column highlights its whole cell; the tree-hosting cell
+			// highlights only the caption's CLICKABLE zone (the same
+			// zone the mouse resolver uses), leaving the apparatus and
+			// the space right of the text in the row style.
 			cellStyle := s
 			if itemIndex == t.currentIndex && rowFocused && enterCol != nil &&
 				spanMatchesCol(sp, enterCol) {
 				cellStyle = scheme.GetFocusedListItem()
-				segX := sp.x
+				segX, segW := sp.x, sp.w
 				if sp.col == nil || (host != nil && sp.col == host) {
-					segX += t.treeCellTextInset(item)
+					segX, segW = t.treeCellEditZone(sp, item)
 				}
 				if segX < clip.X {
+					segW -= clip.X - segX
 					segX = clip.X
 				}
-				if segX1 := clip.X + clip.Width; segX1 > segX {
-					p.FillRect(core.UnitRect{X: segX, Y: itemY, Width: segX1 - segX, Height: metrics.CellHeight}, ' ', cellStyle)
+				if end := clip.X + clip.Width; segX+segW > end {
+					segW = end - segX
+				}
+				if segW > 0 {
+					p.FillRect(core.UnitRect{X: segX, Y: itemY, Width: segW, Height: metrics.CellHeight}, ' ', cellStyle)
 				}
 			}
 			cp := p.WithClip(clip)

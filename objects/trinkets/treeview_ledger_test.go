@@ -261,6 +261,52 @@ func TestTreeFocusedListRowAndTarget(t *testing.T) {
 	}
 }
 
+// On the tree-apparatus column, the Enter-target highlight covers only
+// the caption's CLICKABLE zone (displayed text, two-cell minimum) -
+// the space right of the text stays in the FocusedListRow band.
+func TestTreeTargetZoneOnTreeColumn(t *testing.T) {
+	b, _ := raster.New(480, 160)
+	d := NewDesktop()
+	d.SetBackend(b)
+	tv := NewTreeView()
+	tv.SetParent(d)
+	tv.SetShowHeader(true)
+	tv.SetEditable(true) // only the key column is editable: it IS the target
+	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	for _, name := range []string{"aaa", "bbb"} {
+		tv.AddRootItem(NewTreeItem(name))
+	}
+	tv.SetCurrentIndex(0)
+	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
+	tv.SetFocus()
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"}) // bar -> content
+
+	b.Clear(style.DefaultStyle())
+	tv.Paint(core.NewPainter(b)) // prime the theme
+	scheme := tv.GetScheme()
+	rowR, rowG, rowB := scheme.GetFocusedListRow().Bg.RGBComponents()
+	itR, itG, itB := scheme.GetFocusedListItem().Bg.RGBComponents()
+
+	b.Clear(style.DefaultStyle())
+	tv.Paint(core.NewPainter(b))
+	lay := tv.columnLayout()
+	item := tv.CurrentItem()
+	zx, zw := tv.treeCellEditZone(lay.spans[0], item)
+
+	c := b.Image().RGBAAt(int(zx+zw/2), 16+8) // inside the zone
+	if c.R != itR || c.G != itG || c.B != itB {
+		t.Errorf("zone = %d,%d,%d want FocusedListItem %d,%d,%d", c.R, c.G, c.B, itR, itG, itB)
+	}
+	c = b.Image().RGBAAt(int(zx+zw+16), 16+8) // right of the zone
+	if c.R != rowR || c.G != rowG || c.B != rowB {
+		t.Errorf("right of zone = %d,%d,%d want FocusedListRow %d,%d,%d", c.R, c.G, c.B, rowR, rowG, rowB)
+	}
+	c = b.Image().RGBAAt(2, 16+8) // apparatus, left of the text
+	if c.R != rowR || c.G != rowG || c.B != rowB {
+		t.Errorf("apparatus = %d,%d,%d want FocusedListRow %d,%d,%d", c.R, c.G, c.B, rowR, rowG, rowB)
+	}
+}
+
 // Ledger banding: non-selected rows alternate LedgerOdd/LedgerEven,
 // selection keeps the selection colors, and the blank area below the
 // last row keeps the plain list background.

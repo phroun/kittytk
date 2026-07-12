@@ -673,6 +673,35 @@ func (t *TreeView) handleEditMouseRelease(event core.MouseReleaseEvent) bool {
 
 // --- click-to-edit (a click on the already-selected row) ---
 
+// treeCellEditZone is the caption's clickable/highlight zone within a
+// tree-hosting span: origin at the text start (past indent, expander,
+// icon), width = the DISPLAYED text (the ellipsis, when cut,
+// excluded), with a two-cell minimum, clamped to the span. Shared by
+// the mouse resolver and the Enter-target highlight so they can never
+// disagree.
+func (t *TreeView) treeCellEditZone(sp colSpan, item *TreeItem) (x0, w core.Unit) {
+	metrics := t.EffectiveCellMetrics()
+	textX := sp.x + t.treeCellTextInset(item)
+	avail := sp.x + sp.w - textX
+	if avail <= 0 {
+		return textX, 0
+	}
+	text := item.Text
+	if sp.col != nil {
+		text = sp.col.displayValue(item.Value(sp.col.ID))
+	}
+	font := t.EffectiveFont()
+	shown := strings.TrimSuffix(ellipsizeText(font, text, avail), "…")
+	zone := font.MeasureText(shown)
+	if min := 2 * metrics.CellWidth; zone < min {
+		zone = min
+	}
+	if zone > avail {
+		zone = avail
+	}
+	return textX, zone
+}
+
 // editableColumnAt resolves which editable column the point x (in a
 // content row) addresses: the column under x when it is editable -
 // with the tree-hosting cell counting only its caption's DISPLAYED
@@ -703,25 +732,8 @@ func (t *TreeView) editableColumnAt(x core.Unit, item *TreeItem) *TreeColumn {
 			continue
 		}
 		if sp.col == nil || (host != nil && sp.col == host) {
-			textX := sp.x + t.treeCellTextInset(item)
-			if x < textX {
-				continue
-			}
-			text := item.Text
-			if sp.col != nil {
-				text = sp.col.displayValue(item.Value(sp.col.ID))
-			}
-			font := t.EffectiveFont()
-			avail := sp.x + sp.w - textX
-			shown := strings.TrimSuffix(ellipsizeText(font, text, avail), "…")
-			zone := font.MeasureText(shown)
-			if min := 2 * metrics.CellWidth; zone < min {
-				zone = min
-			}
-			if zone > avail {
-				zone = avail
-			}
-			if x >= textX+zone {
+			zx, zw := t.treeCellEditZone(sp, item)
+			if x < zx || x >= zx+zw {
 				continue
 			}
 		}
