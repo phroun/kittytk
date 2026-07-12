@@ -232,6 +232,38 @@ func TestTreeKeyEditorRespectsIndent(t *testing.T) {
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 }
 
+// Committing an edit keeps the edited row in view even when the user
+// scrolled elsewhere mid-edit and the new value re-sorts the row far
+// away - an explicit edit is an action ON that row.
+func TestTreeEditCommitScrollsIntoView(t *testing.T) {
+	tv := NewTreeView()
+	tv.SetShowHeader(true)
+	tv.SetEditable(true)
+	tv.AddColumn(NewTreeColumn("size", "Size", 10))
+	for i := 0; i < 40; i++ {
+		tv.AddRootItem(NewTreeItem(fmtItem(i)))
+	}
+	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
+	tv.SetSorted(true, -1, false)
+	tv.SetCurrentIndex(0)
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.editBox.SetText("zzz-last")
+	tv.scrollOffset = 20 // the user wheels away mid-edit
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	if tv.currentIndex != 39 {
+		t.Fatalf("edited row index = %d, want 39", tv.currentIndex)
+	}
+	vc := tv.visibleCount()
+	if tv.currentIndex < tv.scrollOffset || tv.currentIndex >= tv.scrollOffset+vc {
+		t.Errorf("edited row out of view after commit: offset=%d idx=%d vc=%d",
+			tv.scrollOffset, tv.currentIndex, vc)
+	}
+}
+
+func fmtItem(i int) string {
+	return string([]byte{'i', 't', 'e', 'm', byte('0' + i/10), byte('0' + i%10)})
+}
+
 // While the row editor is up, the Edit menu's focus inspection sees
 // the CELL EDITOR as the edit target (pass-through via the tree, which
 // holds the real focus); with the editor closed the tree is no target.

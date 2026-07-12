@@ -52,7 +52,14 @@ func init() {
 				it.caption = s
 				if it.node != nil {
 					it.node.Text = s
-					it.refresh()
+					// A caption change under an active visual sort can
+					// move the row: the trinket re-sorts itself (the
+					// viewport follows the selection if it was in view).
+					if it.view != nil && it.view.sorted {
+						it.view.resortKeepingSelection()
+					} else {
+						it.refresh()
+					}
 				}
 				return nil
 			})).Tip("Row or node display text."),

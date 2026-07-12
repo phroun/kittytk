@@ -357,6 +357,9 @@ func (t *TreeView) commitCellEdit() {
 	if t.sorted {
 		t.resortKeepingSelection()
 	}
+	// An explicit edit is a user action ON this row: keep it in view
+	// unconditionally, even if the new value just sorted it far away.
+	t.ensureVisible(t.currentIndex)
 }
 
 // endRowEdit dismisses the editor. commit=false is Escape: nothing is

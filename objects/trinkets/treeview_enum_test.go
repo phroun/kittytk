@@ -440,6 +440,41 @@ tree=new treeview editable children={
 	}
 }
 
+// A wire-side caption change under an active visual sort re-sorts the
+// rows (the name IS the sort key here) instead of leaving stale order.
+func TestTreeWireCaptionResorts(t *testing.T) {
+	ctx := &protocol.BindContext{}
+	f := &captureFactory{inner: protocol.NewRegistryFactory(ctx)}
+	s := protocol.NewSession()
+	script, err := protocol.Parse(`
+tree=new treeview sorted sortedby=-1 children={
+	b=new item caption="bbb"
+	a=new item caption="aaa"
+	c=new item caption="ccc"
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Execute(script, f); err != nil {
+		t.Fatal(err)
+	}
+	tv := f.targets[0].(*TreeView)
+	if got := visualCaptions(tv); !equalStrings(got, []string{"aaa", "bbb", "ccc"}) {
+		t.Fatalf("precondition order = %v", got)
+	}
+	rename, err := protocol.Parse(`set tree.a caption="zzz"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Execute(rename, f); err != nil {
+		t.Fatal(err)
+	}
+	if got := visualCaptions(tv); !equalStrings(got, []string{"bbb", "ccc", "zzz"}) {
+		t.Errorf("order after wire rename = %v, want [bbb ccc zzz]", got)
+	}
+}
+
 func itoa(v uint64) string {
 	if v == 0 {
 		return "0"
