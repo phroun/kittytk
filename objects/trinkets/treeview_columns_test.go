@@ -730,6 +730,29 @@ func TestTreeLinePrefix(t *testing.T) {
 	}
 }
 
+// Growing the tree while scrolled down pulls the content back into the
+// freed space (the scrollbar must not vanish leaving a stale blank).
+func TestTreeResizeReclampsScroll(t *testing.T) {
+	tv := NewTreeView()
+	for i := 0; i < 30; i++ {
+		tv.AddRootItem(NewTreeItem(fmtItem(i)))
+	}
+	tv.SetBounds(core.UnitRect{Width: 200, Height: 160})
+	tv.scrollOffset = 30 - tv.visibleCount() // scrolled to the bottom
+	if tv.scrollOffset <= 0 {
+		t.Fatal("precondition: view smaller than the list")
+	}
+	tv.SetBounds(core.UnitRect{Width: 200, Height: 400})
+	if want := 30 - tv.visibleCount(); tv.scrollOffset != want {
+		t.Errorf("scrollOffset after grow = %d, want %d", tv.scrollOffset, want)
+	}
+	// Tall enough for everything: the offset snaps to 0.
+	tv.SetBounds(core.UnitRect{Width: 200, Height: 640})
+	if tv.scrollOffset != 0 {
+		t.Errorf("scrollOffset with everything visible = %d, want 0", tv.scrollOffset)
+	}
+}
+
 // recordingPopupController captures the registered popup so tests can
 // drive its handlers.
 type recordingPopupController struct {

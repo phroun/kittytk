@@ -522,6 +522,31 @@ func (t *TreeView) rebuildFlatList() {
 	t.clampScrollOffset()
 }
 
+// SetBounds resizes the tree and re-clamps its scroll state (the
+// embedded base cannot dispatch HandleResize to us - the ScrollArea
+// override pattern).
+func (t *TreeView) SetBounds(bounds core.UnitRect) {
+	old := t.Bounds().Size()
+	t.TrinketBase.SetBounds(bounds)
+	if old != bounds.Size() {
+		t.HandleResize(old, bounds.Size())
+	}
+}
+
+// HandleResize re-clamps the scroll state: growing the view while
+// scrolled down must pull the content back into the freed space (the
+// scrollbar vanishes WITH the blank it would explain), and a stale
+// horizontal pan snaps back the same way.
+func (t *TreeView) HandleResize(oldSize, newSize core.UnitSize) {
+	t.clampScrollOffset()
+	if t.hScroll > 0 {
+		if lay := t.columnLayout(); t.hScroll > lay.maxHScroll {
+			t.hScroll = lay.maxHScroll
+		}
+	}
+	t.Update()
+}
+
 // clampScrollOffset ensures scrollOffset is within valid bounds.
 func (t *TreeView) clampScrollOffset() {
 	if len(t.flatList) == 0 {
