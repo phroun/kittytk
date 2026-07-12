@@ -1658,6 +1658,15 @@ func (g *Garland) TransactionCommit() (ChangeResult, error) {
 	// ALWAYS create a new revision, even if no mutations
 	g.currentRevision = g.transaction.pendingRevision
 
+	// Flush decoration cache updates queued by mutations inside the
+	// transaction (recordMutation defers to commit while a transaction
+	// is open); without this, a mark set inside the transaction stays
+	// invisible to the O(1) existence check after commit. The verified
+	// variant re-resolves each key against the committed tree: queued
+	// offsets were captured mid-transaction and later mutations in the
+	// same transaction may have shifted them.
+	g.flushPendingDecorationUpdatesVerified(g.currentFork, g.currentRevision)
+
 	// Update fork's highest revision
 	if forkInfo, ok := g.forks[g.currentFork]; ok {
 		if g.currentRevision > forkInfo.HighestRevision {
@@ -2388,6 +2397,11 @@ func (g *Garland) snapshotCursorPositions() map[*Cursor]*CursorPosition {
 
 // rollbackToPreTransaction restores state to before the transaction.
 func (g *Garland) rollbackToPreTransaction() {
+	// Cache updates queued by the discarded mutations must never be
+	// applied - they describe nodes the rollback just orphaned.
+	g.pendingDecorationUpdates = g.pendingDecorationUpdates[:0]
+	g.pendingDecorationDeletes = g.pendingDecorationDeletes[:0]
+
 	if g.transaction == nil {
 		return
 	}
@@ -3542,13 +3556,15 @@ func (g *Garland) insertBytesAt(c *Cursor, pos int64, data []byte, decorations [
 		return ChangeResult{}, ErrInvalidPosition
 	}
 
-	newRootID, err := g.insertInternal(g.root, rootSnap, pos, 0, data, decorations, insertBefore)
+	interiorDecs, endDecs := splitEndDecorations(decorations, int64(len(data)))
+	newRootID, err := g.insertInternal(g.root, rootSnap, pos, 0, data, interiorDecs, insertBefore)
 	if err != nil {
 		return ChangeResult{}, err
 	}
 
 	// Update tree root
 	g.root = g.nodeRegistry[newRootID]
+	g.addEndDecorations(endDecs, pos)
 
 	// Calculate deltas for counts
 	insertedBytes := int64(len(data))
@@ -3565,10 +3581,11 @@ func (g *Garland) insertBytesAt(c *Cursor, pos int64, data []byte, decorations [
 	g.totalRunes += insertedRunes
 	g.totalLines += insertedLines
 
-	// Adjust cursors after insertion point
+	// Adjust cursors after the insertion point. RULING: insertBefore
+	// governs cursors exactly AT the point, same as decorations.
 	for _, cursor := range g.cursors {
 		if cursor != c && cursor.bytePos >= pos {
-			cursor.adjustForMutation(pos, insertedBytes, insertedRunes, insertedLines)
+			cursor.adjustForMutation(pos, insertedBytes, insertedRunes, insertedLines, insertBefore)
 		}
 	}
 
@@ -3649,7 +3666,7 @@ func (g *Garland) deleteBytesAt(c *Cursor, pos int64, length int64, includeLineD
 		if cursor != c {
 			if cursor.bytePos > pos+length {
 				// Cursor is after deleted range - shift back
-				cursor.adjustForMutation(pos+length, -deletedBytes, -deletedRunes, -deletedLines)
+				cursor.adjustForMutation(pos+length, -deletedBytes, -deletedRunes, -deletedLines, false)
 			} else if cursor.bytePos > pos {
 				// Cursor is within deleted range - move to deletion point
 				cursor.bytePos = pos
@@ -3771,15 +3788,36 @@ func (g *Garland) overwriteBytesAtInternal(c *Cursor, pos int64, length int64, n
 		if rootSnap == nil {
 			return nil, ChangeResult{}, ErrInternal
 		}
-		newRootID, err := g.insertInternal(g.root, rootSnap, pos, 0, newData, allDecorations, insertBefore)
+		// Seam flag: when a range was actually deleted, the only marks
+		// still in the tree at pos are ex-range-end boundary marks
+		// (in-range marks were removed and travel via allDecorations).
+		// They were AFTER the replaced range, so they must slide past
+		// the new content - force the seam to insert-before. Only a
+		// pure insert (length == 0) lets the caller's flag govern
+		// marks that were genuinely at pos.
+		seamBefore := insertBefore
+		if length > 0 {
+			seamBefore = true
+		}
+		interiorDecs, endDecs := splitEndDecorations(allDecorations, newDataLen)
+		newRootID, err := g.insertInternal(g.root, rootSnap, pos, 0, newData, interiorDecs, seamBefore)
 		if err != nil {
 			return nil, ChangeResult{}, err
 		}
 		g.root = g.nodeRegistry[newRootID]
+		g.addEndDecorations(endDecs, pos)
 	} else if len(allDecorations) > 0 {
-		// No new data but we have decorations to add - they need to go somewhere
-		// In this case, the decorations are effectively deleted (returned to caller)
-		// since there's no content to attach them to
+		// Empty replacement: the overwrite degenerates to a delete.
+		// The ruling still holds - marks are never deleted with a
+		// range - so re-home the displaced marks at the deletion point.
+		for _, d := range allDecorations {
+			if oldRootID, removed, err := g.removeDecorationDirect(d.Key); err == nil && removed {
+				g.root = g.nodeRegistry[oldRootID]
+			}
+			if newRootID, err := g.addDecorationInternal(d.Key, pos); err == nil {
+				g.root = g.nodeRegistry[newRootID]
+			}
+		}
 	}
 
 	// Calculate inserted counts
@@ -3797,27 +3835,31 @@ func (g *Garland) overwriteBytesAtInternal(c *Cursor, pos int64, length int64, n
 	g.totalRunes += insertedRunes - deletedRunes
 	g.totalLines += insertedLines - deletedLines
 
-	// Adjust cursors
-	// If the overwrite changes the byte length, cursors after the range need to shift
+	// Adjust cursors. A cursor at or after the end of the replaced
+	// range shifts by the net change (including exactly at the end -
+	// it was after the replaced content); a cursor inside the range
+	// collapses to its start. Either way the replacement can change
+	// rune/line structure before the cursor, so recompute coordinates
+	// from the byte position rather than patching deltas.
 	netByteChange := insertedBytes - deletedBytes
-	netRuneChange := insertedRunes - deletedRunes
-	netLineChange := insertedLines - deletedLines
-
 	for _, cursor := range g.cursors {
-		if cursor != c {
-			if cursor.bytePos >= pos+length {
-				// Cursor is after overwritten range - shift by net change
-				if netByteChange != 0 {
-					cursor.adjustForMutation(pos+length, netByteChange, netRuneChange, netLineChange)
-				}
-			} else if cursor.bytePos > pos {
-				// Cursor is within overwritten range - move to start of range
-				cursor.bytePos = pos
-				// Use unlocked versions since we hold the lock
-				cursor.runePos, _ = g.byteToRuneInternalUnlocked(pos)
-				cursor.line, cursor.lineRune, _ = g.byteToLineRuneInternalUnlocked(pos)
-			}
+		if cursor == c {
+			continue
 		}
+		if cursor.bytePos > pos+length ||
+			(cursor.bytePos == pos+length && (length > 0 || insertBefore)) {
+			// length > 0: at range end means after the replaced
+			// content - always shifts. length == 0: pure insert,
+			// the insertBefore flag governs a cursor exactly at pos.
+			cursor.bytePos += netByteChange
+		} else if cursor.bytePos > pos {
+			cursor.bytePos = pos
+		} else {
+			continue
+		}
+		cursor.runePos, _ = g.byteToRuneInternalUnlocked(cursor.bytePos)
+		cursor.line, cursor.lineRune, _ = g.byteToLineRuneInternalUnlocked(cursor.bytePos)
+		cursor.lineRuneDirty = false
 	}
 
 	// Convert absolute decorations to relative (original positions before deletion)
@@ -3832,6 +3874,36 @@ func (g *Garland) overwriteBytesAtInternal(c *Cursor, pos int64, length int64, n
 	// Handle versioning
 	result := g.recordMutation()
 	return relDecs, result, nil
+}
+
+// splitEndDecorations separates relative decorations that land exactly
+// at (or past) the end of a block of inserted content of length n.
+// Storing those inside the inserted leaf would put them at a leaf's END
+// offset, violating the right-anchored storage invariant: per-leaf
+// range arithmetic then reads such a mark as both "inside" and "after"
+// a range (duplicating it), and offset-addressed lookups miss it. The
+// caller must insert the interior decorations with the content and add
+// the end decorations afterwards via addDecorationInternal, which homes
+// them at offset 0 of the following leaf (or as a legitimate EOF mark).
+func splitEndDecorations(decs []RelativeDecoration, n int64) (interior, end []RelativeDecoration) {
+	for _, d := range decs {
+		if d.Position >= n {
+			end = append(end, d)
+		} else {
+			interior = append(interior, d)
+		}
+	}
+	return
+}
+
+// addEndDecorations places end-of-block decorations after an insert at
+// landing, updating the root as it goes. See splitEndDecorations.
+func (g *Garland) addEndDecorations(end []RelativeDecoration, landing int64) {
+	for _, d := range end {
+		if newRootID, err := g.addDecorationInternal(d.Key, landing+d.Position); err == nil {
+			g.root = g.nodeRegistry[newRootID]
+		}
+	}
 }
 
 // MoveResult contains the result of a Move operation.
@@ -3961,13 +4033,37 @@ func (g *Garland) moveBytesAt(c *Cursor, srcStart, srcEnd, dstStart, dstEnd int6
 				})
 			}
 
+			// Seam flag: when the destination window was non-empty,
+			// every mark still in the tree at the seam collapsed there
+			// from AFTER a deleted range (dst end, or an adjacent src
+			// end) and must slide past the landing content. Only a
+			// pure insertion point (dstLen == 0) lets the caller's
+			// flag govern marks genuinely at the seam.
+			seamBefore := insertBefore
+			if dstLen > 0 {
+				seamBefore = true
+			}
+			interiorDecs, endDecs := splitEndDecorations(allDecs, int64(len(srcData)))
 			rootSnap := g.root.snapshotAt(g.currentFork, g.currentRevision)
-			newRootID, err := g.insertInternal(g.root, rootSnap, adjustedDst, 0, srcData, allDecs, insertBefore)
+			newRootID, err := g.insertInternal(g.root, rootSnap, adjustedDst, 0, srcData, interiorDecs, seamBefore)
 			if err != nil {
 				return MoveResult{}, err
 			}
 			g.root = g.nodeRegistry[newRootID]
 			g.totalBytes += int64(len(srcData))
+			g.addEndDecorations(endDecs, adjustedDst)
+		} else if len(dstDecs) > 0 {
+			// Nothing lands: the move degenerates to deleting the dst
+			// window. Marks are never deleted with a range - re-home
+			// the displaced marks at the collapsed window position.
+			for _, d := range dstDecs {
+				if oldRootID, removed, err := g.removeDecorationDirect(d.Key); err == nil && removed {
+					g.root = g.nodeRegistry[oldRootID]
+				}
+				if newRootID, err := g.addDecorationInternal(d.Key, adjustedDst); err == nil {
+					g.root = g.nodeRegistry[newRootID]
+				}
+			}
 		}
 	} else {
 		// Source is after destination (or at same position)
@@ -4006,13 +4102,38 @@ func (g *Garland) moveBytesAt(c *Cursor, srcStart, srcEnd, dstStart, dstEnd int6
 				})
 			}
 
+			// Seam flag: same rule as the src-before-dst branch above,
+			// plus one case unique to this branch: when the destination
+			// window ends exactly at srcStart, marks that sat at srcEnd
+			// collapse onto the seam (the source delete rebases them to
+			// srcStart, the dst delete to dstStart). They were AFTER the
+			// moved block originally, so they slide past it - and no
+			// flag-governed mark can coexist at that seam, because a
+			// mark originally at dstStart==srcStart travels with the
+			// source content instead.
+			seamBefore := insertBefore
+			if dstLen > 0 || srcStart == dstEnd {
+				seamBefore = true
+			}
+			interiorDecs, endDecs := splitEndDecorations(allDecs, int64(len(srcData)))
 			rootSnap := g.root.snapshotAt(g.currentFork, g.currentRevision)
-			newRootID, err := g.insertInternal(g.root, rootSnap, dstStart, 0, srcData, allDecs, insertBefore)
+			newRootID, err := g.insertInternal(g.root, rootSnap, dstStart, 0, srcData, interiorDecs, seamBefore)
 			if err != nil {
 				return MoveResult{}, err
 			}
 			g.root = g.nodeRegistry[newRootID]
 			g.totalBytes += int64(len(srcData))
+			g.addEndDecorations(endDecs, dstStart)
+		} else if len(dstDecs) > 0 {
+			// Nothing lands - re-home displaced dst marks (see above).
+			for _, d := range dstDecs {
+				if oldRootID, removed, err := g.removeDecorationDirect(d.Key); err == nil && removed {
+					g.root = g.nodeRegistry[oldRootID]
+				}
+				if newRootID, err := g.addDecorationInternal(d.Key, dstStart); err == nil {
+					g.root = g.nodeRegistry[newRootID]
+				}
+			}
 		}
 	}
 
@@ -4052,6 +4173,20 @@ func (g *Garland) moveBytesAt(c *Cursor, srcStart, srcEnd, dstStart, dstEnd int6
 			Key:      d.Key,
 			Position: d.Position - dstStart,
 		}
+	}
+
+	// Move/Copy rearranges content at TWO sites; per-site delta
+	// arithmetic cannot keep cursor coordinates coherent. Reconcile
+	// every cursor's rune/line coordinates from its (clamped) byte
+	// position against the final content - these ops are rare, so
+	// correctness wins over the extra tree walks.
+	for _, cursor := range g.cursors {
+		if cursor.bytePos > g.totalBytes {
+			cursor.bytePos = g.totalBytes
+		}
+		cursor.runePos, _ = g.byteToRuneInternalUnlocked(cursor.bytePos)
+		cursor.line, cursor.lineRune, _ = g.byteToLineRuneInternalUnlocked(cursor.bytePos)
+		cursor.lineRuneDirty = false
 	}
 
 	result := g.recordMutation()
@@ -4142,21 +4277,48 @@ func (g *Garland) copyBytesAt(c *Cursor, srcStart, srcEnd, dstStart, dstEnd int6
 		if rootSnap == nil {
 			return CopyResult{}, ErrInternal
 		}
-		newRootID, err := g.insertInternal(g.root, rootSnap, dstStart, 0, srcData, allDecs, insertBefore)
+		// Seam flag: when the destination window was non-empty, marks
+		// still in the tree at dstStart collapsed there from the
+		// window's end and must slide past the copied content. Only a
+		// pure insertion point (dstLen == 0) lets the caller's flag
+		// govern marks genuinely at the seam.
+		seamBefore := insertBefore
+		if dstLen > 0 {
+			seamBefore = true
+		}
+		interiorDecs, endDecs := splitEndDecorations(allDecs, int64(len(srcData)))
+		newRootID, err := g.insertInternal(g.root, rootSnap, dstStart, 0, srcData, interiorDecs, seamBefore)
 		if err != nil {
 			return CopyResult{}, err
 		}
 		g.root = g.nodeRegistry[newRootID]
+		g.addEndDecorations(endDecs, dstStart)
+	} else if len(dstDecs) > 0 {
+		// Nothing lands: the copy degenerates to deleting the dst
+		// window. Marks are never deleted with a range - re-home the
+		// displaced marks at the collapsed window position.
+		for _, d := range dstDecs {
+			if oldRootID, removed, err := g.removeDecorationDirect(d.Key); err == nil && removed {
+				g.root = g.nodeRegistry[oldRootID]
+			}
+			if newRootID, err := g.addDecorationInternal(d.Key, dstStart); err == nil {
+				g.root = g.nodeRegistry[newRootID]
+			}
+		}
 	}
 
 	// Update counts
 	g.updateCountsFromRoot()
 
-	// Adjust cursors that were in or after the destination range
+	// Adjust cursors that were in or after the destination range.
+	// At exactly the window end: dstLen > 0 means the cursor was after
+	// the replaced content and always shifts; a pure insertion point
+	// (dstLen == 0) is governed by the insertBefore flag.
 	netChange := int64(len(srcData)) - dstLen
 	for _, cursor := range g.cursors {
 		if cursor != c {
-			if cursor.bytePos >= dstStart+dstLen {
+			if cursor.bytePos > dstStart+dstLen ||
+				(cursor.bytePos == dstStart+dstLen && (dstLen > 0 || insertBefore)) {
 				// After destination - shift by net change
 				cursor.bytePos += netChange
 				if cursor.bytePos < 0 {
@@ -4183,6 +4345,20 @@ func (g *Garland) copyBytesAt(c *Cursor, srcStart, srcEnd, dstStart, dstEnd int6
 			Key:      d.Key,
 			Position: d.Position - dstStart,
 		}
+	}
+
+	// Move/Copy rearranges content at TWO sites; per-site delta
+	// arithmetic cannot keep cursor coordinates coherent. Reconcile
+	// every cursor's rune/line coordinates from its (clamped) byte
+	// position against the final content - these ops are rare, so
+	// correctness wins over the extra tree walks.
+	for _, cursor := range g.cursors {
+		if cursor.bytePos > g.totalBytes {
+			cursor.bytePos = g.totalBytes
+		}
+		cursor.runePos, _ = g.byteToRuneInternalUnlocked(cursor.bytePos)
+		cursor.line, cursor.lineRune, _ = g.byteToLineRuneInternalUnlocked(cursor.bytePos)
+		cursor.lineRuneDirty = false
 	}
 
 	result := g.recordMutation()
@@ -4924,20 +5100,27 @@ func (g *Garland) GetDecorationPosition(key string) (AbsoluteAddress, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	// O(1) existence check: if not in registry, it was never created
+	// During a transaction, always search the tree since decorations may
+	// have moved as a side effect of inserts/deletes (cache doesn't
+	// track these movements).
+	inTransaction := g.transaction != nil && g.transaction.hasMutations
+
+	// O(1) existence check: if not in registry, it was never created.
+	// EXCEPT inside a transaction: cache updates are queued until
+	// commit, so a key first set within the transaction has no entry
+	// yet - fall through to the tree search.
 	cacheEntry, exists := g.decorationCache[key]
 	if !exists {
-		return AbsoluteAddress{}, ErrDecorationNotFound
+		if !inTransaction {
+			return AbsoluteAddress{}, ErrDecorationNotFound
+		}
+		cacheEntry = &DecorationCacheEntry{}
 	}
 
 	rootSnap := g.root.snapshotAt(g.currentFork, g.currentRevision)
 	if rootSnap == nil {
 		return AbsoluteAddress{}, ErrDecorationNotFound
 	}
-
-	// During a transaction, always search the tree since decorations may have moved
-	// as a side effect of inserts/deletes (cache doesn't track these movements)
-	inTransaction := g.transaction != nil && g.transaction.hasMutations
 
 	// Check if cached location is valid (same fork AND same revision, not in transaction)
 	// IMPORTANT: We must verify at the CURRENT revision, not the cached revision.
@@ -4968,21 +5151,30 @@ func (g *Garland) GetDecorationPosition(key string) (AbsoluteAddress, error) {
 	// Use cached offset as hint for middle-out search
 	bytePos, nodeID, nodeOffset, found := g.findDecorationWithHint(key, cacheEntry.LastKnownOffset)
 	if !found {
-		// Decoration not present at this revision - mark as confirmed absent
-		cacheEntry.LastKnownFork = g.currentFork
-		cacheEntry.LastKnownRev = g.currentRevision
-		cacheEntry.LastKnownNode = 0 // 0 = confirmed not present
-		cacheEntry.LastAccess = time.Now()
+		// Mid-transaction results must never be stamped into the
+		// cache: g.currentRevision is still the PRE-transaction
+		// revision, so after a rollback the entry would pass the
+		// exact fork+revision check while describing discarded state.
+		if !inTransaction {
+			// Decoration not present at this revision - mark as confirmed absent
+			cacheEntry.LastKnownFork = g.currentFork
+			cacheEntry.LastKnownRev = g.currentRevision
+			cacheEntry.LastKnownNode = 0 // 0 = confirmed not present
+			cacheEntry.LastAccess = time.Now()
+		}
 		return AbsoluteAddress{}, ErrDecorationNotFound
 	}
 
-	// Update cache with new location
-	cacheEntry.LastKnownFork = g.currentFork
-	cacheEntry.LastKnownRev = g.currentRevision
-	cacheEntry.LastKnownNode = nodeID
-	cacheEntry.LastKnownOffset = nodeOffset
-	cacheEntry.Tier = CacheTierHot
-	cacheEntry.LastAccess = time.Now()
+	if !inTransaction {
+		// Update cache with new location (see rollback note above for
+		// why this is skipped during a transaction)
+		cacheEntry.LastKnownFork = g.currentFork
+		cacheEntry.LastKnownRev = g.currentRevision
+		cacheEntry.LastKnownNode = nodeID
+		cacheEntry.LastKnownOffset = nodeOffset
+		cacheEntry.Tier = CacheTierHot
+		cacheEntry.LastAccess = time.Now()
+	}
 
 	return ByteAddress(bytePos), nil
 }
@@ -5086,6 +5278,49 @@ func (g *Garland) applyPendingDecorationUpdates(fork ForkID, rev RevisionID) {
 		}
 	}
 	g.pendingDecorationUpdates = g.pendingDecorationUpdates[:0] // Clear slice, keep capacity
+}
+
+// flushPendingDecorationUpdatesVerified is the transaction-commit
+// counterpart of applyPendingDecorationUpdates. Queued entries carry
+// node IDs and offsets captured when each mutation ran; LATER mutations
+// in the same transaction can shift those offsets or supersede those
+// nodes, and the queue order can even invert a Decorate-then-remove
+// sequence (deletes are flushed first regardless of when they were
+// queued). Stamping such entries with the freshly committed revision
+// would make the read path trust them outright. Instead, re-resolve
+// every touched key against the committed tree and stamp what is
+// actually there.
+func (g *Garland) flushPendingDecorationUpdatesVerified(fork ForkID, rev RevisionID) {
+	hints := make(map[string]int64)
+	for _, key := range g.pendingDecorationDeletes {
+		if _, ok := hints[key]; !ok {
+			hints[key] = 0
+		}
+	}
+	for _, u := range g.pendingDecorationUpdates {
+		hints[u.Key] = u.Offset // last queued offset is the best hint
+	}
+	g.pendingDecorationDeletes = g.pendingDecorationDeletes[:0]
+	g.pendingDecorationUpdates = g.pendingDecorationUpdates[:0]
+
+	now := time.Now()
+	for key, hint := range hints {
+		entry, exists := g.decorationCache[key]
+		if !exists {
+			entry = &DecorationCacheEntry{}
+			g.decorationCache[key] = entry
+		}
+		entry.LastKnownFork = fork
+		entry.LastKnownRev = rev
+		entry.LastAccess = now
+		if _, nodeID, nodeOffset, found := g.findDecorationWithHint(key, hint); found {
+			entry.LastKnownNode = nodeID
+			entry.LastKnownOffset = nodeOffset
+			entry.Tier = CacheTierHot
+		} else {
+			entry.LastKnownNode = 0 // confirmed not present
+		}
+	}
 }
 
 // findLeafAtOffset finds the leaf node containing the given byte offset.
@@ -5403,6 +5638,15 @@ func (g *Garland) lineRuneToByteUnlocked(line, runeInLine int64) (int64, error) 
 // Returns true if the decoration was found and removed, false if cache miss (caller should use fallback).
 // This is O(log n) when cache hits, and returns false when cache misses (no tree walk).
 func (g *Garland) removeDecorationViaCache(key string) (bool, error) {
+	// Mid-transaction the revision number does not advance per
+	// mutation, so a pre-transaction cache entry still carries the
+	// "current" fork+revision and would pass the exactness check below
+	// even though earlier in-transaction edits may have superseded the
+	// cached node. The cache cannot be trusted here at all.
+	if g.transaction != nil && g.transaction.hasMutations {
+		return false, nil
+	}
+
 	// Check cache for hint
 	cacheEntry, exists := g.decorationCache[key]
 	if !exists || cacheEntry.LastKnownNode == 0 {

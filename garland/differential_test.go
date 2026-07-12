@@ -20,11 +20,8 @@ package garland
 //   - Invalid UTF-8 only needs to count consistently (phase 1 sticks
 //     to valid UTF-8 content).
 //
-// Where the interface docs and the code visibly disagree, the model
-// follows OBSERVED code behavior so this harness hunts real logic
-// errors rather than known documentation drift:
-//   - insertBytesAt shifts every other cursor with bytePos >= pos,
-//     regardless of the insertBefore flag (docs say the flag decides).
+//   - insertBefore governs cursors exactly at the insert point the
+//     same way it governs decorations (ruling: docs were right).
 
 import (
 	"bytes"
@@ -123,9 +120,9 @@ func (s *refState) runeToByte(runePos int64) int64 {
 // runeCount, yielding len(data)).
 func (s *refState) byteOfRuneIndex(n int64) int64 { return s.runeToByte(n) }
 
-// insert applies an insertion. Decorations at exactly pos slide right
-// only when insertBefore; other cursors at >= pos always slide
-// (observed code behavior); the acting cursor lands after the insert.
+// insert applies an insertion. Decorations AND passive cursors at
+// exactly pos slide right only when insertBefore (the ruling); the
+// acting cursor lands after the insert.
 func (s *refState) insert(actor int, pos int64, piece []byte, insertBefore bool) {
 	n := int64(len(piece))
 	s.data = append(s.data[:pos:pos], append(append([]byte(nil), piece...), s.data[pos:]...)...)
@@ -138,7 +135,7 @@ func (s *refState) insert(actor int, pos int64, piece []byte, insertBefore bool)
 		if i == actor {
 			continue
 		}
-		if s.cursors[i] >= pos {
+		if s.cursors[i] > pos || (s.cursors[i] == pos && insertBefore) {
 			s.cursors[i] += n
 		}
 	}
@@ -297,18 +294,54 @@ func (h *diffHarness) check(tag string, cursorsHard bool) {
 		h.fail("%s: LineCount = %d, want %d (content %q)", tag, lc.Value, m.lineCount(), got)
 	}
 
+	// Invariants: one live copy per key tree-wide, and no keys beyond
+	// what the model says exist.
+	if tree, err := g.GetDecorationsInByteRange(0, int64(len(m.data))+1); err == nil {
+		seen := map[string]int64{}
+		for _, e := range tree {
+			if prev, dup := seen[e.Key]; dup {
+				h.fail("%s: decoration %q duplicated in tree at %d and %d", tag, e.Key, prev, e.Address.Byte)
+			}
+			seen[e.Key] = e.Address.Byte
+		}
+		for k, p := range seen {
+			if _, ok := m.decs[k]; !ok {
+				h.fail("%s: stray decoration %q at byte %d (model has no such key; model decs %v)", tag, k, p, m.decs)
+			}
+		}
+	}
+
 	for k, want := range m.decs {
 		addr, err := g.GetDecorationPosition(k)
 		if err != nil {
 			h.fail("%s: decoration %q missing (want byte %d): %v", tag, k, want, err)
 		}
 		if addr.Mode != ByteMode || addr.Byte != want {
-			h.fail("%s: decoration %q at mode=%d byte=%d, want byte %d", tag, k, addr.Mode, addr.Byte, want)
+			tree, _ := g.GetDecorationsInByteRange(0, int64(len(m.data))+1)
+			var treeDump []string
+			for _, e := range tree {
+				treeDump = append(treeDump, fmt.Sprintf("%s@%d", e.Key, e.Address.Byte))
+			}
+			h.fail("%s: decoration %q at mode=%d byte=%d, want byte %d (model decs %v; tree %v)", tag, k, addr.Mode, addr.Byte, want, m.decs, treeDump)
 		}
 	}
 
 	for i, c := range h.curs {
-		if got := c.BytePos(); got != m.cursors[i] {
+		// Model-independent coherence: a cursor's cached rune/line
+		// coordinates must always agree with converting its own byte
+		// position, no matter where the byte position ended up.
+		gotB := c.BytePos()
+		if gotB >= 0 && gotB <= int64(len(m.data)) {
+			if r, err := g.ByteToRune(gotB); err == nil && c.RunePos() != r {
+				h.fail("%s: cursor %d INCOHERENT runePos=%d but ByteToRune(%d)=%d", tag, i, c.RunePos(), gotB, r)
+			}
+			if cl, cr, err := g.ByteToLineRune(gotB); err == nil {
+				if line, lr := c.LinePos(); line != cl || lr != cr {
+					h.fail("%s: cursor %d INCOHERENT linePos=%d:%d but ByteToLineRune(%d)=%d:%d", tag, i, line, lr, gotB, cl, cr)
+				}
+			}
+		}
+		if got := gotB; got != m.cursors[i] {
 			if cursorsHard {
 				h.fail("%s: cursor %d bytePos = %d, want %d", tag, i, got, m.cursors[i])
 			}
@@ -528,7 +561,11 @@ func min64(a, b int64) int64 {
 // ---------- the test ----------
 
 func TestDifferentialRandomOps(t *testing.T) {
-	seeds := []int64{1, 2, 3, 4, 5, 6, 7, 8}
+	seeds := make([]int64, 64)
+	for i := range seeds {
+		seeds[i] = int64(i + 1)
+	}
+	_ = seeds
 	for _, seed := range seeds {
 		seed := seed
 		t.Run(fmt.Sprintf("seed%d", seed), func(t *testing.T) {
@@ -539,7 +576,7 @@ func TestDifferentialRandomOps(t *testing.T) {
 					h.opDelete()
 					continue
 				}
-				switch h.rnd.Intn(10) {
+				switch h.rnd.Intn(14) {
 				case 0, 1, 2:
 					h.opInsert()
 				case 3, 4:
@@ -550,6 +587,12 @@ func TestDifferentialRandomOps(t *testing.T) {
 					h.opSeek()
 				case 9:
 					h.opUndoRedo()
+				case 10:
+					h.opOverwrite()
+				case 11, 12:
+					h.opMoveCopy()
+				case 13:
+					h.opTransaction()
 				}
 			}
 			if len(h.soft) > 0 {
@@ -596,5 +639,274 @@ func TestLineNumberingRulings(t *testing.T) {
 		if err != nil || back != c.bytePos {
 			t.Errorf("LineRuneToByte(%d,%d) = %d,%v want %d", c.line, c.rune, back, err, c.bytePos)
 		}
+	}
+}
+
+// ---------- extended mutation family: overwrite / move / copy / tx ----------
+
+// applyOverwrite: [pos, pos+length) replaced by piece. Marks inside
+// consolidate to the START (plain OverwriteBytes = insertBefore
+// false) and are REPORTED; marks after shift by the net change.
+// Passive-cursor policy is observed (resynced), not asserted.
+func (s *refState) applyOverwrite(pos, length int64, piece []byte) []string {
+	end := pos + length
+	if end > int64(len(s.data)) {
+		end = int64(len(s.data))
+	}
+	net := int64(len(piece)) - (end - pos)
+	s.data = append(s.data[:pos:pos], append(append([]byte(nil), piece...), s.data[end:]...)...)
+	var inRange []string
+	for k, d := range s.decs {
+		switch {
+		case d >= pos && d < end:
+			inRange = append(inRange, k)
+			s.decs[k] = pos // consolidate to start
+		case d >= end:
+			s.decs[k] = d + net
+		}
+	}
+	return inRange
+}
+
+// applyMoveCopy models MoveBytes/CopyBytes: all addresses are in the
+// ORIGINAL document; src and dst never overlap; the dst window
+// [dstStart,dstEnd) is replaced by the src content. Marks in the dst
+// window consolidate to the landing block's start (insertBefore false)
+// or end (true) and are reported; on a MOVE, src-range marks travel
+// with the content and marks elsewhere shift. On COPY the source is
+// untouched and the copied content carries no marks.
+func (s *refState) applyMoveCopy(srcStart, srcEnd, dstStart, dstEnd int64, isMove, insertBefore bool) []string {
+	src := append([]byte(nil), s.data[srcStart:srcEnd]...)
+	srcLen := srcEnd - srcStart
+
+	// Build the final content and find where the src block lands.
+	var out []byte
+	insertAt := int64(-1)
+	for p := int64(0); p <= int64(len(s.data)); {
+		if p == dstStart {
+			insertAt = int64(len(out))
+			out = append(out, src...)
+			p = dstEnd
+			if dstStart == dstEnd && isMove && p == srcStart {
+				// fallthrough to src skip below
+			}
+		}
+		if isMove && p == srcStart && srcStart != srcEnd {
+			p = srcEnd
+			continue
+		}
+		if p >= int64(len(s.data)) {
+			break
+		}
+		out = append(out, s.data[p])
+		p++
+	}
+	s.data = out
+
+	// posMap maps an original position OUTSIDE src/dst to its final one.
+	// At exactly dstEnd: a non-empty window means the mark was after
+	// replaced content and always slides past the landing block; a pure
+	// insertion point (dstStart == dstEnd) is governed by insertBefore.
+	posMap := func(d int64) int64 {
+		f := d
+		if isMove && d >= srcEnd {
+			f -= srcLen
+		}
+		if d > dstEnd || (d == dstEnd && dstEnd > dstStart) {
+			f -= dstEnd - dstStart
+			f += srcLen
+		} else if d == dstStart && dstStart == dstEnd && insertBefore {
+			f += srcLen
+		}
+		return f
+	}
+
+	var displaced []string
+	for k, d := range s.decs {
+		switch {
+		case isMove && d >= srcStart && d < srcEnd:
+			s.decs[k] = insertAt + (d - srcStart) // travels with content
+		case d >= dstStart && d < dstEnd:
+			displaced = append(displaced, k)
+			if insertBefore {
+				s.decs[k] = insertAt + srcLen
+			} else {
+				s.decs[k] = insertAt
+			}
+		default:
+			s.decs[k] = posMap(d)
+		}
+	}
+	return displaced
+}
+
+// resyncCursors adopts garland's passive-cursor positions (policy for
+// the extended ops is observed, not asserted) while hard-verifying
+// that each cursor's rune/line coordinates are consistent with its
+// byte position under the model's content.
+func (h *diffHarness) resyncCursors(tag string) {
+	h.t.Helper()
+	for i, c := range h.curs {
+		got := c.BytePos()
+		if got < 0 || got > int64(len(h.model.data)) {
+			h.fail("%s: cursor %d bytePos %d out of range 0..%d", tag, i, got, len(h.model.data))
+		}
+		h.model.cursors[i] = got
+		if rp := c.RunePos(); rp != h.model.byteToRune(got) {
+			h.fail("%s: cursor %d runePos = %d, inconsistent with bytePos %d (want %d)",
+				tag, i, rp, got, h.model.byteToRune(got))
+		}
+		wl, wlr := h.model.lineOf(got)
+		if line, lr := c.LinePos(); line != wl || lr != wlr {
+			h.fail("%s: cursor %d linePos = %d:%d, inconsistent with bytePos %d (want %d:%d)",
+				tag, i, line, lr, got, wl, wlr)
+		}
+	}
+}
+
+func (h *diffHarness) opOverwrite() {
+	if len(h.model.data) == 0 {
+		return
+	}
+	actor := h.rnd.Intn(len(h.curs))
+	rc := h.model.runeCount()
+	startRune := h.rnd.Int63n(rc)
+	nRunes := 1 + h.rnd.Int63n(min64(rc-startRune, 8))
+	start := h.model.byteOfRuneIndex(startRune)
+	end := h.model.byteOfRuneIndex(startRune + nRunes)
+	piece := []byte(h.randPiece())
+	if err := h.curs[actor].SeekByte(start); err != nil {
+		h.fail("overwrite: seek(%d): %v", start, err)
+	}
+	h.model.cursors[actor] = start
+	h.logf("c%d.OverwriteBytes(%d, %q) at %d", actor, end-start, piece, start)
+	got, res, err := h.curs[actor].OverwriteBytes(end-start, piece)
+	if err != nil {
+		h.fail("OverwriteBytes: %v", err)
+	}
+	inRange := h.model.applyOverwrite(start, end-start, piece)
+	if len(got) != len(inRange) {
+		var keys []string
+		for _, d := range got {
+			keys = append(keys, d.Key)
+		}
+		h.fail("overwrite reported %d marks (%v), model expected %d (%v)", len(got), keys, len(inRange), inRange)
+	}
+	h.noteMutation(res)
+	h.resyncCursors("after overwrite")
+	h.check("after overwrite", false)
+}
+
+// pickDisjointRanges returns src [s0,s1) and dst [d0,d1) that do not
+// overlap (dst may be empty = pure insertion point). ok=false when the
+// document is too small to bother.
+func (h *diffHarness) pickDisjointRanges() (s0, s1, d0, d1 int64, ok bool) {
+	rc := h.model.runeCount()
+	if rc < 4 {
+		return 0, 0, 0, 0, false
+	}
+	for try := 0; try < 8; try++ {
+		sr := h.rnd.Int63n(rc - 1)
+		sn := 1 + h.rnd.Int63n(min64(rc-sr, 6))
+		s0, s1 = h.model.byteOfRuneIndex(sr), h.model.byteOfRuneIndex(sr+sn)
+		dr := h.rnd.Int63n(rc + 1)
+		dn := int64(0)
+		if h.rnd.Intn(3) == 0 {
+			dn = h.rnd.Int63n(min64(rc-dr+1, 4))
+		}
+		d0, d1 = h.model.byteOfRuneIndex(dr), h.model.byteOfRuneIndex(dr+dn)
+		if s0 < d1 && d0 < s1 { // the library's overlap rule
+			continue
+		}
+		if d0 == d1 && d0 > s0 && d0 < s1 { // insertion point inside src
+			continue
+		}
+		return s0, s1, d0, d1, true
+	}
+	return 0, 0, 0, 0, false
+}
+
+func (h *diffHarness) opMoveCopy() {
+	s0, s1, d0, d1, ok := h.pickDisjointRanges()
+	if !ok {
+		return
+	}
+	actor := h.rnd.Intn(len(h.curs))
+	before := h.rnd.Intn(2) == 0
+	isMove := h.rnd.Intn(2) == 0
+	h.logf("  pre-op decs: %v", h.model.decs)
+	if tree, err := h.g.GetDecorationsInByteRange(0, int64(len(h.model.data))+1); err == nil {
+		var td []string
+		for _, e := range tree {
+			td = append(td, fmt.Sprintf("%s@%d", e.Key, e.Address.Byte))
+		}
+		h.logf("  pre-op tree decs: %v", td)
+	}
+	var displaced []RelativeDecoration
+	var res ChangeResult
+	var err error
+	if isMove {
+		h.logf("c%d.MoveBytes(%d,%d -> %d,%d, before=%v)", actor, s0, s1, d0, d1, before)
+		var mr MoveResult
+		mr, err = h.curs[actor].MoveBytes(s0, s1, d0, d1, before)
+		displaced, res = mr.DisplacedDecorations, mr.ChangeResult
+	} else {
+		h.logf("c%d.CopyBytes(%d,%d -> %d,%d, before=%v)", actor, s0, s1, d0, d1, before)
+		var cr CopyResult
+		cr, err = h.curs[actor].CopyBytes(s0, s1, d0, d1, nil, before)
+		displaced, res = cr.DisplacedDecorations, cr.ChangeResult
+	}
+	if err != nil {
+		h.fail("move/copy: %v", err)
+	}
+	wantDisplaced := h.model.applyMoveCopy(s0, s1, d0, d1, isMove, before)
+	if len(displaced) != len(wantDisplaced) {
+		var keys []string
+		for _, d := range displaced {
+			keys = append(keys, d.Key)
+		}
+		h.fail("move/copy displaced %d marks (%v), model expected %d (%v)",
+			len(displaced), keys, len(wantDisplaced), wantDisplaced)
+	}
+	h.noteMutation(res)
+	h.resyncCursors("after move/copy")
+	h.check("after move/copy", false)
+}
+
+func (h *diffHarness) opTransaction() {
+	preFR := ForkRevision{h.fork, h.rev}
+	preModel := h.model.clone()
+	if err := h.g.TransactionStart("tx"); err != nil {
+		h.fail("TransactionStart: %v", err)
+	}
+	h.logf("TransactionStart")
+	n := 2 + h.rnd.Intn(3)
+	for i := 0; i < n; i++ {
+		switch h.rnd.Intn(3) {
+		case 0:
+			h.opInsert()
+		case 1:
+			h.opDelete()
+		case 2:
+			h.opDecorate()
+		}
+	}
+	if h.rnd.Intn(4) == 0 {
+		h.logf("TransactionRollback")
+		if err := h.g.TransactionRollback(); err != nil {
+			h.fail("TransactionRollback: %v", err)
+		}
+		delete(h.snaps, ForkRevision{h.fork, h.rev})
+		h.fork, h.rev = preFR.Fork, preFR.Revision
+		h.model = preModel
+		h.check("after rollback", false)
+	} else {
+		res, err := h.g.TransactionCommit()
+		if err != nil {
+			h.fail("TransactionCommit: %v", err)
+		}
+		h.logf("TransactionCommit -> (fork %d, rev %d)", res.Fork, res.Revision)
+		h.noteMutation(res)
+		h.check("after commit", true)
 	}
 }

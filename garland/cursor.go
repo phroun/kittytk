@@ -369,12 +369,19 @@ func (c *Cursor) updatePosition(bytePos, runePos, line, lineRune int64) {
 	c.lineRune = lineRune
 	c.lineRuneDirty = false
 
-	// Record position in history if version has changed
+	// Record position in history if version has changed. NEVER while a
+	// transaction holds uncommitted mutations: currentRevision is still
+	// the PRE-transaction revision then, but this position was computed
+	// against the mid-transaction tree - stamping it under that key
+	// hands UndoSeek coordinates that are incoherent with the revision's
+	// real content. (TransactionStart already recorded the coherent
+	// pre-transaction positions under this key.)
 	if c.garland != nil {
 		currentFork := c.garland.currentFork
 		currentRev := c.garland.currentRevision
+		inMutatedTx := c.garland.transaction != nil && c.garland.transaction.hasMutations
 
-		if c.lastFork != currentFork || c.lastRevision != currentRev {
+		if !inMutatedTx && (c.lastFork != currentFork || c.lastRevision != currentRev) {
 			c.positionHistory[ForkRevision{currentFork, currentRev}] = &CursorPosition{
 				BytePos:  bytePos,
 				RunePos:  runePos,
@@ -395,8 +402,12 @@ func (c *Cursor) updatePosition(bytePos, runePos, line, lineRune int64) {
 // adjustForMutation adjusts cursor position after a mutation.
 // mutationPos is where the mutation occurred (byte position).
 // byteDelta, runeDelta, lineDelta are the size changes (positive for insert, negative for delete).
-func (c *Cursor) adjustForMutation(mutationPos int64, byteDelta, runeDelta, lineDelta int64) {
-	if c.bytePos > mutationPos || (c.bytePos == mutationPos && byteDelta > 0) {
+// includeAtPos governs a cursor sitting EXACTLY at the mutation
+// position on an insert: true (insertBefore) shifts it past the new
+// content, false leaves it anchored before the insert. Cursors beyond
+// the position always shift.
+func (c *Cursor) adjustForMutation(mutationPos int64, byteDelta, runeDelta, lineDelta int64, includeAtPos bool) {
+	if c.bytePos > mutationPos || (includeAtPos && c.bytePos == mutationPos && byteDelta > 0) {
 		// Byte, rune, and line all shift LINEARLY when content changes
 		// before this cursor - O(1) with no tree access.
 		c.bytePos += byteDelta
