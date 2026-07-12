@@ -386,21 +386,18 @@ func (c *Cursor) updatePosition(bytePos, runePos, line, lineRune int64) {
 // mutationPos is where the mutation occurred (byte position).
 // byteDelta, runeDelta, lineDelta are the size changes (positive for insert, negative for delete).
 func (c *Cursor) adjustForMutation(mutationPos int64, byteDelta, runeDelta, lineDelta int64) {
-	if c.bytePos > mutationPos {
+	if c.bytePos > mutationPos || (c.bytePos == mutationPos && byteDelta > 0) {
 		c.bytePos += byteDelta
 		c.runePos += runeDelta
-		// Line position adjustment is more complex - only adjust if mutation was on a prior line
-		// For simplicity, we adjust lineRune only, as line number changes depend on newline insertions
-		// If the mutation added/removed newlines before our line, adjust line number
-		if lineDelta != 0 {
-			c.line += lineDelta
-		}
-	} else if c.bytePos == mutationPos && byteDelta > 0 {
-		// Insert at cursor position - cursor stays at same logical position
-		// but the content shifted, so coordinates shift too
-		c.bytePos += byteDelta
-		c.runePos += runeDelta
-		if lineDelta != 0 {
+		// line and lineRune cannot be maintained by deltas alone: a
+		// newline inserted or removed EARLIER ON THIS CURSOR'S LINE
+		// changes lineRune non-linearly (it re-anchors against a new
+		// last-newline). Recompute both from the authoritative byte
+		// position. Callers hold the garland lock.
+		line, lineRune, err := c.garland.byteToLineRuneInternalUnlocked(c.bytePos)
+		if err == nil {
+			c.line, c.lineRune = line, lineRune
+		} else if lineDelta != 0 {
 			c.line += lineDelta
 		}
 	}
