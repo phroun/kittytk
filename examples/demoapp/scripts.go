@@ -351,7 +351,21 @@ det=new tab caption="Details" children={
 			ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
 			ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"
 			dpc=new item caption="PC12" expanded children={
-				dpcin=new item caption="pc12"
+				dpcin=new item caption="pc12" expanded children={
+					dsrc=new item caption="src" expanded children={
+						dmain=new item caption="main.go"
+						dutil=new item caption="util.go"
+					}
+					dbuild=new item caption="build.log"
+				}
+				dread=new item caption="readme.txt"
+			}
+			ddocs=new item caption="Documents" expanded children={
+				dnotes=new item caption="notes.txt"
+				darch=new item caption="archive" expanded children={
+					dfin=new item caption="final-report.txt"
+					dold=new item caption="old-report.txt"
+				}
 			}
 			darj=new item caption="pc12.arj"
 		}
@@ -361,6 +375,7 @@ det=new tab caption="Details" children={
 			dpinl=new checkbox caption="Pin first 2"
 			dpinr=new checkbox caption="Pin last"
 			dledger=new checkbox caption="Ledger"
+			dlines=new checkbox caption="Tree lines"
 		}
 	}
 }
@@ -414,12 +429,23 @@ ds1=w.t.det.dbox.dtree.ds1
 ds2=w.t.det.dbox.dtree.ds2
 dpc=w.t.det.dbox.dtree.dpc
 dpcin=w.t.det.dbox.dtree.dpc.dpcin
+dsrc=w.t.det.dbox.dtree.dpc.dpcin.dsrc
+dmain=w.t.det.dbox.dtree.dpc.dpcin.dsrc.dmain
+dutil=w.t.det.dbox.dtree.dpc.dpcin.dsrc.dutil
+dbuild=w.t.det.dbox.dtree.dpc.dpcin.dbuild
+dread=w.t.det.dbox.dtree.dpc.dread
+ddocs=w.t.det.dbox.dtree.ddocs
+dnotes=w.t.det.dbox.dtree.ddocs.dnotes
+darch=w.t.det.dbox.dtree.ddocs.darch
+dfin=w.t.det.dbox.dtree.ddocs.darch.dfin
+dold=w.t.det.dbox.dtree.ddocs.darch.dold
 darj=w.t.det.dbox.dtree.darj
 dshowkey=w.t.det.dbox.drow.dshowkey
 dhscroll=w.t.det.dbox.drow.dhscroll
 dpinl=w.t.det.dbox.drow.dpinl
 dpinr=w.t.det.dbox.drow.dpinr
 dledger=w.t.det.dbox.drow.dledger
+dlines=w.t.det.dbox.drow.dlines
 binput=w.t.b.bw.brow.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont
@@ -616,7 +642,11 @@ func detailsValuesScript(id func(name string) uint64) string {
 	col := func(colKey string, vals map[string]string) string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "set %s children={\n", colKey)
-		for _, item := range []string{"ds1", "ds2", "dpc", "dpcin", "darj"} {
+		for _, item := range []string{
+			"ds1", "ds2", "dpc", "dpcin", "dsrc", "dmain", "dutil",
+			"dbuild", "dread", "ddocs", "dnotes", "darch", "dfin",
+			"dold", "darj",
+		} {
 			if v, ok := vals[item]; ok {
 				fmt.Fprintf(&b, "\tnew cell item=%d value=%q\n", id(item), v)
 			}
@@ -625,18 +655,32 @@ func detailsValuesScript(id func(name string) uint64) string {
 		return b.String()
 	}
 	return col("dsizec", map[string]string{
-		"ds1": "311 KB", "ds2": "1 MB", "dpc": "--", "dpcin": "--", "darj": "99 KB",
+		"ds1": "311 KB", "ds2": "1 MB", "dpc": "--", "dpcin": "--",
+		"dsrc": "--", "dmain": "6 KB", "dutil": "3 KB", "dbuild": "42 KB",
+		"dread": "2 KB", "ddocs": "--", "dnotes": "1 KB", "darch": "--",
+		"dfin": "88 KB", "dold": "74 KB", "darj": "99 KB",
 	}) + col("dkindc", map[string]string{
-		"ds1": "PNG image", "ds2": "PNG image", "dpc": "Folder", "dpcin": "Folder", "darj": "ARJ Archive",
+		"ds1": "PNG image", "ds2": "PNG image", "dpc": "Folder", "dpcin": "Folder",
+		"dsrc": "Folder", "dmain": "Text", "dutil": "Text", "dbuild": "Text",
+		"dread": "Text", "ddocs": "Folder", "dnotes": "Text", "darch": "Folder",
+		"dfin": "Text", "dold": "Text", "darj": "ARJ Archive",
 	}) + col("dmodc", map[string]string{
 		"ds1": "Yesterday at 1:21 AM", "ds2": "Yesterday at 12:24 AM",
 		"dpc": "Yesterday at 12:23 AM", "dpcin": "Yesterday at 12:28 AM",
+		"dsrc": "Yesterday at 12:29 AM", "dmain": "Yesterday at 12:30 AM",
+		"dutil": "Yesterday at 12:31 AM", "dbuild": "Today at 9:02 AM",
+		"dread": "Yesterday at 12:32 AM", "ddocs": "Today at 8:15 AM",
+		"dnotes": "Today at 8:16 AM", "darch": "Today at 8:20 AM",
+		"dfin": "Today at 8:21 AM", "dold": "Today at 8:22 AM",
 		"darj": "Yesterday at 12:17 AM",
 	}) + col("dtagsc", map[string]string{}) + col("drawc", map[string]string{
 		// The Size column's sort proxy: the same sizes expanded to
 		// plain byte counts, so "sort by Size" compares 2048-style
 		// numbers while the visible cells keep their "2 KB" captions.
-		"ds1": "318464", "ds2": "1048576", "dpc": "--", "dpcin": "--", "darj": "101376",
+		"ds1": "318464", "ds2": "1048576", "dpc": "--", "dpcin": "--",
+		"dsrc": "--", "dmain": "6144", "dutil": "3072", "dbuild": "43008",
+		"dread": "2048", "ddocs": "--", "dnotes": "1024", "darch": "--",
+		"dfin": "90112", "dold": "75776", "darj": "101376",
 	}) + fmt.Sprintf(
 		// Kind becomes a CHOICE column: its cell editor is a combo
 		// over the kinds collection (the values above are option

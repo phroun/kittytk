@@ -680,6 +680,56 @@ func TestTreeHBarThumbHover(t *testing.T) {
 	}
 }
 
+// treeLinePrefix fills the indent region with tree-command connector
+// segments: the item's own ├/└ elbow in its last chunk dash-filled to
+// the glyph cell, and │ continuations for ancestors that still have
+// siblings below. Length is exactly level*indentWidth - tree lines
+// never change spacing.
+func TestTreeLinePrefix(t *testing.T) {
+	tv := NewTreeView() // indentWidth 2
+	r1, r2 := NewTreeItem("r1"), NewTreeItem("r2")
+	c1, c2 := NewTreeItem("c1"), NewTreeItem("c2")
+	g1, g2 := NewTreeItem("g1"), NewTreeItem("g2")
+	h1 := NewTreeItem("h1")
+	r1.AddChild(c1)
+	r1.AddChild(c2)
+	c1.AddChild(g1)
+	c1.AddChild(g2)
+	c2.AddChild(h1)
+	r1.Expanded, c1.Expanded, c2.Expanded = true, true, true
+	tv.AddRootItem(r1)
+	tv.AddRootItem(r2)
+	tv.SetTreeLines(true)
+
+	cases := []struct {
+		item *TreeItem
+		want string
+	}{
+		{r1, ""},     // roots have no indent to fill
+		{c1, "├─"},   // sibling below
+		{c2, "└─"},   // last child
+		{g1, "│ ├─"}, // c1's chain continues past it
+		{g2, "│ └─"},
+		{h1, "  └─"}, // c2 is last: no continuation line
+	}
+	for _, c := range cases {
+		if got := string(tv.treeLinePrefix(c.item)); got != c.want {
+			t.Errorf("prefix(%s) = %q, want %q", c.item.Text, got, c.want)
+		}
+	}
+
+	// The elbow follows the VISUAL (sorted) order, not declaration
+	// order: descending by name flips c1/c2.
+	tv.SetSorted(true, -1, true)
+	tv.rebuildFlatList()
+	if got := string(tv.treeLinePrefix(c1)); got != "└─" {
+		t.Errorf("sorted prefix(c1) = %q, want └─", got)
+	}
+	if got := string(tv.treeLinePrefix(c2)); got != "├─" {
+		t.Errorf("sorted prefix(c2) = %q, want ├─", got)
+	}
+}
+
 // recordingPopupController captures the registered popup so tests can
 // drive its handlers.
 type recordingPopupController struct {

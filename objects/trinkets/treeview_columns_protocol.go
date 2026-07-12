@@ -381,6 +381,7 @@ func treeViewProps() map[string]protocol.Property {
 		"editable":   boolProp("editable", (*TreeView).SetEditable).Tip("The key (tree) column joins the row editor (edits the item caption).").Def("false"),
 		"showheader": boolProp("showheader", (*TreeView).SetShowHeader).Tip("Show the column header row.").Def("false"),
 		"ledger":     boolProp("ledger", (*TreeView).SetLedger).Tip("Alternate non-selected rows in the ledger colors.").Def("false"),
+		"treelines":  boolProp("treelines", (*TreeView).SetTreeLines).Tip("Connector lines in the indent space; leaf items get a glyph too.").Def("false"),
 		"showkey":    boolProp("showkey", (*TreeView).SetShowKey).Tip("Show the key (tree) column first.").Def("true"),
 		"fit_width":  boolProp("fit_width", (*TreeView).SetFitWidth).Tip("Squeeze columns to the width (no horizontal scrolling).").Def("true"),
 		"key_width":  intProp("key_width", (*TreeView).SetKeyWidth).Tip("Key column width in text cells (scroll mode).").Def("20"),

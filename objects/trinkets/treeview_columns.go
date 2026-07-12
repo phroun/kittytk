@@ -563,6 +563,67 @@ func (t *TreeView) SetShowKey(on bool) { t.showKey = on; t.Update() }
 // last item keeps the plain list background.
 func (t *TreeView) SetLedger(on bool) { t.ledger = on; t.Update() }
 
+// SetTreeLines turns connector lines on: every item gets a glyph (▪
+// for leaves, the usual triangles for branches) and the indent space
+// fills with the tree command's ├/└/│/─ segments. Purely a fill of the
+// space the layout already reserves - no spacing changes.
+func (t *TreeView) SetTreeLines(on bool) { t.treeLines = on; t.Update() }
+
+// treeLinePrefix builds the connector cells for an item's indent
+// region: one indentWidth-cell chunk per level, the last carrying the
+// item's own ├/└ elbow dash-filled up to the glyph cell, earlier ones
+// the │ continuation of any ancestor that still has visual siblings
+// below. Length is exactly level*indentWidth (nil at level 0).
+func (t *TreeView) treeLinePrefix(item *TreeItem) []rune {
+	level := item.Level()
+	if level <= 0 {
+		return nil
+	}
+	out := make([]rune, level*t.indentWidth)
+	for i := range out {
+		out[i] = ' '
+	}
+	// chain[k] is the ancestor-or-self at level k+1: its connector
+	// state fills chunk k (columns [k*indentWidth, (k+1)*indentWidth)).
+	chain := make([]*TreeItem, level)
+	for n, k := item, level-1; k >= 0; n, k = n.Parent, k-1 {
+		chain[k] = n
+	}
+	for k, n := range chain {
+		at := k * t.indentWidth
+		if k == level-1 {
+			if t.hasNextVisualSibling(n) {
+				out[at] = '├'
+			} else {
+				out[at] = '└'
+			}
+			for i := at + 1; i < len(out); i++ {
+				out[i] = '─'
+			}
+		} else if t.hasNextVisualSibling(n) {
+			out[at] = '│'
+		}
+	}
+	return out
+}
+
+// hasNextVisualSibling reports whether another sibling follows item in
+// the VISUAL (sorted) order - the state that picks ├ vs └ and runs the
+// │ continuation through deeper rows.
+func (t *TreeView) hasNextVisualSibling(item *TreeItem) bool {
+	siblings := t.rootItems
+	if item.Parent != nil {
+		siblings = item.Parent.Children
+	}
+	vs := t.visualSiblings(siblings)
+	for i, s := range vs {
+		if s == item {
+			return i+1 < len(vs)
+		}
+	}
+	return false
+}
+
 // SetKeyCaption sets the header caption over the key (tree) column -
 // "Name" in a file listing.
 func (t *TreeView) SetKeyCaption(s string) { t.keyCaption = s; t.Update() }
@@ -1312,12 +1373,22 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, itemY core.Unit, s, textStyle style.CellStyle, metrics core.CellMetrics, font *core.Font, text string) {
 	level := item.Level()
 	x := sp.x + core.Unit(level*t.indentWidth)*metrics.CellWidth
+	// Connector lines fill the indent space (never widen it).
+	if t.treeLines {
+		for ci, r := range t.treeLinePrefix(item) {
+			if r != ' ' {
+				p.DrawCell(sp.x+core.Unit(ci)*metrics.CellWidth, itemY, r, s)
+			}
+		}
+	}
 	if !item.IsLeaf() {
 		if item.Expanded {
 			p.DrawCell(x, itemY, '▼', s)
 		} else {
 			p.DrawCell(x, itemY, '▸', s)
 		}
+	} else if t.treeLines {
+		p.DrawCell(x, itemY, '▪', s)
 	}
 	x += metrics.CellWidth
 	if item.Icon != nil && len(item.Icon.Cells) > 0 {

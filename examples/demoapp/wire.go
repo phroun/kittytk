@@ -384,4 +384,11 @@ func (a *app) wireDetails() {
 			_ = dtree.Set("!ledger")
 		}
 	})
+	ui.Checkbox("dlines").OnToggle(func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = dtree.Set("treelines")
+		} else {
+			_ = dtree.Set("!treelines")
+		}
+	})
 }

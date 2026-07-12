@@ -115,6 +115,7 @@ type TreeView struct {
 	showKey    bool   // key column shown as the first visible column
 	keyCaption string // header caption over the key (tree) column
 	ledger     bool   // alternate non-selected rows in LedgerOdd/LedgerEven
+	treeLines  bool   // connector lines + leaf glyphs in the indent space
 	fitWidth   bool // true: squeeze to width (no hscroll); false: pan
 	fixedLeft  int  // visible columns pinned outside the hscroll region
 	fixedRight int
@@ -641,6 +642,15 @@ func (t *TreeView) Paint(p *core.Painter) {
 		// Calculate x position with indent
 		x := core.Unit(level*t.indentWidth) * metrics.CellWidth
 
+		// Connector lines fill the indent space (never widen it).
+		if t.treeLines {
+			for ci, r := range t.treeLinePrefix(item) {
+				if r != ' ' {
+					p.DrawCell(core.Unit(ci)*metrics.CellWidth, itemY, r, s)
+				}
+			}
+		}
+
 		// Draw expand/collapse indicator
 		if !item.IsLeaf() {
 			if item.Expanded {
@@ -648,6 +658,8 @@ func (t *TreeView) Paint(p *core.Painter) {
 			} else {
 				p.DrawCell(x, itemY, '▸', s)
 			}
+		} else if t.treeLines {
+			p.DrawCell(x, itemY, '▪', s)
 		} else {
 			p.DrawCell(x, itemY, ' ', s)
 		}
