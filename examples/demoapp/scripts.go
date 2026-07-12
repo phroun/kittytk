@@ -625,7 +625,7 @@ func detailsValuesScript(id func(name string) uint64) string {
 		return b.String()
 	}
 	return col("dsizec", map[string]string{
-		"ds1": "311 KB", "ds2": "74 KB", "dpc": "--", "dpcin": "--", "darj": "99 KB",
+		"ds1": "311 KB", "ds2": "1 MB", "dpc": "--", "dpcin": "--", "darj": "99 KB",
 	}) + col("dkindc", map[string]string{
 		"ds1": "PNG image", "ds2": "PNG image", "dpc": "Folder", "dpcin": "Folder", "darj": "ARJ Archive",
 	}) + col("dmodc", map[string]string{
@@ -636,7 +636,7 @@ func detailsValuesScript(id func(name string) uint64) string {
 		// The Size column's sort proxy: the same sizes expanded to
 		// plain byte counts, so "sort by Size" compares 2048-style
 		// numbers while the visible cells keep their "2 KB" captions.
-		"ds1": "318464", "ds2": "75776", "dpc": "--", "dpcin": "--", "darj": "101376",
+		"ds1": "318464", "ds2": "1048576", "dpc": "--", "dpcin": "--", "darj": "101376",
 	}) + fmt.Sprintf(
 		// Kind becomes a CHOICE column: its cell editor is a combo
 		// over the kinds collection (the values above are option
