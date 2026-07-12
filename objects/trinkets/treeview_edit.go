@@ -485,10 +485,20 @@ func (t *TreeView) handleEditKey(event core.KeyPressEvent) bool {
 	}
 	if cb := t.editCombo; cb != nil {
 		if cb.IsOpen() {
-			// The open drop-down owns the keyboard until it closes as
-			// normal: Up/Down navigate its items, Enter/Space confirm
-			// the highlighted value, Escape reverts and closes.
+			// The open drop-down owns the keyboard until it closes:
+			// Up/Down navigate its items, Enter/Space confirm the
+			// highlighted value, Escape reverts. Enter and Escape then
+			// also end the row edit (commit / cancel); Space keeps the
+			// edit session alive for further changes.
 			cb.HandleKeyPress(event)
+			if !cb.IsOpen() {
+				switch event.Key {
+				case "Enter":
+					t.endRowEdit(true)
+				case "Escape":
+					t.endRowEdit(false)
+				}
+			}
 			return true
 		}
 		switch {
