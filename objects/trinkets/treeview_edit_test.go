@@ -176,6 +176,56 @@ func TestTreeRowEditClickOffAccepts(t *testing.T) {
 	}
 }
 
+// Switching edit columns brings the editor into view with the
+// ScrollArea's conservative rule: scroll the minimum needed, and not
+// at all when the cell is already fully visible.
+func TestTreeEditEnsuresColumnVisible(t *testing.T) {
+	tv := newColumnsTree(30, 10) // TUI: content 29 cells
+	tv.SetFitWidth(false)
+	tv.SetKeyWidth(20) // natural: key 20 |1| size 10 |1| kind 12 = 44
+	tv.ColumnByID("size").Editable = true
+	tv.ColumnByID("kind").Editable = true
+	tv.SetCurrentIndex(0)
+
+	// Entering edit on Size (cells 21..31, view 29 wide, hScroll 0):
+	// the right edge is 2 cells past the view - scroll exactly 2.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	if !tv.rowEditing || tv.editCol != tv.ColumnByID("size") {
+		t.Fatal("precondition: editing size")
+	}
+	if tv.hScroll != 2 {
+		t.Errorf("hScroll after edit start = %d, want 2", tv.hScroll)
+	}
+	// Tab to Kind (cells 32..44): right-align to it, clamped to the
+	// max scroll (15).
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Tab"})
+	if tv.hScroll != 15 {
+		t.Errorf("hScroll after Tab to kind = %d, want 15", tv.hScroll)
+	}
+	// S-Tab back to Size: at hScroll 15 its cells 21..31 already sit
+	// inside the view (15..44) - conservative: NO movement.
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab"})
+	if tv.editCol != tv.ColumnByID("size") {
+		t.Fatal("S-Tab did not return to size")
+	}
+	if tv.hScroll != 15 {
+		t.Errorf("hScroll moved for an already-visible column: %d, want 15", tv.hScroll)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+
+	// A pinned column is always in view: editing it never scrolls.
+	tv.SetFixedColumns(0, 1) // pin kind
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // onto pinned kind
+	if tv.editCol != tv.ColumnByID("kind") {
+		t.Fatal("Tab did not reach kind")
+	}
+	if tv.hScroll != 15 {
+		t.Errorf("editing a pinned column scrolled the region: %d, want 15", tv.hScroll)
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+}
+
 // A drag-free click on an editable cell of the ALREADY selected row
 // flips straight into edit mode - no settle delay.
 func TestTreeClickToEdit(t *testing.T) {

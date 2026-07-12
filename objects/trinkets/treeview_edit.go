@@ -96,7 +96,55 @@ func (t *TreeView) beginCellEdit(item *TreeItem, col *TreeColumn) {
 	t.editLastCol = col
 	t.editOrig = item.Value(col.ID)
 	t.rowEditing = true
+	t.ensureEditColVisible()
 	t.Update()
+}
+
+// ensureEditColVisible scrolls the horizontal column region the
+// MINIMUM needed to reveal the edited column (scroll mode only).
+// Same conservative rule as the ScrollArea's EnsureRectVisible: no
+// movement at all when the cell is already fully in view; otherwise
+// align the nearer edge, prioritizing (never hiding) the left edge.
+func (t *TreeView) ensureEditColVisible() {
+	if t.fitWidth || !t.rowEditing || t.editCol == nil {
+		return
+	}
+	lay := t.columnLayout()
+	cw := t.EffectiveCellMetrics().CellWidth
+	for _, sp := range lay.spans {
+		if sp.col != t.editCol {
+			continue
+		}
+		if sp.fixed {
+			return // pinned columns are always in view
+		}
+		// The span's NATURAL cell offset within the scrolling region
+		// (its painted x has the current scroll already applied).
+		leftCells := int(lay.scrollL / cw)
+		viewCells := int((lay.scrollR - lay.scrollL) / cw)
+		start := int(sp.x/cw) - leftCells + t.hScroll
+		end := start + int(sp.w/cw)
+		hs := t.hScroll
+		if start < hs {
+			hs = start
+		} else if end > hs+viewCells {
+			hs = end - viewCells
+			if hs > start {
+				hs = start // never hide the left edge
+			}
+		}
+		if hs < 0 {
+			hs = 0
+		}
+		if hs > lay.maxHScroll {
+			hs = lay.maxHScroll
+		}
+		if hs != t.hScroll {
+			t.hScroll = hs
+			t.Update()
+		}
+		return
+	}
 }
 
 // commitCellEdit writes the editor's value onto the cell if it changed
@@ -162,6 +210,7 @@ func (t *TreeView) stepEditColumn(delta int) {
 	t.editOrig = t.editItem.Value(next.ID)
 	t.editBox.SetText(t.editOrig)
 	t.editBox.SelectAll()
+	t.ensureEditColVisible()
 	t.Update()
 }
 
