@@ -330,6 +330,55 @@ func TestTreeDoubleClickEditableSuppressed(t *testing.T) {
 		t.Fatal("double click on the key text did not edit the caption")
 	}
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+
+	// RIGHT of the caption text (past its displayed width): classic
+	// toggle again - the Finder/Explorer convention.
+	font := tv.EffectiveFont()
+	beyondX := lay.spans[0].x + 3*cw + font.MeasureText("Folder") + 8
+	dbl(beyondX)
+	if !folder.Expanded {
+		t.Error("double click right of the text did not expand")
+	}
+	if tv.rowEditing {
+		t.Fatal("double click right of the text entered edit mode")
+	}
+}
+
+// A blank (or tiny) caption still offers a two-cell edit zone after
+// the text start; clicks past those two cells fall back to the
+// classic behavior.
+func TestTreeKeyBlankCaptionEditZone(t *testing.T) {
+	tv := newEditableTree()
+	tv.SetEditable(true)
+	blank := NewTreeItem("")
+	blank.SetValue("size", "1 KB")
+	tv.AddRootItem(blank)
+	tv.rebuildFlatList()
+	tv.SetCurrentItem(blank)
+	cw := tv.EffectiveCellMetrics().CellWidth
+	lay := tv.columnLayout()
+	textX := lay.spans[0].x + 1*cw // level 0: expander cell, then text
+	rowY := core.Unit(16 + 3*16 + 8) // blank sits at visual row 3
+
+	tv.HandleMousePress(core.MousePressEvent{X: textX + cw, Y: rowY, Button: core.LeftButton})
+	if tv.clickEditItem != blank || tv.clickEditCol != treeKeyColumn {
+		t.Fatal("blank caption's two-cell zone did not arm click-to-edit")
+	}
+	tv.HandleMouseRelease(core.MouseReleaseEvent{X: textX + cw, Y: rowY, Button: core.LeftButton})
+	if !tv.rowEditing || tv.editCol != treeKeyColumn {
+		t.Fatal("blank-zone click did not enter edit mode")
+	}
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
+
+	// Past the two-cell minimum: no edit candidate.
+	tv.HandleMousePress(core.MousePressEvent{X: textX + 2*cw + 4, Y: rowY, Button: core.LeftButton})
+	if tv.clickEditItem != nil {
+		t.Error("click past the two-cell zone became an edit candidate")
+	}
+	tv.HandleMouseRelease(core.MouseReleaseEvent{X: textX + 2*cw + 4, Y: rowY, Button: core.LeftButton})
+	if tv.rowEditing {
+		t.Error("click past the two-cell zone entered edit mode")
+	}
 }
 
 // An editable enum column's measured width keeps one extra cell for

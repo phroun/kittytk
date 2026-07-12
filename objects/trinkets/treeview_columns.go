@@ -1257,13 +1257,13 @@ func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, it
 	if avail < 0 {
 		avail = 0
 	}
-	p.DrawText(x, itemY, ellipsizeText(p, font, text, avail), s, font)
+	p.DrawText(x, itemY, ellipsizeText(font, text, avail), s, font)
 }
 
 // ellipsizeText fits text into avail, replacing a cut tail with an
 // ellipsis - "…" on pixel surfaces, the project's text-mode "..." on
 // cells. Rune-safe; returns the text unchanged when it already fits.
-func ellipsizeText(p *core.Painter, font *core.Font, text string, avail core.Unit) string {
+func ellipsizeText(font *core.Font, text string, avail core.Unit) string {
 	if font.MeasureText(text) <= avail {
 		return text
 	}
@@ -1295,7 +1295,7 @@ func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.
 	if avail < 0 {
 		avail = 0
 	}
-	text = ellipsizeText(p, font, text, avail)
+	text = ellipsizeText(font, text, avail)
 	tw := font.MeasureText(text)
 	x := sp.x
 	switch align {

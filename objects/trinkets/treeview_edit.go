@@ -1,6 +1,8 @@
 package trinkets
 
 import (
+	"strings"
+
 	"github.com/phroun/kittytk/core"
 )
 
@@ -644,12 +646,35 @@ func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
 		if !ok || event.X < clip.X || event.X >= clip.X+clip.Width {
 			continue
 		}
-		// The tree-hosting cell's indent/expander/icon region (left of
-		// the caption text) is never an edit target: the arrow keeps
-		// its click, and a double click there keeps the classic
-		// expand/collapse.
+		// The tree-hosting cell's edit target is the TEXT itself, the
+		// Finder/Explorer convention: from the caption's left edge to
+		// its DISPLAYED width (the ellipsis, when cut, excluded), with
+		// a two-cell minimum so blank or tiny captions stay clickable.
+		// Left of that (indent/expander/icon) and right of it are the
+		// classic click/double-click regions - the arrow keeps its
+		// click, double clicks expand/collapse.
 		if sp.col == nil || (host != nil && sp.col == host) {
-			if event.X < sp.x+t.treeCellTextInset(t.flatList[row]) {
+			item := t.flatList[row]
+			textX := sp.x + t.treeCellTextInset(item)
+			if event.X < textX {
+				continue
+			}
+			text := item.Text
+			if sp.col != nil {
+				text = sp.col.displayValue(item.Value(sp.col.ID))
+			}
+			font := t.EffectiveFont()
+			avail := sp.x + sp.w - textX
+			shown := ellipsizeText(font, text, avail)
+			shown = strings.TrimSuffix(shown, "…")
+			zone := font.MeasureText(shown)
+			if min := 2 * metrics.CellWidth; zone < min {
+				zone = min
+			}
+			if zone > avail {
+				zone = avail
+			}
+			if event.X >= textX+zone {
 				continue
 			}
 		}
