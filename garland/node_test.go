@@ -113,11 +113,14 @@ func TestCreateLeafSnapshotWithDecorations(t *testing.T) {
 	if snap.originalFileOffset != 100 {
 		t.Errorf("Expected originalFileOffset 100, got %d", snap.originalFileOffset)
 	}
-	if snap.dataHash == nil {
-		t.Error("dataHash should not be nil")
+	// Hashes are computed lazily at chill time, never at creation:
+	// eager hashing was the dominant per-keystroke cost, and the eager
+	// decoration hash used a different encoding than thaw verification.
+	if snap.dataHash != nil {
+		t.Error("dataHash should be nil until the snapshot is chilled")
 	}
-	if snap.decorationHash == nil {
-		t.Error("decorationHash should not be nil")
+	if snap.decorationHash != nil {
+		t.Error("decorationHash should be nil until the snapshot is chilled")
 	}
 }
 
@@ -305,27 +308,6 @@ func TestComputeHash(t *testing.T) {
 	}
 }
 
-func TestComputeDecorationHash(t *testing.T) {
-	dec1 := []Decoration{{Key: "a", Position: 10}}
-	dec2 := []Decoration{{Key: "a", Position: 10}}
-	dec3 := []Decoration{{Key: "b", Position: 10}}
-	dec4 := []Decoration{{Key: "a", Position: 20}}
-
-	hash1 := computeDecorationHash(dec1)
-	hash2 := computeDecorationHash(dec2)
-	hash3 := computeDecorationHash(dec3)
-	hash4 := computeDecorationHash(dec4)
-
-	if !bytes.Equal(hash1, hash2) {
-		t.Error("Same decorations should produce same hash")
-	}
-	if bytes.Equal(hash1, hash3) {
-		t.Error("Different keys should produce different hash")
-	}
-	if bytes.Equal(hash1, hash4) {
-		t.Error("Different positions should produce different hash")
-	}
-}
 
 func TestLineStartTracking(t *testing.T) {
 	// Test that line starts are correctly tracked

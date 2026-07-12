@@ -211,11 +211,18 @@ func createLeafSnapshot(data []byte, decorations []Decoration, originalOffset in
 		snap.runesAfterLastNewline = 0
 	}
 
-	// Compute hash
-	snap.dataHash = computeHash(data)
-	if len(decorations) > 0 {
-		snap.decorationHash = computeDecorationHash(decorations)
-	}
+	// Hashes are computed LAZILY, at chill time (chillSnapshot /
+	// chillToWarmStorage fill them in before data leaves memory), for
+	// two reasons:
+	//   - SHA-256 over up to 128KB on every leaf rebuild was the
+	//     dominant per-keystroke cost, paid even though most leaves
+	//     are superseded without ever being chilled.
+	//   - An eagerly computed decorationHash used a DIFFERENT encoding
+	//     (computeDecorationHash) than what cold storage writes and
+	//     thaw verifies (encodeDecorations), so any chilled leaf with
+	//     decorations failed verification on thaw and silently dropped
+	//     its marks. With one writer - the chill path - the hash always
+	//     matches the stored encoding.
 
 	return snap
 }
@@ -287,20 +294,6 @@ func (s *NodeSnapshot) RightID() NodeID {
 func computeHash(data []byte) []byte {
 	h := sha256.Sum256(data)
 	return h[:]
-}
-
-// computeDecorationHash computes a hash of decoration data.
-func computeDecorationHash(decorations []Decoration) []byte {
-	// Simple hash: concatenate key and position bytes
-	var data []byte
-	for _, d := range decorations {
-		data = append(data, []byte(d.Key)...)
-		data = append(data, byte(d.Position>>56), byte(d.Position>>48),
-			byte(d.Position>>40), byte(d.Position>>32),
-			byte(d.Position>>24), byte(d.Position>>16),
-			byte(d.Position>>8), byte(d.Position))
-	}
-	return computeHash(data)
 }
 
 // partitionDecorations splits decorations at a given position.
