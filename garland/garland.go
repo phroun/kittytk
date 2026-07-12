@@ -2,6 +2,7 @@ package garland
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -402,6 +403,10 @@ type Garland struct {
 	// Source file change detection
 	sourceState      *sourceState
 	warmVerification map[NodeID]*warmVerificationState
+
+	// maintenanceInFlight guards against stacking CheckMemoryPressure
+	// goroutines (one per mutation would each scan the node registry).
+	maintenanceInFlight int32
 }
 
 // Open creates or loads a Garland from various sources.
@@ -4594,9 +4599,18 @@ func (g *Garland) recordMutation() ChangeResult {
 		cursor.lastRevision = g.currentRevision
 	}
 
-	// Check memory pressure and perform incremental maintenance if needed
-	// Note: This is done without holding the lock, so we need to be careful
-	go g.CheckMemoryPressure()
+	// Check memory pressure and perform incremental maintenance if
+	// needed. Only when limits are actually configured, and never more
+	// than one checker in flight: an unconditional goroutine per
+	// mutation means one full node-registry scan PER KEYSTROKE, each
+	// scan growing with the registry.
+	if g.lib != nil && (g.lib.memorySoftLimit > 0 || g.lib.memoryHardLimit > 0) &&
+		atomic.CompareAndSwapInt32(&g.maintenanceInFlight, 0, 1) {
+		go func() {
+			defer atomic.StoreInt32(&g.maintenanceInFlight, 0)
+			g.CheckMemoryPressure()
+		}()
+	}
 
 	return ChangeResult{Fork: g.currentFork, Revision: g.currentRevision}
 }

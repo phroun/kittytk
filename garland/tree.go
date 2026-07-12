@@ -615,6 +615,70 @@ func (g *Garland) insertIntoLeaf(
 	// by partitionDecorations (subtracted splitPos). No further adjustment needed
 	// because the inserted content goes into its own leaf node.
 
+	// COALESCE: when the pieces fit in one or two leaves, build those
+	// instead of a left/middle/right triple. Without this, every
+	// keystroke mints a tiny middle leaf plus a deeper spine of
+	// internal nodes - typing at one spot degrades to O(edits) work
+	// per edit and O(edits^2) node accumulation. With it, a keystroke
+	// rebuilds one bounded leaf and the tree's shape is stable.
+	combinedLen := int64(len(leftData)) + int64(len(data)) + int64(len(rightData))
+	if combinedLen <= 2*g.maxLeafSize {
+		combined := make([]byte, 0, combinedLen)
+		combined = append(combined, leftData...)
+		combined = append(combined, data...)
+		combined = append(combined, rightData...)
+
+		mid := int64(len(leftData))
+		combDecs := make([]Decoration, 0, len(leftDecs)+len(absoluteDecs)+len(rightDecs))
+		combDecs = append(combDecs, leftDecs...)
+		for _, d := range absoluteDecs {
+			combDecs = append(combDecs, Decoration{Key: d.Key, Position: d.Position + mid})
+		}
+		for _, d := range rightDecs {
+			combDecs = append(combDecs, Decoration{Key: d.Key, Position: d.Position + mid + int64(len(data))})
+		}
+
+		if combinedLen <= g.maxLeafSize {
+			g.nextNodeID++
+			g.nodeManipulations++
+			leaf := newNode(g.nextNodeID, g)
+			g.nodeRegistry[leaf.id] = leaf
+			leaf.setSnapshot(g.currentFork, g.currentRevision, createLeafSnapshot(combined, combDecs, -1))
+			g.updateDecorationCacheForNode(leaf.id, absoluteOffset, combDecs)
+			return leaf.id, nil
+		}
+
+		// Two balanced leaves, split on a rune boundary so per-leaf
+		// rune/line indexes stay meaningful.
+		sp := combinedLen / 2
+		for sp > 0 && (combined[sp]&0xC0) == 0x80 {
+			sp--
+		}
+		var firstDecs, secondDecs []Decoration
+		for _, d := range combDecs {
+			if d.Position < sp {
+				firstDecs = append(firstDecs, d)
+			} else {
+				secondDecs = append(secondDecs, Decoration{Key: d.Key, Position: d.Position - sp})
+			}
+		}
+		g.nextNodeID++
+		g.nodeManipulations++
+		first := newNode(g.nextNodeID, g)
+		g.nodeRegistry[first.id] = first
+		first.setSnapshot(g.currentFork, g.currentRevision, createLeafSnapshot(combined[:sp:sp], firstDecs, -1))
+		g.updateDecorationCacheForNode(first.id, absoluteOffset, firstDecs)
+
+		g.nextNodeID++
+		g.nodeManipulations++
+		second := newNode(g.nextNodeID, g)
+		g.nodeRegistry[second.id] = second
+		second.setSnapshot(g.currentFork, g.currentRevision, createLeafSnapshot(combined[sp:], secondDecs, -1))
+		g.updateDecorationCacheForNode(second.id, absoluteOffset+sp, secondDecs)
+
+		return g.concatenate(first.id, second.id)
+	}
+
 	// Create new left leaf (original content before insertion point)
 	var leftID NodeID
 	leftOffset := absoluteOffset

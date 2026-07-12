@@ -1,6 +1,7 @@
 package garland
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"time"
 	"unicode/utf8"
@@ -173,25 +174,29 @@ func createLeafSnapshot(data []byte, decorations []Decoration, originalOffset in
 	snap.byteCount = int64(len(data))
 	snap.runeCount = int64(utf8.RuneCount(data))
 
-	// Count newlines and build line starts index
+	// Count newlines and build line starts index. Hops newline to
+	// newline with IndexByte instead of decoding every rune - this runs
+	// on every leaf rebuild, i.e. on every keystroke.
 	snap.lineStarts = make([]LineStart, 0)
 	snap.lineStarts = append(snap.lineStarts, LineStart{ByteOffset: 0, RuneOffset: 0})
 
-	var runeOffset int64 = 0
-	for i := 0; i < len(data); {
-		r, size := utf8.DecodeRune(data[i:])
-		if r == '\n' {
-			snap.lineCount++
-			// Next line starts after this newline
-			if i+size < len(data) {
-				snap.lineStarts = append(snap.lineStarts, LineStart{
-					ByteOffset: int64(i + size),
-					RuneOffset: runeOffset + 1,
-				})
-			}
+	var runeOffset int64
+	prev := 0
+	for {
+		i := bytes.IndexByte(data[prev:], '\n')
+		if i < 0 {
+			break
 		}
-		i += size
-		runeOffset++
+		nl := prev + i
+		snap.lineCount++
+		runeOffset += int64(utf8.RuneCount(data[prev : nl+1]))
+		if nl+1 < len(data) {
+			snap.lineStarts = append(snap.lineStarts, LineStart{
+				ByteOffset: int64(nl + 1),
+				RuneOffset: runeOffset,
+			})
+		}
+		prev = nl + 1
 	}
 
 	// Calculate runes after last newline from lineStarts
