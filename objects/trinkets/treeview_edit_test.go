@@ -203,7 +203,7 @@ func TestTreeKeyEditorRespectsIndent(t *testing.T) {
 		t.Fatal("editor rect unavailable")
 	}
 	lay := tv.columnLayout()
-	wantX := lay.spans[0].x + core.Unit(1*tv.indentWidth+1)*cw
+	wantX := lay.spans[0].x + core.Unit(1*tv.indentWidth+1+treeLeftPadCells)*cw
 	if r.X != wantX {
 		t.Errorf("key editor X = %d, want %d (indent+expander inset)", r.X, wantX)
 	}
@@ -225,7 +225,7 @@ func TestTreeKeyEditorRespectsIndent(t *testing.T) {
 		t.Fatal("host editor rect unavailable")
 	}
 	lay = tv.columnLayout()
-	wantX = lay.spans[0].x + core.Unit(1*tv.indentWidth+1)*cw
+	wantX = lay.spans[0].x + core.Unit(1*tv.indentWidth+1+treeLeftPadCells)*cw
 	if r.X != wantX {
 		t.Errorf("host editor X = %d, want %d", r.X, wantX)
 	}

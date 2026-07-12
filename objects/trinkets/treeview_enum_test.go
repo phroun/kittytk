@@ -372,9 +372,9 @@ func TestTreeDoubleClickEditableSuppressed(t *testing.T) {
 	for _, sp := range lay.spans {
 		switch {
 		case sp.col == nil:
-			keyPadX = sp.x + 4 // inside the level-1 indent, left of the arrow
-			// Text starts after indent(2 cells) + expander(1 cell).
-			keyTextX = sp.x + 3*cw + 4
+			keyPadX = sp.x + cw + 4 // inside the level-1 indent, left of the arrow
+			// Text starts after pad + indent(2 cells) + expander(1 cell).
+			keyTextX = sp.x + core.Unit(3+treeLeftPadCells)*cw + 4
 		case sp.col.ID == "size":
 			sizeX = sp.x + sp.w/2
 		case sp.col.ID == "kind":
@@ -431,7 +431,7 @@ func TestTreeDoubleClickEditableSuppressed(t *testing.T) {
 	// RIGHT of the caption text (past its displayed width): classic
 	// toggle again - the Finder/Explorer convention.
 	font := tv.EffectiveFont()
-	beyondX := lay.spans[0].x + 3*cw + font.MeasureText("Folder") + 8
+	beyondX := lay.spans[0].x + core.Unit(3+treeLeftPadCells)*cw + font.MeasureText("Folder") + 8
 	dbl(beyondX)
 	if !folder.Expanded {
 		t.Error("double click right of the text did not expand")
@@ -454,7 +454,7 @@ func TestTreeKeyBlankCaptionEditZone(t *testing.T) {
 	tv.SetCurrentItem(blank)
 	cw := tv.EffectiveCellMetrics().CellWidth
 	lay := tv.columnLayout()
-	textX := lay.spans[0].x + 1*cw // level 0: expander cell, then text
+	textX := lay.spans[0].x + core.Unit(1+treeLeftPadCells)*cw // level 0: pad, expander cell, then text
 	rowY := core.Unit(16 + 3*16 + 8) // blank sits at visual row 3
 
 	tv.HandleMousePress(core.MousePressEvent{X: textX + cw, Y: rowY, Button: core.LeftButton})

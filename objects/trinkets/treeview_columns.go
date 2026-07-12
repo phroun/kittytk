@@ -703,6 +703,12 @@ func (t *TreeView) SetKeyWidth(cells int) {
 const (
 	treeKeyMinCells     = 6  // narrowest useful tree column
 	treeKeyDefaultCells = 20 // scroll-mode default tree column width
+
+	// treeLeftPadCells is breathing room before the tree apparatus:
+	// the tree-host column's content starts one cell in from its left
+	// edge, painted in the row's own background like the rest of the
+	// glyph/margin area.
+	treeLeftPadCells = 1
 )
 
 // multiColumn reports whether the multi-column presentation is active
@@ -979,7 +985,7 @@ func (t *TreeView) neededCells(col *TreeColumn) int {
 	for _, it := range t.flatList {
 		w := font.MeasureText(col.displayValue(it.Value(col.ID)))
 		if host {
-			w += core.Unit(it.Level()*t.indentWidth+1) * cw
+			w += core.Unit(it.Level()*t.indentWidth+1+treeLeftPadCells) * cw
 		}
 		if w > maxW {
 			maxW = w
@@ -1407,12 +1413,12 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 // the span and always left-aligned.
 func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, itemY core.Unit, s, textStyle style.CellStyle, metrics core.CellMetrics, font *core.Font, text string) {
 	level := item.Level()
-	x := sp.x + core.Unit(level*t.indentWidth)*metrics.CellWidth
+	x := sp.x + core.Unit(level*t.indentWidth+treeLeftPadCells)*metrics.CellWidth
 	// Connector lines fill the indent space (never widen it).
 	if t.treeLines {
 		for ci, r := range t.treeLinePrefix(item) {
 			if r != ' ' {
-				t.drawTreeLineCell(p, sp.x+core.Unit(ci)*metrics.CellWidth, itemY, r, s, metrics)
+				t.drawTreeLineCell(p, sp.x+core.Unit(ci+treeLeftPadCells)*metrics.CellWidth, itemY, r, s, metrics)
 			}
 		}
 	}

@@ -307,7 +307,7 @@ func (t *TreeView) SetCurrentIndex(index int) {
 
 		// Calculate the item's content start position (one space before the expand indicator)
 		// For root items (level 0), start at X=0
-		contentStartCells := level * t.indentWidth
+		contentStartCells := level*t.indentWidth + treeLeftPadCells
 		if contentStartCells > 0 {
 			contentStartCells-- // Show one space of indent
 		}
@@ -664,14 +664,14 @@ func (t *TreeView) Paint(p *core.Painter) {
 			Height: metrics.CellHeight,
 		}, ' ', s)
 
-		// Calculate x position with indent
-		x := core.Unit(level*t.indentWidth) * metrics.CellWidth
+		// Calculate x position with indent (plus the left breathing pad)
+		x := core.Unit(level*t.indentWidth+treeLeftPadCells) * metrics.CellWidth
 
 		// Connector lines fill the indent space (never widen it).
 		if t.treeLines {
 			for ci, r := range t.treeLinePrefix(item) {
 				if r != ' ' {
-					t.drawTreeLineCell(p, core.Unit(ci)*metrics.CellWidth, itemY, r, s, metrics)
+					t.drawTreeLineCell(p, core.Unit(ci+treeLeftPadCells)*metrics.CellWidth, itemY, r, s, metrics)
 				}
 			}
 		}
@@ -1193,7 +1193,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 				keyX = contentWidth // no tree host in view: no indicator hit
 			}
 		}
-		indicatorX := keyX + core.Unit(level*t.indentWidth)*metrics.CellWidth
+		indicatorX := keyX + core.Unit(level*t.indentWidth+treeLeftPadCells)*metrics.CellWidth
 		if event.X >= indicatorX && event.X < indicatorX+metrics.CellWidth {
 			if !item.IsLeaf() {
 				t.ToggleItem(item)

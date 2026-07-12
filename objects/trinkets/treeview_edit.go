@@ -104,7 +104,7 @@ func (t *TreeView) setCellValue(item *TreeItem, col *TreeColumn, v string) {
 // (when the item has one) - mirroring paintTreeCell exactly.
 func (t *TreeView) treeCellTextInset(item *TreeItem) core.Unit {
 	cw := t.EffectiveCellMetrics().CellWidth
-	inset := core.Unit(item.Level()*t.indentWidth+1) * cw
+	inset := core.Unit(item.Level()*t.indentWidth+1+treeLeftPadCells) * cw
 	if item.Icon != nil && len(item.Icon.Cells) > 0 {
 		inset += cw * 2
 	}

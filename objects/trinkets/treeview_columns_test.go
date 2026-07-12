@@ -154,7 +154,8 @@ func TestTreeColumnHostWhenKeyHidden(t *testing.T) {
 		t.Fatal("precondition: root expanded")
 	}
 	tv.HandleMousePress(core.MousePressEvent{
-		X: lay.spans[0].x + 2, Y: tv.headerHeight() + 2, Button: core.LeftButton,
+		X: lay.spans[0].x + core.Unit(treeLeftPadCells)*tv.EffectiveCellMetrics().CellWidth + 2,
+		Y: tv.headerHeight() + 2, Button: core.LeftButton,
 	})
 	if root.Expanded {
 		t.Error("expander click in the host data column did not collapse")
