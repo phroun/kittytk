@@ -575,54 +575,34 @@ func (g *Garland) Close() error {
 	return nil
 }
 
-// Save overwrites the original file with the current content.
-// Caller asserts that this replaces any warm storage source.
+// Save overwrites the original file IN PLACE with the current content.
+// The file is rewritten without a temporary copy (peak disk usage never
+// exceeds max(old, new) size) and shrinks only as the final step; warm
+// storage survives the save, re-homed to the new layout. Undo history
+// that depends on overwritten warm bytes is migrated to cold storage
+// first. See save.go for the full design.
 // Returns ErrNoDataSource if there is no original file path.
 func (g *Garland) Save() error {
-	if g.sourcePath == "" {
-		return ErrNoDataSource
-	}
-
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	// Determine which filesystem to use
-	fs := g.sourceFS
-	if fs == nil {
-		fs = g.lib.defaultFS
-	}
-
-	// Close warm storage handle if open
-	if g.sourceHandle != nil {
-		fs.Close(g.sourceHandle)
-		g.sourceHandle = nil
-	}
-
-	// Stream write to file
-	if err := g.streamWriteToFile(fs, g.sourcePath); err != nil {
-		return err
-	}
-
-	// Reopen for warm storage if needed
-	if g.loadingStyle == AllStorage {
-		handle, err := fs.Open(g.sourcePath, OpenModeRead)
-		if err == nil {
-			g.sourceHandle = handle
-		}
-	}
-
-	return nil
+	return g.SaveWith(SaveOptions{PreserveHistory: true})
 }
 
 // SaveAs writes the current content to a new location.
-// Warm storage remains pointing to the original file (if any).
+// Warm storage remains pointing to the original file (if any). Saving
+// onto the original file itself routes through the in-place engine so
+// the warm backing store is never destroyed.
 func (g *Garland) SaveAs(fs FileSystemInterface, name string) error {
 	if fs == nil {
 		return ErrNotSupported
 	}
 
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	// Full lock: streaming may thaw chilled snapshots, which mutates them.
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.sourcePath != "" && name == g.sourcePath &&
+		(fs == g.sourceFS || (g.sourceFS == nil && fs == g.lib.defaultFS)) {
+		return g.saveInPlace(fs, SaveOptions{PreserveHistory: true})
+	}
 
 	return g.streamWriteToFile(fs, name)
 }
@@ -661,12 +641,9 @@ func (g *Garland) streamWriteNode(fs FileSystemInterface, handle FileHandle, nod
 	}
 
 	if snap.isLeaf {
-		// Thaw if needed
-		if snap.storageState != StorageMemory {
-			forkRev := ForkRevision{g.currentFork, g.currentRevision}
-			if err := g.thawSnapshot(nodeID, forkRev, snap); err != nil {
-				return err
-			}
+		// Thaw if needed, using the snapshot's own history key
+		if err := g.ensureLeafDataResident(node, snap); err != nil {
+			return err
 		}
 		// Write leaf data directly to file
 		if len(snap.data) > 0 {
@@ -1328,6 +1305,24 @@ func (g *Garland) ensureSnapshotData(node *Node, forkRev ForkRevision, snap *Nod
 	}
 
 	return nil
+}
+
+// ensureLeafDataResident thaws a leaf snapshot using the snapshot's OWN
+// history key: cold-storage blocks are named by the (fork, revision)
+// key the snapshot was chilled under, which is not necessarily the
+// current coordinates - thawing with the wrong key misses the block
+// and falsely placeholders the leaf. This is the entry point every
+// reader of snap.data must pass through when the leaf may be chilled.
+func (g *Garland) ensureLeafDataResident(node *Node, snap *NodeSnapshot) error {
+	if snap == nil || !snap.isLeaf || snap.storageState == StorageMemory {
+		return nil
+	}
+	for k, s := range node.history {
+		if s == snap {
+			return g.ensureSnapshotData(node, k, snap)
+		}
+	}
+	return g.ensureSnapshotData(node, ForkRevision{g.currentFork, g.currentRevision}, snap)
 }
 
 // readFromWarmStorageWithTrust reads data from warm storage using trust-aware verification.

@@ -73,12 +73,11 @@ func (r *ropeRuneReader) loadLeafAt(pos int64) error {
 		return ErrInternal
 	}
 
-	// Thaw if needed (cold/warm storage -> memory)
-	if snap.storageState != StorageMemory {
-		forkRev := ForkRevision{r.g.currentFork, r.g.currentRevision}
-		if err := r.g.thawSnapshot(leafResult.Node.id, forkRev, snap); err != nil {
-			return err
-		}
+	// Thaw if needed (cold/warm storage -> memory), using the
+	// snapshot's own history key - cold blocks are named by the key
+	// the snapshot was chilled under.
+	if err := r.g.ensureLeafDataResident(leafResult.Node, snap); err != nil {
+		return err
 	}
 
 	r.leafData = snap.data

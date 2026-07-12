@@ -54,6 +54,12 @@ func (g *Garland) findLeafByByteUnlocked(pos int64) (*LeafSearchResult, error) {
 // runesOnLine tracks runes on the current line before the start of the subtree we're descending into.
 func (g *Garland) findLeafByByteInternal(node *Node, snap *NodeSnapshot, pos int64, byteStart int64, runeStart int64, runesOnLine int64) (*LeafSearchResult, error) {
 	if snap.isLeaf {
+		// Consumers of a leaf search read snap.data (starting with the
+		// rune-offset conversion right below); a chilled leaf must be
+		// resident first or they operate on nil bytes.
+		if err := g.ensureLeafDataResident(node, snap); err != nil {
+			return nil, err
+		}
 		return &LeafSearchResult{
 			Node:                  node,
 			Snapshot:              snap,
@@ -153,6 +159,9 @@ func (g *Garland) findLeafByRuneUnlocked(pos int64) (*LeafSearchResult, error) {
 // runesOnLine tracks runes on the current line before the start of the subtree we're descending into.
 func (g *Garland) findLeafByRuneInternal(node *Node, snap *NodeSnapshot, pos int64, byteStart int64, runeStart int64, runesOnLine int64) (*LeafSearchResult, error) {
 	if snap.isLeaf {
+		if err := g.ensureLeafDataResident(node, snap); err != nil {
+			return nil, err
+		}
 		byteOffset := runeToByteOffset(snap.data, pos)
 		return &LeafSearchResult{
 			Node:                  node,
@@ -269,6 +278,9 @@ func (g *Garland) findLeafByLineInternal(
 	runesOnLine int64,
 ) (*LineSearchResult, error) {
 	if snap.isLeaf {
+		if err := g.ensureLeafDataResident(node, snap); err != nil {
+			return nil, err
+		}
 		// Find the line within this leaf
 		relLine := targetLine - lineStart
 		if relLine < 0 {
@@ -520,7 +532,13 @@ func (g *Garland) insertInternal(
 	insertBefore bool,
 ) (NodeID, error) {
 	if snap.isLeaf {
-		// We've found the leaf to insert into
+		// We've found the leaf to insert into. Its bytes must be
+		// resident: the split/coalesce below slices snap.data, and on
+		// a chilled leaf that would silently build the new tree from
+		// nil - data loss, not an error.
+		if err := g.ensureLeafDataResident(node, snap); err != nil {
+			return 0, err
+		}
 		localPos := insertPos - offset
 		return g.insertIntoLeaf(snap, localPos, offset, data, decorations, insertBefore)
 	}
@@ -792,6 +810,11 @@ func (g *Garland) deleteRangeInternal(
 	}
 
 	if snap.isLeaf {
+		// The rebuild below slices snap.data; a chilled leaf must be
+		// resident or the surviving content is silently lost.
+		if err := g.ensureLeafDataResident(node, snap); err != nil {
+			return 0, err
+		}
 		// Calculate local delete range
 		localStart := deleteStart - nodeStart
 		if localStart < 0 {
