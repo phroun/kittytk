@@ -212,12 +212,14 @@ type Scheme struct {
 	// List Related Colors (TreeView, ListView)
 	// =========================================================================
 
-	ListBG           *CellStyle // nil = TrinketContentBG
-	ListFG           *CellStyle // nil = TrinketContentFG
-	FocusedListBG    *CellStyle // nil = ListBG
-	FocusedListFG    *CellStyle // nil = ListFG
-	SelectedListItem *CellStyle // nil = Selection
-	FocusedListItem  *CellStyle // nil = FocusBG + FocusFG
+	ListBG            *CellStyle // nil = TrinketContentBG
+	ListFG            *CellStyle // nil = TrinketContentFG
+	FocusedListBG     *CellStyle // nil = ListBG
+	FocusedListFG     *CellStyle // nil = ListFG
+	SelectedListItem  *CellStyle // nil = Selection
+	FocusedListRow    *CellStyle // nil = bright yellow on dark gray
+	FocusedListItem   *CellStyle // nil = FocusBG + FocusFG
+	FocusedListButton *CellStyle // list-borne controls (header/chooser); nil = FocusedButton
 
 	// =========================================================================
 	// Scrollbar Colors (ScrollArea, ListView, TreeView)
@@ -339,10 +341,10 @@ func DefaultScheme() *Scheme {
 		HoveredDockItem:   nil, // HoverBG + HoverFG
 
 		// Window Frame Related Colors
-		ActiveWindowBorder:     ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
-		InactiveWindowBorder:   ptr(DefaultStyle().WithFg(ColorBrightBlue).WithBg(ColorBlue)),
-		ActiveWindowTitle:      ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue).Bold()),
-		InactiveWindowTitle:    ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBrightBlack).WithAttrs(StyleDim)),
+		ActiveWindowBorder:   ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
+		InactiveWindowBorder: ptr(DefaultStyle().WithFg(ColorBrightBlue).WithBg(ColorBlue)),
+		ActiveWindowTitle:    ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue).Bold()),
+		InactiveWindowTitle:  ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorBrightBlack).WithAttrs(StyleDim)),
 		// No explicit background: each defaults to its matching (active or
 		// inactive) title-bar background, so a button blends into the bar it
 		// sits on unless a scheme overrides it (see GetTitleBarButton).
@@ -1267,11 +1269,32 @@ func (s *Scheme) GetSelectedListItem() CellStyle {
 	return or(s.SelectedListItem, s.Selection)
 }
 
+// GetFocusedListRow is the focused-and-selected ROW band in an
+// editing-capable list/tree: the whole row lights in this style while
+// FocusedListItem marks only the cell the Enter key would edit.
+func (s *Scheme) GetFocusedListRow() CellStyle {
+	if s.FocusedListRow != nil {
+		return *s.FocusedListRow
+	}
+	return DefaultStyle().WithFg(ColorBrightYellow).WithBg(ColorBrightBlack)
+}
+
 func (s *Scheme) GetFocusedListItem() CellStyle {
 	if s.FocusedListItem != nil {
 		return *s.FocusedListItem
 	}
 	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
+}
+
+// GetFocusedListButton styles a list/tree's own CONTROL stops (the
+// header bar, sort captions, the chooser button) when the internal
+// focus sits on them - they are buttons, not list items, and wear the
+// button face unless a scheme overrides it.
+func (s *Scheme) GetFocusedListButton() CellStyle {
+	if s.FocusedListButton != nil {
+		return *s.FocusedListButton
+	}
+	return s.GetFocusedButton()
 }
 
 // --- Scrollbar Colors ---

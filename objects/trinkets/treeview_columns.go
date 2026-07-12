@@ -983,7 +983,9 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	headerStyle := scheme.GetHeader()
 	if lay.headerH > 0 {
 		if focused && t.headerZone == hzBar {
-			headerStyle = scheme.GetFocusedListItem()
+			// The header is a CONTROL bar, not a list item: its focus
+			// stop wears a button face.
+			headerStyle = scheme.GetFocusedListButton()
 		}
 		if !p.Graphical() {
 			headerStyle = headerStyle.Underline()
@@ -1000,8 +1002,9 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			}
 			spanStyle := headerStyle
 			if focused && t.headerZone == hzItems && t.headerFocusIdx == i {
-				// Drilled-in focus on this caption.
-				spanStyle = scheme.GetFocusedListItem()
+				// Drilled-in focus on this caption (a button face - the
+				// caption acts like a sort button here).
+				spanStyle = scheme.GetFocusedListButton()
 				if !p.Graphical() {
 					spanStyle = spanStyle.Underline()
 				}
@@ -1042,7 +1045,12 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 
 	// Rows. Row styles are collected for the horizontal-scroll edge
 	// fades, which must match each band's own background (header,
-	// selected row, plain rows).
+	// selected row, plain rows). enterCol is the cell Enter would edit
+	// right now - it alone wears FocusedListItem on the focused row.
+	var enterCol *TreeColumn
+	if focused && t.headerZone == hzContent && !t.chooserOpen && !t.rowEditing {
+		enterCol = t.enterTargetColumn()
+	}
 	visibleCount := t.visibleCount()
 	rowStyles := make([]style.CellStyle, 0, visibleCount)
 	for i := 0; i < visibleCount; i++ {
@@ -1067,7 +1075,14 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		case !item.Enabled:
 			s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(scheme.GetListBG())
 		case itemIndex == t.currentIndex && rowFocused:
-			s = scheme.GetFocusedListItem()
+			if t.hasEditableColumns() {
+				// Editing available: the row band wears FocusedListRow;
+				// the Enter-target cell alone carries FocusedListItem
+				// (painted per-span below).
+				s = scheme.GetFocusedListRow()
+			} else {
+				s = scheme.GetFocusedListItem()
+			}
 		case itemIndex == t.currentIndex:
 			s = scheme.GetSelectedListItem()
 		case t.ledger:
@@ -1101,16 +1116,35 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			if !ok {
 				continue
 			}
+			// The Enter-target cell on the focused selected row wears
+			// FocusedListItem over the FocusedListRow band - exactly
+			// the rect its editor would fill (the tree-hosting cell's
+			// apparatus stays in the row style).
+			cellStyle := s
+			if itemIndex == t.currentIndex && rowFocused && enterCol != nil &&
+				spanMatchesCol(sp, enterCol) {
+				cellStyle = scheme.GetFocusedListItem()
+				segX := sp.x
+				if sp.col == nil || (host != nil && sp.col == host) {
+					segX += t.treeCellTextInset(item)
+				}
+				if segX < clip.X {
+					segX = clip.X
+				}
+				if segX1 := clip.X + clip.Width; segX1 > segX {
+					p.FillRect(core.UnitRect{X: segX, Y: itemY, Width: segX1 - segX, Height: metrics.CellHeight}, ' ', cellStyle)
+				}
+			}
 			cp := p.WithClip(clip)
 			switch {
 			case sp.col == nil:
-				t.paintTreeCell(cp, item, sp, itemY, s, metrics, font, item.Text)
+				t.paintTreeCell(cp, item, sp, itemY, s, cellStyle, metrics, font, item.Text)
 			case sp.col == host:
 				// Key column hidden: this column carries the expander
 				// and indent (and is forced left-aligned for it).
-				t.paintTreeCell(cp, item, sp, itemY, s, metrics, font, sp.col.displayValue(item.Value(sp.col.ID)))
+				t.paintTreeCell(cp, item, sp, itemY, s, cellStyle, metrics, font, sp.col.displayValue(item.Value(sp.col.ID)))
 			default:
-				t.drawAligned(cp, sp.col.displayValue(item.Value(sp.col.ID)), sp, itemY, s, font, sp.col.Align)
+				t.drawAligned(cp, sp.col.displayValue(item.Value(sp.col.ID)), sp, itemY, cellStyle, font, sp.col.Align)
 			}
 		}
 	}
@@ -1237,7 +1271,7 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 // expander, icon, then the given text (the key column's caption, or -
 // with the key hidden - the host data column's value), constrained to
 // the span and always left-aligned.
-func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, itemY core.Unit, s style.CellStyle, metrics core.CellMetrics, font *core.Font, text string) {
+func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, itemY core.Unit, s, textStyle style.CellStyle, metrics core.CellMetrics, font *core.Font, text string) {
 	level := item.Level()
 	x := sp.x + core.Unit(level*t.indentWidth)*metrics.CellWidth
 	if !item.IsLeaf() {
@@ -1257,7 +1291,7 @@ func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, it
 	if avail < 0 {
 		avail = 0
 	}
-	p.DrawText(x, itemY, ellipsizeText(font, text, avail), s, font)
+	p.DrawText(x, itemY, ellipsizeText(font, text, avail), textStyle, font)
 }
 
 // ellipsizeText fits text into avail, replacing a cut tail with an
@@ -1349,8 +1383,9 @@ func (t *TreeView) paintChooserButton(p *core.Painter, lay treeColLayout, header
 		// Hover color is a MOUSE affordance only.
 		st = scheme.GetHoveredButton()
 	case keyFocused, t.chooserOpen:
-		// Keyboard focus (and the open state) use the focus styling.
-		st = scheme.GetFocusedListItem()
+		// Keyboard focus (and the open state): a button face - the
+		// chooser is a control, not a list item.
+		st = scheme.GetFocusedListButton()
 	}
 	if p.Graphical() {
 		p.FillRect(core.UnitRect{X: r.X, Y: r.Y, Width: r.Width, Height: r.Height}, ' ', st)

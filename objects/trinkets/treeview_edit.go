@@ -141,6 +141,25 @@ func (t *TreeView) editableColumns() []*TreeColumn {
 
 func (t *TreeView) hasEditableColumns() bool { return len(t.editableColumns()) > 0 }
 
+// enterTargetColumn is the column Enter would edit right now: the
+// remembered last-edited column when still available, else the first
+// editable one (nil when nothing is editable). The paint path marks
+// this cell with FocusedListItem on the focused selected row.
+func (t *TreeView) enterTargetColumn() *TreeColumn {
+	cols := t.editableColumns()
+	if len(cols) == 0 {
+		return nil
+	}
+	col := cols[0]
+	for _, c := range cols {
+		if c == t.editLastCol {
+			col = c
+			break
+		}
+	}
+	return col
+}
+
 // startRowEdit enters row-edit mode on the current item, resuming the
 // last-edited column when it is still available, else the first
 // editable one. Returns false when there is nothing to edit.
@@ -149,16 +168,9 @@ func (t *TreeView) startRowEdit() bool {
 	if item == nil || !t.multiColumn() || t.rowEditing {
 		return false
 	}
-	cols := t.editableColumns()
-	if len(cols) == 0 {
+	col := t.enterTargetColumn()
+	if col == nil {
 		return false
-	}
-	col := cols[0]
-	for _, c := range cols {
-		if c == t.editLastCol {
-			col = c
-			break
-		}
 	}
 	t.beginCellEdit(item, col)
 	return true
