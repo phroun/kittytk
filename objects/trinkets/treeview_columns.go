@@ -1179,6 +1179,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	// toward the CELL's color, not the band behind it.
 	fadeL := make([]style.Color, 0, rows)
 	fadeR := make([]style.Color, 0, rows)
+	rowBands := make([]style.Color, 0, rows) // full-row band bg (vertical fades)
 	for i := 0; i < rows; i++ {
 		itemIndex := t.scrollOffset + i
 		if itemIndex >= len(t.flatList) {
@@ -1312,6 +1313,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		}
 		fadeL = append(fadeL, fadeLBG)
 		fadeR = append(fadeR, fadeRBG)
+		rowBands = append(rowBands, s.Bg)
 	}
 
 	// Dividers, over the rows, down to the footer row (the reserved
@@ -1354,6 +1356,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	// banded so each fade matches the background it covers.
 	t.paintHScrollFades(p, lay, headerStyle, fadeL, fadeR, bgStyle)
 	paintDividers(true)
+	t.paintVScrollFades(p, lay, rowBands, bgStyle)
 	if lay.headerH > 0 {
 		t.paintChooserButton(p, lay, headerStyle)
 	}
@@ -1431,6 +1434,59 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 			if showRight {
 				p.FillRectPixelsAlpha(lay.scrollR, b.y0, -j-1, 0, 1, hPx, rr, rg, rb, a)
 			}
+		}
+	}
+}
+
+// paintVScrollFades fades the content region's top/bottom edges when
+// more rows lie beyond them (pixel surfaces only), banded so each
+// pixel row blends toward the background of the item row under it -
+// the ListView treatment, between the header and the footer. Painted
+// over the dividers (they fade with their content), under the row
+// editor and the scrollbars.
+func (t *TreeView) paintVScrollFades(p *core.Painter, lay treeColLayout, rowBands []style.Color, bgStyle style.CellStyle) {
+	if !p.Graphical() {
+		return
+	}
+	visibleCount := t.visibleCount()
+	maxScroll := len(t.flatList) - visibleCount
+	showTop := t.scrollOffset > 0
+	showBottom := maxScroll > 0 && t.scrollOffset < maxScroll
+	if !showTop && !showBottom {
+		return
+	}
+	bounds := t.Bounds()
+	metrics := t.EffectiveCellMetrics()
+	top := lay.headerH
+	bottom := bounds.Height - t.footerHeight()
+	regionPx := p.UnitSpanPxY(top, bottom)
+	wtPx := p.UnitSpanPxY(0, metrics.CellHeight) // one row deep
+	if wtPx > regionPx/2 {
+		wtPx = regionPx / 2
+	}
+	if wtPx <= 0 {
+		return
+	}
+	wPx := p.UnitSpanPxX(0, bounds.Width)
+	rowPx := p.UnitSpanPxY(0, metrics.CellHeight)
+	bgAt := func(px int) style.Color {
+		if rowPx > 0 {
+			if idx := px / rowPx; idx >= 0 && idx < len(rowBands) {
+				return rowBands[idx]
+			}
+		}
+		return bgStyle.Bg
+	}
+	alphaAt := func(d int) float64 { return 1.0 - (float64(d)+0.5)/float64(wtPx) }
+	for j := 0; j < wtPx; j++ {
+		a := alphaAt(j)
+		if showTop {
+			r, g, b := bgAt(j).RGBComponents()
+			p.FillRectPixelsAlpha(0, top, 0, j, wPx, 1, r, g, b, a)
+		}
+		if showBottom {
+			r, g, b := bgAt(regionPx - 1 - j).RGBComponents()
+			p.FillRectPixelsAlpha(0, bottom, 0, -j-1, wPx, 1, r, g, b, a)
 		}
 	}
 }
