@@ -405,7 +405,12 @@ func (h *diffHarness) opDelete() {
 	}
 	removed := h.model.del(actor, start, end-start)
 	if len(got) != len(removed) {
-		h.fail("delete returned %d decorations, model removed %d (%v)", len(got), len(removed), removed)
+		var gotKeys []string
+		for _, d := range got {
+			gotKeys = append(gotKeys, d.Key)
+		}
+		h.fail("delete returned %d decorations (%v), model removed %d (%v)",
+			len(got), gotKeys, len(removed), removed)
 	}
 	h.noteMutation(res)
 	h.check("after delete", true)
@@ -418,6 +423,9 @@ func (h *diffHarness) opDecorate() {
 		res, err := h.g.Decorate([]DecorationEntry{{Key: key, Address: nil}})
 		if err != nil {
 			h.fail("Decorate remove: %v", err)
+		}
+		if _, err := h.g.GetDecorationPosition(key); err == nil {
+			h.fail("Decorate remove %q: decoration still present afterwards", key)
 		}
 		delete(h.model.decs, key)
 		h.noteMutation(res)

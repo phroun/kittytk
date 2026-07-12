@@ -4943,6 +4943,18 @@ func (g *Garland) Decorate(entries []DecorationEntry) (ChangeResult, error) {
 	if len(additions) > 0 {
 		// Group additions by their target leaf position
 		for _, add := range additions {
+			// A key is unique document-wide: an UPDATE must remove the
+			// old instance wherever it lives. addDecorationInternal only
+			// dedupes within the target leaf, so a move across leaves
+			// would otherwise leave two live copies of the key.
+			oldRootID, removedOld, err := g.removeDecorationDirect(add.key)
+			if err != nil {
+				return ChangeResult{}, err
+			}
+			if removedOld {
+				g.root = g.nodeRegistry[oldRootID]
+				changed = true
+			}
 			newRootID, err := g.addDecorationInternal(add.key, add.bytePos)
 			if err != nil {
 				return ChangeResult{}, err
@@ -5102,6 +5114,21 @@ func (g *Garland) updateDecorationCacheForNode(nodeID NodeID, nodeOffset int64, 
 // applyPendingDecorationUpdates applies queued cache updates with the given revision.
 func (g *Garland) applyPendingDecorationUpdates(fork ForkID, rev RevisionID) {
 	now := time.Now()
+	// Deletions FIRST, updates second - mirroring Decorate's processing
+	// order (deletions, then additions). A MOVE queues a delete for the
+	// old instance and an update for the new one in the same mutation;
+	// applying deletes last would clobber the fresh entry with
+	// "confirmed not present" and the cache would deny a live key.
+	for _, key := range g.pendingDecorationDeletes {
+		if entry, exists := g.decorationCache[key]; exists {
+			entry.LastKnownFork = fork
+			entry.LastKnownRev = rev
+			entry.LastKnownNode = 0 // 0 = confirmed not present
+			entry.LastAccess = now
+		}
+	}
+	g.pendingDecorationDeletes = g.pendingDecorationDeletes[:0] // Clear slice, keep capacity
+
 	for _, update := range g.pendingDecorationUpdates {
 		g.decorationCache[update.Key] = &DecorationCacheEntry{
 			LastKnownFork:   fork,
@@ -5113,17 +5140,6 @@ func (g *Garland) applyPendingDecorationUpdates(fork ForkID, rev RevisionID) {
 		}
 	}
 	g.pendingDecorationUpdates = g.pendingDecorationUpdates[:0] // Clear slice, keep capacity
-
-	// Process pending deletions - mark as "confirmed not present" at this revision
-	for _, key := range g.pendingDecorationDeletes {
-		if entry, exists := g.decorationCache[key]; exists {
-			entry.LastKnownFork = fork
-			entry.LastKnownRev = rev
-			entry.LastKnownNode = 0 // 0 = confirmed not present
-			entry.LastAccess = now
-		}
-	}
-	g.pendingDecorationDeletes = g.pendingDecorationDeletes[:0] // Clear slice, keep capacity
 }
 
 // findLeafAtOffset finds the leaf node containing the given byte offset.
@@ -5447,9 +5463,16 @@ func (g *Garland) removeDecorationViaCache(key string) (bool, error) {
 		return false, nil // No cache entry or marked as not present
 	}
 
-	// Check if cache is for current fork (different fork = definitely stale)
-	if cacheEntry.LastKnownFork != g.currentFork {
-		return false, nil // Wrong fork, need fallback
+	// The cache is a HINT and must be fully verified before acting on
+	// it (the read path requires the exact current fork AND revision;
+	// removal must be at least as strict). In a persistent structure a
+	// superseded node keeps its old snapshots forever, so an
+	// old-revision entry always LOOKS valid here: acting on it removes
+	// the key from a leaf that is no longer in the current tree,
+	// grafts stale data back in at a stale offset, and leaves the live
+	// copy of the decoration untouched.
+	if cacheEntry.LastKnownFork != g.currentFork || cacheEntry.LastKnownRev != g.currentRevision {
+		return false, nil // Stale hint: fall back to the tree walk
 	}
 
 	// Try to access the cached node directly
