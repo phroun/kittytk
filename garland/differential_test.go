@@ -27,6 +27,7 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
+	"regexp"
 	"testing"
 	"unicode/utf8"
 )
@@ -172,6 +173,88 @@ func (s *refState) del(actor int, pos, n int64) []string {
 	}
 	s.cursors[actor] = pos
 	return removed
+}
+
+// ---------- search/replace model ----------
+//
+// SPEC (encoding standard editor semantics, pending ruling):
+//   - Matches are found scanning LEFT TO RIGHT and are NON-OVERLAPPING:
+//     after an accepted match the scan resumes at its end. A whole-word
+//     REJECTION advances one byte, so an overlapping later candidate
+//     can still be accepted.
+//   - Backward search returns the same match set in reverse order.
+//   - Counted replacement selects the first N matches (forward) or the
+//     last N (backward), and applies them bottom-up so positions stay
+//     valid; each replacement behaves exactly like OverwriteBytes.
+//   - A replace with no matches is a true no-op: no new revision, and
+//     the returned coordinates are the current ones.
+//   - Case-insensitive matching uses Unicode case folding (regexp
+//     (?i)), NOT byte lowering - lowering shifts offsets for runes
+//     whose lower form has a different encoded length.
+
+func (s *refState) wholeWordAt(pos, n int64) bool {
+	if pos > 0 {
+		r, _ := utf8.DecodeLastRune(s.data[:pos])
+		if isWordChar(r) {
+			return false
+		}
+	}
+	if pos+n < int64(len(s.data)) {
+		r, _ := utf8.DecodeRune(s.data[pos+n:])
+		if isWordChar(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesString returns matches per the spec, scanning from `from`.
+func (s *refState) matchesString(from int64, needle string, ci, whole bool) [][2]int64 {
+	if ci {
+		re := regexp.MustCompile("(?i)" + regexp.QuoteMeta(needle))
+		return s.matchesRegex(from, re, whole)
+	}
+	nb := []byte(needle)
+	var out [][2]int64
+	off := from
+	for off+int64(len(nb)) <= int64(len(s.data)) {
+		i := bytes.Index(s.data[off:], nb)
+		if i < 0 {
+			break
+		}
+		st := off + int64(i)
+		if whole && !s.wholeWordAt(st, int64(len(nb))) {
+			off = st + 1
+			continue
+		}
+		out = append(out, [2]int64{st, st + int64(len(nb))})
+		off = st + int64(len(nb))
+	}
+	return out
+}
+
+// matchesRegex returns regex matches per the spec, scanning from `from`.
+func (s *refState) matchesRegex(from int64, re *regexp.Regexp, whole bool) [][2]int64 {
+	var out [][2]int64
+	off := from
+	for off <= int64(len(s.data)) {
+		loc := re.FindIndex(s.data[off:])
+		if loc == nil {
+			break
+		}
+		st, en := off+int64(loc[0]), off+int64(loc[1])
+		if whole && !s.wholeWordAt(st, en-st) {
+			off = st + 1
+			continue
+		}
+		out = append(out, [2]int64{st, en})
+		if en > st {
+			off = en
+		} else {
+			off = st + 1
+		}
+	}
+	return out
 }
 
 // ---------- harness ----------
@@ -660,6 +743,188 @@ func (h *diffHarness) opDeleteFork() {
 	h.check("after deletefork", true)
 }
 
+// pickNeedle usually returns a slice of the live document (so matches
+// exist), occasionally random garbage (so the no-match paths run).
+func (h *diffHarness) pickNeedle() string {
+	rc := h.model.runeCount()
+	if rc == 0 || h.rnd.Intn(4) == 0 {
+		return h.randPiece()
+	}
+	start := h.rnd.Int63n(rc)
+	n := 1 + h.rnd.Int63n(min64(rc-start, 4))
+	b0 := h.model.byteOfRuneIndex(start)
+	b1 := h.model.byteOfRuneIndex(start + n)
+	return string(h.model.data[b0:b1])
+}
+
+func (h *diffHarness) opFind() {
+	needle := h.pickNeedle()
+	ci := h.rnd.Intn(3) == 0
+	whole := h.rnd.Intn(4) == 0
+	backward := h.rnd.Intn(2) == 0
+	opts := SearchOptions{CaseSensitive: !ci, WholeWord: whole, Backward: backward}
+	actor := h.rnd.Intn(len(h.curs))
+	h.logf("FindStringAll(%q, ci=%v whole=%v back=%v)", needle, ci, whole, backward)
+
+	got, err := h.curs[actor].FindStringAll(needle, opts)
+	if err != nil {
+		h.fail("FindStringAll(%q): %v", needle, err)
+	}
+	want := h.model.matchesString(0, needle, ci, whole)
+	if backward {
+		for i, j := 0, len(want)-1; i < j; i, j = i+1, j-1 {
+			want[i], want[j] = want[j], want[i]
+		}
+	}
+	if len(got) != len(want) {
+		h.fail("FindStringAll(%q): %d matches, want %d (%v)", needle, len(got), len(want), want)
+	}
+	for i := range got {
+		if got[i].ByteStart != want[i][0] || got[i].ByteEnd != want[i][1] {
+			h.fail("FindStringAll(%q): match %d = [%d,%d), want [%d,%d)",
+				needle, i, got[i].ByteStart, got[i].ByteEnd, want[i][0], want[i][1])
+		}
+	}
+	if n, err := h.curs[actor].CountString(needle, opts); err != nil || n != len(want) {
+		h.fail("CountString(%q) = %d,%v want %d", needle, n, err, len(want))
+	}
+
+	// Single find from the cursor: forward = first match of a scan
+	// starting at the cursor; backward = last global match ending at or
+	// before the cursor.
+	single, err := h.curs[actor].FindString(needle, opts)
+	if err != nil {
+		h.fail("FindString(%q): %v", needle, err)
+	}
+	pos := h.model.cursors[actor]
+	var wantSingle *[2]int64
+	if backward {
+		for _, m := range h.model.matchesString(0, needle, ci, whole) {
+			m := m
+			if m[1] <= pos {
+				wantSingle = &m
+			}
+		}
+	} else {
+		if ms := h.model.matchesString(pos, needle, ci, whole); len(ms) > 0 {
+			wantSingle = &ms[0]
+		}
+	}
+	if (single == nil) != (wantSingle == nil) {
+		h.fail("FindString(%q) from %d: got %v, want %v", needle, pos, single, wantSingle)
+	}
+	if single != nil && (single.ByteStart != wantSingle[0] || single.ByteEnd != wantSingle[1]) {
+		h.fail("FindString(%q) from %d: [%d,%d), want [%d,%d)",
+			needle, pos, single.ByteStart, single.ByteEnd, wantSingle[0], wantSingle[1])
+	}
+}
+
+// selectCounted picks which matches a counted replace should touch:
+// first N forward, last N backward; all when count < 0.
+func selectCounted(matches [][2]int64, count int, backward bool) [][2]int64 {
+	if count < 0 || count >= len(matches) {
+		return matches
+	}
+	if backward {
+		return matches[len(matches)-count:]
+	}
+	return matches[:count]
+}
+
+func (h *diffHarness) opReplaceString() {
+	needle := h.pickNeedle()
+	repl := h.randPiece()
+	if h.rnd.Intn(4) == 0 {
+		repl = "" // replacement-with-nothing = deletion via replace
+	}
+	ci := h.rnd.Intn(3) == 0
+	whole := h.rnd.Intn(4) == 0
+	backward := h.rnd.Intn(3) == 0
+	count := -1
+	if h.rnd.Intn(2) == 0 {
+		count = 1 + h.rnd.Intn(3)
+	}
+	opts := SearchOptions{CaseSensitive: !ci, WholeWord: whole, Backward: backward}
+	actor := h.rnd.Intn(len(h.curs))
+	h.logf("c%d.ReplaceStringCount(%q -> %q, n=%d ci=%v whole=%v back=%v)",
+		actor, needle, repl, count, ci, whole, backward)
+
+	n, res, err := h.curs[actor].ReplaceStringCount(needle, repl, count, opts)
+	if err != nil {
+		h.fail("ReplaceStringCount: %v", err)
+	}
+	sel := selectCounted(h.model.matchesString(0, needle, ci, whole), count, backward)
+	if n != len(sel) {
+		h.fail("ReplaceStringCount(%q->%q) replaced %d, want %d", needle, repl, n, len(sel))
+	}
+	if len(sel) == 0 {
+		if res.Fork != h.fork || res.Revision != h.rev {
+			h.fail("no-op replace moved coords to (fork %d, rev %d) from (fork %d, rev %d)",
+				res.Fork, res.Revision, h.fork, h.rev)
+		}
+		h.check("after noop replace", true)
+		return
+	}
+	for i := len(sel) - 1; i >= 0; i-- {
+		h.model.applyOverwrite(sel[i][0], sel[i][1]-sel[i][0], []byte(repl))
+	}
+	h.noteMutation(res)
+	h.resyncCursors("after replace")
+	h.check("after replace", false)
+}
+
+// regexCases pairs patterns with replacements exercising captures,
+// alternation, classes, and empty replacement. All patterns produce
+// non-empty matches on valid UTF-8.
+var regexCases = []struct{ pattern, repl string }{
+	{`(.)(.)`, `$2$1`},
+	{`e+`, `E`},
+	{`[a-e]{1,3}`, ``},
+	{"\\n", "\r\n"},
+	{`é|Z`, `zz`},
+	{`a(.?)c`, `[$1]`},
+	{`中`, `中中`},
+}
+
+func (h *diffHarness) opReplaceRegex() {
+	rc := regexCases[h.rnd.Intn(len(regexCases))]
+	re := regexp.MustCompile(rc.pattern)
+	backward := h.rnd.Intn(3) == 0
+	count := 1 + h.rnd.Intn(3) // always counted: some patterns match everywhere
+	opts := RegexOptions{Backward: backward}
+	actor := h.rnd.Intn(len(h.curs))
+	h.logf("c%d.ReplaceRegexCount(%q -> %q, n=%d back=%v)", actor, rc.pattern, rc.repl, count, backward)
+
+	n, res, err := h.curs[actor].ReplaceRegexCount(rc.pattern, rc.repl, count, opts)
+	if err != nil {
+		h.fail("ReplaceRegexCount: %v", err)
+	}
+	sel := selectCounted(h.model.matchesRegex(0, re, false), count, backward)
+	if n != len(sel) {
+		h.fail("ReplaceRegexCount(%q) replaced %d, want %d", rc.pattern, n, len(sel))
+	}
+	if len(sel) == 0 {
+		if res.Fork != h.fork || res.Revision != h.rev {
+			h.fail("no-op regex replace moved coords to (fork %d, rev %d) from (fork %d, rev %d)",
+				res.Fork, res.Revision, h.fork, h.rev)
+		}
+		h.check("after noop regex replace", true)
+		return
+	}
+	// Expand each replacement against the ORIGINAL match text (garland
+	// captured Match strings at find time), then apply bottom-up.
+	expanded := make([]string, len(sel))
+	for i, m := range sel {
+		expanded[i] = re.ReplaceAllString(string(h.model.data[m[0]:m[1]]), rc.repl)
+	}
+	for i := len(sel) - 1; i >= 0; i-- {
+		h.model.applyOverwrite(sel[i][0], sel[i][1]-sel[i][0], []byte(expanded[i]))
+	}
+	h.noteMutation(res)
+	h.resyncCursors("after regex replace")
+	h.check("after regex replace", false)
+}
+
 func min64(a, b int64) int64 {
 	if a < b {
 		return a
@@ -685,7 +950,7 @@ func TestDifferentialRandomOps(t *testing.T) {
 					h.opDelete()
 					continue
 				}
-				switch h.rnd.Intn(17) {
+				switch h.rnd.Intn(20) {
 				case 0, 1, 2:
 					h.opInsert()
 				case 3, 4:
@@ -708,6 +973,12 @@ func TestDifferentialRandomOps(t *testing.T) {
 					h.opDeleteFork()
 				case 16:
 					h.opForkSeek()
+				case 17:
+					h.opFind()
+				case 18:
+					h.opReplaceString()
+				case 19:
+					h.opReplaceRegex()
 				}
 			}
 			if len(h.soft) > 0 {

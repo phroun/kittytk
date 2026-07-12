@@ -3892,11 +3892,13 @@ func (g *Garland) overwriteBytesAtInternal(c *Cursor, pos int64, length int64, n
 	// collapses to its start. Either way the replacement can change
 	// rune/line structure before the cursor, so recompute coordinates
 	// from the byte position rather than patching deltas.
+	// The acting cursor is NOT exempt: replace operations fire
+	// overwrites at match positions unrelated to the cursor that
+	// initiated them, so its coordinates must track content shifts
+	// like any other cursor's. (For a plain OverwriteBytes the actor
+	// sits at the range start, where the loop is a no-op anyway.)
 	netByteChange := insertedBytes - deletedBytes
 	for _, cursor := range g.cursors {
-		if cursor == c {
-			continue
-		}
 		if cursor.bytePos > pos+length ||
 			(cursor.bytePos == pos+length && (length > 0 || insertBefore)) {
 			// length > 0: at range end means after the replaced
