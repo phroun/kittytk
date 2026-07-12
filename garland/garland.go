@@ -3332,25 +3332,17 @@ func (g *Garland) findNextWordBoundary(fromByte int64, forward bool) (int64, err
 			return fromByte, nil
 		}
 
-		// Skip current word (if in one), then skip whitespace, then find word start
+		// Skip the rest of the current word run - only when the cursor
+		// is ON a word character. Starting from whitespace/punctuation
+		// must land on the NEXT word start, not consume it and land on
+		// the word after that.
 		pos := fromByte
-		inWord := false
-
-		// First, determine if we're in a word and skip to its end
 		for pos < totalBytes {
 			r, size, err := g.runeAtByte(pos)
-			if err != nil {
+			if err != nil || !isWordChar(r) {
 				break
 			}
-			if isWordChar(r) {
-				inWord = true
-				pos += int64(size)
-			} else if inWord {
-				// We've reached the end of current word
-				break
-			} else {
-				pos += int64(size)
-			}
+			pos += int64(size)
 		}
 
 		// Now skip whitespace/non-word to find next word start

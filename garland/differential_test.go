@@ -257,6 +257,88 @@ func (s *refState) matchesRegex(from int64, re *regexp.Regexp, whole bool) [][2]
 	return out
 }
 
+// ---------- word/line motion model ----------
+//
+// SPEC (mirroring the implementation; see isWordChar): a word is a run
+// of letters/digits/underscores. Forward word-seek from inside a word
+// skips to the end of that run, then over non-word runes, landing on
+// the next word START; from outside a word it lands on the very next
+// word start. Backward lands on the start of the current (or previous)
+// word. A move that only reaches EOF (no further word) still counts as
+// one move if the cursor advanced. NOTE: the doc comment also promises
+// punctuation-run "words"; the implementation does not do that -
+// flagged for ruling.
+
+func (s *refState) nextWordStart(pos int64) int64 {
+	d := s.data
+	for pos < int64(len(d)) {
+		r, sz := utf8.DecodeRune(d[pos:])
+		if !isWordChar(r) {
+			break
+		}
+		pos += int64(sz)
+	}
+	for pos < int64(len(d)) {
+		r, sz := utf8.DecodeRune(d[pos:])
+		if isWordChar(r) {
+			return pos
+		}
+		pos += int64(sz)
+	}
+	return pos
+}
+
+func (s *refState) prevWordStart(pos int64) int64 {
+	d := s.data
+	for pos > 0 {
+		r, sz := utf8.DecodeLastRune(d[:pos])
+		if isWordChar(r) {
+			break
+		}
+		pos -= int64(sz)
+	}
+	for pos > 0 {
+		r, sz := utf8.DecodeLastRune(d[:pos])
+		if !isWordChar(r) {
+			break
+		}
+		pos -= int64(sz)
+	}
+	return pos
+}
+
+func (s *refState) wordSeek(pos int64, n int) (int64, int) {
+	moved := 0
+	steps := n
+	if steps < 0 {
+		steps = -steps
+	}
+	for i := 0; i < steps; i++ {
+		var next int64
+		if n > 0 {
+			next = s.nextWordStart(pos)
+		} else {
+			next = s.prevWordStart(pos)
+		}
+		if next == pos {
+			break
+		}
+		pos = next
+		moved++
+	}
+	return pos, moved
+}
+
+// lineEndOf: the position just before the line's terminating newline,
+// or EOF when the line is unterminated (the last line).
+func (s *refState) lineEndOf(pos int64) int64 {
+	line, _ := s.lineOf(pos)
+	if line < s.lineCount() {
+		return s.byteOfLineRune(line+1, 0) - 1
+	}
+	return int64(len(s.data))
+}
+
 // ---------- harness ----------
 
 type diffHarness struct {
@@ -925,6 +1007,62 @@ func (h *diffHarness) opReplaceRegex() {
 	h.check("after regex replace", false)
 }
 
+func (h *diffHarness) opWordSeek() {
+	actor := h.rnd.Intn(len(h.curs))
+	pos := h.randRunePos()
+	if err := h.curs[actor].SeekByte(pos); err != nil {
+		h.fail("wordseek: seek(%d): %v", pos, err)
+	}
+	h.model.cursors[actor] = pos
+	n := 1 + h.rnd.Intn(3)
+	if h.rnd.Intn(2) == 0 {
+		n = -n
+	}
+	h.logf("c%d.SeekByWord(%d) from %d", actor, n, pos)
+	moved, err := h.curs[actor].SeekByWord(n)
+	if err != nil {
+		h.fail("SeekByWord(%d): %v", n, err)
+	}
+	wantPos, wantMoved := h.model.wordSeek(pos, n)
+	if moved != wantMoved {
+		h.fail("SeekByWord(%d) from %d moved %d, want %d", n, pos, moved, wantMoved)
+	}
+	if got := h.curs[actor].BytePos(); got != wantPos {
+		h.fail("SeekByWord(%d) from %d landed %d, want %d (content %q)", n, pos, got, wantPos, h.model.data)
+	}
+	h.model.cursors[actor] = wantPos
+	h.check("after wordseek", true)
+}
+
+func (h *diffHarness) opLineEnds() {
+	actor := h.rnd.Intn(len(h.curs))
+	pos := h.randRunePos()
+	if err := h.curs[actor].SeekByte(pos); err != nil {
+		h.fail("lineends: seek(%d): %v", pos, err)
+	}
+	h.model.cursors[actor] = pos
+	var want int64
+	if h.rnd.Intn(2) == 0 {
+		h.logf("c%d.SeekLineStart() from %d", actor, pos)
+		if err := h.curs[actor].SeekLineStart(); err != nil {
+			h.fail("SeekLineStart from %d: %v", pos, err)
+		}
+		line, _ := h.model.lineOf(pos)
+		want = h.model.byteOfLineRune(line, 0)
+	} else {
+		h.logf("c%d.SeekLineEnd() from %d", actor, pos)
+		if err := h.curs[actor].SeekLineEnd(); err != nil {
+			h.fail("SeekLineEnd from %d: %v", pos, err)
+		}
+		want = h.model.lineEndOf(pos)
+	}
+	if got := h.curs[actor].BytePos(); got != want {
+		h.fail("line start/end from %d landed %d, want %d (content %q)", pos, h.curs[actor].BytePos(), want, h.model.data)
+	}
+	h.model.cursors[actor] = want
+	h.check("after lineends", true)
+}
+
 func min64(a, b int64) int64 {
 	if a < b {
 		return a
@@ -950,7 +1088,7 @@ func TestDifferentialRandomOps(t *testing.T) {
 					h.opDelete()
 					continue
 				}
-				switch h.rnd.Intn(20) {
+				switch h.rnd.Intn(22) {
 				case 0, 1, 2:
 					h.opInsert()
 				case 3, 4:
@@ -979,6 +1117,10 @@ func TestDifferentialRandomOps(t *testing.T) {
 					h.opReplaceString()
 				case 19:
 					h.opReplaceRegex()
+				case 20:
+					h.opWordSeek()
+				case 21:
+					h.opLineEnds()
 				}
 			}
 			if len(h.soft) > 0 {
