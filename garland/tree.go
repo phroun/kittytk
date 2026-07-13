@@ -21,8 +21,8 @@ func (g *Garland) findLeafByByte(pos int64) (*LeafSearchResult, error) {
 		return nil, ErrInvalidPosition
 	}
 
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	return g.findLeafByByteUnlocked(pos)
 }
@@ -126,8 +126,8 @@ func (g *Garland) findLeafByRune(pos int64) (*LeafSearchResult, error) {
 		return nil, ErrInvalidPosition
 	}
 
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	return g.findLeafByRuneUnlocked(pos)
 }
@@ -235,8 +235,8 @@ func (g *Garland) findLeafByLine(line, runeInLine int64) (*LineSearchResult, err
 		return nil, ErrInvalidPosition
 	}
 
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	return g.findLeafByLineUnlocked(line, runeInLine)
 }

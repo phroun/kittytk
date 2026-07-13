@@ -128,7 +128,10 @@ type SaveReport struct {
 // content. See the file header for the full design. The report lists
 // any lost blocks that were scarred; the app should warn the user.
 func (g *Garland) SaveWith(opts SaveOptions) (SaveReport, error) {
-	if g.sourcePath == "" {
+	g.mu.RLock()
+	noSource := g.sourcePath == ""
+	g.mu.RUnlock()
+	if noSource {
 		return SaveReport{}, ErrNoDataSource
 	}
 

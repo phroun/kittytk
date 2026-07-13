@@ -69,7 +69,10 @@ type RebaseReport struct {
 // RebaseOnSource reconciles the buffer against its own source file.
 // See the file header for semantics.
 func (g *Garland) RebaseOnSource() (RebaseReport, error) {
-	if g.sourcePath == "" {
+	g.mu.RLock()
+	noSource := g.sourcePath == ""
+	g.mu.RUnlock()
+	if noSource {
 		return RebaseReport{}, ErrNoDataSource
 	}
 	g.mu.Lock()

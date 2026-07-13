@@ -116,8 +116,8 @@ func (c *Cursor) FindString(needle string, opts SearchOptions) (*SearchResult, e
 		return nil, nil
 	}
 
-	c.garland.mu.RLock()
-	defer c.garland.mu.RUnlock()
+	c.garland.mu.Lock()
+	defer c.garland.mu.Unlock()
 
 	return c.garland.findStringInternal(c.bytePos, needle, opts)
 }
@@ -132,8 +132,8 @@ func (c *Cursor) FindStringAll(needle string, opts SearchOptions) ([]SearchResul
 		return nil, nil
 	}
 
-	c.garland.mu.RLock()
-	defer c.garland.mu.RUnlock()
+	c.garland.mu.Lock()
+	defer c.garland.mu.Unlock()
 
 	return c.garland.findStringAllInternal(needle, opts)
 }
@@ -150,9 +150,9 @@ func (c *Cursor) ReplaceString(needle, replacement string, opts SearchOptions) (
 	}
 
 	// Find first match
-	c.garland.mu.RLock()
+	c.garland.mu.Lock()
 	match, err := c.garland.findStringInternal(c.bytePos, needle, opts)
-	c.garland.mu.RUnlock()
+	c.garland.mu.Unlock()
 
 	if err != nil {
 		return false, ChangeResult{}, err
@@ -203,9 +203,9 @@ func (c *Cursor) replaceStringCount(needle, replacement string, count int, opts 
 	// Done BEFORE opening a transaction: a replace with no matches must
 	// be a true no-op, not an empty commit that burns a revision and
 	// returns zero-valued coordinates.
-	c.garland.mu.RLock()
+	c.garland.mu.Lock()
 	matches, err := c.garland.findStringAllInternal(needle, opts)
-	c.garland.mu.RUnlock()
+	c.garland.mu.Unlock()
 	if err != nil {
 		return 0, ChangeResult{}, err
 	}
@@ -261,8 +261,8 @@ func (c *Cursor) FindRegex(pattern string, opts RegexOptions) (*SearchResult, er
 		return nil, err
 	}
 
-	c.garland.mu.RLock()
-	defer c.garland.mu.RUnlock()
+	c.garland.mu.Lock()
+	defer c.garland.mu.Unlock()
 
 	return c.garland.findRegexInternal(c.bytePos, re, opts)
 }
@@ -281,8 +281,8 @@ func (c *Cursor) FindRegexAll(pattern string, opts RegexOptions) ([]SearchResult
 		return nil, err
 	}
 
-	c.garland.mu.RLock()
-	defer c.garland.mu.RUnlock()
+	c.garland.mu.Lock()
+	defer c.garland.mu.Unlock()
 
 	return c.garland.findRegexAllInternal(re, opts)
 }
@@ -304,8 +304,8 @@ func (c *Cursor) MatchRegex(pattern string, caseInsensitive bool) (bool, *Search
 		return false, nil, err
 	}
 
-	c.garland.mu.RLock()
-	defer c.garland.mu.RUnlock()
+	c.garland.mu.Lock()
+	defer c.garland.mu.Unlock()
 
 	// Read from cursor to end (or reasonable chunk)
 	data, err := c.garland.readBytesRangeInternal(c.bytePos, c.garland.totalBytes-c.bytePos)
@@ -341,9 +341,9 @@ func (c *Cursor) ReplaceRegex(pattern, replacement string, opts RegexOptions) (b
 	}
 
 	// Find first match
-	c.garland.mu.RLock()
+	c.garland.mu.Lock()
 	match, err := c.garland.findRegexInternal(c.bytePos, re, opts)
-	c.garland.mu.RUnlock()
+	c.garland.mu.Unlock()
 
 	if err != nil {
 		return false, ChangeResult{}, err
@@ -397,9 +397,9 @@ func (c *Cursor) replaceRegexCount(pattern, replacement string, count int, opts 
 
 	// Find all matches BEFORE opening a transaction (see
 	// replaceStringCount for why).
-	c.garland.mu.RLock()
+	c.garland.mu.Lock()
 	matches, err := c.garland.findRegexAllInternal(re, opts)
-	c.garland.mu.RUnlock()
+	c.garland.mu.Unlock()
 	if err != nil {
 		return 0, ChangeResult{}, err
 	}
@@ -730,8 +730,8 @@ func (c *Cursor) CountString(needle string, opts SearchOptions) (int, error) {
 		return 0, nil
 	}
 
-	c.garland.mu.RLock()
-	defer c.garland.mu.RUnlock()
+	c.garland.mu.Lock()
+	defer c.garland.mu.Unlock()
 
 	matches, err := c.garland.findStringAllInternal(needle, opts)
 	if err != nil {
@@ -754,8 +754,8 @@ func (c *Cursor) CountRegex(pattern string, caseInsensitive bool) (int, error) {
 		return 0, err
 	}
 
-	c.garland.mu.RLock()
-	defer c.garland.mu.RUnlock()
+	c.garland.mu.Lock()
+	defer c.garland.mu.Unlock()
 
 	matches, err := c.garland.findRegexAllInternal(re, RegexOptions{})
 	if err != nil {
@@ -777,9 +777,9 @@ func (c *Cursor) FindNext(needle string, opts SearchOptions) (*SearchResult, err
 		return nil, ErrCursorNotFound
 	}
 
-	c.garland.mu.RLock()
+	c.garland.mu.Lock()
 	match, err := c.garland.findStringInternal(searchStart, needle, opts)
-	c.garland.mu.RUnlock()
+	c.garland.mu.Unlock()
 
 	if err != nil {
 		return nil, err
@@ -806,9 +806,9 @@ func (c *Cursor) FindNextRegex(pattern string, opts RegexOptions) (*SearchResult
 		return nil, err
 	}
 
-	c.garland.mu.RLock()
+	c.garland.mu.Lock()
 	match, err := c.garland.findRegexInternal(searchStart, re, opts)
-	c.garland.mu.RUnlock()
+	c.garland.mu.Unlock()
 
 	if err != nil {
 		return nil, err

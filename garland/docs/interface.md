@@ -2,6 +2,23 @@
 
 This document defines the complete user-facing API for the Garland library.
 
+## Concurrency Contract
+
+Any goroutine may call any public API concurrently. All operations are
+linearized through the buffer's internal lock: pure metadata getters
+(counts, positions, fork/revision, status, IntegrityEvents,
+MemoryPressure) run in parallel under a read lock; everything that can
+load storage tiers or mutate (edits, seeks, reads that may thaw,
+searches, decorations) serializes under the write lock - at sub-
+millisecond per operation this costs nothing measurable. Each Cursor
+may be used by ONE goroutine at a time (edits from other goroutines
+still adjust it safely). The long operation - save - runs without the
+lock via SaveOptions.Concurrent. Position errors (ErrInvalidPosition
+etc.) are normal when the buffer shrinks under a racing reader; the
+caller coordinates its own read-modify-write sequences. Cold-storage
+block writes are atomic (write + rename), so concurrent block reads
+never tear.
+
 ## Overview
 
 Garland is a rope-based data structure for efficient text/binary editing with:

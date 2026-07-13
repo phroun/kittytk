@@ -1505,9 +1505,10 @@ func (g *Garland) handleWarmStorageMismatch(nodeID NodeID) {
 
 // NewCursor creates a new cursor at position 0.
 func (g *Garland) NewCursor() *Cursor {
-	c := newCursor(g)
-
+	// newCursor reads currentFork/currentRevision - inside the lock,
+	// or a concurrent mutation's recordMutation races the read.
 	g.mu.Lock()
+	c := newCursor(g)
 	g.cursors = append(g.cursors, c)
 	g.mu.Unlock()
 
@@ -1534,11 +1535,15 @@ func (g *Garland) RemoveCursor(c *Cursor) error {
 
 // CurrentFork returns the current fork ID.
 func (g *Garland) CurrentFork() ForkID {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
 	return g.currentFork
 }
 
 // CurrentRevision returns the current revision number within the current fork.
 func (g *Garland) CurrentRevision() RevisionID {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
 	return g.currentRevision
 }
 
@@ -1621,6 +1626,8 @@ func (g *Garland) IsReady() bool {
 
 // InTransaction returns true if any transaction is active.
 func (g *Garland) InTransaction() bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
 	return g.transaction != nil
 }
 
@@ -3183,8 +3190,8 @@ func (g *Garland) ByteToLineRune(bytePos int64) (line, runeInLine int64, err err
 // implementation in byteToRuneInternalUnlocked (the RWMutex is not
 // reentrant; paths already holding the lock call the Unlocked core).
 func (g *Garland) byteToRuneInternal(bytePos int64) (int64, error) {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	return g.byteToRuneInternalUnlocked(bytePos)
 }
 
@@ -3204,11 +3211,18 @@ func (g *Garland) byteToRuneInternalUnlocked(bytePos int64) (int64, error) {
 }
 
 func (g *Garland) runeToByteInternal(runePos int64) (int64, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.runeToByteInternalUnlocked(runePos)
+}
+
+// runeToByteInternalUnlocked converts under a lock the caller holds.
+func (g *Garland) runeToByteInternalUnlocked(runePos int64) (int64, error) {
 	if runePos == 0 {
 		return 0, nil
 	}
 
-	result, err := g.findLeafByRune(runePos)
+	result, err := g.findLeafByRuneUnlocked(runePos)
 	if err != nil {
 		return 0, err
 	}
@@ -3224,8 +3238,8 @@ func (g *Garland) runeToByteInternal(runePos int64) (int64, error) {
 // the read lock now covers the WHOLE conversion instead of being
 // taken piecemeal by each tree lookup.
 func (g *Garland) byteToLineRuneInternal(bytePos int64) (int64, int64, error) {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	return g.byteToLineRuneInternalUnlocked(bytePos)
 }
 
@@ -3317,7 +3331,14 @@ func (g *Garland) byteToLineRuneInternalUnlocked(bytePos int64) (int64, int64, e
 }
 
 func (g *Garland) lineRuneToByteInternal(line, runeInLine int64) (int64, error) {
-	result, err := g.findLeafByLine(line, runeInLine)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.lineRuneToByteInternalUnlocked(line, runeInLine)
+}
+
+// lineRuneToByteInternalUnlocked converts under a lock the caller holds.
+func (g *Garland) lineRuneToByteInternalUnlocked(line, runeInLine int64) (int64, error) {
+	result, err := g.findLeafByLineUnlocked(line, runeInLine)
 	if err != nil {
 		return 0, err
 	}
@@ -3329,8 +3350,8 @@ func (g *Garland) lineRuneToByteInternal(line, runeInLine int64) (int64, error) 
 // Positive n moves forward, negative moves backward.
 // Returns the number of words actually moved.
 func (g *Garland) seekByWordAt(c *Cursor, n int, style WordStyle) (int, error) {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	if n == 0 {
 		return 0, nil
@@ -3594,14 +3615,14 @@ func decodeLastRune(data []byte) (rune, int) {
 
 // seekLineEndAt moves the cursor to the end of its current line.
 func (g *Garland) seekLineEndAt(c *Cursor) error {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	currentLine := c.line
 
 	// Try to find the start of the next line
 	nextLine := currentLine + 1
-	nextLineBytePos, err := g.lineRuneToByteInternal(nextLine, 0)
+	nextLineBytePos, err := g.lineRuneToByteInternalUnlocked(nextLine, 0)
 
 	if err == nil && nextLineBytePos > 0 {
 		// Next line exists - position just before the newline
@@ -4589,19 +4610,19 @@ func (g *Garland) deleteRunesAt(c *Cursor, runePos int64, length int64, includeL
 	}
 
 	// Convert rune positions to byte positions (need brief lock for this)
-	g.mu.RLock()
-	byteStart, err := g.runeToByteInternal(runePos)
+	g.mu.Lock()
+	byteStart, err := g.runeToByteInternalUnlocked(runePos)
 	if err != nil {
-		g.mu.RUnlock()
+		g.mu.Unlock()
 		return nil, ChangeResult{}, err
 	}
 
-	byteEnd, err := g.runeToByteInternal(runePos + length)
+	byteEnd, err := g.runeToByteInternalUnlocked(runePos + length)
 	if err != nil {
 		// Clamp to EOF
 		byteEnd = g.totalBytes
 	}
-	g.mu.RUnlock()
+	g.mu.Unlock()
 
 	// Now call deleteBytesAt which will handle its own locking
 	return g.deleteBytesAt(c, byteStart, byteEnd-byteStart, includeLineDecorations)
@@ -4627,6 +4648,56 @@ func (g *Garland) truncateAt(c *Cursor, pos int64) (ChangeResult, error) {
 	// Call deleteBytesAt which will handle its own locking
 	_, result, err := g.deleteBytesAt(c, pos, length, false)
 	return result, err
+}
+
+// setCursorFromByte recomputes every coordinate from a byte position
+// and updates the cursor, all under one write lock - cursor fields are
+// only ever written with the lock held.
+func (g *Garland) setCursorFromByte(c *Cursor, pos int64) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	runePos, err := g.byteToRuneInternalUnlocked(pos)
+	if err != nil {
+		return err
+	}
+	line, lineRune, err := g.byteToLineRuneInternalUnlocked(pos)
+	if err != nil {
+		return err
+	}
+	c.updatePosition(pos, runePos, line, lineRune)
+	return nil
+}
+
+// setCursorFromRune is setCursorFromByte for a rune position.
+func (g *Garland) setCursorFromRune(c *Cursor, runePos int64) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	pos, err := g.runeToByteInternalUnlocked(runePos)
+	if err != nil {
+		return err
+	}
+	line, lineRune, err := g.byteToLineRuneInternalUnlocked(pos)
+	if err != nil {
+		return err
+	}
+	c.updatePosition(pos, runePos, line, lineRune)
+	return nil
+}
+
+// setCursorFromLine is setCursorFromByte for a line:rune position.
+func (g *Garland) setCursorFromLine(c *Cursor, line, runeInLine int64) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	pos, err := g.lineRuneToByteInternalUnlocked(line, runeInLine)
+	if err != nil {
+		return err
+	}
+	runePos, err := g.byteToRuneInternalUnlocked(pos)
+	if err != nil {
+		return err
+	}
+	c.updatePosition(pos, runePos, line, runeInLine)
+	return nil
 }
 
 // recordMutation handles versioning after a mutation.
@@ -4706,7 +4777,7 @@ func (g *Garland) recordCursorPositionsInHistory() {
 	for _, cursor := range g.cursors {
 		// Always update position - cursor may have moved since last record
 		// This captures the position just before the mutation occurs
-		cursor.resolveStaleLineRune(true) // history must store real columns
+		cursor.resolveStaleLineRuneLocked() // history must store real columns
 		cursor.positionHistory[key] = &CursorPosition{
 			BytePos:  cursor.bytePos,
 			RunePos:  cursor.runePos,
@@ -4755,11 +4826,11 @@ func (g *Garland) readBytesAt(pos int64, length int64) ([]byte, error) {
 	}
 
 	// Try read with read lock first (fast path)
-	g.mu.RLock()
+	g.mu.Lock()
 	totalBytesForRevision := g.calculateTotalBytesUnlocked()
 
 	if pos > totalBytesForRevision {
-		g.mu.RUnlock()
+		g.mu.Unlock()
 		return nil, ErrInvalidPosition
 	}
 
@@ -4770,7 +4841,7 @@ func (g *Garland) readBytesAt(pos int64, length int64) ([]byte, error) {
 	}
 
 	result, err := g.readBytesRangeInternal(pos, readLength)
-	g.mu.RUnlock()
+	g.mu.Unlock()
 
 	// If data is not loaded (cold storage), try to thaw and retry
 	if err == ErrDataNotLoaded {
@@ -4780,9 +4851,9 @@ func (g *Garland) readBytesAt(pos int64, length int64) ([]byte, error) {
 		}
 
 		// Retry with read lock
-		g.mu.RLock()
+		g.mu.Lock()
 		result, err = g.readBytesRangeInternal(pos, readLength)
-		g.mu.RUnlock()
+		g.mu.Unlock()
 	}
 
 	return result, err
@@ -4819,20 +4890,20 @@ func (g *Garland) readStringAt(pos int64, length int64) (string, error) {
 		return "", nil
 	}
 
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	if pos < 0 || pos > g.totalRunes {
 		return "", ErrInvalidPosition
 	}
 
 	// Convert rune range to byte range
-	byteStart, err := g.runeToByteInternal(pos)
+	byteStart, err := g.runeToByteInternalUnlocked(pos)
 	if err != nil {
 		return "", err
 	}
 
-	byteEnd, err := g.runeToByteInternal(pos + length)
+	byteEnd, err := g.runeToByteInternalUnlocked(pos + length)
 	if err != nil {
 		// If end is past EOF, clamp to EOF
 		byteEnd = g.totalBytes
@@ -4851,8 +4922,8 @@ func (g *Garland) readLineAt(line int64) (string, error) {
 		return "", ErrInvalidPosition
 	}
 
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	// Validate line number
 	if line > g.totalLines {
@@ -4860,7 +4931,7 @@ func (g *Garland) readLineAt(line int64) (string, error) {
 	}
 
 	// Find start of line
-	lineResult, err := g.findLeafByLine(line, 0)
+	lineResult, err := g.findLeafByLineUnlocked(line, 0)
 	if err != nil {
 		return "", err
 	}
@@ -5245,8 +5316,8 @@ func (g *Garland) Decorate(entries []DecorationEntry) (ChangeResult, error) {
 // GetDecorationPosition returns the current position of a decoration by key.
 // Uses registry-based O(1) existence check and cached location hints for fast lookup.
 func (g *Garland) GetDecorationPosition(key string) (AbsoluteAddress, error) {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	// During a transaction, always search the tree since decorations may
 	// have moved as a side effect of inserts/deletes (cache doesn't
@@ -5544,8 +5615,8 @@ func (g *Garland) GetDecorationsInByteRange(start, end int64) ([]DecorationEntry
 		return nil, ErrInvalidPosition
 	}
 
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	if start > g.totalBytes {
 		return nil, ErrInvalidPosition
@@ -5611,8 +5682,8 @@ func (g *Garland) GetDecorationsOnLine(line int64) ([]DecorationEntry, error) {
 		return nil, ErrInvalidPosition
 	}
 
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	if line > g.totalLines {
 		return nil, ErrInvalidPosition
@@ -5674,8 +5745,8 @@ func (g *Garland) findLineEndUnlocked(lineStart int64) int64 {
 // DumpDecorations writes all decorations to a file in INI-like format.
 // If fs is nil, uses the Garland's source filesystem.
 func (g *Garland) DumpDecorations(fs FileSystemInterface, path string) error {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	rootSnap := g.root.snapshotAt(g.currentFork, g.currentRevision)
 	if rootSnap == nil {

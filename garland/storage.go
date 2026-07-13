@@ -48,6 +48,11 @@ type FileSystemInterface interface {
 	MkdirAll(path string) error
 	Remove(name string) error
 	Rmdir(path string) error // Only removes empty directories
+
+	// Rename atomically replaces newpath with oldpath. Cold storage
+	// relies on this so a block being re-written (chill) can never be
+	// torn-read by a concurrent Get (unlocked save phase, thaw).
+	Rename(oldpath, newpath string) error
 }
 
 // localFileHandle wraps an os.File for the local file system.
@@ -165,6 +170,10 @@ func (fs *localFileSystem) WriteFile(name string, data []byte) error {
 	return os.WriteFile(name, data, 0644)
 }
 
+func (fs *localFileSystem) Rename(oldpath, newpath string) error {
+	return os.Rename(oldpath, newpath)
+}
+
 func (fs *localFileSystem) ReadFile(name string) ([]byte, error) {
 	return os.ReadFile(name)
 }
@@ -199,8 +208,16 @@ func (cs *fsColdStorage) Set(folder, block string, data []byte) error {
 	if err := cs.fs.MkdirAll(dir); err != nil {
 		return err
 	}
+	// Write-then-rename: a concurrent Get (the lock-free save phase, a
+	// thaw on another goroutine) must never see a half-written block.
+	// Same-block Sets are serialized by the garland lock, so the .tmp
+	// name cannot collide with itself.
 	path := filepath.Join(dir, block)
-	return cs.fs.WriteFile(path, data)
+	tmp := path + ".tmp"
+	if err := cs.fs.WriteFile(tmp, data); err != nil {
+		return err
+	}
+	return cs.fs.Rename(tmp, path)
 }
 
 func (cs *fsColdStorage) Get(folder, block string) ([]byte, error) {
