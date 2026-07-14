@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	gtfont "github.com/go-text/typesetting/font"
+
+	"github.com/phroun/kittytk/core"
 )
 
 // System font fallbacks. The embedded Noto faces remain the
@@ -82,6 +84,53 @@ func systemFallbackFiles() []string {
 // registered; safe to call more than once.
 func (e *Engine) LoadSystemFallbacks() int {
 	return e.loadFallbackFiles(systemFallbackFiles())
+}
+
+// macMenuFontFiles returns candidate paths for macOS's UI font in priority
+// order (San Francisco first, then the classic Helvetica). Empty off macOS.
+func macMenuFontFiles() []string {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	return []string{
+		"/System/Library/Fonts/SFNS.ttf",     // San Francisco (system UI font)
+		"/System/Library/Fonts/SFNSText.ttf", // older SF naming
+		"/System/Library/Fonts/Helvetica.ttc",
+	}
+}
+
+// LoadMacMenuFont registers macOS's UI font under core.MacShortcutFontFamily so
+// menu shortcuts can address it by name for native rendering. It uses the first
+// candidate that parses and returns true; a no-op returning false when none is
+// found (off macOS, or the files are absent). Safe to call more than once.
+func (e *Engine) LoadMacMenuFont() bool {
+	for _, path := range macMenuFontFiles() {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var face *gtfont.Face
+		if strings.EqualFold(filepath.Ext(path), ".ttc") {
+			faces, err := gtfont.ParseTTC(bytes.NewReader(data))
+			if err != nil || len(faces) == 0 {
+				continue
+			}
+			face = faces[0]
+		} else {
+			f, err := gtfont.ParseTTF(bytes.NewReader(data))
+			if err != nil {
+				continue
+			}
+			face = f
+		}
+		e.db.registerFace(core.MacShortcutFontFamily, Aspect{}, face)
+		e.mu.Lock()
+		e.cache.clear()
+		e.epoch++
+		e.mu.Unlock()
+		return true
+	}
+	return false
 }
 
 func (e *Engine) loadFallbackFiles(paths []string) int {

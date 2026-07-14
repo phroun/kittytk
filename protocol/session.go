@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"fmt"
+	"strings"
 )
 
 // Object is a UI object under construction, provided by a Factory.
@@ -36,9 +37,12 @@ type destroyer interface {
 }
 
 // Reply reports server-assigned IDs for a request: top-level
-// correlation keys plus explicitly surfaced names (D11/D15).
+// correlation keys plus explicitly surfaced names (D11/D15). Extra
+// carries additional raw wire statements a verb wants delivered ahead
+// of the reply line (the describe verb's flat vocabulary stream, D24).
 type Reply struct {
-	IDs map[string]uint64
+	IDs   map[string]uint64
+	Extra []string
 }
 
 // Session holds connection-scoped interpretation state: alias and
@@ -58,6 +62,23 @@ type Session struct {
 type templateDef struct {
 	base string // builtin or another template name
 	args []*Arg
+}
+
+// Register injects a pre-existing object into the session's object table so
+// verbs (set, sub, destroy) can address it by ID without it having been
+// created via `new`. The host uses this to make the connection's Application
+// settable over the wire - its ID travels to the client in the handshake.
+func (s *Session) Register(obj Object) {
+	if obj != nil {
+		s.objects[obj.ID()] = obj
+	}
+}
+
+// Object returns the object registered under id, if any. The host uses it at
+// window-adoption time to resolve wire references such as a window's owner id.
+func (s *Session) Object(id uint64) (Object, bool) {
+	obj, ok := s.objects[id]
+	return obj, ok
 }
 
 // NewSession creates an empty session.
@@ -167,6 +188,20 @@ func (s *Session) executeTopLevel(stmt *Statement, f Factory, st *execState) err
 		return nil
 	case "sub", "unsub":
 		return s.subscribe(stmt.Verb, stmt.Args, f)
+	case "describe":
+		// Introspection (D24): stream the registered wire vocabulary as
+		// flat statements (proptype/prop/propcommon), one per line, ahead
+		// of the reply. Takes no arguments.
+		if len(stmt.Args) != 0 {
+			return fmt.Errorf("describe: takes no arguments")
+		}
+		enc := EncodeVocabulary(DescribeVocabulary())
+		for _, line := range strings.Split(strings.TrimRight(enc, "\n"), "\n") {
+			if line != "" {
+				st.reply.Extra = append(st.reply.Extra, line)
+			}
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown verb %q", stmt.Verb)
 	}

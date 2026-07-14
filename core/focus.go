@@ -1,4 +1,4 @@
-// Package core provides fundamental types for the TUI toolkit.
+// Package core provides fundamental types for KittyTK.
 package core
 
 import (
@@ -773,22 +773,50 @@ type ActivityReporter interface {
 	IsActive() bool
 }
 
+// QuasiActiveReporter is an optional capability: a window-like trinket that is
+// "quasi-active" - lit and rendered active but with a heavy single border
+// because OS focus lives on another surface (a torn-off window) - reports it
+// here. Such a window is still the focused window on its own surface, so
+// FocusChainActive treats it as active and a focused control inside it keeps
+// showing its caret / focus indicators.
+type QuasiActiveReporter interface {
+	IsQuasiActive() bool
+}
+
+// chainNodeActive reports, for one ancestor node, whether it is an activity
+// reporter and, if so, whether it counts as active - true when it is active
+// outright or quasi-active (lit on a torn-off surface).
+func chainNodeActive(node any) (isReporter, active bool) {
+	ar, ok := node.(ActivityReporter)
+	if !ok {
+		return false, false
+	}
+	if ar.IsActive() {
+		return true, true
+	}
+	if qa, ok := node.(QuasiActiveReporter); ok && qa.IsQuasiActive() {
+		return true, true
+	}
+	return true, false
+}
+
 // FocusChainActive reports whether every window-like ancestor of w
 // (including w itself) is the active one in its container. A trinket
 // keeps its local focus while its window sits in the background, but
 // focus indicators - the text caret in particular - must not show
-// there, or two carets can be on screen at once. Trinkets outside any
-// window pass vacuously.
+// there, or two carets can be on screen at once. A quasi-active window
+// (lit on its own torn-off surface) counts as active, so its focused
+// control still shows a caret. Trinkets outside any window pass vacuously.
 func FocusChainActive(w Trinket) bool {
 	if w == nil {
 		return true
 	}
-	if ar, ok := w.(ActivityReporter); ok && !ar.IsActive() {
+	if isRep, active := chainNodeActive(w); isRep && !active {
 		return false
 	}
 	current := w.Parent()
 	for current != nil {
-		if ar, ok := current.(ActivityReporter); ok && !ar.IsActive() {
+		if isRep, active := chainNodeActive(current); isRep && !active {
 			return false
 		}
 		trinket, ok := current.(Trinket)

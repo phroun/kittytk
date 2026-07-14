@@ -93,6 +93,34 @@ is frozen; naming questions are collected at the end.
   Templates may contain children (component definitions). Builtins are
   lowercase; templates CamelCase by convention.
 
+## Introspection (D24)
+
+A connection can ask the host to describe its own wire vocabulary, so
+tooling and clients discover the surface at runtime instead of hard-coding
+it. Send the verb `describe` (no arguments); the host answers with a stream
+of **flat** statements (one per line, no nested blocks — the simplest
+parsers can read it) ahead of the batch's `reply`:
+
+```
+propcommon name="enabled" kind=flag default="true" doc="Whether the trinket accepts input."
+proptype   name="button" !virtual
+prop of="button" name="caption" kind=string default="" doc="Display text (& = accelerator)."
+prop of="button" name="action" kind=action default="" doc="Optional command dispatched on click."
+…
+```
+
+- `propcommon` — a property every non-virtual type accepts (reported once).
+- `proptype name=… virtual|!virtual` — a registered type; following `prop`
+  lines (matched by `of=`) are its type-specific properties.
+- Each property carries `kind` (string/int/float/flag/enum/word/color/units/
+  stream/action), `default` (a literal, or `inherited`/`as-noted`/empty),
+  a brief tooltip `doc`, and `enum` (comma-separated allowed words, else empty).
+
+The descriptors come straight from each trinket's registration, so they
+cannot drift from what the host actually accepts. All three client
+libraries decode it: Go `Conn.Describe()` → `protocol.Vocabulary`, Python
+`conn.describe()` → `kittytk.Vocabulary`, C `kt_describe()` → `kt_vocab *`.
+
 ## Identity, creation, correlation
 
 | Concept | Form | Notes |
@@ -254,6 +282,8 @@ Events: `change selected=`.
 |---|---|---|
 | `feed` | string (stream) | **Pseudo-property**: every application APPENDS bytes to the terminal **display** — parsed into the screen buffer as if program output (`Terminal.Feed`, NOT `Write`, which is keyboard input to the child PTY). A channel, not state; never read back. Arbitrary bytes travel via the `\xNN` string escape (+ `\e` for ESC), so `set term feed="\e[1mhi\r\n"` works today; the O6 bulk frame arrives with transport as a more efficient encoding of the same statement. |
 | `shell` | flag | In-process convenience: starts the trinket's own local shell. Under the display-protocol split the PTY belongs to the APP, which pumps bytes through `feed=`. |
+| `font` | string | Monospace family the cell grid derives from on graphical targets (default `Monday`). Text mode ignores it (cells are cells). |
+| `font_size` | int (points) | Point size the cell grid derives from on graphical targets: the cell is the font's measured advance width × line height at this size, so glyphs and grid share one pitch (default 12). |
 | `columns`, `rows` | numeric | (future — currently bounds-driven) |
 
 Input direction (user keystrokes → app as `data` events) joins the

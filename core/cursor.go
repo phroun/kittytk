@@ -26,3 +26,14 @@ const (
 type CursorProvider interface {
 	CursorShape() CursorShape
 }
+
+// CursorShaper is an optional container capability: a container that
+// routes mouse events through a coordinate transform the generic
+// ChildAt+Bounds cursor descent can't reproduce (a nested window's
+// title/content split and interior denomination, an MDI pane's window
+// placement) answers the cursor query itself, descending exactly as it
+// routes events. localX/localY are in the container's own coordinate
+// space, as its HandleMouseMove receives them.
+type CursorShaper interface {
+	CursorShapeAt(localX, localY Unit) CursorShape
+}

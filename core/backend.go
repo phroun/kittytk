@@ -1,8 +1,9 @@
-// Package core provides fundamental types for the TUI toolkit.
+// Package core provides fundamental types for KittyTK.
 package core
 
 import (
 	"image"
+	"math"
 
 	"github.com/phroun/kittytk/style"
 )
@@ -108,6 +109,25 @@ type RenderBackend interface {
 	Beep()
 }
 
+// AsyncClipboardReader is an optional RenderBackend capability for surfaces
+// whose clipboard read is asynchronous - a terminal answering an OSC 52 query
+// may prompt the user for permission or otherwise take an unbounded time. The
+// desktop uses it to drive a "waiting for clipboard" affordance instead of
+// blocking the event loop. Backends whose read is instant (SDL) omit it, and
+// callers use the synchronous GetClipboard.
+type AsyncClipboardReader interface {
+	// RequestClipboardRead asks the host/terminal for its clipboard. It returns
+	// false when an async read isn't available or applicable right now (the
+	// caller should fall back to GetClipboard); when true, the handler set via
+	// SetClipboardReadHandler will be invoked with the reply if/when it arrives
+	// (it may never arrive - the caller decides how long to wait).
+	RequestClipboardRead() bool
+
+	// SetClipboardReadHandler registers the single callback invoked (possibly
+	// on another goroutine) when a clipboard response arrives.
+	SetClipboardReadHandler(func(text string))
+}
+
 // SmoothPositioner is an optional RenderBackend capability: true
 // when the surface can place window chrome at arbitrary unit
 // positions (pixel surfaces). Cell-only surfaces (terminals) omit it
@@ -143,6 +163,15 @@ type RoundedRectDrawer interface {
 	StrokeRoundedRect(r UnitRect, radius Unit, border style.BorderStyle, s style.CellStyle)
 }
 
+// RoundedRectWeightStroker is an optional RenderBackend capability: stroke
+// a rounded rectangle with an explicit device-pixel weight instead of the
+// fixed border-style weight. Used for the thin inner line of a
+// single-border (active-but-not-focused) window frame, whose weight tracks
+// the tabbed control's tab stroke rather than the frame border.
+type RoundedRectWeightStroker interface {
+	StrokeRoundedRectWeight(r UnitRect, radius Unit, strokePx int, s style.CellStyle)
+}
+
 // TranslucentPixelFiller is an optional RenderBackend capability: fill a
 // device-pixel rectangle with a color at partial opacity, blended over
 // the existing pixels and respecting the clip (including a rounded clip
@@ -159,7 +188,7 @@ type TranslucentPixelFiller interface {
 // strip's silhouette corners use this; cell surfaces omit it and
 // callers fall back to scanline fills.
 type ArcWedgeDrawer interface {
-	DrawArcWedge(r UnitRect, centerRight, centerBottom bool, strokeW Unit, s style.CellStyle)
+	DrawArcWedge(r UnitRect, centerRight, centerBottom bool, strokeW Unit, offXPx, offYPx int, s style.CellStyle)
 }
 
 // ImageDrawer is an optional RenderBackend capability: composite a
@@ -175,10 +204,35 @@ type ImageDrawer interface {
 	DrawImagePx(xPx, yPx int, img image.Image)
 }
 
-// DeviceScaler is an optional RenderBackend capability reporting how
-// many device pixels one unit covers (the raster backend's scale).
+// MaskTintDrawer is an optional RenderBackend capability: composite a
+// color-independent coverage mask (only its alpha is read) tinted with a solid
+// color. Lets a caller cache one grayscale glyph per shape and recolor it per
+// draw, so color-varying content doesn't re-rasterize a glyph per color.
+type MaskTintDrawer interface {
+	DrawImageMaskTintPx(xPx, yPx int, mask *image.RGBA, r, g, b uint8)
+}
+
+// DeviceScaler is an optional RenderBackend capability reporting the
+// device zoom: how many device pixels one unit covers at the base font
+// size (the raster backend's integer scale). Chrome that wants a
+// physical hairline weight uses it; geometry that must track font_size
+// uses UnitPixelMapper instead.
 type DeviceScaler interface {
 	Scale() int
+}
+
+// UnitPixelMapper is an optional RenderBackend capability exposing the
+// backend's true (font_size-aware, possibly fractional and cell-snapped)
+// unit-to-device-pixel mapping, so the Painter's device-pixel helpers
+// place sub-unit fills exactly where the backend's own geometry lands.
+// Without it the Painter falls back to integer unit*DeviceScale.
+type UnitPixelMapper interface {
+	// PxPerUnit is the unsnapped device pixels per unit (for lengths).
+	PxPerUnit() float64
+	// UnitToPxX / UnitToPxY are the cell-snapped conversions of a unit
+	// position on each axis (for anchors).
+	UnitToPxX(Unit) int
+	UnitToPxY(Unit) int
 }
 
 // GraphicalModer is the D1 mode query: a backend reports true when
@@ -266,6 +320,71 @@ func FindGraphicalFrames(w Trinket) bool {
 	return false
 }
 
+// windowFrameBorderPx is the configured graphical window-frame border
+// width in device pixels (0 = the built-in default). Set by the host from
+// the ini's border_width. It is read both by the raster backend (to
+// stroke the frame) and, converted to units, by the window layout (to
+// reserve the border outside the content coordinate system).
+var windowFrameBorderPx int
+
+// SetWindowFrameBorderPx sets the graphical window-frame border width in
+// device pixels; 0 (or negative) restores the default.
+func SetWindowFrameBorderPx(px int) {
+	if px < 0 {
+		px = 0
+	}
+	windowFrameBorderPx = px
+}
+
+// WindowFrameBorderPx returns the effective frame border width in device
+// pixels - the configured value, or the built-in default (2) when unset.
+func WindowFrameBorderPx() int {
+	if windowFrameBorderPx > 0 {
+		return windowFrameBorderPx
+	}
+	return defaultWindowFrameBorderPx
+}
+
+// defaultWindowFrameBorderPx is the built-in frame stroke weight.
+const defaultWindowFrameBorderPx = 2
+
+// FrameBorderProvider is the trinket-side carrier of the graphical
+// window-frame border reservation: the desktop reports how many units the
+// frame border occupies (the device-pixel width converted at its
+// pixels-per-unit), 0 on cell surfaces. Windows reserve it out of their
+// content area so the border rests OUTSIDE the interior coordinate system
+// (a thicker border shrinks the interior / needs a bigger window).
+type FrameBorderProvider interface {
+	WindowFrameBorderUnits() Unit
+}
+
+// FindFrameBorderUnits walks up the trinket tree for a
+// FrameBorderProvider. Default (no provider found): 0 - no reserved
+// border, the cell-frame / safe answer.
+func FindFrameBorderUnits(w Trinket) Unit {
+	for current := Trinket(w); current != nil; {
+		if p, ok := current.(FrameBorderProvider); ok {
+			return p.WindowFrameBorderUnits()
+		}
+		parent := current.Parent()
+		if parent == nil {
+			return 0
+		}
+		current = parent
+	}
+	return 0
+}
+
+// SnapOriginSetter is an optional RenderBackend capability: anchor cell
+// snapping at a unit origin so content snaps relative to it (a window's
+// interior stays pixel-identical wherever the window sits). Cell surfaces
+// omit it, so setting an origin there is a no-op.
+type SnapOriginSetter interface {
+	// SetSnapOrigin anchors snapping at (ux, uy) and returns the previous
+	// origin for restore. (0,0) is the global default.
+	SetSnapOrigin(ux, uy Unit) (Unit, Unit)
+}
+
 // CaretDrawer is an optional RenderBackend capability: pixel surfaces
 // draw the text-insertion caret as a thin vertical bar sitting at the
 // left edge of the glyph box at (x, y) - where the next character
@@ -285,6 +404,26 @@ type CaretDrawer interface {
 // The style's background color fills the rect. Cell surfaces omit it.
 type PixelRectFiller interface {
 	FillRectPx(xPx, yPx, wPx, hPx int, s style.CellStyle)
+}
+
+// TextPixelDrawer is an optional RenderBackend capability: draw a string
+// with its top-left at a device pixel (not a unit that re-snaps to the cell
+// grid), returning the advance in device pixels. Proportional glyphs
+// rasterize at the unsnapped pixels-per-unit; laying successive segments and
+// the caret out by this pixel advance - instead of re-snapping each unit
+// position through the cell rate - keeps them exactly on the glyphs at a
+// fractional font size, where the two rates diverge. Cell surfaces omit it.
+type TextPixelDrawer interface {
+	DrawTextPx(xPx, yPx int, s string, st style.CellStyle, f *Font) int
+}
+
+// ClippedTextPixelDrawer is an optional RenderBackend capability: like
+// DrawTextPx, but only the device-pixel columns in [clipX0, clipX1) are
+// painted. It lets a caller draw one shaped run and reveal only part of it
+// with pixel precision (the selection re-colors its text this way, from the
+// same run as the base text, so the glyphs never move). Cell surfaces omit it.
+type ClippedTextPixelDrawer interface {
+	DrawTextPxClipped(xPx, yPx int, s string, st style.CellStyle, f *Font, clipX0, clipX1 int) int
 }
 
 // FindSmoothPositioning walks up the trinket tree for a
@@ -536,16 +675,20 @@ func (p *Painter) DrawRoundedRect(r UnitRect, radius Unit, border style.BorderSt
 
 // DrawArcWedge paints an antialiased quarter-arc wedge when the
 // backend supports it (see ArcWedgeDrawer). strokeW is in screen
-// units. Returns false on cell surfaces; the caller then falls back
-// to its scanline rendering.
-func (p *Painter) DrawArcWedge(r UnitRect, centerRight, centerBottom bool, strokeW Unit, s style.CellStyle) bool {
+// units; offXPx/offYPx rigidly translate the whole wedge by an exact
+// device-pixel amount AFTER cell snapping - for sub-cell nudges that
+// must be exact regardless of position (e.g. shifting a foot arc by
+// one line thickness so its stroke meets the shoulder's without a
+// snapping-dependent jog). Returns false on cell surfaces; the caller
+// then falls back to its scanline rendering.
+func (p *Painter) DrawArcWedge(r UnitRect, centerRight, centerBottom bool, strokeW Unit, offXPx, offYPx int, s style.CellStyle) bool {
 	ad, ok := p.backend.(ArcWedgeDrawer)
 	if !ok {
 		return false
 	}
 	screenRect := p.transform.ApplyRect(r)
 	p.applyClip()
-	ad.DrawArcWedge(screenRect, centerRight, centerBottom, strokeW, s)
+	ad.DrawArcWedge(screenRect, centerRight, centerBottom, strokeW, offXPx, offYPx, s)
 	return true
 }
 
@@ -573,10 +716,61 @@ func (p *Painter) DrawImageOffset(x, y Unit, offXPx, offYPx int, img image.Image
 		return false
 	}
 	sx, sy := p.toScreen(x, y)
-	scale := p.DeviceScale()
+	ax, ay := p.deviceAnchor(sx, sy)
 	p.applyClip()
-	id.DrawImagePx(int(sx)*scale+offXPx, int(sy)*scale+offYPx, img)
+	id.DrawImagePx(ax+offXPx, ay+offYPx, img)
 	return true
+}
+
+// DrawImageMaskTintOffset composites a coverage mask (only its alpha is read)
+// tinted with (r,g,b) at unit (x,y) plus a device-pixel offset - the recolor
+// twin of DrawImageOffset for cached grayscale glyphs. Returns false on
+// backends without MaskTintDrawer.
+func (p *Painter) DrawImageMaskTintOffset(x, y Unit, offXPx, offYPx int, mask *image.RGBA, r, g, b uint8) bool {
+	md, ok := p.backend.(MaskTintDrawer)
+	if !ok {
+		return false
+	}
+	sx, sy := p.toScreen(x, y)
+	ax, ay := p.deviceAnchor(sx, sy)
+	p.applyClip()
+	md.DrawImageMaskTintPx(ax+offXPx, ay+offYPx, mask, r, g, b)
+	return true
+}
+
+// DrawTextOffset draws a string with its top-left at unit (x, y) plus a
+// device-pixel offset, returning the advance in device pixels. Proportional
+// glyphs rasterize at the unsnapped pixels-per-unit, so laying successive
+// segments out by accumulating this pixel advance - instead of re-snapping
+// each unit position through the cell rate - keeps them exactly on the
+// glyphs at a fractional font size, where the two rates diverge. Returns 0,
+// false on cell surfaces (the caller falls back to whole-unit DrawText).
+func (p *Painter) DrawTextOffset(x, y Unit, offXPx, offYPx int, text string, s style.CellStyle, font *Font) (int, bool) {
+	td, ok := p.backend.(TextPixelDrawer)
+	if !ok {
+		return 0, false
+	}
+	sx, sy := p.toScreen(x, y)
+	ax, ay := p.deviceAnchor(sx, sy)
+	p.applyClip()
+	return td.DrawTextPx(ax+offXPx, ay+offYPx, text, s, font), true
+}
+
+// DrawTextOffsetClipped draws a string at unit (x, y) plus a device-pixel
+// offset, but reveals only the columns in [clipX0Px, clipX1Px) - both given
+// as device-pixel offsets from the same unit anchor. Draw the whole run at
+// offXPx and clip to the wanted span to re-color a slice of it (the
+// selection) without re-shaping or re-placing the glyphs, so they don't
+// jitter as the span grows. Returns 0, false on cell surfaces.
+func (p *Painter) DrawTextOffsetClipped(x, y Unit, offXPx, clipX0Px, clipX1Px int, text string, s style.CellStyle, font *Font) (int, bool) {
+	td, ok := p.backend.(ClippedTextPixelDrawer)
+	if !ok {
+		return 0, false
+	}
+	sx, sy := p.toScreen(x, y)
+	ax, ay := p.deviceAnchor(sx, sy)
+	p.applyClip()
+	return td.DrawTextPxClipped(ax+offXPx, ay, text, s, font, ax+clipX0Px, ax+clipX1Px), true
 }
 
 // FillRectPixels fills, in device pixels, a rectangle anchored at unit
@@ -590,9 +784,9 @@ func (p *Painter) FillRectPixels(x, y Unit, offXPx, offYPx, wPx, hPx int, s styl
 		return false
 	}
 	sx, sy := p.toScreen(x, y)
-	scale := p.DeviceScale()
+	ax, ay := p.deviceAnchor(sx, sy)
 	p.applyClip()
-	pf.FillRectPx(int(sx)*scale+offXPx, int(sy)*scale+offYPx, wPx, hPx, s)
+	pf.FillRectPx(ax+offXPx, ay+offYPx, wPx, hPx, s)
 	return true
 }
 
@@ -608,14 +802,16 @@ func (p *Painter) FillRectPixelsAlpha(x, y Unit, offXPx, offYPx, wPx, hPx int, r
 		return false
 	}
 	sx, sy := p.toScreen(x, y)
-	scale := p.DeviceScale()
+	ax, ay := p.deviceAnchor(sx, sy)
 	p.applyClip()
-	tf.FillRectPxAlpha(int(sx)*scale+offXPx, int(sy)*scale+offYPx, wPx, hPx, r, g, b, alpha)
+	tf.FillRectPxAlpha(ax+offXPx, ay+offYPx, wPx, hPx, r, g, b, alpha)
 	return true
 }
 
-// DeviceScale reports how many device pixels one unit covers on this
-// target (1 on cell surfaces and unscaled pixel surfaces).
+// DeviceScale reports the device zoom: how many device pixels one unit
+// covers at the base font size (1 on cell surfaces and unscaled pixel
+// surfaces). It does NOT include the font_size cell scaling; use
+// UnitsToPx / the device anchor helpers for font_size-aware conversions.
 func (p *Painter) DeviceScale() int {
 	if ds, ok := p.backend.(DeviceScaler); ok {
 		if s := ds.Scale(); s > 0 {
@@ -623,6 +819,76 @@ func (p *Painter) DeviceScale() int {
 		}
 	}
 	return 1
+}
+
+// PxPerUnitF reports the fractional device pixels per unit, tracking
+// font_size on backends that expose UnitPixelMapper (else the integer
+// DeviceScale). Device-pixel render paths (e.g. the terminal cell
+// raster) multiply unit dimensions by this so they grow with the cell.
+func (p *Painter) PxPerUnitF() float64 {
+	if m, ok := p.backend.(UnitPixelMapper); ok {
+		if ppu := m.PxPerUnit(); ppu > 0 {
+			return ppu
+		}
+	}
+	return float64(p.DeviceScale())
+}
+
+// UnitsToPx converts a unit length to device pixels, tracking font_size
+// on backends that expose UnitPixelMapper (else integer unit*scale). For
+// device-pixel widths/heights that must grow with the cell size.
+//
+// For a span that borders cell-snapped geometry (a menu edge, a hairline
+// that must reach a fill's edge) use UnitSpanPxX/Y instead: those snap
+// both ends to the same grid the shapes paint on, so the device fill and
+// the shape line up exactly (no seam).
+func (p *Painter) UnitsToPx(u Unit) int {
+	return int(math.Round(float64(u) * p.PxPerUnitF()))
+}
+
+// UnitSpanPxX is the device-pixel distance between two unit X positions,
+// snapped to the same grid the backend paints on (see deviceAnchor), so a
+// device-pixel fill anchored at fromX and this many pixels wide ends
+// exactly where a cell-snapped shape at toX does.
+func (p *Painter) UnitSpanPxX(fromX, toX Unit) int {
+	sf, _ := p.toScreen(fromX, 0)
+	st, _ := p.toScreen(toX, 0)
+	af, _ := p.deviceAnchor(sf, 0)
+	at, _ := p.deviceAnchor(st, 0)
+	return at - af
+}
+
+// UnitSpanPxY is UnitSpanPxX for the Y axis.
+func (p *Painter) UnitSpanPxY(fromY, toY Unit) int {
+	_, sf := p.toScreen(0, fromY)
+	_, st := p.toScreen(0, toY)
+	_, af := p.deviceAnchor(0, sf)
+	_, at := p.deviceAnchor(0, st)
+	return at - af
+}
+
+// deviceAnchor maps a screen-unit position to its device-pixel anchor,
+// matching the backend's own (cell-snapped, font_size-aware) geometry so
+// device-pixel fills line up with painted edges.
+func (p *Painter) deviceAnchor(sx, sy Unit) (int, int) {
+	if m, ok := p.backend.(UnitPixelMapper); ok {
+		return m.UnitToPxX(sx), m.UnitToPxY(sy)
+	}
+	scale := p.DeviceScale()
+	return int(sx) * scale, int(sy) * scale
+}
+
+// SetSnapOrigin anchors the backend's cell snapping at unit (ux, uy) when
+// the backend supports it (graphical surfaces), returning the previous
+// origin (both 0 on cell surfaces). A window paints its subtree with the
+// origin set to its top-left, so its interior is pixel-stable as the
+// window moves, then restores the previous origin. Because paints are
+// synchronous, save the return and restore it right after the subtree.
+func (p *Painter) SetSnapOrigin(ux, uy Unit) (Unit, Unit) {
+	if s, ok := p.backend.(SnapOriginSetter); ok {
+		return s.SetSnapOrigin(ux, uy)
+	}
+	return 0, 0
 }
 
 // Graphical reports whether the target paints pixels rather than
@@ -659,6 +925,20 @@ func (p *Painter) StrokeRoundedRect(r UnitRect, radius Unit, border style.Border
 	screenRect := p.transform.ApplyRect(r)
 	p.applyClip()
 	rd.StrokeRoundedRect(screenRect, radius, border, s)
+	return true
+}
+
+// StrokeRoundedRectWeight paints only the rounded rectangle's stroke at an
+// explicit device-pixel weight (see RoundedRectWeightStroker), leaving the
+// interior untouched. Returns false on cell surfaces.
+func (p *Painter) StrokeRoundedRectWeight(r UnitRect, radius Unit, strokePx int, s style.CellStyle) bool {
+	rd, ok := p.backend.(RoundedRectWeightStroker)
+	if !ok {
+		return false
+	}
+	screenRect := p.transform.ApplyRect(r)
+	p.applyClip()
+	rd.StrokeRoundedRectWeight(screenRect, radius, strokePx, s)
 	return true
 }
 

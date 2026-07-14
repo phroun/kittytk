@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/protocol"
-	"github.com/phroun/kittytk/trinkets"
 )
 
 // The Protocol Demo window's script must execute cleanly and surface

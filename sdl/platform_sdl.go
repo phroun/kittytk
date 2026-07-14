@@ -12,9 +12,9 @@ import (
 
 	sdl2 "github.com/veandco/go-sdl2/sdl"
 
+	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/platform"
-	"github.com/phroun/kittytk/raster"
 )
 
 // Platform runs KittyTK over SDL2 windows: each surface is an OS
@@ -23,7 +23,9 @@ import (
 type Platform struct {
 	title    string
 	wPx, hPx int
-	scale    int // pixels per unit; see SetScale
+	scale    int              // device zoom: pixels per unit at 12pt; see SetScale
+	fontSize int              // UI point size that sets the cell pixel size (0 = 12pt base)
+	metrics  core.CellMetrics // root cell denomination for every surface (0 = raster default 8x16)
 
 	mu     sync.Mutex
 	posts  []func()
@@ -41,7 +43,28 @@ type Platform struct {
 	cursors   map[core.CursorShape]*sdl2.Cursor
 	curCursor core.CursorShape
 	cursorSet bool
+
+	// FPS overlay in the OS title bar (kittytk-sdl [window] fps=true): count
+	// presented frames and, once a second, rewrite the main window's title to
+	// "<title> - N fps". main-thread only, so no locking.
+	showFPS   bool
+	fpsFrames int
+	fpsSince  time.Time
+
+	// vsync selects whether presents sync to the display refresh. On by
+	// default; turning it off uncaps the burn loop (see SetShowFPS) so fps can
+	// read the raw render throughput.
+	vsync bool
 }
+
+// SetShowFPS enables the render frame-rate readout in the main window's OS
+// title bar. Off by default. Call before Run.
+func (p *Platform) SetShowFPS(on bool) { p.showFPS = on }
+
+// SetVSync selects whether presents sync to the display refresh. On by
+// default; call before Run/EnsureBackend. Off lets fps=true read uncapped
+// throughput (and removes the refresh-rate cap generally).
+func (p *Platform) SetVSync(on bool) { p.vsync = on }
 
 // nativeWin bundles one OS window with its presentation chain.
 type nativeWin struct {
@@ -69,7 +92,7 @@ type timerEntry struct {
 
 // New creates an SDL platform; the main window has the given pixel size.
 func New(title string, widthPx, heightPx int) *Platform {
-	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1, wins: map[uint32]*nativeWin{}}
+	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1, vsync: true, wins: map[uint32]*nativeWin{}}
 }
 
 // SetScale sets how many window pixels one abstract unit covers.
@@ -81,6 +104,35 @@ func (p *Platform) SetScale(scale int) {
 		scale = 1
 	}
 	p.scale = scale
+}
+
+// SetCellMetrics sets the root cell denomination applied to EVERY
+// surface's backend - the main window (including after a resize, which
+// recreates the framebuffer) and every torn-off/secondary window. Call
+// before EnsureBackend/Run. A zero value keeps the raster default 8x16.
+// font_size does NOT go through here (it scales the cell's pixel size,
+// not the denomination); see SetFontSize.
+func (p *Platform) SetCellMetrics(m core.CellMetrics) {
+	p.metrics = m
+}
+
+// SetFontSize sets the UI point size that fixes the cell's pixel size on
+// EVERY surface's backend (12pt = the base 8x16-pixel cell at zoom 1). It
+// scales pixels-per-unit, so layout is unchanged in units and only the
+// pixel size of every cell grows. Call before EnsureBackend/Run.
+func (p *Platform) SetFontSize(size int) {
+	p.fontSize = size
+}
+
+// applyMetrics re-seeds a freshly created backend with the platform's
+// denomination and font_size so its geometry matches every other surface.
+func (p *Platform) applyMetrics(b *raster.Backend) {
+	if p.metrics.CellWidth > 0 && p.metrics.CellHeight > 0 {
+		b.SetCellMetrics(p.metrics)
+	}
+	if p.fontSize > 0 {
+		b.SetFontSize(p.fontSize)
+	}
 }
 
 // Backend returns the main window's raster backend (valid after Run
@@ -96,6 +148,7 @@ func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 		if err != nil {
 			return nil, err
 		}
+		p.applyMetrics(b)
 		p.backend = b
 	}
 	return p.backend, nil
@@ -110,6 +163,13 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		return 1
 	}
 	defer sdl2.Quit()
+
+	// Deliver the click that activates a background window to the app, so a
+	// press on a non-focused SDL window (a torn-off window or the desktop
+	// window, brought forward from another of ours or from another macOS
+	// app) still hits the control under the pointer instead of only raising
+	// the window. Off by default on macOS; read live at event time.
+	_ = sdl2.SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1")
 
 	win, err := p.createWindow(p.title, sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED,
 		p.wPx, p.hPx, sdl2.WINDOW_SHOWN|sdl2.WINDOW_RESIZABLE, 0)
@@ -132,7 +192,19 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	// re-lay out and present live at every size change.
 	sdl2.AddEventWatchFunc(func(ev sdl2.Event, _ interface{}) bool {
 		if e, ok := ev.(*sdl2.WindowEvent); ok && e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
+			// The main loop is frozen inside that modal loop, so its post-queue
+			// drain is stalled too - posted work can't land, and a live terminal
+			// (whose feed batches apply through Post) would sit on its last frame
+			// until release while the chrome around it reflows. Drain the queue
+			// on the main thread first (safe: the watch runs on the same, but
+			// blocked, main thread, and feed-applies push no SDL events) so that
+			// work lands, then resize. If the drain dirtied the surface at an
+			// unchanged size, liveResize won't have presented it - so do.
+			p.drainPosts()
 			p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
+			if w, ok := p.wins[e.WindowID]; ok && w.surface != nil && w.surface.dirty.Swap(false) {
+				p.paintAndPresent(w, true)
+			}
 		}
 		return true
 	}, nil)
@@ -151,12 +223,28 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		delivered := p.pumpEvents()
 
 		for _, w := range p.wins {
-			if s := w.surface; s != nil && s.dirty.Swap(false) {
-				p.paintAndPresent(w)
+			s := w.surface
+			if s == nil {
+				continue
+			}
+			dirty := s.dirty.Swap(false)
+			// fps=true runs a continuous repaint (burn) loop on the main
+			// window so the reading reflects a steady render rate; otherwise
+			// only dirty surfaces repaint (on-demand). The burn loop always
+			// repaints in full.
+			burn := p.showFPS && w == p.main
+			if dirty || burn {
+				p.paintAndPresent(w, burn)
 			}
 		}
 
-		if !delivered {
+		if p.showFPS {
+			p.updateFPSTitle()
+		}
+
+		// The burn loop must not sleep - vsync in the present chain paces it.
+		// On-demand mode idles at 5ms when nothing was delivered.
+		if !delivered && !p.showFPS {
 			sdl2.Delay(5)
 		}
 	}
@@ -186,7 +274,11 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 	if err != nil {
 		return nil, err
 	}
-	w.renderer, err = sdl2.CreateRenderer(w.window, -1, sdl2.RENDERER_ACCELERATED|sdl2.RENDERER_PRESENTVSYNC)
+	rendererFlags := uint32(sdl2.RENDERER_ACCELERATED)
+	if p.vsync {
+		rendererFlags |= sdl2.RENDERER_PRESENTVSYNC
+	}
+	w.renderer, err = sdl2.CreateRenderer(w.window, -1, rendererFlags)
 	if err != nil {
 		w.renderer, err = sdl2.CreateRenderer(w.window, -1, 0)
 		if err != nil {
@@ -235,6 +327,7 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 	if err != nil {
 		return err
 	}
+	p.applyMetrics(b)
 	w.backend = b
 	if w == p.main || p.main == nil {
 		p.backend = b
@@ -254,17 +347,40 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 
 // paintAndPresent runs the handler frame into the window's raster
 // backend and blits it.
-func (p *Platform) paintAndPresent(w *nativeWin) {
+func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 	s := w.surface
 	if s == nil || s.handler == nil || w.texture == nil {
 		return
 	}
+	full, dmg := s.takeDamage()
+	if forceFull {
+		full = true
+	}
+	if !full && (dmg.Width <= 0 || dmg.Height <= 0) {
+		// Dirty with no bounded region recorded: repaint everything.
+		full = true
+	}
+
 	w.backend.BeginFrame()
-	s.handler.Frame(core.NewPainter(w.backend))
+	if full {
+		s.handler.Frame(core.NewPainter(w.backend))
+	} else {
+		// Clip the whole tree to the damaged region: the persistent
+		// framebuffer keeps everything outside it, off-clip draws are rejected,
+		// and only this rectangle is re-uploaded below.
+		s.handler.Frame(core.NewPainter(w.backend).WithClip(dmg))
+	}
 	w.backend.EndFrame()
 
 	img := w.backend.Image()
-	_ = w.texture.Update(nil, unsafe.Pointer(&img.Pix[0]), img.Stride)
+	if x0, y0, x1, y1, ok := damageDevicePx(w.backend, full, dmg); ok {
+		off := img.PixOffset(x0, y0)
+		_ = w.texture.Update(
+			&sdl2.Rect{X: int32(x0), Y: int32(y0), W: int32(x1 - x0), H: int32(y1 - y0)},
+			unsafe.Pointer(&img.Pix[off]), img.Stride)
+	} else {
+		_ = w.texture.Update(nil, unsafe.Pointer(&img.Pix[0]), img.Stride)
+	}
 	if w.transparent {
 		// Alpha-0 clear so unpainted pixels (the frame's corner
 		// cutouts) stay transparent through the composite.
@@ -273,6 +389,42 @@ func (p *Platform) paintAndPresent(w *nativeWin) {
 	_ = w.renderer.Clear()
 	_ = w.renderer.Copy(w.texture, nil, nil)
 	w.renderer.Present()
+
+	if p.showFPS && w == p.main {
+		p.fpsFrames++
+	}
+}
+
+// damageDevicePx returns the device-pixel sub-rectangle to re-upload for a
+// bounded repaint; ok=false means upload the whole texture (full repaint or a
+// degenerate region).
+func damageDevicePx(b *raster.Backend, full bool, dmg core.UnitRect) (x0, y0, x1, y1 int, ok bool) {
+	if full {
+		return 0, 0, 0, 0, false
+	}
+	return b.DevicePxRect(dmg)
+}
+
+// updateFPSTitle rewrites the main window's OS title with the measured frame
+// rate about once a second. fps=true drives a continuous repaint of the main
+// window, so this reads the sustained render rate (vsync-paced - typically the
+// monitor refresh) rather than the sporadic on-demand present rate.
+func (p *Platform) updateFPSTitle() {
+	now := time.Now()
+	if p.fpsSince.IsZero() {
+		p.fpsSince = now
+		return
+	}
+	elapsed := now.Sub(p.fpsSince)
+	if elapsed < time.Second {
+		return
+	}
+	fps := int(float64(p.fpsFrames)/elapsed.Seconds() + 0.5)
+	if p.main != nil && p.main.window != nil {
+		p.main.window.SetTitle(fmt.Sprintf("%s - %d fps", p.title, fps))
+	}
+	p.fpsFrames = 0
+	p.fpsSince = now
 }
 
 // liveResize re-sizes one window's framebuffer, re-lays out its
@@ -295,7 +447,7 @@ func (p *Platform) liveResize(id uint32, wPx, hPx int) {
 	w.applyShape()
 	if s := w.surface; s != nil && s.handler != nil {
 		s.handler.Resized(w.backend.Size())
-		p.paintAndPresent(w)
+		p.paintAndPresent(w, true) // a resize repaints the whole surface
 		s.dirty.Store(false)
 	}
 }
@@ -350,6 +502,22 @@ func (p *Platform) pumpEvents() bool {
 			}
 			text := e.GetText()
 			for _, ch := range text {
+				// On macOS the Option key composes text (Option+a -> "å"),
+				// so meta shortcuts arrive here as accented characters rather
+				// than as KEYDOWN modifier combos. Decode them back to their
+				// "M-key" notation - matching the TUI backend - and dispatch
+				// as a key event instead of typing the composed character.
+				if runtime.GOOS == "darwin" {
+					if decoded, ok := decodeMacOSOptionChar(ch); ok {
+						mods, name := core.ParseKeyModifiers(decoded)
+						t := ""
+						if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
+							t = name
+						}
+						s.handler.Event(core.KeyPressEvent{Key: decoded, Modifiers: mods, Text: t})
+						continue
+					}
+				}
 				s.handler.Event(core.KeyPressEvent{
 					Key:  string(ch),
 					Text: string(ch),
@@ -369,6 +537,15 @@ func (p *Platform) pumpEvents() bool {
 					}
 					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
 				}
+			} else if e.Type == sdl2.KEYUP {
+				// Report releases with the modifier state AFTER this key rose
+				// (SDL's live keymap), so the desktop can commit a window-cycle
+				// run once every modifier is up. Emitted even for a bare
+				// modifier key (translateKey == "") so that release is seen.
+				s.handler.Event(core.KeyReleaseEvent{
+					Key:       translateKey(e.Keysym),
+					Modifiers: currentKeyModifiers(),
+				})
 			}
 		case *sdl2.MouseButtonEvent:
 			s := p.surfaceFor(e.WindowID)
@@ -426,19 +603,61 @@ func (p *Platform) mainSurface() *sdlSurface {
 	return nil
 }
 
-// toUnits converts window-pixel mouse coordinates to abstract units.
+// rootDenomination is the platform's root cell denomination (units per
+// cell), matching what every surface's backend reports: the configured
+// override or the default 8x16.
+func (p *Platform) rootDenomination() (int, int) {
+	w, h := int(p.metrics.CellWidth), int(p.metrics.CellHeight)
+	if w < 1 {
+		w = 8
+	}
+	if h < 1 {
+		h = 16
+	}
+	return w, h
+}
+
+// cellPx is the exact integer pixel size of one root cell along an axis -
+// the same value the raster backend paints with (denomination base scaled
+// by font_size, ceil'd so a cell contains its glyph, then the integer
+// device zoom). Must match raster.Backend.cellPx or hit-testing drifts.
+func (p *Platform) cellPx(denom int) int {
+	fs := p.fontSize
+	if fs < 1 {
+		fs = 12
+	}
+	n := (denom*fs + 11) / 12 // ceil(denom * fontSize/12)
+	if n < 1 {
+		n = 1
+	}
+	return n * p.scale
+}
+
+// pxToUnitAxis inverts the backend's cell-snapped forward mapping on one
+// axis: whole cells map back from exact cellPx multiples, the sub-cell
+// remainder from its rounded fraction. Floors toward negative infinity so
+// captured-drag coordinates left/above the window stay strictly negative.
+func pxToUnitAxis(px, denom, cellPx int) int {
+	if cellPx < 1 {
+		cellPx = 1
+	}
+	cells := px / cellPx
+	rem := px - cells*cellPx
+	if rem < 0 { // floor division for negative coordinates
+		cells--
+		rem += cellPx
+	}
+	sub := (rem*denom + cellPx/2) / cellPx // round(rem * denom/cellPx)
+	return cells*denom + sub
+}
+
+// toUnits converts window-pixel mouse coordinates to abstract units,
+// inverting the backend's font_size-aware, cell-snapped pixel mapping so
+// hit-testing lands on the same grid the UI paints on at any font_size.
 func (p *Platform) toUnits(x, y int32) (core.Unit, core.Unit) {
-	// Round toward negative infinity so captured-drag coordinates
-	// left/above the window stay strictly negative.
-	fx, fy := int(x), int(y)
-	ux := fx / p.scale
-	if fx < 0 && fx%p.scale != 0 {
-		ux--
-	}
-	uy := fy / p.scale
-	if fy < 0 && fy%p.scale != 0 {
-		uy--
-	}
+	denomW, denomH := p.rootDenomination()
+	ux := pxToUnitAxis(int(x), denomW, p.cellPx(denomW))
+	uy := pxToUnitAxis(int(y), denomH, p.cellPx(denomH))
 	return core.Unit(ux), core.Unit(uy)
 }
 
@@ -586,6 +805,14 @@ func translateKey(sym sdl2.Keysym) string {
 			}
 			return prefix + string(ch)
 		case alt:
+			// On macOS a bare Option+printable composes a character that
+			// SDL also delivers via TextInput, where we decode it back to
+			// M-key (see the TextInputEvent handler). Defer to that path so
+			// the shortcut fires exactly once; elsewhere Alt is a plain Meta
+			// modifier and TextInput carries nothing, so emit M-key here.
+			if runtime.GOOS == "darwin" {
+				return ""
+			}
 			return "M-" + string(ch)
 		case gui:
 			// Command-modified printables never arrive via TextInput;
@@ -792,6 +1019,13 @@ type sdlSurface struct {
 	handler  platform.SurfaceHandler
 	dirty    atomic.Bool
 	closed   bool
+
+	// Damage accumulated since the last present: a full-surface flag (an empty
+	// Invalidate, the default) or the union of bounded regions. A bounded frame
+	// repaints (and re-uploads) only that rectangle.
+	damageMu   sync.Mutex
+	damageFull bool
+	damageRect core.UnitRect
 }
 
 func (s *sdlSurface) Size() core.UnitSize {
@@ -801,9 +1035,58 @@ func (s *sdlSurface) Metrics() core.CellMetrics {
 	return s.win.backend.Metrics()
 }
 func (s *sdlSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
-func (s *sdlSurface) Invalidate(core.UnitRect)             { s.dirty.Store(true) }
-func (s *sdlSurface) SetCursorVisible(bool)                {}
-func (s *sdlSurface) SetCursorPosition(x, y core.Unit)     {}
+
+// Invalidate marks the surface dirty and accumulates damage: an empty rect
+// (the common case) means the whole surface; a bounded rect unions into the
+// pending region so a partial repaint touches only what changed.
+func (s *sdlSurface) Invalidate(r core.UnitRect) {
+	s.damageMu.Lock()
+	if r.Width <= 0 || r.Height <= 0 {
+		s.damageFull = true
+	} else if !s.damageFull {
+		s.damageRect = unionUnitRect(s.damageRect, r)
+	}
+	s.damageMu.Unlock()
+	s.dirty.Store(true)
+}
+
+// takeDamage reads and clears the accumulated damage.
+func (s *sdlSurface) takeDamage() (full bool, rect core.UnitRect) {
+	s.damageMu.Lock()
+	full, rect = s.damageFull, s.damageRect
+	s.damageFull = false
+	s.damageRect = core.UnitRect{}
+	s.damageMu.Unlock()
+	return full, rect
+}
+
+// unionUnitRect returns the smallest rectangle covering both; a degenerate
+// operand is treated as the other.
+func unionUnitRect(a, b core.UnitRect) core.UnitRect {
+	if a.Width <= 0 || a.Height <= 0 {
+		return b
+	}
+	if b.Width <= 0 || b.Height <= 0 {
+		return a
+	}
+	x0, y0 := a.X, a.Y
+	if b.X < x0 {
+		x0 = b.X
+	}
+	if b.Y < y0 {
+		y0 = b.Y
+	}
+	x1, y1 := a.X+a.Width, a.Y+a.Height
+	if b.X+b.Width > x1 {
+		x1 = b.X + b.Width
+	}
+	if b.Y+b.Height > y1 {
+		y1 = b.Y + b.Height
+	}
+	return core.UnitRect{X: x0, Y: y0, Width: x1 - x0, Height: y1 - y0}
+}
+func (s *sdlSurface) SetCursorVisible(bool)            {}
+func (s *sdlSurface) SetCursorPosition(x, y core.Unit) {}
 
 // ScreenPositionPx implements platform.NativeSurface.
 func (s *sdlSurface) ScreenPositionPx() (int, int) {
@@ -830,6 +1113,17 @@ func (s *sdlSurface) SetBordered(bordered bool) {
 		return
 	}
 	s.win.window.SetBordered(bordered)
+}
+
+// ScreenSizePx implements platform.NativeSurface: the OS window's current
+// pixel size, straight from SDL (no unit round-trip that would drift at
+// fractional pixels-per-unit).
+func (s *sdlSurface) ScreenSizePx() (int, int) {
+	if s.closed || s.win.window == nil {
+		return 0, 0
+	}
+	w, h := s.win.window.GetSize()
+	return int(w), int(h)
 }
 
 // SetScreenSizePx implements platform.NativeSurface: the size change
@@ -916,6 +1210,15 @@ func (s *sdlSurface) Minimize() {
 		return
 	}
 	s.win.window.Minimize()
+}
+
+// Restore implements platform.NativeRestorer: un-minimizes (and unhides)
+// the OS window so the desktop's "Show All" can bring torn windows back.
+func (s *sdlSurface) Restore() {
+	if s.closed || s.win.window == nil {
+		return
+	}
+	s.win.window.Restore()
 }
 
 // Minimized implements platform.NativeSurface.

@@ -5,7 +5,34 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/ptydriver"
 )
+
+// wireTerminal drives a terminal surface's child process from the client
+// side: it spawns a PTY, streams the child's output in through feed=, and
+// writes the terminal's input/resize events back to the PTY. The driver is
+// registered for cleanup when the app quits.
+func (a *app) wireTerminal(term client.Handle) {
+	drv, err := ptydriver.Start("", func(b []byte) {
+		_ = term.Set("feed=" + protocol.Quote(string(b)))
+	})
+	if err != nil {
+		return
+	}
+	a.drivers = append(a.drivers, drv)
+	term.On("input", func(ev *protocol.Event) {
+		if s, ok := ev.Text("data"); ok {
+			drv.Input([]byte(s))
+		}
+	})
+	term.On("resize", func(ev *protocol.Event) {
+		cols, okc := ev.Int("cols")
+		rows, okr := ev.Int("rows")
+		if okc && okr {
+			drv.Resize(cols, rows)
+		}
+	})
+}
 
 // wireMainWindow subscribes the demo window's interactive trinkets:
 // the basic-trinket narration, the font/denomination toggles (window
@@ -71,11 +98,9 @@ func (a *app) wireMenus() {
 	// Demo menu.
 	c.OnCommand("demo.file.new", func() { a.openTerminalWindow() })
 
-	// Edit menu: the display performs these on the focused trinket.
-	c.OnCommand("demo.edit.cut", func() { _, _ = c.Exec("cut") })
-	c.OnCommand("demo.edit.copy", func() { _, _ = c.Exec("copy") })
-	c.OnCommand("demo.edit.paste", func() { _, _ = c.Exec("paste") })
-	c.OnCommand("demo.edit.selectall", func() { _, _ = c.Exec("selectall") })
+	// Edit menu: Cut/Copy/Paste/Select All are supplied by the host's
+	// system Edit menu and act on the focused trinket directly; the client
+	// only contributes the custom Raw Key Input item.
 	c.OnCommand("demo.edit.rawkey", func() { _, _ = c.Exec("rawkey") })
 
 	// View menu.
@@ -84,9 +109,12 @@ func (a *app) wireMenus() {
 	c.OnCommand("demo.view.speak", func() { _, _ = c.Exec("announce_speak") })
 
 	// Window menu: New Window is a whole new application (connection).
-	c.OnCommand("demo.window.new", func() { openSecondary(a.path) })
-	c.OnCommand("demo.window.tile", func() { _, _ = c.Exec("tile") })
-	c.OnCommand("demo.window.cascade", func() { _, _ = c.Exec("cascade") })
+	// Dial it on its own goroutine: openSecondary blocks on a fresh
+	// handshake (including the host's approval prompt) and build, and the
+	// command handler runs on the connection's single event-delivery
+	// goroutine - blocking here would starve all further events for this
+	// connection until it returns.
+	c.OnCommand("demo.window.new", func() { go openSecondary(a.path) })
 
 	// Basic Trinkets buttons narrate to the status bar.
 	c.OnCommand("demo.basic.ok", func() { a.setStatus("OK button clicked!") })
@@ -221,6 +249,7 @@ func (a *app) openTerminalWindow() {
 	}
 	win := ui.Window("dwin")
 	ui.Button("dcloser").OnClick(func() { _ = win.Close() })
+	a.wireTerminal(ui.Object("dterm"))
 }
 
 // showAbout opens the About message box.
@@ -256,12 +285,11 @@ func (a *app) wireSecondary(n int) {
 	c := a.conn
 
 	ui.Button("closer").OnClick(func() { _ = ui.Window("w").Close() })
+	a.wireTerminal(ui.Object("term"))
 
 	c.OnCommand("demo.app.close", func() { _ = ui.Window("w").Close() })
-	c.OnCommand("demo.app.cut", func() { _, _ = c.Exec("cut") })
-	c.OnCommand("demo.app.copy", func() { _, _ = c.Exec("copy") })
-	c.OnCommand("demo.app.paste", func() { _, _ = c.Exec("paste") })
-	c.OnCommand("demo.app.selectall", func() { _, _ = c.Exec("selectall") })
+	// Cut/Copy/Paste/Select All come from the host's system Edit menu; the
+	// client only wires the custom Raw Key Input item.
 	c.OnCommand("demo.app.rawkey", func() { _, _ = c.Exec("rawkey") })
 	c.OnCommand("demo.app.info", func() {
 		_, _ = c.Exec(fmt.Sprintf(
@@ -274,4 +302,93 @@ func (a *app) wireSecondary(n int) {
 
 	// Closing the window ends this secondary connection.
 	ui.Window("w").OnClosed(func() { a.conn.Close() })
+}
+
+// wireDetails fills the Details tab's column values (the two-batch
+// pattern: the build surfaced the item IDs, this batch references
+// them), narrates sort requests, and wires the feature-toggle row.
+// Sorting itself is built into the trinket (visual reorder only; the
+// item order the app owns never moves) - the status line just shows
+// the app CAN observe it.
+func (a *app) wireDetails() {
+	ui := a.ui
+	dtree := ui.Object("dtree")
+	if !dtree.Valid() {
+		return
+	}
+	_, _ = a.conn.Exec(detailsValuesScript(func(name string) uint64 {
+		return ui.Object(name).ID()
+	}))
+	dtree.On("sort", func(ev *protocol.Event) {
+		if ev.Flag("sorted") != protocol.FlagTrue {
+			a.setStatus("Details: unsorted (app order)")
+			return
+		}
+		by, _ := ev.Int("sortedby")
+		dir := "ascending"
+		if ev.Flag("descending") == protocol.FlagTrue {
+			dir = "descending"
+		}
+		colName := "Name"
+		if by >= 0 {
+			colName = fmt.Sprintf("column %d", by)
+		}
+		a.setStatus(fmt.Sprintf("Details: sort by %s, %s", colName, dir))
+	})
+	// In-place cell edits (Kind and Tags are editable): the trinket
+	// already updated the cell; this is observation only.
+	dtree.On("edit", func(ev *protocol.Event) {
+		col, _ := ev.Int("column")
+		value, _ := ev.Text("value")
+		colName := fmt.Sprintf("column %d", col)
+		if col < 0 {
+			colName = "Name" // the key column reports index -1
+		}
+		a.setStatus(fmt.Sprintf("Details: edited %s -> %q", colName, value))
+	})
+
+	// Feature toggles: key column visibility, the horizontal-scroll
+	// model, and pinned columns on either side.
+	ui.Checkbox("dshowkey").OnToggle(func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = dtree.Set("showkey")
+		} else {
+			_ = dtree.Set("!showkey")
+		}
+	})
+	ui.Checkbox("dhscroll").OnToggle(func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = dtree.Set("!fit_width")
+		} else {
+			_ = dtree.Set("fit_width")
+		}
+	})
+	ui.Checkbox("dpinl").OnToggle(func(s protocol.FlagState) {
+		n := 0
+		if s == protocol.FlagTrue {
+			n = 2
+		}
+		_ = dtree.Set(fmt.Sprintf("fixed_left=%d", n))
+	})
+	ui.Checkbox("dpinr").OnToggle(func(s protocol.FlagState) {
+		n := 0
+		if s == protocol.FlagTrue {
+			n = 1
+		}
+		_ = dtree.Set(fmt.Sprintf("fixed_right=%d", n))
+	})
+	ui.Checkbox("dledger").OnToggle(func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = dtree.Set("ledger")
+		} else {
+			_ = dtree.Set("!ledger")
+		}
+	})
+	ui.Checkbox("dlines").OnToggle(func(s protocol.FlagState) {
+		if s == protocol.FlagTrue {
+			_ = dtree.Set("treelines")
+		} else {
+			_ = dtree.Set("!treelines")
+		}
+	})
 }

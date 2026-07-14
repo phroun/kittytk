@@ -1,4 +1,4 @@
-// Package core provides fundamental types for the TUI toolkit.
+// Package core provides fundamental types for KittyTK.
 package core
 
 import (
@@ -260,6 +260,13 @@ type PopupRequest struct {
 	HandleMouseRelease func(event MouseReleaseEvent) bool
 	// HandleMouseWheel function to handle wheel scrolling (returns true if handled)
 	HandleMouseWheel func(event MouseWheelEvent) bool
+	// OnDismiss is called when the HOST discards the popup without
+	// routing the triggering event to the popup's own handlers (e.g.
+	// a press outside every popup force-clears the overlay list). It
+	// lets the owner reset its open-state - otherwise the owner still
+	// believes its popup is up and keeps swallowing keys for a menu
+	// that no longer exists. NOT called on an explicit UnregisterPopup.
+	OnDismiss func()
 }
 
 // PopupController is an interface for managing popup overlays.
@@ -1137,6 +1144,32 @@ func (w *TrinketBase) Paint(p *Painter) {
 	// Default: do nothing
 }
 
+// repaintHook is fired by every Update() so the host can wake its render
+// loop. The desktop sets it to flag that a frame is needed; without a hook set
+// (the default, e.g. in tests) Update() just records needsRepaint as before.
+var repaintHook struct {
+	sync.RWMutex
+	fn func()
+}
+
+// SetRepaintHook installs a callback invoked on every Update() (pass nil to
+// clear). The host uses it to coalesce "a repaint is needed" so its frame loop
+// can skip work when nothing changed. Safe to call from any goroutine.
+func SetRepaintHook(fn func()) {
+	repaintHook.Lock()
+	repaintHook.fn = fn
+	repaintHook.Unlock()
+}
+
+func fireRepaintHook() {
+	repaintHook.RLock()
+	fn := repaintHook.fn
+	repaintHook.RUnlock()
+	if fn != nil {
+		fn()
+	}
+}
+
 // Update marks the trinket as needing repaint.
 func (w *TrinketBase) Update() {
 	w.mu.Lock()
@@ -1147,6 +1180,7 @@ func (w *TrinketBase) Update() {
 	if app != nil {
 		app.requestRepaint()
 	}
+	fireRepaintHook()
 }
 
 // NeedsRepaint returns whether the trinket needs repainting.

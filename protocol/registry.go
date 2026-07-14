@@ -30,9 +30,32 @@ type BindContext struct {
 
 	mu       sync.Mutex
 	actions  map[uint64]string
-	subs     map[uint64]map[string]bool // trinketID -> event types ("" = all; ID 0 = all trinkets)
+	subs     map[uint64]map[string]bool     // trinketID -> event types ("" = all; ID 0 = all trinkets)
+	onSub    map[uint64]map[string][]func() // trinketID -> event type -> on-subscribe hooks
 	suppress int
 	stash    map[string]any
+	refs     map[uint64]any // virtual wire objects by ID, for pointer properties
+}
+
+// RegisterRef records a virtual wire object under its wire ID so
+// POINTER PROPERTIES on this connection can reach it later (a tree
+// column's enum= names a collection built earlier). The factory calls
+// this for every virtual object it constructs.
+func (c *BindContext) RegisterRef(id uint64, target any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refs == nil {
+		c.refs = make(map[uint64]any)
+	}
+	c.refs[id] = target
+}
+
+// LookupRef resolves a wire ID registered with RegisterRef (nil if
+// unknown on this connection).
+func (c *BindContext) LookupRef(id uint64) any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.refs[id]
 }
 
 // Stash returns the connection-scoped value under key, creating it
@@ -91,6 +114,25 @@ func (c *BindContext) subscribedLocked(ev *Event) bool {
 	return false
 }
 
+// OnSubscribe registers fn to run each time a client subscribes to
+// (trinketID, eventType). It lets a trinket push its current state to a
+// late-subscribing client - e.g. a terminal re-emitting its grid size, so a
+// client whose subscription arrives after the one-shot paint-time emit still
+// learns the real size (its PTY would otherwise stay at the default and the
+// shell would mis-wrap its prompt). fn runs after the subscription is
+// recorded and without c.mu held, so it may call EmitEvent.
+func (c *BindContext) OnSubscribe(trinketID uint64, eventType string, fn func()) {
+	c.mu.Lock()
+	if c.onSub == nil {
+		c.onSub = make(map[uint64]map[string][]func())
+	}
+	if c.onSub[trinketID] == nil {
+		c.onSub[trinketID] = make(map[string][]func())
+	}
+	c.onSub[trinketID][eventType] = append(c.onSub[trinketID][eventType], fn)
+	c.mu.Unlock()
+}
+
 // Subscribe opens event flow for (trinketID, eventType). trinketID 0
 // means all trinkets; eventType "" means all types.
 func (c *BindContext) Subscribe(trinketID uint64, eventType string) {
@@ -102,7 +144,21 @@ func (c *BindContext) Subscribe(trinketID uint64, eventType string) {
 		c.subs[trinketID] = make(map[string]bool)
 	}
 	c.subs[trinketID][eventType] = true
+	// Collect on-subscribe hooks for this exact type (and, when a specific
+	// type is named, the type-agnostic "" registrations too).
+	var fire []func()
+	if c.onSub != nil {
+		if m, ok := c.onSub[trinketID]; ok {
+			fire = append(fire, m[eventType]...)
+			if eventType != "" {
+				fire = append(fire, m[""]...)
+			}
+		}
+	}
 	c.mu.Unlock()
+	for _, fn := range fire {
+		fn()
+	}
 }
 
 // Unsubscribe removes subscriptions. eventType "" removes all of the
@@ -196,9 +252,9 @@ type TypeSpec struct {
 	// New constructs the target (a trinket, or a virtual item's record).
 	New func() any
 
-	// Props maps property names to appliers. Type-specific properties
-	// take precedence over common ones.
-	Props map[string]PropertyApplier
+	// Props maps property names to their Property (applier + descriptor).
+	// Type-specific properties take precedence over common ones.
+	Props map[string]Property
 
 	// Append attaches a constructed child target to a parent target
 	// (children blocks, D13). Nil means the type takes no children.
@@ -226,7 +282,7 @@ type TypeSpec struct {
 var (
 	regMu     sync.RWMutex
 	regTypes  = map[string]*TypeSpec{}
-	regCommon = map[string]PropertyApplier{}
+	regCommon = map[string]Property{}
 )
 
 // RegisterType registers a builtin type. Builtin names begin lowercase
@@ -251,14 +307,15 @@ func RegisterType(name string, spec *TypeSpec) {
 }
 
 // RegisterCommonProperty registers a property available on every
-// non-virtual type (enabled, visible, font, ...).
-func RegisterCommonProperty(name string, apply PropertyApplier) {
+// non-virtual type (enabled, visible, font, ...). The Property carries
+// both the applier and its introspection descriptor.
+func RegisterCommonProperty(name string, p Property) {
 	regMu.Lock()
 	defer regMu.Unlock()
 	if _, dup := regCommon[name]; dup {
 		panic(fmt.Sprintf("protocol: common property %q registered twice", name))
 	}
-	regCommon[name] = apply
+	regCommon[name] = p
 }
 
 // RegisteredTypes returns the sorted names of registered types.
@@ -321,6 +378,9 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 		if aware, ok := o.target.(interface{ SetWireID(uint64) }); ok {
 			aware.SetWireID(o.virtualID)
 		}
+		// And every virtual object is reachable by ID for pointer
+		// properties (a column's enum= naming a collection).
+		f.ctx.RegisterRef(o.virtualID, o.target)
 	}
 	if spec.Bind != nil {
 		spec.Bind(f.ctx, o.target)
@@ -341,15 +401,15 @@ func (o *registryObject) Target() any { return o.target }
 
 // Set implements Object.
 func (o *registryObject) Set(name string, v *Value, flag FlagState) error {
-	if apply, ok := o.spec.Props[name]; ok {
-		return apply(o.ctx, o.target, v, flag)
+	if p, ok := o.spec.Props[name]; ok {
+		return p.Apply(o.ctx, o.target, v, flag)
 	}
 	if !o.spec.Virtual {
 		regMu.RLock()
-		apply, ok := regCommon[name]
+		p, ok := regCommon[name]
 		regMu.RUnlock()
 		if ok {
-			return apply(o.ctx, o.target, v, flag)
+			return p.Apply(o.ctx, o.target, v, flag)
 		}
 	}
 	return fmt.Errorf("property %q is not supported by this type", name)

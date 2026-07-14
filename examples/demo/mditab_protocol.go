@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/phroun/kittytk/app"
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/app"
+	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/protocol"
-	"github.com/phroun/kittytk/trinkets"
 )
 
 // The MDI Demo tab, converted: the pane, its background control
@@ -39,7 +39,7 @@ sp=new splitter orientation=vertical position=0.9 caption="Dock" children={
 			}
 		}
 	}
-	dock=new dockrow entry_width=20
+	dock=new dockrow entry_width=16
 }
 mdi=sp.sa.mdi
 status=sp.sa.mdi.cp.status

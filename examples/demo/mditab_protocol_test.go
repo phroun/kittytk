@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/phroun/kittytk/client"
-	"github.com/phroun/kittytk/trinkets"
+	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 // The MDI tab script must build, surface its keys, and support the

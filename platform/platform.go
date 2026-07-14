@@ -89,6 +89,11 @@ type NativeSurface interface {
 	ScreenPositionPx() (x, y int)
 	// SetScreenPositionPx moves the surface.
 	SetScreenPositionPx(x, y int)
+	// ScreenSizePx returns the OS window's current size in screen pixels.
+	// This is the authoritative pixel size; deriving it from the surface's
+	// unit size and back would drift at fractional pixels-per-unit (the
+	// unit size snaps to whole cells).
+	ScreenSizePx() (w, h int)
 	// SetScreenSizePx resizes the surface's OS window; the size
 	// change reports back through SurfaceHandler.Resized.
 	SetScreenSizePx(w, h int)
@@ -128,6 +133,14 @@ type CursorController interface {
 // from the primary window so the app's own chrome is the only title bar.
 type BorderToggler interface {
 	SetBordered(bordered bool)
+}
+
+// NativeRestorer is an optional NativeSurface capability: programmatically
+// un-minimize the OS window (the counterpart to Minimize, which the OS
+// otherwise only reverses via the Dock/taskbar). Used by the desktop's
+// "Show All" to bring torn-off windows back.
+type NativeRestorer interface {
+	Restore()
 }
 
 // Surface is one render target: per-surface size, damage, input.

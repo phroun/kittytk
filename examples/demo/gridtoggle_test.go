@@ -3,11 +3,11 @@ package main
 import (
 	"testing"
 
+	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/trinkets"
+	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/protocol"
-	"github.com/phroun/kittytk/raster"
-	"github.com/phroun/kittytk/trinkets"
-	"github.com/phroun/kittytk/window"
 )
 
 // Toggling the 32-unit-rows denomination on and back off must return

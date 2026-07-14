@@ -1,7 +1,7 @@
 package main
 
 // A headless integration test: it stands up a real display service over
-// a unix socket (the same one sdldesktop serves) and drives the demo's
+// a unix socket (the same one kittytk-sdl serves) and drives the demo's
 // shell-free scripts through it, proving the deep surfacing paths, the
 // trinket properties across the gallery, and the desktop-action app verbs
 // are all accepted by the live session - things parsing alone can't
@@ -22,8 +22,8 @@ import (
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
+	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/style"
-	"github.com/phroun/kittytk/trinkets"
 )
 
 // nullBackend is a headless RenderBackend.
@@ -68,7 +68,7 @@ func startService(t *testing.T) (sock string, stop func()) {
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(&nullBackend{})
-	// The desktop's own windowless application (as in sdldesktop).
+	// The desktop's own windowless application (as in kittytk-sdl).
 	desktop.SetOnStartup(func() {
 		if _, err := display.Serve(desktop, sock); err != nil {
 			t.Errorf("serve: %v", err)
@@ -105,7 +105,7 @@ func TestDemoBuildsOverService(t *testing.T) {
 	sock, stop := startService(t)
 	defer stop()
 
-	conn, err := client.Dial(sock, "KittyTK Demo", nil)
+	conn, err := client.DialWith(sock, "KittyTK Demo", client.DialOptions{MultiWindow: true})
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

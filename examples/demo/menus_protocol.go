@@ -7,11 +7,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/phroun/kittytk/app"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/app"
+	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/protocol"
 	"github.com/phroun/kittytk/style"
-	"github.com/phroun/kittytk/trinkets"
 )
 
 // applyTerminalTheme walks a trinket subtree and puts every PurfecTerm
@@ -58,21 +58,15 @@ func mainMenuScript() string {
 	var b strings.Builder
 	b.WriteString(`
 bar=new menubar children={
-	new menu caption="&Demo" children={
+	new menu caption="&Demo" wellknown="app" children={
 		new menuitem caption="&New" shortcut="^N" action=demo.file.new
 		new menuitem caption="&Open..." shortcut="^O"
 		new menuitem caption="&Save" shortcut="^S"
 	}
-	editmenu=new menu caption="&Edit" children={
-		cutitem=new menuitem caption="Cu&t" shortcut="^X" action=demo.edit.cut
-		new menuitem caption="&Copy" shortcut="^C" action=demo.edit.copy
-		new menuitem caption="&Paste" shortcut="^V" action=demo.edit.paste
-		new menuitem separator
-		new menuitem caption="Select &All" action=demo.edit.selectall
-		new menuitem separator
+	new menu caption="&Edit" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.edit.rawkey
 	}
-	v=new menu caption="&View" children={
+	v=new menu caption="&View" wellknown="view" children={
 		new menuitem caption="&Toolbar" checkable checked
 		new menuitem caption="&Status Bar" checkable checked
 		new menuitem separator
@@ -85,11 +79,8 @@ bar=new menubar children={
 	}
 	b.WriteString(`
 	}
-	new menu caption="&Window" children={
+	new menu caption="&Window" wellknown="window" children={
 		new menuitem caption="&New Window" action=demo.window.new
-		new menuitem separator
-		new menuitem caption="&Tile" action=demo.window.tile
-		new menuitem caption="&Cascade" action=demo.window.cascade
 	}
 	new menu caption="&Alphabet" children={`)
 	for i := 0; i < 26; i++ {
@@ -101,20 +92,18 @@ bar=new menubar children={
 	}
 	b.WriteString(`
 	}
-	new menu caption="&Help" children={
+	new menu caption="&Help" wellknown="help" children={
 		new menuitem caption="&About" action=demo.help.about
 	}
 }
 announce=bar.v.sr
 speakitem=bar.v.speak
-cutitem=bar.editmenu.cutitem
-editmenu=bar.editmenu
 `)
 	return b.String()
 }
 
 func createMenus(desktop *trinkets.Desktop, application *app.Application) []*trinkets.Menu {
-	menus, byID, reply := buildMenuBar(mainMenuScript())
+	menus, _, _ := buildMenuBar(mainMenuScript())
 
 	commands := application.Commands()
 	commands.Register("demo.file.new", func() {
@@ -139,72 +128,13 @@ func createMenus(desktop *trinkets.Desktop, application *app.Application) []*tri
 		}
 		desktop.Update()
 	})
-	// Edit actions operate on the focused trinket; the context menus
-	// on edit boxes invoke the same methods.
-	type editActor interface {
-		Cut()
-		Copy()
-		Paste()
-		SelectAll()
-	}
-	editTarget := func() editActor {
-		if fw := desktop.FocusedTrinket(); fw != nil {
-			if ea, ok := fw.(editActor); ok {
-				return ea
-			}
-		}
-		return nil
-	}
-	commands.Register("demo.edit.cut", func() {
-		if ea := editTarget(); ea != nil {
-			ea.Cut()
-		}
-	})
-	commands.Register("demo.edit.copy", func() {
-		if ea := editTarget(); ea != nil {
-			ea.Copy()
-		}
-	})
-	commands.Register("demo.edit.paste", func() {
-		if ea := editTarget(); ea != nil {
-			ea.Paste()
-		}
-	})
-	commands.Register("demo.edit.selectall", func() {
-		if ea := editTarget(); ea != nil {
-			ea.SelectAll()
-		}
-	})
-
-	// Grey out Cut when the focused trinket reports it doesn't apply
-	// (a terminal's output can't be cut). Refreshed each time the
-	// Edit menu opens; the focused trinket is the previous active
-	// window's while the menu is up.
-	if em, ok := byID[reply.IDs["editmenu"]].(*trinkets.Menu); ok {
-		cut, _ := byID[reply.IDs["cutitem"]].(*trinkets.MenuItem)
-		em.SetOnAboutToShow(func() {
-			if cut == nil {
-				return
-			}
-			enabled := true
-			if fw := desktop.FocusedTrinket(); fw != nil {
-				if cq, ok := fw.(interface{ CutEnabled() bool }); ok {
-					enabled = cq.CutEnabled()
-				}
-			}
-			cut.SetEnabled(enabled)
-		})
-	}
+	// Cut/Copy/Paste/Select All are supplied by the system Edit menu, wired
+	// to the focused trinket; the demo only contributes the custom Raw Key
+	// Input item (below).
 
 	commands.Register("demo.window.new", func() {
 		newApp := createSecondaryApplication(desktop)
 		desktop.AddApplication(newApp)
-	})
-	commands.Register("demo.window.tile", func() {
-		desktop.WindowManager().TileWindows()
-	})
-	commands.Register("demo.window.cascade", func() {
-		desktop.WindowManager().CascadeWindows()
 	})
 	commands.Register("demo.help.about", func() {
 		showAboutDialog(desktop, application)
@@ -284,32 +214,24 @@ func createMenus(desktop *trinkets.Desktop, application *app.Application) []*tri
 func secondaryMenuScript(appNum int) string {
 	return fmt.Sprintf(`
 bar=new menubar children={
-	new menu caption="&App %d" children={
+	new menu caption="&App %d" wellknown="app" children={
 		new menuitem caption="&Close Window" shortcut="^W" action=demo.app.close
 	}
-	editmenu=new menu caption="&Edit" children={
-		cutitem=new menuitem caption="Cu&t" shortcut="^X" action=demo.app.cut
-		new menuitem caption="&Copy" shortcut="^C" action=demo.app.copy
-		new menuitem caption="&Paste" shortcut="^V" action=demo.app.paste
-		new menuitem separator
-		new menuitem caption="Select &All" action=demo.app.selectall
-		new menuitem separator
+	new menu caption="&Edit" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.app.rawkey
 	}
 	new menu caption="&Info" children={
 		new menuitem caption="&About This App" action=demo.app.info
 	}
-	new menu caption="&Help" children={
+	new menu caption="&Help" wellknown="help" children={
 		new menuitem caption="&About" action=demo.app.about
 	}
 }
-editmenu=bar.editmenu
-cutitem=bar.editmenu.cutitem
 `, appNum)
 }
 
 func createSecondaryMenus(desktop *trinkets.Desktop, application *app.Application, appNum int) []*trinkets.Menu {
-	menus, byID, reply := buildMenuBar(secondaryMenuScript(appNum))
+	menus, _, _ := buildMenuBar(secondaryMenuScript(appNum))
 
 	// Each secondary application has its OWN registry, so the same
 	// action IDs bind per-app without collision.
@@ -321,60 +243,8 @@ func createSecondaryMenus(desktop *trinkets.Desktop, application *app.Applicatio
 		}
 	})
 
-	// Edit actions operate on the focused trinket, just like the main
-	// menu; the context menus on edit boxes invoke the same methods.
-	type editActor interface {
-		Cut()
-		Copy()
-		Paste()
-		SelectAll()
-	}
-	editTarget := func() editActor {
-		if fw := desktop.FocusedTrinket(); fw != nil {
-			if ea, ok := fw.(editActor); ok {
-				return ea
-			}
-		}
-		return nil
-	}
-	commands.Register("demo.app.cut", func() {
-		if ea := editTarget(); ea != nil {
-			ea.Cut()
-		}
-	})
-	commands.Register("demo.app.copy", func() {
-		if ea := editTarget(); ea != nil {
-			ea.Copy()
-		}
-	})
-	commands.Register("demo.app.paste", func() {
-		if ea := editTarget(); ea != nil {
-			ea.Paste()
-		}
-	})
-	commands.Register("demo.app.selectall", func() {
-		if ea := editTarget(); ea != nil {
-			ea.SelectAll()
-		}
-	})
-
-	// Grey out Cut when the focused trinket reports it doesn't apply
-	// (a terminal's output can't be cut), matching the main Edit menu.
-	if em, ok := byID[reply.IDs["editmenu"]].(*trinkets.Menu); ok {
-		cut, _ := byID[reply.IDs["cutitem"]].(*trinkets.MenuItem)
-		em.SetOnAboutToShow(func() {
-			if cut == nil {
-				return
-			}
-			enabled := true
-			if fw := desktop.FocusedTrinket(); fw != nil {
-				if cq, ok := fw.(interface{ CutEnabled() bool }); ok {
-					enabled = cq.CutEnabled()
-				}
-			}
-			cut.SetEnabled(enabled)
-		})
-	}
+	// Cut/Copy/Paste/Select All come from the system Edit menu, wired to the
+	// focused trinket; this app only adds the custom Raw Key Input item.
 
 	commands.Register("demo.app.rawkey", func() {
 		desktop.ActivatePassNextKeyToTrinket()

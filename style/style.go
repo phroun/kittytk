@@ -1,4 +1,4 @@
-// Package style provides theming and visual styling for the TUI toolkit.
+// Package style provides theming and visual styling for KittyTK.
 package style
 
 import (
@@ -48,6 +48,26 @@ func RGB(r, g, b int) Color {
 // Color256 creates a 256-color palette color.
 func Color256(n int) Color {
 	return Color(256 + 0x1000000 + n)
+}
+
+// RGBComponents resolves this color to 24-bit RGB through the active
+// terminal palette, mirroring the graphical backend's background
+// resolution: indexed colors (0-15) and ColorDefault (and anything else)
+// map through the active theme, true-color values decode directly.
+// Graphical overlays that must match a painted background - e.g. the
+// scroll-area edge fades - sample this.
+func (c Color) RGBComponents() (r, g, b uint8) {
+	switch {
+	case c >= 0 && c < 16:
+		t := ActiveTermANSIColor(int(c))
+		return t.R, t.G, t.B
+	case c >= 256 && c < 256+0x1000000:
+		v := uint32(c - 256)
+		return uint8(v >> 16), uint8(v >> 8), uint8(v)
+	default:
+		bg := ActiveTermPalette.Background
+		return bg.R, bg.G, bg.B
+	}
 }
 
 // FgCode returns the ANSI escape code for foreground color.
@@ -108,8 +128,8 @@ func (c Color) BgCode() string {
 type TextStyle int
 
 const (
-	StyleNormal    TextStyle = 0
-	StyleBold      TextStyle = 1 << iota
+	StyleNormal TextStyle = 0
+	StyleBold   TextStyle = 1 << iota
 	StyleDim
 	StyleItalic
 	StyleUnderline
@@ -154,9 +174,9 @@ func (s TextStyle) Code() string {
 
 // CellStyle combines all styling for a single cell.
 type CellStyle struct {
-	Fg        Color
-	Bg        Color
-	Attrs     TextStyle
+	Fg    Color
+	Bg    Color
+	Attrs TextStyle
 }
 
 // DefaultStyle returns a default cell style.
@@ -326,11 +346,11 @@ type Theme struct {
 	Background CellStyle
 
 	// Normal trinket appearance
-	Normal    CellStyle
-	Focused   CellStyle
-	Disabled  CellStyle
-	Selected  CellStyle
-	Hover     CellStyle
+	Normal   CellStyle
+	Focused  CellStyle
+	Disabled CellStyle
+	Selected CellStyle
+	Hover    CellStyle
 
 	// Window appearance
 	WindowFrame        CellStyle
@@ -344,26 +364,26 @@ type Theme struct {
 	ButtonPressed CellStyle
 
 	// Input field appearance
-	Input        CellStyle
-	InputFocused CellStyle
+	Input          CellStyle
+	InputFocused   CellStyle
 	InputSelection CellStyle
 
 	// Menu appearance
-	MenuBar           CellStyle
-	MenuBarSelected   CellStyle
-	MenuItem          CellStyle
-	MenuItemSelected  CellStyle
-	MenuItemDisabled  CellStyle
-	MenuSeparator     CellStyle
+	MenuBar          CellStyle
+	MenuBarSelected  CellStyle
+	MenuItem         CellStyle
+	MenuItemSelected CellStyle
+	MenuItemDisabled CellStyle
+	MenuSeparator    CellStyle
 
 	// List appearance
-	ListItem          CellStyle
-	ListItemSelected  CellStyle
-	ListItemFocused   CellStyle
+	ListItem         CellStyle
+	ListItemSelected CellStyle
+	ListItemFocused  CellStyle
 
 	// Scrollbar appearance
-	ScrollTrack  CellStyle
-	ScrollThumb  CellStyle
+	ScrollTrack CellStyle
+	ScrollThumb CellStyle
 
 	// Progress bar
 	ProgressFilled CellStyle
@@ -384,11 +404,11 @@ func DefaultTheme() *Theme {
 	return &Theme{
 		Background: DefaultStyle().WithBg(ColorBlue),
 
-		Normal:    DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack),
-		Focused:   DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
-		Disabled:  DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack),
-		Selected:  DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
-		Hover:     DefaultStyle().WithFg(ColorWhite).WithBg(ColorBrightBlack),
+		Normal:   DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack),
+		Focused:  DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
+		Disabled: DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack),
+		Selected: DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
+		Hover:    DefaultStyle().WithFg(ColorWhite).WithBg(ColorBrightBlack),
 
 		WindowFrame:        DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
 		WindowTitle:        DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
@@ -403,12 +423,12 @@ func DefaultTheme() *Theme {
 		InputFocused:   DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorCyan),
 		InputSelection: DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
 
-		MenuBar:           DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
-		MenuBarSelected:   DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
-		MenuItem:          DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
-		MenuItemSelected:  DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
-		MenuItemDisabled:  DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite),
-		MenuSeparator:     DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite),
+		MenuBar:          DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
+		MenuBarSelected:  DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
+		MenuItem:         DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
+		MenuItemSelected: DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
+		MenuItemDisabled: DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite),
+		MenuSeparator:    DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite),
 
 		ListItem:         DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
 		ListItemSelected: DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
@@ -444,11 +464,11 @@ func DarkTheme() *Theme {
 	return &Theme{
 		Background: DefaultStyle().WithBg(bg),
 
-		Normal:    DefaultStyle().WithFg(text).WithBg(surface),
-		Focused:   DefaultStyle().WithFg(text).WithBg(overlay),
-		Disabled:  DefaultStyle().WithFg(subtext).WithBg(surface),
-		Selected:  DefaultStyle().WithFg(bg).WithBg(blue),
-		Hover:     DefaultStyle().WithFg(text).WithBg(overlay),
+		Normal:   DefaultStyle().WithFg(text).WithBg(surface),
+		Focused:  DefaultStyle().WithFg(text).WithBg(overlay),
+		Disabled: DefaultStyle().WithFg(subtext).WithBg(surface),
+		Selected: DefaultStyle().WithFg(bg).WithBg(blue),
+		Hover:    DefaultStyle().WithFg(text).WithBg(overlay),
 
 		WindowFrame:        DefaultStyle().WithFg(lavender).WithBg(surface),
 		WindowTitle:        DefaultStyle().WithFg(text).WithBg(surface),
@@ -463,12 +483,12 @@ func DarkTheme() *Theme {
 		InputFocused:   DefaultStyle().WithFg(text).WithBg(overlay),
 		InputSelection: DefaultStyle().WithFg(bg).WithBg(blue),
 
-		MenuBar:           DefaultStyle().WithFg(text).WithBg(surface),
-		MenuBarSelected:   DefaultStyle().WithFg(bg).WithBg(blue),
-		MenuItem:          DefaultStyle().WithFg(text).WithBg(surface),
-		MenuItemSelected:  DefaultStyle().WithFg(bg).WithBg(blue),
-		MenuItemDisabled:  DefaultStyle().WithFg(subtext).WithBg(surface),
-		MenuSeparator:     DefaultStyle().WithFg(overlay).WithBg(surface),
+		MenuBar:          DefaultStyle().WithFg(text).WithBg(surface),
+		MenuBarSelected:  DefaultStyle().WithFg(bg).WithBg(blue),
+		MenuItem:         DefaultStyle().WithFg(text).WithBg(surface),
+		MenuItemSelected: DefaultStyle().WithFg(bg).WithBg(blue),
+		MenuItemDisabled: DefaultStyle().WithFg(subtext).WithBg(surface),
+		MenuSeparator:    DefaultStyle().WithFg(overlay).WithBg(surface),
 
 		ListItem:         DefaultStyle().WithFg(text).WithBg(surface),
 		ListItemSelected: DefaultStyle().WithFg(bg).WithBg(blue),
@@ -494,11 +514,11 @@ func ClassicTheme() *Theme {
 	return &Theme{
 		Background: DefaultStyle().WithBg(ColorBlue),
 
-		Normal:    DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
-		Focused:   DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
-		Disabled:  DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorCyan),
-		Selected:  DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack),
-		Hover:     DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightCyan),
+		Normal:   DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
+		Focused:  DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),
+		Disabled: DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorCyan),
+		Selected: DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack),
+		Hover:    DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightCyan),
 
 		WindowFrame:        DefaultStyle().WithFg(ColorWhite).WithBg(ColorCyan),
 		WindowTitle:        DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
@@ -513,12 +533,12 @@ func ClassicTheme() *Theme {
 		InputFocused:   DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorBlue),
 		InputSelection: DefaultStyle().WithFg(ColorBlack).WithBg(ColorCyan),
 
-		MenuBar:           DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
-		MenuBarSelected:   DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack),
-		MenuItem:          DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
-		MenuItemSelected:  DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack),
-		MenuItemDisabled:  DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite),
-		MenuSeparator:     DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
+		MenuBar:          DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
+		MenuBarSelected:  DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack),
+		MenuItem:         DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
+		MenuItemSelected: DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlack),
+		MenuItemDisabled: DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorWhite),
+		MenuSeparator:    DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
 
 		ListItem:         DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite),
 		ListItemSelected: DefaultStyle().WithFg(ColorWhite).WithBg(ColorBlue),

@@ -1,4 +1,4 @@
-# TUI Toolkit API Reference
+# KittyTK API Reference
 
 Complete API for building KittyTK applications.
 

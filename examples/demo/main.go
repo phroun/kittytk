@@ -4,26 +4,27 @@ package main
 import (
 	"fmt"
 
-	"github.com/phroun/kittytk/app"
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/layout"
+	"github.com/phroun/kittytk/objects/app"
+	"github.com/phroun/kittytk/objects/trinkets"
+	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/ptydriver"
 	"github.com/phroun/kittytk/style"
-	"github.com/phroun/kittytk/trinkets"
-	"github.com/phroun/kittytk/window"
 )
 
-// fixedWidthBox is a bordered panel whose width is pinned, so its
-// content width does not grow when the font changes. Word wrap only
-// happens when width is genuinely constrained; an unconstrained label's
-// SizeHint scales with the font and simply widens instead of wrapping.
-// Height is NOT pinned: it flows from the content via height-for-width,
-// so wrapping onto more lines makes the box taller.
+// fixedWidthBox is a bordered panel whose width is pinned to a raw unit
+// width (denomination units), so the column occupies the same number of
+// units at any font_size and simply grows in pixels as the cell grows.
+// Word wrap only happens when width is genuinely constrained. Height is
+// NOT pinned: it flows from the content via height-for-width, so wrapping
+// onto more lines makes the box taller rather than overflow its border.
 type fixedWidthBox struct {
 	*trinkets.Panel
-	width core.Unit
+	width core.Unit // pinned width in units
 }
 
 func newFixedWidthBox(width core.Unit, content core.Trinket) *fixedWidthBox {
@@ -39,7 +40,19 @@ func newFixedWidthBox(width core.Unit, content core.Trinket) *fixedWidthBox {
 }
 
 func (f *fixedWidthBox) SizeHint() core.UnitSize {
-	return core.UnitSize{Width: f.width, Height: f.Panel.SizeHint().Height}
+	w := f.width
+	// Height is the content's height AT the pinned width (height-for-
+	// width): the width is fixed, so wrapping onto more lines must make
+	// the box taller rather than overflow its border. The plain SizeHint
+	// height is the content's height at its natural (unwrapped) width,
+	// which is too short once the text wraps into the narrow column.
+	h := f.Panel.SizeHint().Height
+	if hfw, ok := any(f.Panel).(core.HeightForWidther); ok && hfw.HasHeightForWidth() {
+		if hh := hfw.HeightForWidth(w); hh > h {
+			h = hh
+		}
+	}
+	return core.UnitSize{Width: w, Height: h}
 }
 
 // idCaptureFactory records built targets by object ID so the app can
@@ -244,6 +257,9 @@ sb=new statusbar children={
 		mainWindow := createMainWindow(desktop, application)
 		application.AddWindow(mainWindow)
 		application.SetMainWindow(mainWindow)
+		// The demo opens secondary windows (New Window, dialogs, terminals),
+		// so it's multi-window: the system supplies its Window menu.
+		application.SetMultiWindow(true)
 
 		// D22: this desktop IS a display service. Remote apps dial
 		// the socket and appear as full applications:
@@ -276,7 +292,6 @@ closer=w.sp.tp.closebtn
 term=w.sp.term
 
 set term feed="\e[1;36mThis banner arrived as protocol text:\e[0m set term feed=\"...\"\r\n\r\n"
-set term shell
 
 sub closer click
 `
@@ -302,6 +317,14 @@ func createDemoWindow(desktop *trinkets.Desktop, application *app.Application) *
 	}
 
 	w := factory.byID[reply.IDs["w"]].(*window.Window)
+	// The terminal's child process runs client-side: spawn a PTY and
+	// bridge it to the built terminal surface (feed in, input/resize out).
+	if term, ok := factory.byID[reply.IDs["term"]].(*trinkets.PurfecTerm); ok {
+		if drv, err := ptydriver.Start("", term.Feed); err == nil {
+			term.SetInputSink(drv.Input)
+			term.SetResizeSink(drv.Resize)
+		}
+	}
 	// Main demo windows can be torn off (the %/# title handle);
 	// dialogs deliberately can't, so the difference is visible.
 	w.SetTearable(true)
@@ -432,8 +455,13 @@ sb=new statusbar children={new section children={new span text="Secondary Applic
 
 	splitter.SetSecond(terminal)
 
-	// Start the terminal shell
-	terminal.Start()
+	// The child process runs client-side: spawn a PTY here and bridge it
+	// to the terminal surface - its output is fed in, and the user's input
+	// and grid resizes are written back to the PTY.
+	if drv, err := ptydriver.Start("", terminal.Feed); err == nil {
+		terminal.SetInputSink(drv.Input)
+		terminal.SetResizeSink(drv.Resize)
+	}
 
 	w.SetContent(splitter)
 
@@ -463,7 +491,9 @@ func buildStatusSections(script string) []trinkets.StatusSection {
 	if err != nil {
 		panic(fmt.Sprintf("statusbar script: %v", err))
 	}
-	bar := factory.byID[reply.IDs["sb"]].(interface{ Sections() []trinkets.StatusSection })
+	bar := factory.byID[reply.IDs["sb"]].(interface {
+		Sections() []trinkets.StatusSection
+	})
 	return bar.Sections()
 }
 
@@ -471,7 +501,8 @@ func buildStatusSections(script string) []trinkets.StatusSection {
 // dialog. Dialogs are one-shot protocol objects: built from text,
 // closed by their own buttons (the finish event is available via a
 // sub statement in the script when a caller cares).
-func protocolMessageBox(application *app.Application, script string) {
+// buildMessageBox executes a messagebox script and returns the dialog.
+func buildMessageBox(script string) *trinkets.MessageBox {
 	factory := &idCaptureFactory{
 		inner: protocol.NewRegistryFactory(&protocol.BindContext{}),
 		byID:  make(map[uint64]any),
@@ -484,12 +515,21 @@ func protocolMessageBox(application *app.Application, script string) {
 	if err != nil {
 		panic(fmt.Sprintf("messagebox script: %v", err))
 	}
-	dialog := factory.byID[reply.IDs["dlg"]].(*trinkets.MessageBox)
-	application.AddWindow(&dialog.Window)
+	return factory.byID[reply.IDs["dlg"]].(*trinkets.MessageBox)
+}
+
+func protocolMessageBox(application *app.Application, script string) {
+	application.AddWindow(&buildMessageBox(script).Window)
 }
 
 func showAboutDialog(desktop *trinkets.Desktop, application *app.Application) {
-	protocolMessageBox(application, `
-dlg=new messagebox title="About KittyTK" icon=information ok text="KittyTK Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion 0.1.0"
-`)
+	dlg := buildMessageBox(fmt.Sprintf(`
+dlg=new messagebox title="About %s" icon=information ok text="%s Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion %s"
+`, core.Name, core.Name, core.Version))
+	// The About belongs to this application, so add it through the app: as a
+	// modal-type window it becomes an APPLICATION modal (blocking this app's
+	// windows across the desktop and any torn-off surfaces), never a system
+	// modal. System modals are reserved for the desktop's own prompts.
+	_ = desktop
+	application.AddWindow(&dlg.Window)
 }

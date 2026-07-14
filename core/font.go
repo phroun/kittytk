@@ -1,4 +1,4 @@
-// Package core provides fundamental types for the TUI toolkit.
+// Package core provides fundamental types for KittyTK.
 package core
 
 import (
@@ -39,6 +39,15 @@ func currentTextMeasurer() TextMeasurer {
 	textMeasurerMu.RLock()
 	defer textMeasurerMu.RUnlock()
 	return textMeasurer
+}
+
+// HasTextMeasurer reports whether a graphical render target has installed
+// a text measurer - i.e. the process renders on a pixel backend where
+// MeasureText/LineHeight answer with real font metrics rather than
+// text-mode cell arithmetic. It is the process-wide graphical/text-mode
+// signal (one render target per process).
+func HasTextMeasurer() bool {
+	return currentTextMeasurer() != nil
 }
 
 // FontStyle represents text styling attributes that can be combined.
@@ -193,14 +202,20 @@ func (f *Font) MeasureText(text string) Unit {
 // MeasureRunes returns the width in units for a given number of runes.
 // This assumes all characters are alphabetic (full width for Tuesday font).
 // For mixed content, use MeasureText instead.
+//
+// A rune is one cell of the default denomination: 8 units wide (16 for
+// the double-width Tuesday demo face). This is a unit count, so it does
+// NOT vary with font_size - font_size scales the pixel size of a unit,
+// not the number of units per character.
 func (f *Font) MeasureRunes(runeCount int) Unit {
 	if f == nil {
 		f = DefaultFont()
 	}
+	perRune := 8
 	if f.Name == "Tuesday" {
-		return Unit(runeCount) * 16
+		perRune = 16 // double-width demo face
 	}
-	return Unit(runeCount) * 8
+	return Unit(runeCount * perRune)
 }
 
 // isAlphabetic returns true if the character is a letter or digit.

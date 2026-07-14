@@ -4,7 +4,7 @@
 // nine-tab trinket gallery, menu bars, status bar, the protocol-built
 // window, terminal child windows, dialogs and MDI - over the socket.
 //
-//	terminal 1:  go run -tags sdl ./examples/sdldesktop
+//	terminal 1:  go run ./cmd/kittytk-tui             (or -tags sdl ./cmd/kittytk-sdl)
 //	terminal 2:  go run ./examples/demoapp
 //
 // It is the backendless twin of examples/demo: same windows, built from
@@ -21,6 +21,7 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/ptydriver"
 )
 
 // soloMode, set by -solo, makes the primary app the whole display: its
@@ -36,7 +37,7 @@ func main() {
 	a, err := newPrimary(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot reach display service at %s: %v\n", path, err)
-		fmt.Fprintln(os.Stderr, "start the desktop first: go run -tags sdl ./examples/sdldesktop")
+		fmt.Fprintln(os.Stderr, "start a desktop first: go run ./cmd/kittytk-tui (or -tags sdl ./cmd/kittytk-sdl)")
 		os.Exit(1)
 	}
 	a.wait() // blocks until the main window closes or the desktop exits
@@ -59,6 +60,10 @@ type app struct {
 	mdiCount int
 	dockSeq  int
 
+	// Client-side PTYs backing this app's terminal surfaces, closed when
+	// the app quits.
+	drivers []*ptydriver.Driver
+
 	quit     chan struct{}
 	quitOnce sync.Once
 }
@@ -70,11 +75,11 @@ func newApp(path, name string, primary bool) (*app, error) {
 	a := &app{path: path, primary: primary, quit: make(chan struct{})}
 	// Command dispatch is observed via conn.OnCommand handlers, so the
 	// Dial sink is unused here.
-	dial := client.Dial
-	if primary && soloMode {
-		dial = client.DialSolo
-	}
-	conn, err := dial(path, name, nil)
+	// The demo opens secondary windows, so it declares multi-window: the
+	// display supplies its Window menu. Command dispatch is observed via
+	// conn.OnCommand handlers, so the Dial sink is unused here.
+	opts := client.DialOptions{MultiWindow: true, Solo: primary && soloMode}
+	conn, err := client.DialWith(path, name, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +104,7 @@ func newPrimary(path string) (*app, error) {
 	a.wireMainWindow()
 	a.wireMenus()
 	a.wireMDI()
+	a.wireDetails()
 	a.openProtocolWindow()
 
 	// The demo ends when its main window closes (or the desktop exits).
@@ -114,6 +120,9 @@ func (a *app) wait() {
 	select {
 	case <-a.quit:
 	case <-a.conn.Closed():
+	}
+	for _, d := range a.drivers {
+		d.Close()
 	}
 	a.conn.Close()
 }

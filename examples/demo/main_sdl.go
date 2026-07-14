@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/phroun/kittytk/objects/trinkets"
 	sdlplat "github.com/phroun/kittytk/sdl"
-	"github.com/phroun/kittytk/trinkets"
 )
 
 // The graphical demo: the SAME demo application, rendered as pixels

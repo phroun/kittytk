@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/phroun/kittytk/core"
 )
 
 // This file holds the display-protocol scripts that BUILD the demo's
@@ -85,7 +87,10 @@ t=new tabs children={
 b=new tab caption="Basic Trinkets" children={
 	bw=new panel layout=vbox spacing=0 children={
 		new label caption="This is a demo of basic trinkets:"
-		input=new textinput placeholder="Enter text here..."
+		brow=new panel layout=hbox spacing=8 children={
+			input=new textinput placeholder="Enter text here..." stretch=1
+			new button caption="Browse..."
+		}
 		new spacer
 		new panel layout=hbox spacing=8 children={
 			new button caption="OK" action=demo.basic.ok
@@ -335,6 +340,46 @@ new tab caption="Vertical Tabs" children={
 	}
 }
 
+det=new tab caption="Details" children={
+	dbox=new panel layout=vbox spacing=0 children={
+		dtree=new treeview caption="Name" showheader sorted sortedby=-1 editable stretch=1 align=fill children={
+			dsizec=new column id=size caption="Size" width=10 align=right sortable sortproxy=4
+			dkindc=new column id=kind caption="Kind" width=14 sortable editable
+			dmodc=new column id=modified caption="Date Modified" width=24 sortable
+			dtagsc=new column id=tags caption="Tags" width=8 editable
+			drawc=new column id=rawsize caption="Raw Size" width=10 align=right numeric hidden !optional
+			ds1=new item caption="Screenshot 2026-07-10 at 1.21.28 AM.png"
+			ds2=new item caption="Screenshot 2026-07-10 at 12.24.05 AM.png"
+			dpc=new item caption="PC12" expanded children={
+				dpcin=new item caption="pc12" expanded children={
+					dsrc=new item caption="src" expanded children={
+						dmain=new item caption="main.go"
+						dutil=new item caption="util.go"
+					}
+					dbuild=new item caption="build.log"
+				}
+				dread=new item caption="readme.txt"
+			}
+			ddocs=new item caption="Documents" expanded children={
+				dnotes=new item caption="notes.txt"
+				darch=new item caption="archive" expanded children={
+					dfin=new item caption="final-report.txt"
+					dold=new item caption="old-report.txt"
+				}
+			}
+			darj=new item caption="pc12.arj"
+		}
+		drow=new panel layout=hbox spacing=8 children={
+			dshowkey=new checkbox caption="Name column" checked
+			dhscroll=new checkbox caption="H-scroll (fit off)"
+			dpinl=new checkbox caption="Pin first 2"
+			dpinr=new checkbox caption="Pin last"
+			dledger=new checkbox caption="Ledger"
+			dlines=new checkbox caption="Tree lines"
+		}
+	}
+}
+
 mtab=new tab caption="MDI Demo" children={
 	mdisp=new splitter orientation=vertical position=0.9 caption="Dock" children={
 		mdisa=new scrollarea children={
@@ -368,7 +413,40 @@ mtab=new tab caption="MDI Demo" children={
 # Surface what the app-side handlers address, then open the event flows
 # they listen to (command flows regardless; toggles/changes need a sub).
 tabs=w.t
-binput=w.t.b.bw.input
+dtree=w.t.det.dbox.dtree
+dsizec=w.t.det.dbox.dtree.dsizec
+dkindc=w.t.det.dbox.dtree.dkindc
+dmodc=w.t.det.dbox.dtree.dmodc
+dtagsc=w.t.det.dbox.dtree.dtagsc
+drawc=w.t.det.dbox.dtree.drawc
+kinds=new collection of=options children={
+	new option key=png value="PNG image"
+	new option key=folder value="Folder"
+	new option key=arj value="ARJ Archive"
+	new option key=txt value="Text"
+}
+ds1=w.t.det.dbox.dtree.ds1
+ds2=w.t.det.dbox.dtree.ds2
+dpc=w.t.det.dbox.dtree.dpc
+dpcin=w.t.det.dbox.dtree.dpc.dpcin
+dsrc=w.t.det.dbox.dtree.dpc.dpcin.dsrc
+dmain=w.t.det.dbox.dtree.dpc.dpcin.dsrc.dmain
+dutil=w.t.det.dbox.dtree.dpc.dpcin.dsrc.dutil
+dbuild=w.t.det.dbox.dtree.dpc.dpcin.dbuild
+dread=w.t.det.dbox.dtree.dpc.dread
+ddocs=w.t.det.dbox.dtree.ddocs
+dnotes=w.t.det.dbox.dtree.ddocs.dnotes
+darch=w.t.det.dbox.dtree.ddocs.darch
+dfin=w.t.det.dbox.dtree.ddocs.darch.dfin
+dold=w.t.det.dbox.dtree.ddocs.darch.dold
+darj=w.t.det.dbox.dtree.darj
+dshowkey=w.t.det.dbox.drow.dshowkey
+dhscroll=w.t.det.dbox.drow.dhscroll
+dpinl=w.t.det.dbox.drow.dpinl
+dpinr=w.t.det.dbox.drow.dpinr
+dledger=w.t.det.dbox.drow.dledger
+dlines=w.t.det.dbox.drow.dlines
+binput=w.t.b.bw.brow.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont
 grid=w.t.s.o.sp.c.grid
@@ -397,21 +475,15 @@ func mainMenuScript() string {
 	var b strings.Builder
 	b.WriteString(`
 mb=new menubar children={
-	new menu caption="&Demo" children={
+	new menu caption="&Demo" wellknown="app" children={
 		new menuitem caption="&New" shortcut="^N" action=demo.file.new
 		new menuitem caption="&Open..." shortcut="^O"
 		new menuitem caption="&Save" shortcut="^S"
 	}
-	new menu caption="&Edit" children={
-		new menuitem caption="Cu&t" shortcut="^X" action=demo.edit.cut
-		new menuitem caption="&Copy" shortcut="^C" action=demo.edit.copy
-		new menuitem caption="&Paste" shortcut="^V" action=demo.edit.paste
-		new menuitem separator
-		new menuitem caption="Select &All" action=demo.edit.selectall
-		new menuitem separator
+	new menu caption="&Edit" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.edit.rawkey
 	}
-	new menu caption="&View" children={
+	new menu caption="&View" wellknown="view" children={
 		new menuitem caption="&Toolbar" checkable checked
 		new menuitem caption="&Status Bar" checkable checked
 		new menuitem separator
@@ -420,11 +492,8 @@ mb=new menubar children={
 		new menuitem caption="Show A&nnouncements in Status Bar" checkable action=demo.view.announce
 		new menuitem caption="Speak Announcements" checkable action=demo.view.speak
 	}
-	new menu caption="&Window" children={
+	new menu caption="&Window" wellknown="window" children={
 		new menuitem caption="&New Window" action=demo.window.new
-		new menuitem separator
-		new menuitem caption="&Tile" action=demo.window.tile
-		new menuitem caption="&Cascade" action=demo.window.cascade
 	}
 	new menu caption="&Alphabet" children={`)
 	for i := 0; i < 26; i++ {
@@ -436,7 +505,7 @@ mb=new menubar children={
 	}
 	b.WriteString(`
 	}
-	new menu caption="&Help" children={
+	new menu caption="&Help" wellknown="help" children={
 		new menuitem caption="&About" action=demo.help.about
 	}
 }
@@ -497,14 +566,14 @@ dwin=dw%d
 dcloser=dw%d.dsp.dtp.dclose
 dterm=dw%d.dsp.dterm
 set dterm feed="\e[1;36mThis banner arrived as protocol text.\e[0m\r\n\r\n"
-set dterm shell
 `, n, 40+n*16, 40+n*16, n, n, n)
 }
 
-// aboutDialogScript is the About message box.
-const aboutDialogScript = `
-dlg=new messagebox title="About KittyTK" icon=information ok text="KittyTK Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion 0.1.0"
-`
+// aboutDialogScript is the About message box. The name and version come from
+// the core package's single source of truth.
+var aboutDialogScript = fmt.Sprintf(`
+dlg=new messagebox title="About %s" icon=information ok text="%s Demo\n\nA comprehensive cross-surface UI toolkit.\n\nVersion %s"
+`, core.Name, core.Name, core.Version)
 
 // secondaryBuildScript is a whole secondary application: a window with a
 // control panel over a PurfecTerm, its own menu bar and status bar.
@@ -526,24 +595,17 @@ w=new window title="App %d Window" x=%d y=%d width=480 height=320 tearable main 
 }
 closer=w.sp.tp.closebtn
 term=w.sp.term
-set term shell
 mb=new menubar children={
-	new menu caption="&App %d" children={
+	new menu caption="&App %d" wellknown="app" children={
 		new menuitem caption="&Close Window" shortcut="^W" action=demo.app.close
 	}
-	new menu caption="&Edit" children={
-		new menuitem caption="Cu&t" shortcut="^X" action=demo.app.cut
-		new menuitem caption="&Copy" shortcut="^C" action=demo.app.copy
-		new menuitem caption="&Paste" shortcut="^V" action=demo.app.paste
-		new menuitem separator
-		new menuitem caption="Select &All" action=demo.app.selectall
-		new menuitem separator
+	new menu caption="&Edit" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.app.rawkey
 	}
 	new menu caption="&Info" children={
 		new menuitem caption="&About This App" action=demo.app.info
 	}
-	new menu caption="&Help" children={
+	new menu caption="&Help" wellknown="help" children={
 		new menuitem caption="&About" action=demo.app.about
 	}
 }
@@ -570,4 +632,58 @@ wwin=mdi.d%d
 wnew=mdi.d%d.p.bp.nb
 wclose=mdi.d%d.p.bp.cl
 `, n, n, (offset*2+1)*8, (offset+1)*16, n, n, n, n)
+}
+
+// detailsValuesScript fills the Details tab's cell values column-major
+// (each column owns its data, keyed by item), per the two-batch
+// pattern: items build first so their IDs exist, then the values
+// reference them. id resolves a surfaced correlation key to its wire ID.
+func detailsValuesScript(id func(name string) uint64) string {
+	col := func(colKey string, vals map[string]string) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, "set %s children={\n", colKey)
+		for _, item := range []string{
+			"ds1", "ds2", "dpc", "dpcin", "dsrc", "dmain", "dutil",
+			"dbuild", "dread", "ddocs", "dnotes", "darch", "dfin",
+			"dold", "darj",
+		} {
+			if v, ok := vals[item]; ok {
+				fmt.Fprintf(&b, "\tnew cell item=%d value=%q\n", id(item), v)
+			}
+		}
+		b.WriteString("}\n")
+		return b.String()
+	}
+	return col("dsizec", map[string]string{
+		"ds1": "311 KB", "ds2": "1 MB", "dpc": "--", "dpcin": "--",
+		"dsrc": "--", "dmain": "6 KB", "dutil": "3 KB", "dbuild": "42 KB",
+		"dread": "2 KB", "ddocs": "--", "dnotes": "1 KB", "darch": "--",
+		"dfin": "88 KB", "dold": "74 KB", "darj": "99 KB",
+	}) + col("dkindc", map[string]string{
+		"ds1": "PNG image", "ds2": "PNG image", "dpc": "Folder", "dpcin": "Folder",
+		"dsrc": "Folder", "dmain": "Text", "dutil": "Text", "dbuild": "Text",
+		"dread": "Text", "ddocs": "Folder", "dnotes": "Text", "darch": "Folder",
+		"dfin": "Text", "dold": "Text", "darj": "ARJ Archive",
+	}) + col("dmodc", map[string]string{
+		"ds1": "Yesterday at 1:21 AM", "ds2": "Yesterday at 12:24 AM",
+		"dpc": "Yesterday at 12:23 AM", "dpcin": "Yesterday at 12:28 AM",
+		"dsrc": "Yesterday at 12:29 AM", "dmain": "Yesterday at 12:30 AM",
+		"dutil": "Yesterday at 12:31 AM", "dbuild": "Today at 9:02 AM",
+		"dread": "Yesterday at 12:32 AM", "ddocs": "Today at 8:15 AM",
+		"dnotes": "Today at 8:16 AM", "darch": "Today at 8:20 AM",
+		"dfin": "Today at 8:21 AM", "dold": "Today at 8:22 AM",
+		"darj": "Yesterday at 12:17 AM",
+	}) + col("dtagsc", map[string]string{}) + col("drawc", map[string]string{
+		// The Size column's sort proxy: the same sizes expanded to
+		// plain byte counts, so "sort by Size" compares 2048-style
+		// numbers while the visible cells keep their "2 KB" captions.
+		"ds1": "318464", "ds2": "1048576", "dpc": "--", "dpcin": "--",
+		"dsrc": "--", "dmain": "6144", "dutil": "3072", "dbuild": "43008",
+		"dread": "2048", "ddocs": "--", "dnotes": "1024", "darch": "--",
+		"dfin": "90112", "dold": "75776", "darj": "101376",
+	}) + fmt.Sprintf(
+		// Kind becomes a CHOICE column: its cell editor is a combo
+		// over the kinds collection (the values above are option
+		// values, so no magic entry appears).
+		"set dkindc enum=%d enum_store=value\n", id("kinds"))
 }

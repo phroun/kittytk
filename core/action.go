@@ -1,7 +1,8 @@
-// Package core provides fundamental types for the TUI toolkit.
+// Package core provides fundamental types for KittyTK.
 package core
 
 import (
+	"strings"
 	"sync"
 )
 
@@ -223,15 +224,126 @@ func (s Shortcut) String() string {
 	return string(s)
 }
 
+// macNativeShortcuts, when set, makes DisplayString render shortcuts with
+// macOS's native modifier glyphs (⌃⌥⇧⌘) in canonical order. The host enables
+// it only when the ini's [system] native=true and the host OS is macOS; in
+// every other case the compact key-handler notation is shown unchanged.
+var macNativeShortcuts bool
+
+// SetMacNativeShortcuts toggles macOS-native shortcut glyph rendering for
+// menus and tooltips. Called once at host startup.
+func SetMacNativeShortcuts(on bool) { macNativeShortcuts = on }
+
+// MacShortcutFontFamily is the font family the graphical renderer uses to draw
+// menu shortcuts when macOS-native rendering is on. The text engine registers
+// macOS's UI font under this name (best-effort - it falls back to the default
+// UI face when that font isn't present, e.g. off macOS), so the native
+// modifier glyphs ⌃⌥⇧⌘ appear in Apple's own typeface. Because the same font
+// object is used to measure and to draw, switching families never desyncs the
+// menu's width machinery.
+const MacShortcutFontFamily = "apple-menu"
+
+// MacNativeShortcuts reports whether macOS-native shortcut rendering is on.
+func MacNativeShortcuts() bool { return macNativeShortcuts }
+
 // DisplayString returns a human-readable representation of the shortcut
 // for display in menus and tooltips.
-// Uses compact notation: ^ for Ctrl, M- for Alt, S- for Shift.
+// Uses compact notation: ^ for Ctrl, M- for Alt, S- for Shift - unless
+// macOS-native rendering is enabled, in which case modifiers become the
+// native glyphs ⌃⌥⇧⌘ in canonical order.
 func (s Shortcut) DisplayString() string {
 	if s == "" {
 		return ""
 	}
+	if macNativeShortcuts {
+		return s.macNativeDisplay()
+	}
 	// Return the key handler format directly - it's already compact and readable
 	return string(s)
+}
+
+// macNativeDisplay renders the shortcut with macOS modifier glyphs in the
+// canonical order Control, Option, Shift, Command (⌃⌥⇧⌘) followed by the key,
+// with no separators. Modifier mapping:
+//
+//	^ / C-  → ⌃ (Control)
+//	M- / A- → ⌥ (Option)
+//	S-      → ⇧ (Shift)
+//	s-      → ⌘ (Command)
+//
+// A single uppercase letter after a hyphenated modifier implies Shift, matching
+// the notation elsewhere (M-a = Option+A, M-A = Option+Shift+A); caret notation
+// (^X) never implies Shift. The letter key is uppercased to match how macOS
+// menus present keys (⌘S, not ⌘s). Named keys (Tab, Delete, F1) and any
+// unrecognized modifier (H-) are passed through as-is.
+func (s Shortcut) macNativeDisplay() string {
+	const (
+		modControl = 1
+		modOption  = 2
+		modShift   = 4
+		modCommand = 8
+	)
+	str := string(s)
+	mods := 0
+	usedCaret := false
+	for len(str) > 0 {
+		if len(str) >= 2 {
+			switch str[:2] {
+			case "M-", "A-":
+				mods |= modOption
+				str = str[2:]
+				continue
+			case "C-":
+				mods |= modControl
+				str = str[2:]
+				continue
+			case "S-":
+				mods |= modShift
+				str = str[2:]
+				continue
+			case "s-":
+				mods |= modCommand
+				str = str[2:]
+				continue
+			case "H-": // Hyper has no macOS glyph; drop the prefix
+				str = str[2:]
+				continue
+			}
+		}
+		if str[0] == '^' {
+			mods |= modControl
+			usedCaret = true
+			str = str[1:]
+			continue
+		}
+		break
+	}
+
+	key := str
+	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' && !usedCaret {
+		// Uppercase letter after a hyphenated modifier implies Shift.
+		mods |= modShift
+	}
+	if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
+		// macOS menus present letter keys uppercased.
+		key = strings.ToUpper(key)
+	}
+
+	var b strings.Builder
+	if mods&modControl != 0 {
+		b.WriteRune('⌃')
+	}
+	if mods&modOption != 0 {
+		b.WriteRune('⌥')
+	}
+	if mods&modShift != 0 {
+		b.WriteRune('⇧')
+	}
+	if mods&modCommand != 0 {
+		b.WriteRune('⌘')
+	}
+	b.WriteString(key)
+	return b.String()
 }
 
 // spokenKeyNames maps punctuation and whitespace keys to words a speech
