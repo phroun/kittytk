@@ -3,7 +3,16 @@
 Continuity document for resuming development in a fresh session. The GitHub
 repo is being renamed (module path is already `github.com/phroun/kittytk`, so
 the rename brings the repo name into line with the module — no import-path
-changes needed). This file covers the toolkit only; the `garland/` subtree is
+changes needed).
+
+> **Post-rename access check (confirmed):** after the repo rename, git
+> fetch and push from this session still succeed. The local `origin` remote
+> still reads the old path (`.../git/phroun/tuitk`) but resolves correctly —
+> the session proxy targets a stable repo identity and GitHub redirects the
+> old name. No remote reconfiguration was needed to keep pushing to
+> `claude/project-survey-mr6k4v`. (A human clone should still update its
+> `origin` URL to the new name at leisure; GitHub's redirect covers it
+> either way.) This file covers the toolkit only; the `garland/` subtree is
 a separate self-contained module (`github.com/phroun/garland`) mirrored here
 for development and synced back to its own repo — it has its own docs under
 `garland/docs/`.
