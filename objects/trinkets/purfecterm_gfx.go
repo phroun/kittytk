@@ -262,7 +262,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// space (updateTerminalSize's unit division undercounts at fractional
 	// ppu). The yellow scrollback line and text span this content width.
 	contentWpx := vpFullWpx
-	if t.gfxInputActive() {
+	if t.gfxInputActive() && !t.editorMode {
 		contentWpx = p.UnitSpanPxX(0, bounds.Width-gfxScrollbarLane)
 	}
 	if baseCW > 0 && baseCH > 0 {
@@ -466,7 +466,9 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	}
 	buf.ClearDirty()
 
-	t.paintScrollbarsGfx(p, bounds, buf, chh)
+	if !t.editorMode {
+		t.paintScrollbarsGfx(p, bounds, buf, chh)
+	}
 	t.ensureBlinkTimer()
 }
 
