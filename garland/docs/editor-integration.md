@@ -85,7 +85,16 @@ file open, in every loading style.
   saving leaves nothing behind. `g.BackupInfo()` for a status line;
   `BackupFailed` never blocks saves - decide whether to warn.
 
-## 8. Memory pressure (app-side hot-write mode)
+## 8. Undo coalescing (typing = one undo step)
+
+- `g.SetUndoCoalescing(true, autoBakeTime)` once at open (e.g. 1-2s
+  auto-bake). Adjacent typing runs and delete runs then collapse into
+  single revisions automatically.
+- Call `g.Bake()` wherever your UI wants a guaranteed undo boundary
+  (command executed, focus lost, mode switch). Seeks, saves, and
+  transactions already bake on their own.
+
+## 9. Memory pressure (app-side hot-write mode)
 
 - `g.MemoryPressure()`: when `SaveableBytes` dominates and
   `ResidentBytes` nears the hard limit, prompt/trigger a save -
