@@ -4730,7 +4730,16 @@ func (g *Garland) setCursorFromLine(c *Cursor, line, runeInLine int64) error {
 	if err != nil {
 		return err
 	}
-	c.updatePosition(pos, runePos, line, runeInLine)
+	// A runeInLine past the line's rune count migrates forward into the
+	// following line(s), bounded at EOF (the final line past a trailing
+	// newline is reachable). The byte position above already resolves
+	// that; derive the ACTUAL line:rune from it rather than storing the
+	// requested column, so LinePos() and BytePos() can never disagree.
+	realLine, realLineRune, err := g.byteToLineRuneInternalUnlocked(pos)
+	if err != nil {
+		return err
+	}
+	c.updatePosition(pos, runePos, realLine, realLineRune)
 	return nil
 }
 

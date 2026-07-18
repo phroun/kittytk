@@ -337,6 +337,10 @@ func (c *Cursor) SeekRune(pos int64) error
 
 // SeekLine moves cursor to a line and rune-within-line position.
 // Line and rune are both 0-indexed. Newline is the last character of its line.
+// A runeInLine past the line's rune count migrates forward into the
+// following line(s), bounded at end-of-buffer (the final line past a
+// trailing newline is reachable). LinePos() afterward reports the
+// ACTUAL resolved line:rune, always consistent with BytePos().
 func (c *Cursor) SeekLine(line, runeInLine int64) error
 
 // SeekByWord moves by n words (negative = backward) using
