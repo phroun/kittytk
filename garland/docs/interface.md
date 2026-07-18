@@ -174,6 +174,11 @@ type FileOptions struct {
     // emacs-compatible ".#<name>" lock file while the buffer holds
     // unsaved modifications. See "Source Metadata & Consistency".
     UseEmacsLocks bool
+
+    // LockOwner overrides the identity written inside the lock file
+    // (default: environment-derived "user@host.pid"; follow that form
+    // for emacs interoperability). Single line, trimmed.
+    LockOwner string
 }
 
 type LoadingStyle int
@@ -459,9 +464,10 @@ With `FileOptions.UseEmacsLocks`, Garland maintains an emacs-style
 buffer holds unsaved modifications: acquired on the first mutation
 past a clean point, released on save / revert-to-saved / undo onto
 the saved revision / Close. The lock is a regular file containing
-"user@host.pid", written through the filesystem hook (VFS-portable;
-emacs reads this form as well as its symlink form). A foreign lock is
-NEVER clobbered - it is recorded and reported; the app decides.
+"user@host.pid" (identity overridable via FileOptions.LockOwner),
+written through the filesystem hook (VFS-portable; emacs reads this
+form as well as its symlink form). A foreign lock is NEVER clobbered -
+it is recorded and reported; the app decides.
 
 ```go
 func (g *Garland) HoldsSourceLock() bool

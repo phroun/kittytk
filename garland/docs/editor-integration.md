@@ -10,7 +10,10 @@ touchpoints. Full signatures: `interface.md`.
 - Pass a custom `FileSystem` in `FileOptions` if the file is
   virtualized. A custom FS must implement `Stat` and `DeviceInfo`
   (or return `ErrNotSupported` and volunteer metadata, see §2).
-- `UseEmacsLocks: true` if you want emacs-interoperable locking (§6).
+- `UseEmacsLocks: true` if you want emacs-interoperable locking (§6);
+  set `LockOwner` to stamp your app's own identity into the lock file
+  (the string other editors show in "being edited by" prompts;
+  default is environment-derived `user@host.pid`).
 - `g.SetBackupLocation(nil, backupDir, BackupOptions{})` right after
   open (§7). Nothing else to do for backups - they are automatic.
 

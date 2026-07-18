@@ -256,6 +256,14 @@ type FileOptions struct {
 	// Garland reports foreign locks it finds (SourceLockOwner,
 	// SourceConsistencyReport.LockedBy). See emacs_lock.go.
 	UseEmacsLocks bool
+
+	// LockOwner overrides the identity written inside the emacs lock
+	// file (and used to recognize our own lock vs. a foreign one).
+	// Empty means the default "user@host.pid", derived from the
+	// environment. Follow that form for emacs interoperability; the
+	// value is used verbatim after trimming surrounding whitespace,
+	// and must be a single line. Only meaningful with UseEmacsLocks.
+	LockOwner string
 }
 
 // ChangeResult contains version information after a mutation.
@@ -591,7 +599,7 @@ func (lib *Library) Open(options FileOptions) (*Garland, error) {
 		if options.UseEmacsLocks {
 			// Construction is single-threaded; the garland is not yet
 			// published, so the *Locked helper is safe to call.
-			g.initEmacsLockLocked()
+			g.initEmacsLockLocked(options.LockOwner)
 		}
 
 	case options.DataChannel != nil:
