@@ -39,6 +39,12 @@ demoapp: demoapp.c kittytk.c scripts.c ptydriver.c kittytk.h scripts.h ptydriver
 counter: counter.c kittytk.c kittytk.h
 	$(CC) $(CFLAGS) -o $@ counter.c kittytk.c $(LDLIBS)
 
+# A window whose sole child is a mew editor control filling it. Requires
+# a host built with -tags mew (the "editor" trinket type). The C client
+# itself is plain - only the host needs the tag.
+mewdemo: mewdemo.c kittytk.c kittytk.h
+	$(CC) $(CFLAGS) -o $@ mewdemo.c kittytk.c $(LDLIBS)
+
 # Interop smoke binaries (also driven by the Go tests in c/interop).
 interop_smoke: interop_smoke.c kittytk.c kittytk.h
 	$(CC) $(CFLAGS) -o $@ interop_smoke.c kittytk.c $(LDLIBS)
@@ -51,4 +57,4 @@ test:
 	cd .. && go test ./c/interop/
 
 clean:
-	rm -f demoapp counter interop_smoke demoapp_smoke
+	rm -f demoapp counter mewdemo interop_smoke demoapp_smoke
