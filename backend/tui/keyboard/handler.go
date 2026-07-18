@@ -2,9 +2,11 @@
 // It handles VT100/ANSI escape sequences, UTF-8 characters, bracketed paste,
 // and line assembly for terminal input.
 //
-// Forked from github.com/phroun/direct-key-handler (v0.3.3) into the KittyTK
-// tree to add OSC 52 clipboard-response parsing (the OnClipboard callback),
-// which reuses the same accumulate-into-a-buffer machinery as bracketed paste.
+// Forked from github.com/phroun/direct-key-handler into the KittyTK tree to
+// add OSC 52 clipboard-response parsing (the OnClipboard callback), which
+// reuses the same accumulate-into-a-buffer machinery as bracketed paste.
+// Tracks upstream v0.3.6 (EmitPasteKeys option, macOS Option+[ U+201C fix,
+// and CPR/DSR ESC[row;colR parsing on top of the v0.3.3 base).
 package keyboard
 
 import (
@@ -96,6 +98,10 @@ type Handler struct {
 	// macOS Option key decoding
 	decodeMacOSOption bool // When true, decode macOS Option+key chars to M-key notation
 
+	// Paste key echo. When false, bracketed-paste content is delivered only via
+	// OnPaste/OnPasteChunk and is NOT also re-emitted as individual key events.
+	emitPasteKeys bool
+
 	// Echo output (where to echo typed characters)
 	echoWriter io.Writer
 
@@ -132,6 +138,14 @@ type Options struct {
 	// Only applies if InputReader is os.Stdin and is a terminal.
 	// Default: true
 	ManageTerminal *bool
+
+	// EmitPasteKeys controls whether bracketed-paste content is ALSO re-emitted
+	// as individual key events on the Keys channel. Consumers that handle paste
+	// through OnPaste or OnPasteChunk (e.g. to batch it into a single edit) do
+	// not want this echo: it duplicates the content and, on a large paste, can
+	// overflow the Keys channel and lose events. Default: true (backward
+	// compatible); set to false to deliver paste only via the callbacks.
+	EmitPasteKeys *bool
 }
 
 // New creates a new keyboard Handler.
@@ -160,6 +174,12 @@ func New(opts Options) *Handler {
 		decodeMacOSOption = *opts.DecodeMacOSOption
 	}
 
+	// Default to true (paste is echoed as keys) for backward compatibility.
+	emitPasteKeys := true
+	if opts.EmitPasteKeys != nil {
+		emitPasteKeys = *opts.EmitPasteKeys
+	}
+
 	h := &Handler{
 		inputReader:       opts.InputReader,
 		rawBytes:          make(chan []byte, 64),
@@ -171,6 +191,7 @@ func New(opts Options) *Handler {
 		terminalFd:        -1,
 		pasteChunkSize:    pasteChunkSize,
 		decodeMacOSOption: decodeMacOSOption,
+		emitPasteKeys:     emitPasteKeys,
 	}
 
 	// Check if input is a terminal file descriptor
@@ -462,7 +483,7 @@ var macOSOptionChars = map[rune]string{
 	// Option+symbol
 	'–':      "M--",  // Option+minus (en dash)
 	'≠':      "M-=",  // Option+equals
-	'"':      "M-[",  // Option+[ (left double quote)
+	'“':      "M-[",  // Option+[ (left double quote, U+201C — the char Option actually emits; keying on ASCII '"' would rewrite a plain double quote into a curly one)
 	'\u2019': "M-]",  // Option+] (right single quote)
 	'«':      "M-\\", // Option+backslash
 	'…':      "M-;",  // Option+semicolon
@@ -937,8 +958,10 @@ func (h *Handler) emitPaste(content []byte) {
 	if inLineMode {
 		// In line read mode: add pasted content directly to line buffer
 		h.handlePasteLineAssembly(content)
-	} else {
-		// Normal mode: emit each character as individual key events
+	} else if h.emitPasteKeys {
+		// Normal mode: emit each character as individual key events. Consumers
+		// that take paste via OnPaste/OnPasteChunk opt out (EmitPasteKeys=false)
+		// so the content is not also delivered as a burst of keystrokes.
 		for len(content) > 0 {
 			r, size := utf8.DecodeRune(content)
 			if r == utf8.RuneError && size == 1 {
@@ -1332,7 +1355,16 @@ func (h *Handler) parseModifiedCSI(seq string) (string, bool) {
 		return parseModifiedCursorKey(finalByte, parts)
 	case 'H', 'F':
 		return parseModifiedHomeEnd(finalByte, parts)
-	case 'P', 'Q', 'R', 'S':
+	case 'R':
+		// A two-parameter R whose first parameter is not 1 is a Cursor
+		// Position Report (DSR reply: ESC[row;colR), not modified F3 —
+		// the legacy F3-with-modifiers form is always "1;mod". Surface it
+		// as a distinct event so the application can consume it.
+		if len(parts) == 2 && parts[0] != "1" && parts[0] != "" {
+			return "CPR:" + parts[0] + ";" + parts[1], true
+		}
+		return parseModifiedF1toF4(finalByte, parts)
+	case 'P', 'Q', 'S':
 		return parseModifiedF1toF4(finalByte, parts)
 	case '~':
 		return parseModifiedTildeKey(parts)
