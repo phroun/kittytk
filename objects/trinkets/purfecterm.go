@@ -49,6 +49,14 @@ type PurfecTerm struct {
 	// Graphical-path state (rendering caches, blink animation,
 	// selection drag, scrollbars, context menu).
 	gfx purfecTermGfx
+
+	// editorMode configures the terminal as a full-screen editor
+	// display surface rather than a scrolling terminal: the scrollback
+	// buffer is disabled, no scrollbar lane is reserved or drawn, and
+	// the local Shift+navigation scroll keys are not intercepted (they
+	// pass through to the child). An embedded editor - mew - drives its
+	// display through a PurfecTerm in this mode.
+	editorMode bool
 }
 
 // CellDebugInfo contains debug information about a clicked cell.
@@ -165,9 +173,33 @@ func (t *PurfecTerm) CursorShapeAt(x, y core.Unit) core.CursorShape {
 	return core.CursorText
 }
 
+// SetEditorMode configures the terminal as a full-screen editor display
+// surface (see the editorMode field). Turning it on disables the
+// scrollback buffer, reclaims the scrollbar lane for text, and stops
+// the trinket from intercepting the Shift+navigation scroll keys so an
+// embedded editor receives them. Turning it off restores normal
+// scrolling-terminal behavior.
+func (t *PurfecTerm) SetEditorMode(on bool) {
+	t.editorMode = on
+	if t.terminal != nil {
+		if buf := t.terminal.Buffer(); buf != nil {
+			buf.SetScrollbackDisabled(on)
+		}
+	}
+	t.updateTerminalSize()
+	t.Update()
+}
+
+// EditorMode reports whether the terminal is configured as an editor
+// display surface (see SetEditorMode).
+func (t *PurfecTerm) EditorMode() bool { return t.editorMode }
+
 // overScrollLane reports whether a local point falls in either scrollbar
 // track, mirroring scrollbarPress's hit tests.
 func (t *PurfecTerm) overScrollLane(x, y core.Unit) bool {
+	if t.editorMode {
+		return false // no scrollbar lanes in editor mode
+	}
 	bounds := t.Bounds()
 	if track, _, _, _, _, ok := t.vScrollGeometry(bounds); ok &&
 		x >= track.X && y >= track.Y && y < track.Y+track.Height {
@@ -345,9 +377,10 @@ func (t *PurfecTerm) updateTerminalSize() {
 	cw, ch := t.cellDims()
 
 	width := bounds.Width
-	if t.gfxInputActive() {
-		// The vertical scrollbar lane is always present on pixel
-		// surfaces: reserve its width so it never covers text.
+	if t.gfxInputActive() && !t.editorMode {
+		// The vertical scrollbar lane is present on pixel surfaces
+		// (except in editor mode, where text owns the full width):
+		// reserve its width so it never covers text.
 		width -= gfxScrollbarLane
 	}
 	newCols := int(width / cw)
@@ -516,7 +549,9 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Scrollback navigation is handled locally and never reaches the
 	// child: since input is consumed by the sink callback the emulator's
 	// own local-key path no longer runs, so honour the Shift+nav keys here.
-	if t.handleScrollbackKey(event.Key) {
+	// Editor mode has no scrollback, so those keys pass through to the
+	// child (the editor) like any other key.
+	if !t.editorMode && t.handleScrollbackKey(event.Key) {
 		t.Update()
 		return true
 	}

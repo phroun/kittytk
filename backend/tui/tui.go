@@ -10,7 +10,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/phroun/kittytk/backend/tui/keyboard"
+	"github.com/phroun/direct-key-handler/keyboard"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
 	"golang.org/x/term"

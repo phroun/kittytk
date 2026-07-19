@@ -25,6 +25,7 @@ __pycache__/
 # C example binaries
 /c/demoapp
 /c/counter
+/c/mewdemo
 /c/interop_smoke
 /c/demoapp_smoke
 
