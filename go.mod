@@ -13,7 +13,13 @@ require (
 )
 
 require (
-	github.com/phroun/direct-key-handler v0.3.3 // indirect
+	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
+	github.com/mattn/go-runewidth v0.0.24 // indirect
+	github.com/phroun/argwild v0.0.1 // indirect
+	github.com/phroun/direct-key-handler v0.3.6 // indirect
+	github.com/phroun/garland v0.1.8 // indirect
+	github.com/phroun/mew v0.0.0-20260718225454-656087d6ecb0 // indirect
+	github.com/phroun/pawscript v0.2.11-alpha // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	golang.org/x/net v0.57.0 // indirect

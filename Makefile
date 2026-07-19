@@ -24,16 +24,16 @@ build: tui sdl
 
 # Terminal desktop host.
 tui:
-	$(GO) build -o $(BIN_DIR)/kittytk-tui ./cmd/kittytk-tui
+	$(GO) build -tags mew -o $(BIN_DIR)/kittytk-tui ./cmd/kittytk-tui
 
 # Graphical (SDL) desktop host. Requires the sdl build tag and SDL2 dev libs.
 sdl:
-	$(GO) build -tags sdl -o $(BIN_DIR)/kittytk-sdl ./cmd/kittytk-sdl
+	$(GO) build -tags sdl,mew -o $(BIN_DIR)/kittytk-sdl ./cmd/kittytk-sdl
 
 # Full test suite across both build tags.
 test:
 	$(GO) test ./...
-	$(GO) test -tags sdl ./...
+	$(GO) test -tags sdl,mew ./...
 
 # Remove built binaries.
 clean:
