@@ -19,6 +19,12 @@ import "time"
 //   - overwrite: an overwrite-mode keystroke that lands at the end of
 //     what the run has written so far (the caret advances there), i.e.
 //     replace-mode typing.
+// One cross-kind transition is allowed, ONE-DIRECTIONAL: an insert may
+// continue an OVERWRITE run at its end. This is "overtype mode" - the
+// editor overwrites within a line, then switches to appending via
+// inserts when it reaches the end - and the switch keeps coalescing.
+// After it the run is an insert run, so it is one-way (a later overwrite
+// bakes); Bake() opts out.
 // The mechanism is the same for all three, and safe precisely because
 // mutations path-copy into fresh node IDs - a revision's identity lives
 // entirely in revisionInfo[rev].RootID, so re-pointing it atomically
@@ -65,6 +71,22 @@ const (
 	coalesceOverwrite
 )
 
+// coalesceKindContinues reports whether an op of kind opKind may
+// continue a run of kind runKind. Every kind continues itself.
+// ADDITIONALLY, one-directional, an insert may continue an OVERWRITE
+// run: an editor's "overtype mode" overwrites within a line and then,
+// on reaching the end, switches to APPENDING via inserts - that switch
+// keeps coalescing (the run then becomes an insert run, so the switch
+// is one-way; a subsequent overwrite bakes). The reverse - an overwrite
+// continuing an insert run - never coalesces. The app can always Bake()
+// to opt out of the transition.
+func coalesceKindContinues(runKind, opKind coalesceKind) bool {
+	if runKind == opKind {
+		return true
+	}
+	return opKind == coalesceInsert && runKind == coalesceOverwrite
+}
+
 // coalesceState tracks the active run (if any) for one garland.
 type coalesceState struct {
 	enabled  bool
@@ -90,7 +112,7 @@ type coalesceState struct {
 // paths (deferred), so a failed mutation can never leak a stale
 // decision into the next one.
 type coalescePending struct {
-	valid  bool // set by a coalescible op (insert/delete)
+	valid  bool // set by a coalescible op (insert/delete/overwrite)
 	amend  bool // this op amends the current revision
 	kind   coalesceKind
 	pos    int64
@@ -146,16 +168,25 @@ func (g *Garland) coalesceDecideLocked(kind coalesceKind, pos, length int64) boo
 
 	amend := cs.active &&
 		cs.fork == g.currentFork && cs.rev == g.currentRevision &&
-		cs.kind == kind && g.isAtHead() &&
+		coalesceKindContinues(cs.kind, kind) && g.isAtHead() &&
 		(cs.autoBake <= 0 || time.Since(cs.lastOp) <= cs.autoBake)
 	if amend {
 		switch kind {
 		case coalesceInsert:
-			// Beginning or end of the run's chunk (RULING: interior
-			// insertions bake - moving the caret into the middle of
-			// what you just typed is navigation, and navigation ends
-			// the group).
-			amend = pos == cs.start || pos == cs.end
+			if cs.kind == coalesceOverwrite {
+				// Overtype reached the end of the line and is now
+				// APPENDING: an insert continues an overwrite run only at
+				// its end (the append point), never by prepending. After
+				// this the run becomes an insert run (see
+				// coalesceExtendRunLocked), so the switch is one-way.
+				amend = pos == cs.end
+			} else {
+				// Beginning or end of the run's chunk (RULING: interior
+				// insertions bake - moving the caret into the middle of
+				// what you just typed is navigation, and navigation ends
+				// the group).
+				amend = pos == cs.start || pos == cs.end
+			}
 		case coalesceDelete:
 			// Forward delete at the anchor, or backspace ending on it.
 			amend = pos == cs.start || pos+length == cs.start
@@ -214,6 +245,8 @@ func (g *Garland) coalesceExtendRunLocked(pc coalescePending) {
 		// chunk is now length longer and still starts at cs.start.
 		// Overwrite: only the forward gesture amends (pos == cs.end),
 		// so the written span grows by the written length at the end.
+		// (An insert amending an overwrite run also lands at cs.end,
+		// so the same formula covers the overtype->append switch.)
 		cs.end += pc.length
 	case coalesceDelete:
 		if pc.pos+pc.length == cs.start {
@@ -222,5 +255,10 @@ func (g *Garland) coalesceExtendRunLocked(pc coalescePending) {
 		}
 		// Forward delete (pc.pos == cs.start): anchor unchanged.
 	}
+	// The run adopts its latest op's kind, so the one-directional
+	// overwrite->insert transition sticks: once an insert has continued
+	// an overwrite run it is an insert run, and a later overwrite bakes.
+	// (For same-kind runs this is a no-op.)
+	cs.kind = pc.kind
 	cs.lastOp = time.Now()
 }
