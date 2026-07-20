@@ -6,25 +6,33 @@ import "time"
 // a single history entry.
 //
 // DESIGN: an editor wants "typing a word" to be ONE undo step, not one
-// per keystroke. When coalescing is enabled, an insert that lands at
-// the beginning or end of the chunk the previous insert built, or a
-// delete that keeps consuming from the same caret location (forward
-// delete at the point, or backspace walking left into it), AMENDS the
-// current revision instead of minting a new one: the revision's root
-// is re-pointed at the new tree and the revision number does not move.
-// This is safe precisely because mutations path-copy into fresh node
-// IDs - a revision's identity lives entirely in revisionInfo[rev].
-// RootID, so re-pointing it atomically replaces the revision's content
-// while every other revision keeps resolving through its own root.
+// per keystroke. When coalescing is enabled, an edit that continues the
+// active run AMENDS the current revision instead of minting a new one:
+// the revision's root is re-pointed at the new tree and the revision
+// number does not move. Three run kinds coalesce, each independently
+// (a run of one kind never absorbs another kind's op):
+//   - insert: a keystroke that lands at the beginning or end of the
+//     chunk the previous insert built (typing / prepend-typing);
+//   - delete: a delete that keeps consuming from the same caret
+//     location (forward delete at the point, or backspace walking left
+//     into it);
+//   - overwrite: an overwrite-mode keystroke that lands at the end of
+//     what the run has written so far (the caret advances there), i.e.
+//     replace-mode typing.
+// The mechanism is the same for all three, and safe precisely because
+// mutations path-copy into fresh node IDs - a revision's identity lives
+// entirely in revisionInfo[rev].RootID, so re-pointing it atomically
+// replaces the revision's content while every other revision keeps
+// resolving through its own root.
 //
 // Runs end ("bake") at a HARD EDGE:
 //   - Bake() - the app forces one (menu action completed, focus lost,
 //     whatever policy it likes);
 //   - AutoBakeTime - the new edit arrived more than this long after
 //     the previous one (0 disables time-based baking);
-//   - any non-continuation: different kind (insert vs delete),
-//     non-adjacent position, or any other mutation (overwrite, move,
-//     copy, decorate, scarify, rebase, ...);
+//   - any non-continuation: a different kind (insert / delete /
+//     overwrite never merge with each other), a non-adjacent position,
+//     or any other mutation (move, copy, decorate, scarify, rebase, ...);
 //   - history navigation (UndoSeek, ForkSeek) - resuming an old run
 //     after looking around would rewrite what the user just inspected;
 //   - a successful save - the save point pins the revision it wrote;
@@ -45,12 +53,16 @@ import "time"
 // Adjacency is POSITION-based, not cursor-identity-based: whatever
 // cursor performs the edit, what matters is where the bytes land.
 
-// coalesceKind distinguishes the two coalescible operations.
+// coalesceKind distinguishes the coalescible operations. Each kind runs
+// separately: a run of one kind never absorbs an op of another (an
+// overwrite adjacent to a typing run bakes the typing run and starts a
+// fresh overwrite run, and vice versa).
 type coalesceKind int
 
 const (
 	coalesceInsert coalesceKind = iota + 1
 	coalesceDelete
+	coalesceOverwrite
 )
 
 // coalesceState tracks the active run (if any) for one garland.
@@ -86,9 +98,11 @@ type coalescePending struct {
 }
 
 // SetUndoCoalescing enables or disables undo coalescing and sets the
-// auto-bake window. While enabled, runs of adjacent inserts (typing)
-// and adjacent deletes (backspacing / forward-deleting at one caret)
-// collapse into a single revision. autoBakeTime > 0 bakes the run
+// auto-bake window. While enabled, runs of adjacent inserts (typing),
+// adjacent deletes (backspacing / forward-deleting at one caret), and
+// adjacent overwrites (replace-mode typing) each collapse into a single
+// revision - the three kinds run separately and never merge with one
+// another. autoBakeTime > 0 bakes the run
 // automatically when the next edit arrives more than that long after
 // the previous one; 0 disables time-based baking. Changing the
 // configuration is itself a hard edge. Disabled by default - every
@@ -145,6 +159,16 @@ func (g *Garland) coalesceDecideLocked(kind coalesceKind, pos, length int64) boo
 		case coalesceDelete:
 			// Forward delete at the anchor, or backspace ending on it.
 			amend = pos == cs.start || pos+length == cs.start
+		case coalesceOverwrite:
+			// Overwrite-mode typing advances the caret to the end of
+			// what it just wrote, so a continuing overwrite lands
+			// exactly at the run's end. Unlike insert there is no
+			// prepend gesture: overwriting back into the run replaces
+			// content it already wrote - navigation, which bakes (the
+			// same spirit as insert's interior rule). length here is
+			// the WRITTEN length (len(newData)); the deleted length
+			// does not affect the run's own span.
+			amend = pos == cs.end
 		}
 	}
 
@@ -167,7 +191,10 @@ func (g *Garland) coalesceStartRunLocked(pc coalescePending) {
 	cs.rev = g.currentRevision
 	cs.kind = pc.kind
 	switch pc.kind {
-	case coalesceInsert:
+	case coalesceInsert, coalesceOverwrite:
+		// The written span is [pos, pos+writtenLen); a forward
+		// continuation extends it at the end. (For overwrite, pc.length
+		// is the written length, len(newData).)
 		cs.start, cs.end = pc.pos, pc.pos+pc.length
 	case coalesceDelete:
 		// After deleting at pos, the gap sits at pos: a forward delete
@@ -182,9 +209,11 @@ func (g *Garland) coalesceStartRunLocked(pc coalescePending) {
 func (g *Garland) coalesceExtendRunLocked(pc coalescePending) {
 	cs := &g.coalesce
 	switch pc.kind {
-	case coalesceInsert:
-		// Append at end or prepend at start: either way the chunk is
-		// now length longer and still starts at cs.start.
+	case coalesceInsert, coalesceOverwrite:
+		// Insert: append at end or prepend at start - either way the
+		// chunk is now length longer and still starts at cs.start.
+		// Overwrite: only the forward gesture amends (pos == cs.end),
+		// so the written span grows by the written length at the end.
 		cs.end += pc.length
 	case coalesceDelete:
 		if pc.pos+pc.length == cs.start {
