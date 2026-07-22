@@ -26,6 +26,7 @@
 package text
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -160,6 +161,40 @@ func NewEngine() *Engine {
 	return &Engine{db: newFontDB(), cache: newShapeCache(2048)}
 }
 
+// ArabicJoinDiag reports, for the given family context, which face Arabic
+// letters actually resolve to and whether shaping a run substitutes contextual
+// forms — the one-line ground truth for "why doesn't Arabic connect": a face
+// whose GSUB this shaper cannot execute leaves the middle letter of ليك as its
+// isolated glyph. Meant for a one-time stderr print from the renderer.
+func (e *Engine) ArabicJoinDiag(family string) string {
+	f := &core.Font{Name: family, Size: 12}
+	face := e.db.fallbackFor(f).ResolveFace('ي')
+	fam := "?"
+	if face != nil {
+		fam = face.Describe().Family
+	}
+	ids := func(s string) map[uint32]bool {
+		out := map[uint32]bool{}
+		sp := e.ShapeRun(f, s)
+		for li := range sp.Lines {
+			for ri := range sp.Lines[li].Runs {
+				for _, g := range sp.Lines[li].Runs[ri].raw.Glyphs {
+					out[uint32(g.GlyphID)] = true
+				}
+			}
+		}
+		return out
+	}
+	run := ids("ليك")
+	verdict := "OK (contextual forms substituted)"
+	for id := range ids("ي") {
+		if run[id] {
+			verdict = "BROKEN (middle letter shapes as its ISOLATED glyph — this face's GSUB is not executable by the embedded shaper; is a locally-installed font overriding the embedded one?)"
+		}
+	}
+	return fmt.Sprintf("arabic face=%q via %q: join=%s", fam, family, verdict)
+}
+
 // RegisterFont adds a font variant (TTF/OTF bytes) under a family
 // name, extending the fallback chain in registration order. Data is
 // parsed once; registering the same family+aspect again replaces it.
@@ -182,6 +217,41 @@ func (e *Engine) Epoch() uint64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.epoch
+}
+
+// SetFontAlias re-points a font alias (e.g. "ui-term", "ui-fraktur") at an
+// ordered list of target families; resolve uses the first that is registered,
+// so the list is a fallback chain. No targets deletes the alias. Bumps the
+// epoch so caches keyed on the font set flush. The named families must already
+// be registered (RegisterFontFile / RegisterFontByName, or UseFont which loads
+// on demand).
+func (e *Engine) SetFontAlias(alias string, targets ...string) {
+	e.db.setAlias(alias, targets)
+	e.bumpEpoch()
+}
+
+// sharedEngine is the process-wide engine a graphical backend publishes so
+// every surface — UI chrome and each embedded terminal — resolves fonts from
+// one font set. A live font change then reaches them all through one handle.
+var (
+	sharedMu     sync.RWMutex
+	sharedEngine *Engine
+)
+
+// SetShared publishes e as the process-wide engine (called by the raster
+// backend when it builds its engine). Pass nil to clear.
+func SetShared(e *Engine) {
+	sharedMu.Lock()
+	sharedEngine = e
+	sharedMu.Unlock()
+}
+
+// Shared returns the process-wide engine, or nil if none is published (e.g. the
+// pure-TUI path, where fonts are the outer terminal's concern).
+func Shared() *Engine {
+	sharedMu.RLock()
+	defer sharedMu.RUnlock()
+	return sharedEngine
 }
 
 // shapeCache is a two-generation cache: inserts land in cur; when cur
@@ -352,7 +422,9 @@ func (e *Engine) shapeOutputs(runes []rune, pieces []spanPiece, base di.Directio
 			Face:      face,
 			Size:      emFor(face, pc.font),
 		}
-		for _, si := range e.seg.Split(in, fallbackMap{db: e.db, primary: face}) {
+		fbRoot, fbStyle := scriptContext(pc.font.Name)
+		fb := fallbackMap{db: e.db, primary: face, scriptRoot: fbRoot, scriptStyle: fbStyle}
+		for _, si := range e.seg.Split(in, fb) {
 			outs = append(outs, e.shaper.Shape(si))
 		}
 	}

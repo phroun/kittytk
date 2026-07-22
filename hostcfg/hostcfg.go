@@ -26,6 +26,15 @@
 //	border_width =            ; window frame thickness in device px (blank/0 = default)
 //	fps          =            ; true = show the render frame rate in the graphical
 //	                          ;        host's OS title bar (kittytk-sdl only)
+//	fonts_path   =            ; extra font search directories (comma list, relative
+//	                          ;   to this ini) the engine scans to find families by name
+//	ui_term      =            ; the ui-term terminal face (family or comma fallback
+//	                          ;   list). Any ui_* key re-points the matching font
+//	                          ;   alias: ui_text_serif, ui_term_hebrew, ui_term_cjk_sans,
+//	                          ;   … — the whole ui-{text,term}-{script}-{style} tree.
+//
+//	[fonts]                   ; family name -> font file path (graphical host only;
+//	JetBrainsMono = /path/to/JetBrainsMono.ttf   ; relative paths resolve against this ini)
 //
 //	[service]
 //	endpoint =            ; blank = default; tcp://host:port, tls://…, or a socket path
@@ -46,6 +55,15 @@
 //	                      ;                         (read-back), falling back to the
 //	                      ;                         internal clipboard if it is silent
 //	                      ;   internal/off        = host-internal clipboard only
+//	pseudofont_black_serif = ; text-backend cipher pseudo-fonts, selected by
+//	pseudofont_black_sans  = ;   NAME (Unicode math-alphanumerics faking a
+//	pseudofont_double      = ;   style). Each defaults on; set = off renders
+//	pseudofont_fraktur     = ;   that style as plain text instead.
+//	pseudofont_script      = ;
+//	fraktur_mode           = ; SEPARATE: how a terminal's VT100 fraktur request
+//	                      ;   (font 20 / SGR 20) is handled — native (forward the
+//	                      ;   escape to the enclosing terminal), pseudo (the
+//	                      ;   fraktur cipher; default), off (normal font).
 //
 // Environment variables still take precedence over the file: KITTYTK_DISPLAY
 // for the endpoint and KITTYTK_TOKEN for the token.
@@ -85,11 +103,45 @@ type Config struct {
 	Native    string
 	TUINative string
 
+	// TUIPseudoFontsDisabled turns off individual cipher pseudo-fonts (used BY
+	// NAME) in the text backend ([tui] pseudofont_<group> = off): keyed by
+	// toggle group (black_serif, black_sans, double, fraktur, script). A
+	// disabled group renders plain instead of the styled Unicode. Absent =
+	// enabled.
+	TUIPseudoFontsDisabled map[string]bool
+
+	// TUIFrakturMode ([tui] fraktur_mode) is a SEPARATE concern: how a
+	// terminal's VT100 fraktur REQUEST (font 20 / SGR 20) is handled — "native"
+	// forwards the VT fraktur escape to the enclosing terminal, "pseudo" renders
+	// it with the fraktur cipher (default), "off" ignores it (normal font).
+	// Empty = the backend default (pseudo). Distinct from pseudofont_fraktur.
+	TUIFrakturMode string
+
 	// TUIClipboard controls the terminal host's clipboard integration, set by
 	// the [tui] section's `clipboard` key. "internal"/"off"/"none"/"false"
 	// keep an internal-only clipboard; anything else (or empty) mirrors
 	// Copy/Cut to the terminal's clipboard via OSC 52.
 	TUIClipboard string
+
+	// Fonts maps a font family name to a font file path, read from the [fonts]
+	// section (keys keep their original case — a family name). Registered into
+	// the graphical host's shared text engine at startup so any name (including
+	// the ui-term terminal face) resolves against it. Relative paths resolve
+	// against the ini's directory. Ignored by the terminal host (fonts aren't
+	// real there).
+	Fonts map[string]string
+
+	// FontsPath lists extra directories the font engine scans to resolve
+	// families by NAME, from [window] fonts_path (comma-separated). Relative
+	// entries resolve against the ini's directory.
+	FontsPath []string
+
+	// FontAliases holds the [window] ui_* font-alias overrides: any key of the
+	// form ui_<...> re-points the font alias ui-<...> (underscores -> hyphens)
+	// at a comma-separated fallback list — the whole systematic font tree,
+	// overridable at any level (ui_term, ui_text_serif, ui_term_hebrew_sans, …).
+	// Keyed by the hyphenated alias name.
+	FontAliases map[string][]string
 
 	// Source is the path of the ini that was loaded, or "" if none was
 	// found (defaults were used).
@@ -127,9 +179,50 @@ func Load() Config {
 		}
 		apply(data, &cfg)
 		cfg.Source = p
+		// Resolve relative font paths against the ini's own directory, so a
+		// user can ship fonts next to their kittytk.ini.
+		if dir := filepath.Dir(p); dir != "" {
+			for family, fp := range cfg.Fonts {
+				if !filepath.IsAbs(fp) {
+					cfg.Fonts[family] = filepath.Join(dir, fp)
+				}
+			}
+			for i, sp := range cfg.FontsPath {
+				if !filepath.IsAbs(sp) {
+					cfg.FontsPath[i] = filepath.Join(dir, sp)
+				}
+			}
+		}
 		break // first found wins
 	}
 	return cfg
+}
+
+// splitList parses a comma-separated value (font families or paths), stripping
+// surrounding quotes off the whole value and off each element, dropping empties.
+func splitList(v string) []string {
+	v = stripQuotes(strings.TrimSpace(v))
+	if v == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = stripQuotes(strings.TrimSpace(p)); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// stripQuotes removes a matching pair of surrounding single or double quotes.
+func stripQuotes(s string) string {
+	if len(s) >= 2 {
+		q := s[0]
+		if (q == '"' || q == '\'') && s[len(s)-1] == q {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
 
 // apply parses ini text and sets the recognized keys on cfg. Section
@@ -155,8 +248,59 @@ func apply(data []byte, cfg *Config) {
 		if eq < 0 {
 			continue
 		}
-		key := strings.ToLower(strings.TrimSpace(line[:eq]))
+		origKey := strings.TrimSpace(line[:eq])
+		key := strings.ToLower(origKey)
 		val := strings.TrimSpace(stripInlineComment(line[eq+1:]))
+		// [fonts] is the one section whose keys are DATA (family names, kept in
+		// their original case), not fixed knobs — a family -> file path map.
+		if section == "fonts" {
+			if origKey == "" {
+				continue
+			}
+			v := stripQuotes(val)
+			if v == "" {
+				continue
+			}
+			if cfg.Fonts == nil {
+				cfg.Fonts = map[string]string{}
+			}
+			cfg.Fonts[origKey] = v
+			continue
+		}
+		// Any ui_* key re-points the font alias ui-* (underscores -> hyphens) at
+		// a comma-separated fallback list — the whole systematic font tree.
+		if strings.HasPrefix(key, "ui_") {
+			alias := strings.ReplaceAll(key, "_", "-")
+			if list := splitList(val); len(list) > 0 {
+				if cfg.FontAliases == nil {
+					cfg.FontAliases = map[string][]string{}
+				}
+				cfg.FontAliases[alias] = list
+			} else {
+				delete(cfg.FontAliases, alias)
+			}
+			continue
+		}
+		// [tui] font knobs (two separate things): pseudofont_<group> = off
+		// disables a by-name cipher pseudo-font; fraktur_mode = native|pseudo|off
+		// governs how a terminal's VT100 fraktur request is rendered.
+		if section == "tui" {
+			if strings.HasPrefix(key, "pseudofont_") {
+				group := strings.TrimPrefix(key, "pseudofont_")
+				if cfg.TUIPseudoFontsDisabled == nil {
+					cfg.TUIPseudoFontsDisabled = map[string]bool{}
+				}
+				cfg.TUIPseudoFontsDisabled[group] = isFalsey(val) // off/false/no/0
+				continue
+			}
+			if key == "fraktur_mode" {
+				switch strings.ToLower(val) {
+				case "native", "pseudo", "off":
+					cfg.TUIFrakturMode = strings.ToLower(val)
+				}
+				continue
+			}
+		}
 		switch key {
 		case "title":
 			cfg.Title = val
@@ -203,6 +347,9 @@ func apply(data []byte, cfg *Config) {
 			if section == "tui" {
 				cfg.TUIClipboard = val
 			}
+		case "fonts_path":
+			// [window] fonts_path: extra font search directories (comma list).
+			cfg.FontsPath = append(cfg.FontsPath, splitList(val)...)
 		}
 	}
 }

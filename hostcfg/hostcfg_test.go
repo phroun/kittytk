@@ -199,6 +199,97 @@ func TestTUIClipboardConfig(t *testing.T) {
 	}
 }
 
+// The [fonts] section is a family -> path map (keys keep their case); [window]
+// fonts_path and ui_term are comma-separated lists.
+func TestApplyFontConfig(t *testing.T) {
+	cfg := Defaults()
+	apply([]byte(`
+[fonts]
+JetBrainsMono = /usr/share/fonts/jbm.ttf
+Comic Mono = "/opt/comic mono.otf"
+
+[window]
+fonts_path = /a/fonts, "/b/more fonts"
+ui_term = "JetBrainsMono, Monday"
+ui_text_hebrew_serif = SBL Hebrew
+`), &cfg)
+
+	if cfg.Fonts["JetBrainsMono"] != "/usr/share/fonts/jbm.ttf" {
+		t.Errorf("Fonts[JetBrainsMono] = %q", cfg.Fonts["JetBrainsMono"])
+	}
+	if cfg.Fonts["Comic Mono"] != "/opt/comic mono.otf" {
+		t.Errorf("Fonts[Comic Mono] = %q (quotes should strip)", cfg.Fonts["Comic Mono"])
+	}
+	if len(cfg.FontsPath) != 2 || cfg.FontsPath[0] != "/a/fonts" || cfg.FontsPath[1] != "/b/more fonts" {
+		t.Errorf("FontsPath = %v", cfg.FontsPath)
+	}
+	if got := cfg.FontAliases["ui-term"]; len(got) != 2 || got[0] != "JetBrainsMono" || got[1] != "Monday" {
+		t.Errorf("FontAliases[ui-term] = %v", got)
+	}
+	if got := cfg.FontAliases["ui-text-hebrew-serif"]; len(got) != 1 || got[0] != "SBL Hebrew" {
+		t.Errorf("FontAliases[ui-text-hebrew-serif] = %v", got)
+	}
+}
+
+// Load resolves relative [fonts] paths and fonts_path against the ini's own
+// directory, so fonts can ship next to kittytk.ini.
+func TestLoadResolvesRelativeFontPaths(t *testing.T) {
+	dir := t.TempDir()
+	ini := "[fonts]\nMyFont = fonts/my.ttf\n\n[window]\nfonts_path = extra\n"
+	if err := os.WriteFile(filepath.Join(dir, IniName), []byte(ini), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	cfg := Load()
+	if got, want := cfg.Fonts["MyFont"], filepath.Join(dir, "fonts/my.ttf"); got != want {
+		t.Errorf("Fonts[MyFont] = %q, want %q", got, want)
+	}
+	if len(cfg.FontsPath) != 1 || cfg.FontsPath[0] != filepath.Join(dir, "extra") {
+		t.Errorf("FontsPath = %v, want [%s]", cfg.FontsPath, filepath.Join(dir, "extra"))
+	}
+}
+
+// [tui] pseudofont_<group> = off disables a by-name cipher; fraktur_mode is a
+// separate VT-request knob. Both are read only under [tui].
+func TestApplyTUIPseudoFonts(t *testing.T) {
+	cfg := Defaults()
+	apply([]byte(`
+[tui]
+pseudofont_fraktur = off
+pseudofont_double = no
+pseudofont_black_serif = on
+fraktur_mode = native
+`), &cfg)
+
+	if !cfg.TUIPseudoFontsDisabled["fraktur"] {
+		t.Errorf("pseudofont_fraktur=off should disable the fraktur cipher")
+	}
+	if !cfg.TUIPseudoFontsDisabled["double"] {
+		t.Errorf("pseudofont_double=no should disable double")
+	}
+	if cfg.TUIPseudoFontsDisabled["black_serif"] {
+		t.Errorf("pseudofont_black_serif=on should stay enabled")
+	}
+	if cfg.TUIFrakturMode != "native" {
+		t.Errorf("fraktur_mode=native should set TUIFrakturMode, got %q", cfg.TUIFrakturMode)
+	}
+
+	// An unrecognized fraktur_mode is ignored (stays empty -> backend default).
+	c1 := Defaults()
+	apply([]byte("[tui]\nfraktur_mode = sideways\n"), &c1)
+	if c1.TUIFrakturMode != "" {
+		t.Errorf("invalid fraktur_mode should be ignored, got %q", c1.TUIFrakturMode)
+	}
+
+	// The same keys outside [tui] are ignored.
+	c2 := Defaults()
+	apply([]byte("pseudofont_fraktur = off\nfraktur_mode = native\n"), &c2)
+	if len(c2.TUIPseudoFontsDisabled) != 0 || c2.TUIFrakturMode != "" {
+		t.Errorf("pseudofont/fraktur_mode outside [tui] should be ignored")
+	}
+}
+
 // Load uses the first kittytk.ini found; the current directory is searched
 // before the exe dir and the user config dir.
 func TestLoadFirstFoundWinsFromCWD(t *testing.T) {
@@ -226,8 +317,18 @@ func TestLoadDefaultsWhenNoIni(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())
 
 	cfg := Load()
-	if cfg != Defaults() {
+	d := Defaults()
+	// Config carries maps/slices (fonts) and so is no longer comparable with
+	// ==; check the scalar knobs field-wise and assert no font config appeared.
+	if cfg.Title != d.Title || cfg.Width != d.Width || cfg.Height != d.Height ||
+		cfg.Scale != d.Scale || cfg.FontSize != d.FontSize || cfg.BorderWidth != d.BorderWidth ||
+		cfg.ShowFPS != d.ShowFPS || cfg.VSync != d.VSync || cfg.Endpoint != d.Endpoint ||
+		cfg.Token != d.Token || cfg.Native != d.Native || cfg.TUINative != d.TUINative ||
+		cfg.TUIClipboard != d.TUIClipboard {
 		t.Errorf("no ini should yield defaults, got %+v", cfg)
+	}
+	if len(cfg.Fonts) != 0 || len(cfg.FontsPath) != 0 || len(cfg.FontAliases) != 0 {
+		t.Errorf("no ini should yield no font config, got %+v", cfg)
 	}
 }
 

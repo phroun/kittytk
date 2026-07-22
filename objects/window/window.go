@@ -22,16 +22,17 @@ const (
 type WindowFlags int
 
 const (
-	WindowFlagNone       WindowFlags = 0
-	WindowFlagFrameless  WindowFlags = 1 << iota // No window frame
-	WindowFlagNoTitle                            // No title bar
-	WindowFlagNoResize                           // Cannot be resized
-	WindowFlagNoMove                             // Cannot be moved
-	WindowFlagNoClose                            // No close button
-	WindowFlagNoMinimize                         // No minimize button
-	WindowFlagNoMaximize                         // No maximize button
-	WindowFlagStaysOnTop                         // Always on top
-	WindowFlagTearable                           // Shows the %/# tear-off handle; window may detach
+	WindowFlagNone                 WindowFlags = 0
+	WindowFlagFrameless            WindowFlags = 1 << iota // No window frame
+	WindowFlagNoTitle                                      // No title bar
+	WindowFlagNoResize                                     // Cannot be resized
+	WindowFlagNoMove                                       // Cannot be moved
+	WindowFlagNoClose                                      // No close button
+	WindowFlagNoMinimize                                   // No minimize button
+	WindowFlagNoMaximize                                   // No maximize button
+	WindowFlagStaysOnTop                                   // Always on top
+	WindowFlagTearable                                     // Shows the %/# tear-off handle; window may detach
+	WindowFlagNoTitleWhenMaximized                         // No title bar (and no frame) WHILE maximized; normal chrome when restored
 )
 
 // windowCornerRadius is the corner radius (in units) of the graphical
@@ -104,6 +105,11 @@ type Window struct {
 
 	// Position before maximization (for restore)
 	normalBounds core.UnitRect
+
+	// stateBeforeMinimize is the state the window was in when it was minimized
+	// (Normal or Maximized), so Restore returns it to the right one — a
+	// maximized window minimized to the dock comes back maximized, not normal.
+	stateBeforeMinimize WindowState
 
 	// Content
 	content core.Trinket
@@ -426,6 +432,23 @@ func canMaximize(flags WindowFlags) bool {
 	return flags&WindowFlagNoMaximize == 0 && flags&WindowFlagNoResize == 0
 }
 
+// hasTitleBar reports whether the window shows a title bar in the given state,
+// and thus whether its title-bar hit regions are live: the caption buttons,
+// drag-to-move/detach, and double-click-to-restore. A NoTitle or Frameless
+// window never has one; a NoTitleWhenMaximized window has one only when NOT
+// maximized (it drops all chrome while maximized and regains it when restored).
+// When there is no title bar, those clicks must not be caught - the top row is
+// ordinary content there.
+func hasTitleBar(flags WindowFlags, state WindowState) bool {
+	if flags&WindowFlagNoTitle != 0 || flags&WindowFlagFrameless != 0 {
+		return false
+	}
+	if flags&WindowFlagNoTitleWhenMaximized != 0 && state == WindowStateMaximized {
+		return false
+	}
+	return true
+}
+
 // Maximize maximizes the window.
 func (w *Window) Maximize() {
 	w.mu.Lock()
@@ -465,7 +488,14 @@ func (w *Window) Minimize() {
 		return
 	}
 
-	w.normalBounds = w.Bounds()
+	// Remember what to come back to. Only capture normalBounds from a NORMAL
+	// window: a maximized window's Bounds() is the full maximized rect, and
+	// normalBounds already holds its pre-maximize floating size — overwriting it
+	// here would lose that (and, with the state, its maximized-ness).
+	w.stateBeforeMinimize = w.state
+	if w.state == WindowStateNormal {
+		w.normalBounds = w.Bounds()
+	}
 	w.state = WindowStateMinimized
 	handler := w.onStateChange
 	w.mu.Unlock()
@@ -477,7 +507,11 @@ func (w *Window) Minimize() {
 	}
 }
 
-// Restore restores the window from maximized or minimized state.
+// Restore restores the window from maximized or minimized state. A window
+// minimized while maximized comes back MAXIMIZED (not normal); the window
+// manager re-applies the client-area bounds for that case (RestoreWindow), since
+// the window itself doesn't know the client area. Un-minimizing to normal (or
+// un-maximizing) restores the saved floating bounds here.
 func (w *Window) Restore() {
 	w.mu.Lock()
 	if w.state == WindowStateNormal {
@@ -485,16 +519,25 @@ func (w *Window) Restore() {
 		return
 	}
 
+	restoreTo := WindowStateNormal
+	if w.state == WindowStateMinimized && w.stateBeforeMinimize == WindowStateMaximized {
+		restoreTo = WindowStateMaximized
+	}
 	bounds := w.normalBounds
-	w.state = WindowStateNormal
+	w.state = restoreTo
+	w.stateBeforeMinimize = WindowStateNormal
 	w.pressedButton = TitleButtonNone // Reset pressed button state
 	handler := w.onStateChange
 	w.mu.Unlock()
 
-	w.SetBounds(bounds)
+	// Only the un-maximize/normal case restores the floating bounds; a
+	// return-to-maximized is resized to the client area by the manager.
+	if restoreTo == WindowStateNormal {
+		w.SetBounds(bounds)
+	}
 
 	if handler != nil {
-		handler(WindowStateNormal)
+		handler(restoreTo)
 	}
 }
 
@@ -1182,9 +1225,17 @@ func (w *Window) contentBounds() core.UnitRect {
 
 	var cb core.UnitRect
 	switch {
-	case state == WindowStateMaximized && flags&WindowFlagNoTitle == 0:
-		// Maximized: only top title bar, no side borders.
-		cb = core.UnitRect{X: 0, Y: metrics.CellHeight, Width: bounds.Width, Height: bounds.Height - metrics.CellHeight}
+	case state == WindowStateMaximized:
+		// Maximized: flush to the edges with no side borders. The top title row
+		// is reserved only when the window actually has a title bar in this state
+		// - a NoTitle, Frameless, or (while maximized) NoTitleWhenMaximized window
+		// fills the whole surface (being maximized is independent of having a
+		// title bar or a frame).
+		top := core.Unit(0)
+		if hasTitleBar(flags, state) {
+			top = metrics.CellHeight
+		}
+		cb = core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: bounds.Height - top}
 	case flags&WindowFlagFrameless != 0:
 		cb = core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 	case core.FindGraphicalFrames(w):
@@ -1455,11 +1506,17 @@ func (w *Window) Paint(p *core.Painter) {
 	}
 
 	// Draw frame based on state
-	if state == WindowStateMaximized && flags&WindowFlagNoTitle == 0 {
-		// Maximized: only title bar, no side borders
-		w.paintMaximizedFrame(p, bounds, metrics, title, titleStyle, frameStyle, frameBorder)
+	if state == WindowStateMaximized {
+		// Maximized: no side borders. Draw the top title bar only when the
+		// window has one in this state; a NoTitle, Frameless, or (while
+		// maximized) NoTitleWhenMaximized window has no frame at all (no title,
+		// no border).
+		if hasTitleBar(flags, state) {
+			w.paintMaximizedFrame(p, bounds, metrics, title, titleStyle, frameStyle, frameBorder)
+		}
 	} else if flags&WindowFlagFrameless == 0 {
-		// Normal frame
+		// Normal frame (a restored NoTitleWhenMaximized window lands here and
+		// regains its full title bar and border).
 		w.paintNormalFrame(p, bounds, metrics, title, titleStyle, frameStyle, frameBorder, flags)
 	}
 
@@ -2251,7 +2308,7 @@ func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleSty
 	tearable := w.flags&WindowFlagTearable != 0
 	detached := w.detached
 	w.mu.RUnlock()
-	if tearable == false || w.flags&WindowFlagNoTitle != 0 {
+	if tearable == false || !hasTitleBar(w.flags, w.State()) {
 		return controlsRight
 	}
 	buttonWidth := metrics.TextWidth(3)
@@ -2304,7 +2361,7 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	y -= inset
 
 	// Must be in titlebar
-	if flags&WindowFlagNoTitle != 0 || y < 0 || y >= metrics.CellHeight {
+	if !hasTitleBar(flags, state) || y < 0 || y >= metrics.CellHeight {
 		return TitleButtonNone
 	}
 
@@ -2343,7 +2400,7 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	// Check tear-off handle [%]/[#]. It floats immediately left of the
 	// centered title, so hit-test the same slot paintTearHandle draws. The
 	// handle is hidden while the title is focused, so it isn't hittable then.
-	if flags&WindowFlagTearable != 0 && flags&WindowFlagNoTitle == 0 && titleFocus != TitleFocusTitle {
+	if flags&WindowFlagTearable != 0 && hasTitleBar(flags, state) && titleFocus != TitleFocusTitle {
 		titleW := w.EffectiveFont().MeasureText(title)
 		// Inner width: the paint centers within the border-inset titlebar.
 		handleX := tearHandleSlotX(w.Bounds().Width-2*inset, controlX, titleW, buttonWidth)
@@ -3165,7 +3222,7 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	// Check for title bar clicks
-	if flags&WindowFlagNoTitle == 0 && event.Y < titleBand {
+	if hasTitleBar(flags, state) && event.Y < titleBand {
 		// Check if clicking on a button
 		button := w.buttonAtPosition(event.X, event.Y)
 		if button != TitleButtonNone {
