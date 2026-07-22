@@ -22,6 +22,7 @@ import (
 // All callbacks on the OS-locked main thread per D21.
 type Platform struct {
 	title    string
+	appName  string // OS application name (macOS menu bar / task switcher); "" = SDL default
 	wPx, hPx int
 	scale    int              // device zoom: pixels per unit at 12pt; see SetScale
 	fontSize int              // UI point size that sets the cell pixel size (0 = 12pt base)
@@ -95,6 +96,29 @@ func New(title string, widthPx, heightPx int) *Platform {
 	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1, vsync: true, wins: map[uint32]*nativeWin{}}
 }
 
+// SetAppName sets the OS application name - on macOS the name shown in the
+// application (first) menu of the system menu bar and, where the OS uses it, the
+// task switcher. Empty leaves SDL's default (the executable/process name). Call
+// before Run.
+func (p *Platform) SetAppName(name string) {
+	p.appName = name
+}
+
+// macAboutHandler backs the macOS application-menu "About" item (see
+// SetAboutHandler). Package-level because the Cocoa menu-action callback
+// (kittytkAboutClicked) reaches it from C with no receiver.
+var macAboutHandler func()
+
+// SetAboutHandler wires the native macOS application menu's "About <app>" item to
+// fn, replacing the standard Cocoa about panel; fn runs on the main (platform)
+// thread when the item is chosen. No-op on other platforms and when fn is nil.
+// Call before Run — Run installs it once the menu exists. fn should schedule its
+// work via the platform/desktop post queue rather than touch UI state directly,
+// since it fires from AppKit's menu-tracking loop.
+func (p *Platform) SetAboutHandler(fn func()) {
+	macAboutHandler = fn
+}
+
 // SetScale sets how many window pixels one abstract unit covers.
 // The raster backend renders glyphs at the scaled size (crisp, not
 // upsampled) and input coordinates are converted back to units. Call
@@ -159,6 +183,13 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
+	// The application name (macOS menu bar / task switcher) must be set before
+	// SDL initializes video, when it builds the Cocoa application menu. SDL
+	// otherwise falls back to the process name (here "mew-sdl").
+	if p.appName != "" {
+		_ = sdl2.SetHint("SDL_APP_NAME", p.appName)
+	}
+
 	if err := sdl2.Init(sdl2.INIT_VIDEO | sdl2.INIT_EVENTS); err != nil {
 		return 1
 	}
@@ -183,6 +214,13 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 			w.destroy()
 		}
 	}()
+
+	// Retarget the macOS app menu's "About <app>" item now that SDL has built
+	// the menu (during Init/window creation), if a handler was set. No-op off
+	// macOS and when no handler was set.
+	if macAboutHandler != nil {
+		installAboutMenuHandler()
+	}
 
 	sdl2.StartTextInput()
 
@@ -1249,13 +1287,30 @@ func (s *sdlSurface) Raise() {
 
 // Close implements platform.NativeSurface: destroys the OS window.
 // The main window ignores it (quitting the app is Platform.Quit).
+//
+// The SDL window/renderer/texture teardown — and the wins map, which the event
+// pump reads — are only safe on the platform's main loop thread (macOS requires
+// SDL video calls there, and touching wins off the pump's thread is a data
+// race). Close is reachable from other goroutines: a torn window closing from an
+// app's own session goroutine (mew's commit handler), a timer-driven dialog
+// dismissal, and so on. So marshal the whole teardown onto the main loop via
+// Post rather than destroying inline. The s.closed guard (and re-checking the
+// wins entry) makes it idempotent and safe against a reused window id.
 func (s *sdlSurface) Close() {
-	if s.closed || s.win == s.platform.main {
-		return
+	if s.win == s.platform.main {
+		return // never destroy the loop-owning window here
 	}
-	s.closed = true
-	s.handler = nil
-	delete(s.platform.wins, s.win.id)
-	s.win.destroy()
-	reassertCapture()
+	p := s.platform
+	p.Post(func() {
+		if s.closed {
+			return
+		}
+		s.closed = true
+		s.handler = nil
+		if cur, ok := p.wins[s.win.id]; ok && cur == s.win {
+			delete(p.wins, s.win.id)
+		}
+		s.win.destroy()
+		reassertCapture()
+	})
 }

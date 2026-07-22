@@ -1373,6 +1373,44 @@ func (m *WindowManager) TopAppModal(appID core.ObjectID) *Window {
 	return nil
 }
 
+// TopModalBlocking returns the top modal currently blocking win - at any scope -
+// or nil if win is not modal-blocked. It mirrors the block predicate
+// (isModalBlockedLocked), preferring the most specific scope: a window-level
+// modal on a window in win's group, then an application modal for win's app,
+// then a system modal. Used to surface the RIGHT modal when a blocked window is
+// clicked, whatever scope it was shown at (TopAppModal only covers app modals).
+func (m *WindowManager) TopModalBlocking(win *Window) *Window {
+	if win == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	// Window-level: a modal owned by a window in win's group.
+	for owner, st := range m.windowModalStacks {
+		if len(st) == 0 {
+			continue
+		}
+		if top := st[len(st)-1]; m.windowInModalScope(win, owner) && !m.modalExempt(win, top) {
+			return top
+		}
+	}
+	// Application-level: a modal of win's own app.
+	if id := win.AppID(); id != 0 {
+		if st := m.appModalStacks[id]; len(st) > 0 {
+			if top := st[len(st)-1]; !m.modalExempt(win, top) {
+				return top
+			}
+		}
+	}
+	// System-level: blocks everything.
+	if n := len(m.modalStack); n > 0 {
+		if top := m.modalStack[n-1]; !m.modalExempt(win, top) {
+			return top
+		}
+	}
+	return nil
+}
+
 // unregisterModalLocked removes win from whichever modal stack holds it,
 // pruning empty per-key stacks. m.mu held.
 func (m *WindowManager) unregisterModalLocked(win *Window) {
@@ -1465,7 +1503,7 @@ func (m *WindowManager) isModalBlockedLocked(win *Window) bool {
 // edge). Every other press on a blocked window is swallowed with no effect -
 // no edge resize, no button, no content, and no raise.
 func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePressEvent, bounds core.UnitRect) {
-	if win.Flags()&(WindowFlagNoTitle|WindowFlagNoMove) != 0 {
+	if !hasTitleBar(win.Flags(), win.State()) || win.Flags()&WindowFlagNoMove != 0 {
 		return
 	}
 	if m.detectResizeEdge(win, event.X, event.Y) != ResizeEdgeNone {
@@ -1588,6 +1626,14 @@ func (m *WindowManager) MinimizeWindow(win *Window) {
 // RestoreWindow restores a minimized window.
 func (m *WindowManager) RestoreWindow(win *Window) {
 	win.Restore()
+	// A window minimized while maximized comes back maximized: re-fit it to the
+	// current client area (its saved bounds are the pre-maximize floating size,
+	// and Restore deliberately left the bounds alone for this case). Without this
+	// it keeps stale bounds and, for a NoTitleWhenMaximized window, its frame,
+	// until the next manual resize/maximize.
+	if win.IsMaximized() {
+		win.SetBounds(m.ClientArea())
+	}
 	m.ActivateWindow(win)
 
 	// Notify via callback (for dock row integration)
@@ -2151,7 +2197,7 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 			metrics := core.DefaultCellMetrics()
 			titleTop := core.FindFrameBorderUnits(win)
 			if event.Y < bounds.Y+titleTop+metrics.CellHeight &&
-				win.Flags()&WindowFlagNoTitle == 0 {
+				hasTitleBar(win.Flags(), win.State()) {
 
 				// Activate (focus + raise) for titlebar interaction
 				m.ActivateWindow(win)

@@ -308,13 +308,19 @@ func (d *Desktop) tornHostForWindow(win *window.Window) *window.TearOffHost {
 }
 
 // surfaceBlockingModal is called when a press lands on a modally-blocked torn
-// window: if the application modal that blocks it is minimized, restore it -
-// OS-restoring a torn modal, or dock-restoring an in-surface one - so the user
-// is pulled to the modal they must resolve. Mirrors the in-surface pattern
-// where clicking a blocked window (or the wallpaper) surfaces a minimized
-// modal, with OS-level restore standing in for the desktop dock.
+// window: it surfaces whatever modal actually blocks that window - window-,
+// application-, or system-level - OS-restoring a torn modal (or dock-restoring
+// an in-surface one) if minimized, so the user is pulled to the modal they must
+// resolve. Mirrors the in-surface pattern where clicking a blocked window (or
+// the wallpaper) surfaces the blocking modal. Using TopModalBlocking (not just
+// the app stack) means an owner-scoped modal - e.g. a dialog owned by the solo
+// window - is surfaced too, not only application modals.
 func (d *Desktop) surfaceBlockingModal(win *window.Window) {
-	d.surfaceAppModal(win.AppID())
+	wm := d.windowManager
+	if wm == nil {
+		return
+	}
+	d.surfaceModal(wm.TopModalBlocking(win))
 }
 
 // surfaceActiveAppModal surfaces the modal of the application whose menu bar is
@@ -331,35 +337,47 @@ func (d *Desktop) surfaceActiveAppModal() {
 
 // surfaceAppModal raises (or restores, incl. OS-restore of a torn one) the top
 // modal of the given application, so the user is pulled to the modal blocking
-// that app.
+// that app. Used by the wallpaper-click path (surfaceActiveAppModal).
 func (d *Desktop) surfaceAppModal(appID core.ObjectID) {
-	wm := d.windowManager
-	if wm == nil {
-		return
+	if wm := d.windowManager; wm != nil {
+		d.surfaceModal(wm.TopAppModal(appID))
 	}
-	modal := wm.TopAppModal(appID)
-	if modal == nil {
+}
+
+// surfaceModal pulls a specific modal window to the front: if it is torn onto
+// its own OS surface, un-minimize it (OS-restore) and raise that surface back
+// over the window the user just clicked; otherwise (in-surface) restore it from
+// the dock if minimized, else raise and activate it so the user lands on it
+// ready to interact. Nil is a no-op.
+func (d *Desktop) surfaceModal(modal *window.Window) {
+	wm := d.windowManager
+	if wm == nil || modal == nil {
 		return
 	}
 	if h := d.tornHostForWindow(modal); h != nil {
-		// The modal is torn onto its own OS surface: un-minimize it if
-		// needed, then raise it back over the window the user just clicked
-		// (which the OS brought forward), so it never stays lost behind.
-		if modal.IsMinimized() {
-			if r, ok := h.Surface().(platform.NativeRestorer); ok {
+		surf := h.Surface()
+		// Restore before raising if the modal is minimized at EITHER level: the
+		// OS window (Minimized(), set when the user minimizes via the OS window
+		// controls - the app-level flag below doesn't capture that) or the
+		// window's own minimized flag. Raise alone won't un-minimize an
+		// OS-minimized window, so it would otherwise stay hidden.
+		osMinimized := false
+		if n, ok := surf.(platform.NativeSurface); ok {
+			osMinimized = n.Minimized()
+		}
+		if osMinimized || modal.IsMinimized() {
+			if r, ok := surf.(platform.NativeRestorer); ok {
 				r.Restore()
+			}
+			if modal.IsMinimized() {
 				modal.Restore()
 			}
 		}
-		if n, ok := h.Surface().(platform.NativeSurface); ok {
+		if n, ok := surf.(platform.NativeSurface); ok {
 			n.Raise()
 		}
 		return
 	}
-	// The modal is in-surface: restore it from the dock if minimized,
-	// otherwise raise it back to the top of the window stack and focus it
-	// (RestoreWindow already activates). Activating - not just raising - so
-	// the user lands on the modal ready to interact with it.
 	if modal.IsMinimized() {
 		wm.RestoreWindow(modal)
 	} else {
@@ -673,8 +691,11 @@ func (d *Desktop) dropTornHost(host *window.TearOffHost) {
 	if d.tornDrag != nil && d.tornDrag.host == host {
 		d.tornDrag = nil
 	}
-	// A closing torn window can't keep owning focus/the menu bar line.
-	if d.tornFocusOwner == host.Window() {
+	// A closing torn window can't keep owning focus/the menu bar line. Note
+	// whether it DID own focus - if so, focus must be handed back to another
+	// window below (the OS won't do it for us when the surface is destroyed).
+	wasFocus := d.tornFocusOwner == host.Window()
+	if wasFocus {
 		d.tornFocusOwner = nil
 	}
 	for i, th := range d.tornHosts {
@@ -689,16 +710,74 @@ func (d *Desktop) dropTornHost(host *window.TearOffHost) {
 	}
 	solo := d.solo
 	d.mu.Unlock()
+	closing := host.Window()
 	if native, ok := host.Surface().(platform.NativeSurface); ok {
 		native.Close()
 	}
 	d.invalidateSurface()
+
+	// Hand focus back when the closing window held it. A torn window is not in
+	// the window manager, so RemoveWindow's "activate the topmost remaining
+	// window" never runs for it, and destroying the OS surface leaves no window
+	// focused. Refocus the window this one floated over (its owner - a dialog
+	// returns focus to what it covered), else the solo primary / top remaining
+	// torn window. Skip when the primary itself closed (soloRebalance promotes a
+	// peer instead). Posted so it runs after the surface is actually destroyed
+	// (Close defers that to the main loop too).
+	if wasFocus && !wasPrimary {
+		d.Post(func() { d.refocusAfterTornClose(closing) })
+	}
+
 	// In solo mode: the primary surface can't be closed, so when its
 	// window closes a remaining window is promoted onto it; when no
 	// windows remain the host quits.
 	if solo {
 		d.Post(func() { d.soloRebalance(wasPrimary) })
 	}
+}
+
+// refocusAfterTornClose gives OS focus (and desktop/app focus) back to the
+// window a just-closed torn window floated over: its owner if it has one, else
+// the solo primary window, else the top remaining torn window. It raises that
+// window's OS surface - its own torn surface if it has one, otherwise the
+// desktop's primary surface (a docked window, or the solo primary host) - and
+// re-points desktop focus at it.
+func (d *Desktop) refocusAfterTornClose(closing *window.Window) {
+	d.mu.RLock()
+	primary := d.soloPrimaryHost
+	surf := d.surface
+	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
+	d.mu.RUnlock()
+
+	target := closing.Owner()
+	if target == nil {
+		switch {
+		case primary != nil:
+			target = primary.Window()
+		case len(hosts) > 0:
+			target = hosts[len(hosts)-1].Window()
+		}
+	}
+	if target == nil {
+		return
+	}
+
+	raised := false
+	for _, h := range hosts {
+		if h.Window() == target {
+			if ns, ok := h.Surface().(platform.NativeSurface); ok {
+				ns.Raise()
+				raised = true
+			}
+			break
+		}
+	}
+	if !raised {
+		if ns, ok := surf.(platform.NativeSurface); ok {
+			ns.Raise()
+		}
+	}
+	d.windowFocusChanged(target)
 }
 
 // globalToDesktopUnits converts a global pixel position to desktop

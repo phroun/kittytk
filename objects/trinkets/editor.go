@@ -168,6 +168,26 @@ func (e *Editor) SetCaption(s string)     { e.caption = s; e.SetAccessibleName(s
 func (e *Editor) SetReadOnly(b bool)      { e.readonly = b; e.refreshButton(); e.Update() }
 func (e *Editor) SetFilename(s string)    { e.filename = s }
 
+// SetLaunchArgv is a host seam (not an app property): the KittyTK host injects
+// the process argv so the root editor launches with mew's full command-line
+// semantics. The placeholder can't run mew, so it just previews the first file
+// operand; the mew build (editor_mew.go) honors the whole vector via EditArgv.
+func (e *Editor) SetLaunchArgv(argv []string) {
+	for _, a := range argv {
+		if a == "" || a[0] == '-' || a[0] == '+' {
+			continue // skip switches and +N; the placeholder only previews a file
+		}
+		e.SetFilename(a)
+		return
+	}
+}
+
+// SetShowDesktop / SetHideDesktop are host seams that back mew's show_desktop /
+// hide_desktop commands in the mew build; the placeholder runs no mew session,
+// so they are accepted and ignored (kept for a matching method surface).
+func (e *Editor) SetShowDesktop(func()) {}
+func (e *Editor) SetHideDesktop(func()) {}
+
 // --- Event-hook setters (bind) ---
 
 func (e *Editor) SetOnCommit(fn func(string)) { e.onCommit = fn }

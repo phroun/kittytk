@@ -113,6 +113,26 @@ type Desktop struct {
 	// System menu (always present, upper-left)
 	systemMenu *Menu
 
+	// soleAppChromeSuppression, when enabled (SetSoleAppChromeSuppression), lets
+	// the sole-single-window-app condition hide the desktop chrome (Ψ menu, menu
+	// bar, status bar). Opt-in per host: a TUI host turns it on so a lone
+	// fullscreen app fills the screen; the graphical host leaves it off (solo
+	// mode already handles fullscreen there). Off by default - so the standalone
+	// hosts keep their normal chrome.
+	soleAppChromeSuppression bool
+
+	// hideMenuBarSoleApp, when set (SetHideMenuBarForSoleApp), extends the
+	// suppression to the menu bar too (see menuBarShown) - an experimental toggle
+	// for a fully chrome-free single-app desktop. Off by default (the menu bar
+	// always shows).
+	hideMenuBarSoleApp bool
+
+	// onApplicationsChanged, when set (SetOnApplicationsChanged), fires whenever
+	// an application is added to or removed from the desktop, so a host can react
+	// to the app set changing - e.g. a single-app host upgrading itself to
+	// multi-window once a peer app joins the server.
+	onApplicationsChanged func()
+
 	// solo: a single application owns the whole display. Its main window
 	// replaces the desktop entirely - no system (Psi) menu, no dock, no
 	// wallpaper - and the host quits when the last window closes.
@@ -697,6 +717,8 @@ func (d *Desktop) AddApplication(app ApplicationProvider) {
 		d.updateMenuBarContent()
 		d.updateStatusBarContent()
 	}
+
+	d.fireApplicationsChanged()
 }
 
 // RemoveApplication unregisters an application from the desktop.
@@ -731,6 +753,8 @@ func (d *Desktop) RemoveApplication(app ApplicationProvider) {
 		d.updateMenuBarContent()
 		d.updateStatusBarContent()
 	}
+
+	d.fireApplicationsChanged()
 }
 
 // SetApplication sets a single application (for backward compatibility).
@@ -752,6 +776,28 @@ func (d *Desktop) ActiveApplication() ApplicationProvider {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.activeApp
+}
+
+// SetOnApplicationsChanged registers a callback fired whenever the set of
+// applications changes (added or removed). A host uses it to adapt to the
+// presence of other apps; it runs on the platform thread, after the app set and
+// active application have been updated.
+func (d *Desktop) SetOnApplicationsChanged(fn func()) {
+	d.mu.Lock()
+	d.onApplicationsChanged = fn
+	d.mu.Unlock()
+}
+
+// fireApplicationsChanged invokes the applications-changed callback (if any)
+// without holding d.mu, so the callback may read Applications() and mutate app
+// state freely.
+func (d *Desktop) fireApplicationsChanged() {
+	d.mu.RLock()
+	fn := d.onApplicationsChanged
+	d.mu.RUnlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // Applications returns all registered applications.
@@ -891,6 +937,22 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 	}
 }
 
+// RaiseToFront brings the desktop's primary OS surface to the front of the
+// window stack (and focuses it). Two host uses: at startup, so the window comes
+// forward even from a session-detached launch that the window manager won't
+// focus; and after ExitSoloMode, so the revealed desktop ends up on top (that
+// call raises the surface too, but then re-homes the solo window above it, so it
+// needs raising once more). No-op on a single-surface backend (the TUI) that
+// can't reorder OS windows.
+func (d *Desktop) RaiseToFront() {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	if ns, ok := surf.(platform.NativeSurface); ok {
+		ns.Raise()
+	}
+}
+
 // ExitSoloMode is the inverse of EnterSoloMode: it gives the primary
 // surface back to the desktop (re-bordered, wallpaper/dock/menu drawn
 // again) and re-homes the window that filled it as an ordinary tearable
@@ -958,6 +1020,18 @@ func (d *Desktop) ExitSoloMode() {
 	win.SetTearable(true)  // its redock handle returns; it can dock now
 	win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
 	d.createTornHost(win, 0, 0)
+
+	// Stagger the revealed desktop down-right off the re-homed window (which
+	// stays at the old primary origin), so the two don't sit exactly on top of
+	// each other. The offset is a cascade step sized to the window's title bar
+	// plus the menu bar (and the frame border), so the re-homed window's title
+	// and menu bars peek out above and to the left of the desktop rather than
+	// being fully covered by it.
+	if ns, ok := surf.(platform.NativeSurface); ok {
+		off := d.unitToPx(d.EffectiveCellMetrics().CellHeight + d.MenuBarHeight() + core.FindFrameBorderUnits(win))
+		x, y := ns.ScreenPositionPx()
+		ns.SetScreenPositionPx(x+off, y+off)
+	}
 
 	d.invalidateSurface()
 }
@@ -1120,6 +1194,17 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 		}
 	})
 
+	// The solo primary surface is a torn host too, so - exactly as createTornHost
+	// wires for a regular torn window - it must consult the modal stack: an
+	// application- or window-level modal of this window's own app blocks it (the
+	// host dims it and swallows input), and a press while blocked surfaces the
+	// blocking modal (OS-restoring it if minimized, raising it to the top).
+	// Without this the solo editor keeps taking input while a modal of its app is
+	// up - the modal shows but doesn't actually block.
+	host.SetModalChecker(
+		func() bool { return d.windowManager.IsTornWindowBlocked(win) },
+		func() { d.surfaceBlockingModal(win) })
+
 	win.SetDetached(true)
 	win.SetTearable(false) // no tear/redock handle in solo
 	d.attachMainWindowChrome(win)
@@ -1258,6 +1343,79 @@ func (d *Desktop) promoteToPrimary(peer *window.TearOffHost, reposition bool) {
 	d.soloHostOnPrimaryAt(win, target)
 }
 
+// soleForegroundApp reports whether exactly one non-context-only application is
+// present. When true, that app owns the whole menu bar, so the system (Ψ) menu
+// is suppressed as redundant furniture. A context-only app (a windowless host
+// context, e.g. the graphical service's own app) does not count, so an empty
+// desktop still reads as "no foreground app" and keeps Ψ.
+//
+// This reads d.applications WITHOUT taking d.mu: it is consulted from the layout,
+// paint, and hit-test paths, some of which already run under d.mu, so locking
+// here would deadlock. The application set is only mutated on the platform
+// thread (AddApplication/RemoveApplication run pre-Run or via Post), the same
+// thread that lays out and paints, so the read needs no lock.
+func (d *Desktop) soleForegroundApp() bool {
+	n := 0
+	for _, a := range d.applications {
+		if a != nil && !a.ContextOnly() {
+			n++
+		}
+	}
+	return n == 1
+}
+
+// suppressSoleAppChrome reports whether the desktop's own chrome (Ψ menu, menu
+// bar, status bar) should be hidden because a single self-contained app owns the
+// desktop. This is opt-in per host (SetSoleAppChromeSuppression): a TUI host
+// enables it so a lone fullscreen app (mew) fills the screen; the graphical host
+// leaves it off, since solo mode already handles the fullscreen case there. It
+// applies only while exactly one non-context app is present AND that (active)
+// app is single-window; once the sole app declares itself multi-window (e.g. mew
+// on show_desktop), the chrome returns.
+func (d *Desktop) suppressSoleAppChrome() bool {
+	if !d.soleAppChromeSuppression || !d.soleForegroundApp() {
+		return false
+	}
+	if a := d.activeApp; a != nil && a.MultiWindow() {
+		return false
+	}
+	return true
+}
+
+// SetSoleAppChromeSuppression enables the sole-app chrome suppression (Ψ menu,
+// status bar, and - with SetHideMenuBarForSoleApp - the menu bar). Off by
+// default; a TUI host enables it, the graphical host does not.
+func (d *Desktop) SetSoleAppChromeSuppression(enabled bool) {
+	d.soleAppChromeSuppression = enabled
+	d.Update()
+}
+
+// statusBarShown reports whether the desktop's own status bar should occupy the
+// bottom row and paint. It is suppressed when a single self-contained app owns
+// the desktop (see suppressSoleAppChrome): that app provides its own status
+// surface (e.g. mew's modebar), so the desktop's is redundant and its row is
+// reclaimed for content.
+func (d *Desktop) statusBarShown() bool {
+	return d.statusBar != nil && !d.suppressSoleAppChrome()
+}
+
+// menuBarShown reports whether the desktop menu bar should occupy the top row
+// and paint. It is present unless the experimental hideMenuBarSoleApp toggle is
+// on AND the sole-app chrome is being suppressed, in which case it too is
+// hidden (its row reclaimed) for a fully chrome-free single-app desktop.
+func (d *Desktop) menuBarShown() bool {
+	return d.menuBar != nil && !(d.hideMenuBarSoleApp && d.suppressSoleAppChrome())
+}
+
+// SetHideMenuBarForSoleApp toggles whether the desktop menu bar is also hidden
+// while the sole-app chrome is suppressed (see menuBarShown). Experimental:
+// hiding it removes the only pointer route to the app's menus, so it is off by
+// default.
+func (d *Desktop) SetHideMenuBarForSoleApp(hide bool) {
+	d.hideMenuBarSoleApp = hide
+	d.Update()
+}
+
 // updateMenuBarContent updates the menu bar with the active app's menus.
 // The first menu after the system menu automatically gets standard app items
 // (Hide, Hide Others, Show All, Quit) appended.
@@ -1289,8 +1447,12 @@ func (d *Desktop) updateMenuBarContent() {
 		}
 	}
 
-	// Full bar: system menu first
-	if d.systemMenu != nil {
+	// Full bar: system menu first - unless the sole-app chrome is suppressed
+	// (a bundled single-app host like mew on the TUI), in which case Ψ is
+	// dropped as redundant furniture and that app's own menus are all that
+	// shows. An empty desktop, a multi-window app, or a graphical host all keep
+	// Ψ.
+	if d.systemMenu != nil && !d.suppressSoleAppChrome() {
 		d.menuBar.AddMenu(d.systemMenu)
 	}
 
@@ -3353,7 +3515,7 @@ func (d *Desktop) Beep() {
 // Children returns all child trinkets.
 func (d *Desktop) Children() []core.Trinket {
 	var children []core.Trinket
-	if d.menuBar != nil {
+	if d.menuBarShown() {
 		children = append(children, d.menuBar)
 	}
 	if d.content != nil {
@@ -3362,7 +3524,7 @@ func (d *Desktop) Children() []core.Trinket {
 	if d.dockVisible() {
 		children = append(children, d.dockRow)
 	}
-	if d.statusBar != nil {
+	if d.statusBarShown() {
 		children = append(children, d.statusBar)
 	}
 	return children
@@ -3386,12 +3548,12 @@ func (d *Desktop) ChildAt(pos core.UnitPoint) core.Trinket {
 	bounds := d.Bounds()
 
 	// Check menu bar
-	if d.menuBar != nil && pos.Y < metrics.CellHeight {
+	if d.menuBarShown() && pos.Y < metrics.CellHeight {
 		return d.menuBar
 	}
 
 	// Check status bar
-	if d.statusBar != nil && pos.Y >= bounds.Height-metrics.CellHeight {
+	if d.statusBarShown() && pos.Y >= bounds.Height-metrics.CellHeight {
 		return d.statusBar
 	}
 
@@ -3477,7 +3639,7 @@ func (d *Desktop) ActiveMenuBounds() core.UnitRect {
 // This is true when a menu is open, or when the menu bar is focused AND
 // actively showing accelerators (not just technically holding focus).
 func (d *Desktop) IsMenuBarActive() bool {
-	if d.menuBar == nil {
+	if !d.menuBarShown() {
 		return false
 	}
 	// Menu open always captures
@@ -3612,8 +3774,9 @@ func (d *Desktop) layoutChildren() {
 	bounds := d.Bounds()
 	metrics := d.EffectiveCellMetrics()
 
-	// Menu bar at top
-	if d.menuBar != nil {
+	// Menu bar at top (skipped when suppressed for a single-app desktop; its
+	// row is reclaimed by the content area, see ClientArea/menuBarShown).
+	if d.menuBarShown() {
 		d.menuBar.SetBounds(core.UnitRect{
 			X:      0,
 			Y:      0,
@@ -3634,8 +3797,9 @@ func (d *Desktop) layoutChildren() {
 		dockHeight = d.dockRow.RequiredHeight()
 	}
 
-	// Status bar at bottom
-	if d.statusBar != nil {
+	// Status bar at bottom (skipped when suppressed for a single-app desktop;
+	// its row is reclaimed by the content area, see ClientArea/statusBarShown).
+	if d.statusBarShown() {
 		d.statusBar.SetBounds(core.UnitRect{
 			X:      0,
 			Y:      bounds.Height - metrics.CellHeight,
@@ -3647,7 +3811,7 @@ func (d *Desktop) layoutChildren() {
 	// Dock row above status bar
 	if d.dockVisible() {
 		dockY := bounds.Height - metrics.CellHeight - dockHeight
-		if d.statusBar == nil {
+		if !d.statusBarShown() {
 			dockY = bounds.Height - dockHeight
 		}
 		d.dockRow.SetBounds(core.UnitRect{
@@ -3678,10 +3842,10 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	top := core.Unit(0)
 	bottom := bounds.Height
 
-	if d.menuBar != nil {
+	if d.menuBarShown() {
 		top = metrics.CellHeight
 	}
-	if d.statusBar != nil {
+	if d.statusBarShown() {
 		bottom -= metrics.CellHeight
 	}
 	// Account for dock row height (when not empty)
@@ -3699,25 +3863,28 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	}
 }
 
-// MenuBarHeight returns the height of the menu bar area (0 if no menu bar).
+// MenuBarHeight returns the height of the menu bar area (0 when there is no menu
+// bar or it is suppressed for a single-app desktop).
 func (d *Desktop) MenuBarHeight() core.Unit {
-	if d.menuBar == nil {
+	if !d.menuBarShown() {
 		return 0
 	}
 	return d.EffectiveCellMetrics().CellHeight
 }
 
-// StatusBarHeight returns the height of the status bar area (0 if no status bar).
+// StatusBarHeight returns the height of the status bar area (0 when there is no
+// status bar or it is suppressed for a single-app desktop).
 func (d *Desktop) StatusBarHeight() core.Unit {
-	if d.statusBar == nil {
+	if !d.statusBarShown() {
 		return 0
 	}
 	return d.EffectiveCellMetrics().CellHeight
 }
 
-// StatusBarBounds returns the bounds of the status bar area (empty rect if no status bar).
+// StatusBarBounds returns the bounds of the status bar area (empty rect when
+// there is no status bar or it is suppressed for a single-app desktop).
 func (d *Desktop) StatusBarBounds() core.UnitRect {
-	if d.statusBar == nil {
+	if !d.statusBarShown() {
 		return core.UnitRect{}
 	}
 	bounds := d.Bounds()
@@ -3826,8 +3993,8 @@ func (d *Desktop) Paint(p *core.Painter) {
 		d.content.Paint(contentPainter)
 	}
 
-	// Draw menu bar at top
-	if d.menuBar != nil {
+	// Draw menu bar at top (skipped when suppressed for a single-app desktop)
+	if d.menuBarShown() {
 		// Set menu bar bounds
 		d.menuBar.SetBounds(core.UnitRect{
 			X:      0,

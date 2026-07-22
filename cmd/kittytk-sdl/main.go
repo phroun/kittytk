@@ -67,6 +67,24 @@ func main() {
 	// integration for the graphical host.
 	backend.SetSystemClipboard(plat.Clipboard, plat.SetClipboard)
 
+	// [fonts] / [window] fonts_path / ui_* from kittytk.ini: register the
+	// configured font files and search directories into the shared text engine
+	// (embedded terminals resolve fonts from the same set), then re-point any
+	// ui-* font aliases at their families. Editor.conf's own [fonts] still
+	// applies on top per embedded editor instance.
+	if len(cfg.Fonts) > 0 || len(cfg.FontsPath) > 0 || len(cfg.FontAliases) > 0 {
+		eng := backend.Engine()
+		for _, dir := range cfg.FontsPath {
+			eng.AddFontSearchPath(dir)
+		}
+		for family, path := range cfg.Fonts {
+			_ = eng.RegisterFontFile(family, path)
+		}
+		for alias, names := range cfg.FontAliases {
+			eng.UseFont(alias, names...)
+		}
+	}
+
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font
 	// The UI font stays one cell tall in UNITS (12); font_size makes it

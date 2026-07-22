@@ -20,7 +20,9 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/phroun/kittytk/core"
@@ -28,6 +30,17 @@ import (
 	"github.com/phroun/kittytk/text"
 	"github.com/phroun/purfecterm"
 )
+
+// arabicDiagOnce prints, the first time an Arabic cell is rendered, which face
+// Arabic actually resolves to at RUNTIME and whether it cursively joins under
+// the embedded shaper — the ground truth for diagnosing disconnected Arabic on
+// a user machine (e.g. a locally-installed font silently overriding the
+// embedded one).
+var arabicDiagOnce sync.Once
+
+// arabicGeomOnce prints the first both-sides-joining cell's exact slice
+// geometry (box, ppu, window, keep range, slice bounds, edge-ink verdict).
+var arabicGeomOnce sync.Once
 
 const (
 	// Overlay lane thickness: one layout column, matching every other
@@ -93,6 +106,7 @@ type purfecTermGfx struct {
 
 	// Caches + engine for scaled glyph imagery.
 	engine     *text.Engine
+	fontEpoch  uint64 // engine font-set epoch the text cache was built against
 	textCur    map[coverMaskKey]*image.RGBA
 	textPrev   map[coverMaskKey]*image.RGBA
 	glyphCur   map[purfecterm.GlyphCacheKey]*image.RGBA
@@ -103,12 +117,16 @@ type purfecTermGfx struct {
 // coverMaskKey identifies a cached glyph COVERAGE mask - deliberately
 // color-independent (no fg), so recoloring a glyph (an ls listing, a fire
 // animation) is a cache hit that just re-tints the same grayscale mask.
+// family distinguishes faces (font slots), so two families at the same box
+// size never collide.
 type coverMaskKey struct {
-	str      string
-	bold     bool
-	italic   bool
-	wPx, hPx int
-	wide     bool
+	str          string
+	family       string
+	bold         bool
+	italic       bool
+	wPx, hPx     int
+	wide         bool
+	kashL, kashR bool // Arabic kashida drawn on the left/right cell edge
 }
 
 const gfxCacheMax = 4096
@@ -138,6 +156,13 @@ func (t *PurfecTerm) gfxScheme() purfecterm.ColorScheme {
 }
 
 func (t *PurfecTerm) gfxEngine() *text.Engine {
+	// Prefer the process-wide engine (published by the raster backend) so the
+	// terminal grid and the UI chrome share one font set — a live font change
+	// via SetFontAlias / UseFont then re-fonts every surface at once.
+	if shared := text.Shared(); shared != nil {
+		t.gfx.engine = shared
+		return shared
+	}
 	if t.gfx.engine == nil {
 		t.gfx.engine = text.NewEngine()
 		// Same tail-of-chain system fallbacks as the raster engine,
@@ -345,7 +370,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 			cell := buf.GetVisibleCell(x, y)
 
 			cellVisualWidth := 1.0
-			if cell.FlexWidth && cell.CellWidth > 0 {
+			if cell.CellWidth > 0 { // CellWidth is authoritative (see patches/purfecterm/PROTOCOL.md)
 				cellVisualWidth = cell.CellWidth
 			}
 
@@ -394,8 +419,36 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 					wavePhase := t.gfx.blinkPhase + float64(x)*0.5
 					yOffPx = int(math.Round(math.Sin(wavePhase) * 3.0 * ppu))
 				}
-				if !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx) {
-					t.drawCellText(painter, &cell, fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth)
+				// Arabic contextual joining: a per-cell renderer must pick the
+				// presentation form itself (a lone letter always shapes
+				// isolated), from the neighbor cells' base characters.
+				var leftCh, rightCh rune
+				if x > 0 {
+					leftCh = buf.GetVisibleCell(x-1, y).Char
+				}
+				if x+1 < effectiveCols {
+					rightCh = buf.GetVisibleCell(x+1, y).Char
+				}
+				shaped, suppress := purfecterm.ShapeArabicCellVisual(leftCh, cell.Char, rightCh)
+				if !suppress && !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx) {
+					// The app may emit PRESENTATION forms (mew pre-shapes
+					// Arabic); joining and the shaping window are computed
+					// from the BASE letters, or nothing would ever join.
+					baseC := arabicBaseChar(cell.Char)
+					baseL := arabicBaseChar(leftCh)
+					baseR := arabicBaseChar(rightCh)
+					kashL, kashR := arabicKashida(baseC, baseL, baseR)
+					dc := cell
+					var actx *arabicCellShape
+					if purfecterm.ScriptClass(cell.Char) == "arabic" {
+						// Shape a five-piece window (neighbours + tatweels +
+						// letter) as one run so the font's GSUB joins for real;
+						// the renderer cuts this cell's piece out of it.
+						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR)
+					} else {
+						dc.Char = shaped
+					}
+					t.drawCellText(painter, &dc, t.cellFamily(buf, &cell), fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth, kashL, kashR, actx)
 				}
 			}
 
@@ -476,30 +529,73 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 // Text rendering with scaling (double lines, screen scale, flex)
 // ---------------------------------------------------------------
 
+// primaryTermFamily is the terminal grid's primary face — font slot 0 (SGR
+// 10). It is the app-chosen terminal font (the "ui-term" engine alias by
+// default, so the systematic ui-* tree and [window] ui_term config reach the
+// grid), via effTermFont so the default is honored even before SetTerminalFont.
+func (t *PurfecTerm) primaryTermFamily() string {
+	if f := t.effTermFont(); f != nil && f.Name != "" {
+		return f.Name
+	}
+	return "ui-term"
+}
+
+// cellFamily resolves the font family a cell paints in, most specific first:
+//  1. an explicit per-cell font slot (SGR 10-20 / OSC 7004) the app selected;
+//  2. an app-configured script-class font (OSC 7005) for the glyph's script,
+//     overriding the engine's ui-term-<script> default so a program running in
+//     the terminal gets the same script fonts on the SDL path as on gtk/qt;
+//  3. the terminal's primary face.
+//
+// mew never sends OSC 7005, so step 2 is inert there (GetScriptFont == "") and
+// scripts resolve through the engine's ui-term-<script> tree as before.
+func (t *PurfecTerm) cellFamily(buf *purfecterm.Buffer, cell *purfecterm.Cell) string {
+	if cell.Font != 0 {
+		if fam := buf.GetFontSlot(int(cell.Font)); fam != "" {
+			return fam
+		}
+	}
+	if cls := purfecterm.ScriptClass(cell.Char); cls != "" {
+		if fam := buf.GetScriptFont(cls); fam != "" {
+			return fam
+		}
+	}
+	return t.primaryTermFamily()
+}
+
 // cellTextImage rasterizes one cell's glyph into a color-independent COVERAGE
 // mask (white ink, alpha = coverage) at an exact device-pixel box, applying the
 // gtk stretch/center rules, and caches it keyed WITHOUT color. Callers tint the
 // mask with the cell's foreground at draw time (DrawImageMaskTintOffset), so a
 // glyph shown in many colors rasterizes once and re-tints per cell.
-func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, boxWPx, boxHPx int, ppu float64, wideCell bool, ch rune) *image.RGBA {
+func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx, boxHPx int, ppu float64, wideCell bool, ch rune, kashL, kashR bool, actx *arabicCellShape) *image.RGBA {
 	if boxWPx <= 0 || boxHPx <= 0 {
 		return nil
 	}
 	if ppu <= 0 {
 		ppu = 1
 	}
-	key := coverMaskKey{str: str, bold: bold, italic: italic, wPx: boxWPx, hPx: boxHPx, wide: wideCell}
+	if family == "" {
+		family = t.primaryTermFamily()
+	}
+
+	// A live font change (SetFontAlias / register) bumps the engine epoch: the
+	// coverage masks were rasterized against the OLD font set, so flush them.
+	if eng := t.gfxEngine(); eng != nil {
+		if ep := eng.Epoch(); ep != t.gfx.fontEpoch {
+			t.gfx.fontEpoch = ep
+			t.gfx.textCur = map[coverMaskKey]*image.RGBA{}
+			t.gfx.textPrev = map[coverMaskKey]*image.RGBA{}
+		}
+	}
+
+	key := coverMaskKey{str: str, family: family, bold: bold, italic: italic, wPx: boxWPx, hPx: boxHPx, wide: wideCell, kashL: kashL, kashR: kashR}
 	if img, ok := t.gfx.textCur[key]; ok {
 		return img
 	}
 	if img, ok := t.gfx.textPrev[key]; ok {
 		t.gfx.textCur[key] = img
 		return img
-	}
-
-	family := "Monday"
-	if t.termFont != nil {
-		family = t.termFont.Name
 	}
 	// Choose the point size whose line budget fills the box height. The box
 	// is device pixels at ppu, so dividing it back out gives the cell height
@@ -525,6 +621,9 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, boxWPx, boxHPx
 	if naturalW <= 0 {
 		naturalW = 1
 	}
+	if naturalH <= 0 {
+		naturalH = 1
+	}
 	raw := image.NewRGBA(image.Rect(0, 0, naturalW, naturalH))
 	// Rasterize a WHITE glyph at the renderer's font_size-aware pixels-per-unit:
 	// the result is a color-independent coverage mask (alpha = ink coverage);
@@ -533,35 +632,122 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, boxWPx, boxHPx
 
 	// Stretch/center per the gtk rules.
 	out := image.NewRGBA(image.Rect(0, 0, boxWPx, boxHPx))
-	var placed *image.RGBA
-	xOff := 0
-	switch {
-	case naturalW > boxWPx:
-		// Squeeze wide glyphs to fit the box.
-		placed = scaleRGBA(raw, boxWPx, boxHPx)
-	case wideCell && purfecterm.IsAmbiguousWidth(ch) && !purfecterm.IsBlockOrLineDrawing(ch):
-		// Ambiguous-width char in a wide cell: 1.5x, centered.
-		w := naturalW * 3 / 2
-		if w > boxWPx {
-			w = boxWPx
+	if actx != nil {
+		// Arabic: str is the shaping window (prev + tatweels + letter + tatweels
+		// + next, joining sides only), shaped above as ONE run so the font's own
+		// GSUB produced the true joined forms with real connecting strokes. The
+		// cell keeps the slice between the neighbour letters — the letter WITH
+		// its tatweel connectors INCLUDED — at NATURAL size (no horizontal
+		// scaling, vertical exactly as every other cell): the letter is centred
+		// in the cell and the tatweel runs simply continue to the cell edges,
+		// where the crop cuts them mid-stroke to meet the neighbouring cells'
+		// strokes. The window carries more tatweel than a cell can need, so the
+		// stroke never runs out before the boundary; neighbour letters and
+		// surplus tatweel fall outside the cell and are clipped.
+		keep0, keep1 := actx.seg0, actx.seg1
+		if actx.rt0 >= 0 {
+			keep0 = actx.rt0 // include the right-side tatweels; drop prev
 		}
-		placed = scaleRGBA(raw, w, boxHPx)
-		xOff = (boxWPx - w) / 2
-	case wideCell && purfecterm.IsBlockOrLineDrawing(ch):
-		// Block/line drawing stretches to connect.
-		placed = scaleRGBA(raw, boxWPx, boxHPx)
-	default:
-		if naturalH != boxHPx {
-			placed = scaleRGBA(raw, naturalW, boxHPx)
-		} else {
-			placed = raw
+		if actx.lt0 >= 0 {
+			keep1 = actx.lt1 // include the left-side tatweels; drop next
 		}
-		xOff = (boxWPx - naturalW) / 2
-		if xOff < 0 {
-			xOff = 0
+		// The keep range in window px: everything between the neighbour
+		// letters (the letter with its tatweel runs).
+		k0, k1 := 0, raw.Rect.Dx()
+		if u0, u1, ok := sp.RuneSpanX(keep0, keep1); ok {
+			k0 = int(math.Floor(u0 * ppu))
+			k1 = int(math.Ceil(u1 * ppu))
 		}
+		// The letter's centre in window px.
+		center := float64(k0+k1) / 2
+		if b0, b1, ok := sp.RuneSpanX(actx.seg0, actx.seg1); ok {
+			center = (b0 + b1) / 2 * ppu
+		}
+		// The cell's mask is a slice of the joined window EXACTLY one cell
+		// wide, centred on the letter and bounded by the keep range. The
+		// joined window's baseline is continuous through the letter and its
+		// tatweels (the embedded archive faces substitute true contextual
+		// forms), so wherever the cut lands — mid-tatweel when the cell is
+		// wider than the letter, mid-letter when it is narrower — both cut
+		// ends carry baseline ink, and adjacent cells meet at their shared
+		// boundary. Each cell is fully self-contained (no overflow into
+		// neighbours), so partial repaints and background fills can never
+		// erase a join. A side with no join runs out of keep range and ends
+		// naturally. No scaling in either axis beyond the standard
+		// height-to-box treatment.
+		lo := int(math.Round(center - float64(boxWPx)/2))
+		s0, s1 := lo, lo+boxWPx
+		// A JOINING side is never cropped short of the cell edge: the slice
+		// keeps the full half-cell of the shaped window on that side — the
+		// tatweel run, and past it the junction toward the neighbour letter —
+		// whatever ink is there, so the cell's ink always reaches the edge.
+		// Only a side with NO join is trimmed back to the keep range, so an
+		// isolated or final edge keeps its natural gap.
+		if actx.lt0 < 0 && s0 < k0 {
+			s0 = k0
+		}
+		if actx.rt0 < 0 && s1 > k1 {
+			s1 = k1
+		}
+		slice := cropCols(raw, s0, s1)
+		if slice == nil {
+			slice = raw
+			s0, lo = 0, 0
+		}
+		if slice.Rect.Dy() != boxHPx {
+			// Height to the box, width untouched — same as every cell.
+			slice = scaleRGBA(slice, slice.Rect.Dx(), boxHPx)
+		}
+		compositeInto(out, slice, s0-lo, 0)
+		if actx.rt0 >= 0 || actx.lt0 >= 0 {
+			// One-time geometry report for the first joining cell: every term
+			// of the sizing equation at RUNTIME, plus whether the finished
+			// mask's ink really reaches the joining cell edges.
+			arabicGeomOnce.Do(func() {
+				cwU, chU := t.cellDims()
+				tf := t.effTermFont()
+				tfSize := 0
+				if tf != nil {
+					tfSize = tf.Size
+				}
+				fmt.Fprintf(os.Stderr,
+					"kittytk: arabic geom: box=%dx%d ppu=%.3f pt=%d cell=%vx%v units termFontSize=%d window=%q rawW=%d rawH=%d keep=[%d,%d) center=%.1f slice=[%d,%d) dstX=%d joinL=%v joinR=%v edgeInk L=%v R=%v\n",
+					boxWPx, boxHPx, ppu, f.Size, cwU, chU, tfSize, str, raw.Rect.Dx(), raw.Rect.Dy(), k0, k1, center, s0, s1, s0-lo,
+					actx.lt0 >= 0, actx.rt0 >= 0,
+					colInked(out, 0), colInked(out, boxWPx-1))
+			})
+		}
+	} else {
+		var placed *image.RGBA
+		xOff := 0
+		switch {
+		case naturalW > boxWPx:
+			// Squeeze wide glyphs to fit the box.
+			placed = scaleRGBA(raw, boxWPx, boxHPx)
+		case wideCell && purfecterm.IsAmbiguousWidth(ch) && !purfecterm.IsBlockOrLineDrawing(ch):
+			// Ambiguous-width char in a wide cell: 1.5x, centered.
+			w := naturalW * 3 / 2
+			if w > boxWPx {
+				w = boxWPx
+			}
+			placed = scaleRGBA(raw, w, boxHPx)
+			xOff = (boxWPx - w) / 2
+		case wideCell && purfecterm.IsBlockOrLineDrawing(ch):
+			// Block/line drawing stretches to connect.
+			placed = scaleRGBA(raw, boxWPx, boxHPx)
+		default:
+			if naturalH != boxHPx {
+				placed = scaleRGBA(raw, naturalW, boxHPx)
+			} else {
+				placed = raw
+			}
+			xOff = (boxWPx - naturalW) / 2
+			if xOff < 0 {
+				xOff = 0
+			}
+		}
+		compositeInto(out, placed, xOff, 0)
 	}
-	compositeInto(out, placed, xOff, 0)
 
 	if len(t.gfx.textCur) >= gfxCacheMax {
 		t.gfx.textPrev = t.gfx.textCur
@@ -573,21 +759,36 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, boxWPx, boxHPx
 
 // drawCellText renders one cell's character with all scaling rules,
 // including double-width/height lines (top/bottom halves clipped).
-func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg purfecterm.Color,
-	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, ppu float64, yOffPx int, cellVisualWidth float64) {
+func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family string, fg purfecterm.Color,
+	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, ppu float64, yOffPx int, cellVisualWidth float64, kashL, kashR bool, actx *arabicCellShape) {
 
 	str := cell.String()
-	boxW := int(math.Round(cellW * ppu))
-	contentH := int(math.Round(cellH * ppu))
+	if actx != nil {
+		str = actx.s // Arabic: the five-piece shaping window (also the cache key)
+		arabicDiagOnce.Do(func() {
+			if eng := t.gfxEngine(); eng != nil {
+				fmt.Fprintf(os.Stderr, "kittytk: %s\n", eng.ArabicJoinDiag(family))
+			}
+		})
+	}
+	// The mask box must be EXACTLY the painted purfecterm cell rect. Cell
+	// rects are painted (fillPixels) as [round(x0*ppu), round(x1*ppu)) — at
+	// fractional ppu (font_size not a multiple of 12) that differs from
+	// round(width*ppu) by a pixel, so the mask must use the same edge math or
+	// it is measurably narrower/shorter than the cell it fills and Arabic
+	// joins fall short of the boundary.
 	xPx := int(math.Round(cellX * ppu))
-	yPx := int(math.Round(cellY*ppu)) + yOffPx
+	yPx0 := int(math.Round(cellY * ppu))
+	boxW := int(math.Round((cellX+cellW)*ppu)) - xPx
+	contentH := int(math.Round((cellY+cellH)*ppu)) - yPx0
+	yPx := yPx0 + yOffPx
 	wide := cellVisualWidth > 1.0
 
 	frgb := pcRGBA(fg)
 	switch lineAttr {
 	case purfecterm.LineAttrDoubleTop, purfecterm.LineAttrDoubleBottom:
 		// Rendered at 2x height; only one half shows through the clip.
-		mask := t.cellTextImage(str, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char)
+		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
 		if mask == nil {
 			return
 		}
@@ -600,7 +801,7 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg pur
 		}
 		clip.DrawImageMaskTintOffset(0, 0, xPx, yPx, mask, frgb.R, frgb.G, frgb.B)
 	default:
-		mask := t.cellTextImage(str, cell.Bold, cell.Italic, boxW, contentH, ppu, wide, cell.Char)
+		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH, ppu, wide, cell.Char, kashL, kashR, actx)
 		if mask == nil {
 			return
 		}
@@ -628,6 +829,20 @@ func scaleRGBA(src *image.RGBA, w, h int) *image.RGBA {
 	return dst
 }
 
+// colInked reports whether column x of img has any inked pixel.
+func colInked(img *image.RGBA, x int) bool {
+	b := img.Bounds()
+	if x < b.Min.X || x >= b.Max.X {
+		return false
+	}
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		if img.RGBAAt(x, y).A != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func compositeInto(dst, src *image.RGBA, xOff, yOff int) {
 	sw, sh := src.Rect.Dx(), src.Rect.Dy()
 	for y := 0; y < sh; y++ {
@@ -638,6 +853,24 @@ func compositeInto(dst, src *image.RGBA, xOff, yOff int) {
 			}
 		}
 	}
+}
+
+// cropCols returns the column slice [x0,x1) of src at full height, or nil if
+// the clamped range is empty. Used to cut one cluster's pixels out of a shaped
+// Arabic window.
+func cropCols(src *image.RGBA, x0, x1 int) *image.RGBA {
+	if x0 < 0 {
+		x0 = 0
+	}
+	if x1 > src.Rect.Dx() {
+		x1 = src.Rect.Dx()
+	}
+	if x1 <= x0 {
+		return nil
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, x1-x0, src.Rect.Dy()))
+	compositeInto(dst, src, -x0, 0)
+	return dst
 }
 
 // ---------------------------------------------------------------
@@ -1176,7 +1409,27 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 				fillPixels(clip, cellX, rowY, cellX+cellW, rowY+chh, ppu, bg)
 			}
 			if cell.Char != ' ' && cell.Char != 0 {
-				t.drawCellText(clip, &cell, fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0)
+				// Arabic contextual joining from the split-view neighbors.
+				var leftCh, rightCh rune
+				if screenCol+horizOffset > 0 {
+					leftCh = buf.GetCellForSplit(screenCol+horizOffset-1, rowInSplit, currentSplit.BufferRow, currentSplit.BufferCol).Char
+				}
+				rightCh = buf.GetCellForSplit(screenCol+horizOffset+1, rowInSplit, currentSplit.BufferRow, currentSplit.BufferCol).Char
+				shaped, suppress := purfecterm.ShapeArabicCellVisual(leftCh, cell.Char, rightCh)
+				if !suppress {
+					baseC := arabicBaseChar(cell.Char)
+					baseL := arabicBaseChar(leftCh)
+					baseR := arabicBaseChar(rightCh)
+					kashL, kashR := arabicKashida(baseC, baseL, baseR)
+					dc := cell
+					var actx *arabicCellShape
+					if purfecterm.ScriptClass(cell.Char) == "arabic" {
+						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR)
+					} else {
+						dc.Char = shaped
+					}
+					t.drawCellText(clip, &dc, t.cellFamily(buf, &cell), fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0, kashL, kashR, actx)
+				}
 			}
 		}
 
@@ -1535,7 +1788,7 @@ func (t *PurfecTerm) screenToCellGfx(x, y core.Unit) (cellX, cellY int) {
 	for col := horizOffset; col < cols+horizOffset; col++ {
 		cell := buf.GetVisibleCell(col-horizOffset, cellY)
 		w := 1.0
-		if cell.FlexWidth && cell.CellWidth > 0 {
+		if cell.CellWidth > 0 { // CellWidth is authoritative (see patches/purfecterm/PROTOCOL.md)
 			w = cell.CellWidth
 		}
 		cellPixelWidth := w * cw * lineScale
@@ -1549,6 +1802,46 @@ func (t *PurfecTerm) screenToCellGfx(x, y core.Unit) (cellX, cellY int) {
 		cellX = 0
 	}
 	return cellX, cellY
+}
+
+// screenToVisualCellGfx maps trinket-unit coordinates to the PHYSICAL
+// viewport cell — the coordinates a mouse report carries. Under the standard
+// contract, mouse reports are visual screen columns (what a hardware terminal
+// sends), which diverge from screenToCellGfx's LOGICAL buffer cells whenever
+// wide characters precede the pointer: reporting the logical cell parks the
+// hosted app's caret left of the click. Local selection keeps the logical
+// mapping; reports must use this one.
+func (t *PurfecTerm) screenToVisualCellGfx(x, y core.Unit) (col, row int) {
+	buf := t.terminal.Buffer()
+	baseCW, baseCH := t.cellDims()
+	cw := float64(baseCW) * buf.GetHorizontalScale()
+	chh := float64(baseCH) * buf.GetVerticalScale()
+	if cw <= 0 || chh <= 0 {
+		return 0, 0
+	}
+	kx, ky := t.gfx.hitKX, t.gfx.hitKY
+	if kx <= 0 {
+		kx = 1
+	}
+	if ky <= 0 {
+		ky = 1
+	}
+	col = int(float64(x) * kx / cw)
+	row = int(float64(y) * ky / chh)
+	cols, rows := buf.GetSize()
+	if col < 0 {
+		col = 0
+	}
+	if cols > 0 && col >= cols {
+		col = cols - 1
+	}
+	if row < 0 {
+		row = 0
+	}
+	if rows > 0 && row >= rows {
+		row = rows - 1
+	}
+	return col, row
 }
 
 // sendMouseEventGfx forwards an xterm-encoded mouse event to the PTY
@@ -1596,7 +1889,8 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.RightButton {
 		if forwardToPTY {
 			t.gfx.mouseDown = true
-			t.sendMouseEventGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), cellX, cellY, true)
+			repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
+			t.sendMouseEventGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), repX, repY, true)
 			return true
 		}
 		t.showContextMenu(event)
@@ -1609,7 +1903,8 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 			btn = purfecterm.MouseButtonMiddle
 		}
 		t.gfx.mouseDown = true
-		t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, true)
+		repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
+		t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), repX, repY, true)
 		return true
 	}
 
@@ -1650,7 +1945,8 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
 			if t.gfx.mouseDown {
 				btn = purfecterm.MouseButtonLeft | purfecterm.MouseMotionFlag
 			}
-			t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, true)
+			repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
+			t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), repX, repY, true)
 		}
 		return true
 	}
@@ -1723,7 +2019,7 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
-		cellX, cellY := t.screenToCellGfx(event.X, event.Y)
+		cellX, cellY := t.screenToVisualCellGfx(event.X, event.Y)
 		btn := purfecterm.MouseButtonLeft
 		switch event.Button {
 		case core.MiddleButton:
@@ -1754,7 +2050,7 @@ func (t *PurfecTerm) gfxMouseWheel(event core.MouseWheelEvent) bool {
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
-		cellX, cellY := t.screenToCellGfx(event.X, event.Y)
+		cellX, cellY := t.screenToVisualCellGfx(event.X, event.Y)
 		mods := gfxMouseModifiers(event.Modifiers)
 		if event.DeltaY < 0 {
 			t.sendMouseEventGfx(purfecterm.MouseScrollUp|mods, cellX, cellY, true)

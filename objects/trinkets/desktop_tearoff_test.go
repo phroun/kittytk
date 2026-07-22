@@ -50,6 +50,7 @@ func (s *msSurface) SetOpacity(o float64)             { s.opacity = o }
 func (s *msSurface) Raise()                           { s.raised = true }
 func (s *msSurface) Minimized() bool                  { return s.minimized }
 func (s *msSurface) Minimize()                        { s.minimized = true }
+func (s *msSurface) Restore()                         { s.minimized = false } // NativeRestorer
 func (s *msSurface) WorkAreaPx() (int, int, int, int) { return 0, 0, 1600, 1000 }
 
 // SetScreenSizePx mimics the real platform: the size change reports
@@ -571,6 +572,132 @@ func TestSoloModeHostsMainOnPrimarySurface(t *testing.T) {
 	d.RunOn(plat)
 }
 
+// A modal owned by the solo window must block the solo primary surface. That
+// surface is a torn host, so it has to consult the modal stack exactly as a
+// regular torn host does - a regression guard for the solo host omitting
+// SetModalChecker, which left the editor taking input while its own modal was up
+// (the modal displayed but did not actually block).
+func TestSoloPrimaryHostBlockedByOwnedModal(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Solo")
+	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.EnterSoloMode(main)
+
+		host := d.soloPrimaryHost
+		if host == nil {
+			t.Fatal("no solo primary host after EnterSoloMode")
+		}
+		if host.IsModalBlocked() {
+			t.Fatal("solo host reports blocked before any modal is up")
+		}
+
+		// A window-level modal owned by the solo window.
+		modal := window.NewWindow("Gate")
+		modal.SetType(window.WindowTypeModal)
+		modal.SetOwner(main)
+		d.WindowManager().AddWindow(modal)
+
+		if !host.IsModalBlocked() {
+			t.Error("solo primary host is not blocked by a modal owned by its window")
+		}
+
+		// The blocked-press surfacing must find the window-scoped modal (not just
+		// application modals) so a click on the blocked editor pulls it forward.
+		if got := d.WindowManager().TopModalBlocking(main); got != modal {
+			t.Errorf("TopModalBlocking = %v, want the owning modal %v", got, modal)
+		}
+
+		// Closing the modal releases the block.
+		modal.Close()
+		if host.IsModalBlocked() {
+			t.Error("solo primary host still blocked after its modal closed")
+		}
+
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
+// A click on the blocked window must OS-restore the blocking modal when it is
+// minimized at the OS level (the user minimized its torn surface via the window
+// controls) - the window's own IsMinimized flag doesn't capture that - and then
+// raise it. Regression for surfaceModal gating the restore on IsMinimized alone.
+func TestSurfaceBlockingModalRestoresOSMinimized(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Main")
+	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		wm := d.WindowManager()
+		d.EnterSoloMode(main)
+
+		// A modal owned by the solo window, torn onto its own peer surface.
+		modal := window.NewWindow("Gate")
+		modal.SetType(window.WindowTypeModal)
+		modal.SetOwner(main)
+		app.windows = append(app.windows, modal)
+		modal.SetBounds(core.UnitRect{X: 40, Y: 30, Width: 220, Height: 160})
+		wm.AddWindow(modal)
+		modal.Layout()
+
+		if len(plat.surfaces) != 2 {
+			t.Fatalf("want 2 surfaces (primary + torn modal), got %d", len(plat.surfaces))
+		}
+		modalSurf := plat.surfaces[1]
+
+		// The user OS-minimizes the modal's surface; the window's own flag stays
+		// clear (an OS-level minimize the app never initiated).
+		modalSurf.Minimize()
+		modalSurf.raised = false
+		if modal.IsMinimized() {
+			t.Fatal("precondition: window IsMinimized should be clear (OS-only minimize)")
+		}
+
+		// A press on the blocked solo editor surfaces the modal.
+		d.surfaceBlockingModal(main)
+
+		if modalSurf.Minimized() {
+			t.Error("modal surface was not OS-restored before raising")
+		}
+		if !modalSurf.raised {
+			t.Error("modal surface was not raised to the front")
+		}
+
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
 // Closing the window on the primary surface (which owns the loop and
 // can't be destroyed) promotes a remaining peer onto that surface: the
 // primary surface takes on the peer's window and repositions/resizes to
@@ -707,11 +834,18 @@ func TestExitSoloModeRevealsDesktop(t *testing.T) {
 		if !main.IsTearable() {
 			t.Error("app window did not regain its tearable/redock handle")
 		}
-		// The torn window lands at the primary's rectangle (same location).
+		// The torn window keeps the old primary rectangle; the revealed desktop is
+		// staggered down-right off it by a cascade step (title bar + menu bar +
+		// frame border), so the app's chrome peeks out rather than being fully
+		// covered by the desktop on top.
 		torn := plat.surfaces[1]
-		if torn.x != primary.x || torn.y != primary.y {
-			t.Errorf("torn window at (%d,%d), want the primary's (%d,%d)",
-				torn.x, torn.y, primary.x, primary.y)
+		off := d.unitToPx(d.EffectiveCellMetrics().CellHeight + d.MenuBarHeight() + core.FindFrameBorderUnits(main))
+		if off <= 0 {
+			t.Fatalf("cascade offset should be positive, got %d", off)
+		}
+		if primary.x != torn.x+off || primary.y != torn.y+off {
+			t.Errorf("desktop primary at (%d,%d), want the torn window's (%d,%d) staggered by %d",
+				primary.x, primary.y, torn.x, torn.y, off)
 		}
 		if torn.size != primary.size {
 			t.Errorf("torn window size %v, want the primary's %v", torn.size, primary.size)
