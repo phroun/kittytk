@@ -617,13 +617,33 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	eng := t.gfxEngine()
 	sp := eng.ShapeRun(f, str)
 	naturalW := int(math.Round(float64(sp.Width()) * ppu))
-	naturalH := int(math.Round(float64(eng.LineHeight(f)) * ppu))
+	// The raster must hold the face's REAL ink, not just its nominal line
+	// budget. emFor sizes a face so ascent+descent+gap fills the budget, but
+	// the per-run bounds each round up independently and land a unit or two
+	// either side of it — Noto Naskh reports 18 against a 16-unit budget, and
+	// a budget-sized raster simply cut its descenders off.
+	lineH := eng.LineHeight(f)
+	if len(sp.Lines) > 0 {
+		if ink := sp.Lines[0].Ascent + sp.Lines[0].Descent + sp.Lines[0].Gap; ink > lineH {
+			lineH = ink
+		}
+	}
+	naturalH := int(math.Round(float64(lineH) * ppu))
 	if naturalW <= 0 {
 		naturalW = 1
 	}
 	if naturalH <= 0 {
 		naturalH = 1
 	}
+	// Baseline alignment: each face splits its line budget between ascent and
+	// descent however its designer chose, so its baseline sits at its own
+	// height in the box — Noto Kufi's shallow ascent (9 of 16) parks it high,
+	// Noto Naskh's (11) lower, Latin's and Noto Serif Hebrew's (13) lower
+	// still. Left alone every script rides at a different level in the row.
+	// Shift the finished mask so this face's baseline lands where the PRIMARY
+	// terminal face puts its own. A translation of whole pixels: the glyph
+	// keeps its size and shape, it only moves.
+	yShift := t.baselineShiftPx(family, ch, pt, fs, sp, ppu)
 	raw := image.NewRGBA(image.Rect(0, 0, naturalW, naturalH))
 	// Rasterize a WHITE glyph at the renderer's font_size-aware pixels-per-unit:
 	// the result is a color-independent coverage mask (alpha = ink coverage);
@@ -694,11 +714,7 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 			slice = raw
 			s0, lo = 0, 0
 		}
-		if slice.Rect.Dy() != boxHPx {
-			// Height to the box, width untouched — same as every cell.
-			slice = scaleRGBA(slice, slice.Rect.Dx(), boxHPx)
-		}
-		compositeInto(out, slice, s0-lo, 0)
+		compositeInto(out, slice, s0-lo, yShift)
 		if actx.rt0 >= 0 || actx.lt0 >= 0 {
 			// One-time geometry report for the first joining cell: every term
 			// of the sizing equation at RUNTIME, plus whether the finished
@@ -720,33 +736,32 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	} else {
 		var placed *image.RGBA
 		xOff := 0
+		// Width rules only: the height stays the raster's own so the baseline
+		// shift below lands where it was computed. (Vertical scaling was a
+		// no-op in any case — the budget-sized raster already matched the box.)
 		switch {
 		case naturalW > boxWPx:
 			// Squeeze wide glyphs to fit the box.
-			placed = scaleRGBA(raw, boxWPx, boxHPx)
+			placed = scaleRGBA(raw, boxWPx, naturalH)
 		case wideCell && purfecterm.IsAmbiguousWidth(ch) && !purfecterm.IsBlockOrLineDrawing(ch):
 			// Ambiguous-width char in a wide cell: 1.5x, centered.
 			w := naturalW * 3 / 2
 			if w > boxWPx {
 				w = boxWPx
 			}
-			placed = scaleRGBA(raw, w, boxHPx)
+			placed = scaleRGBA(raw, w, naturalH)
 			xOff = (boxWPx - w) / 2
 		case wideCell && purfecterm.IsBlockOrLineDrawing(ch):
 			// Block/line drawing stretches to connect.
-			placed = scaleRGBA(raw, boxWPx, boxHPx)
+			placed = scaleRGBA(raw, boxWPx, naturalH)
 		default:
-			if naturalH != boxHPx {
-				placed = scaleRGBA(raw, naturalW, boxHPx)
-			} else {
-				placed = raw
-			}
+			placed = raw
 			xOff = (boxWPx - naturalW) / 2
 			if xOff < 0 {
 				xOff = 0
 			}
 		}
-		compositeInto(out, placed, xOff, 0)
+		compositeInto(out, placed, xOff, yShift)
 	}
 
 	if len(t.gfx.textCur) >= gfxCacheMax {
@@ -755,6 +770,73 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	}
 	t.gfx.textCur[key] = out
 	return out
+}
+
+// baselineShiftPx is how far to move a face's mask vertically so its baseline
+// lands where the PRIMARY terminal face puts its own — the alignment that makes
+// Hebrew and Arabic sit on the same line as Latin rather than each script
+// riding at its own face-declared height.
+//
+// Zero for the primary face itself, and zero whenever the reference cannot be
+// shaped (no engine, empty run), so an unknown case falls back to today's
+// behaviour rather than a guess.
+func (t *PurfecTerm) baselineShiftPx(family string, ch rune, pt int, fs core.FontStyle, sp *text.ShapedParagraph, ppu float64) int {
+	if sp == nil || len(sp.Lines) == 0 {
+		return 0
+	}
+	eng := t.gfxEngine()
+	if eng == nil {
+		return 0
+	}
+	ref := t.primaryTermFamily()
+	if ref == "" {
+		return 0
+	}
+	// Compare BASELINES, not family names. A terminal cell resolves its font
+	// once — for mew that is always the primary family — while the engine
+	// picks the script face per glyph inside ShapeRun, so sp already reflects
+	// the face that will really paint. Gating on the requested name being
+	// different from the primary made this a no-op for every cell mew draws.
+	refSP := eng.ShapeRun(&core.Font{Name: ref, Size: pt, Style: fs}, "M")
+	if refSP == nil || len(refSP.Lines) == 0 {
+		return 0
+	}
+	shift := int(math.Round(float64(refSP.Lines[0].Baseline-sp.Lines[0].Baseline) * ppu))
+	// A configured per-face correction rides on top, for a face whose own
+	// metrics misplace it however faithfully they are followed. Cell units
+	// (1/16 of a row), positive down — so it survives the live font zoom,
+	// which the device-pixel conversion here applies.
+	// The correction belongs to the face that actually painted, which for a
+	// script glyph is the fallback target rather than the requested primary.
+	if adj := eng.BaselineAdjust(eng.ScriptFaceFor(family, ch)); adj != 0 {
+		shift += int(math.Round(float64(adj) * ppu))
+	}
+	// A correction larger than the cell is not an alignment, it is a bad
+	// metric; leave such a face where it is rather than launching it out of
+	// the row.
+	limit := int(math.Round(float64(eng.LineHeight(&core.Font{Name: ref, Size: pt})) * ppu))
+	if limit > 0 {
+		if shift > limit {
+			shift = limit
+		}
+		if shift < -limit {
+			shift = -limit
+		}
+	}
+	return shift
+}
+
+// canonicalFamily lowercases and strips spaces/hyphens so "Noto Sans Mono",
+// "noto-sans-mono" and "notosansmono" compare equal — the same leniency the
+// font database applies to alias names.
+func canonicalFamily(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if r != ' ' && r != '-' && r != '_' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // drawCellText renders one cell's character with all scaling rules,
@@ -786,6 +868,27 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 
 	frgb := pcRGBA(fg)
 	switch lineAttr {
+	case purfecterm.LineAttrDoubleWidth:
+		// Double width, single height. cellTextImage takes its point size from
+		// the box HEIGHT alone, so widening the box on its own only centres an
+		// ordinary glyph in it — which is what a DECDWL heading looked like.
+		//
+		// Ask for a 2x-TALL mask instead: that doubles the point size, and
+		// since the box is already the doubled cell width the bigger glyph
+		// fills it. Averaging the mask back down to one row keeps the full
+		// horizontal detail of the 2x rasterization, which is what makes a
+		// doubled heading read as drawn at that size rather than magnified.
+		//
+		// (The alternative — rasterize at the ORDINARY size and repeat each
+		// column — reproduces the normal row's pixels exactly, so it cannot
+		// lose density, but it widens by nearest-neighbour and gives up the
+		// extra outline detail the 2x render carries. Kept under
+		// KITTYTK_DWL=widen; judged by eye, the 2x render looks better.)
+		mask := t.dwlDoubleWideMask(str, family, cell, boxW, contentH, ppu, wide, kashL, kashR, actx)
+		if mask == nil {
+			return
+		}
+		p.DrawImageMaskTintOffset(0, 0, xPx, yPx, mask, frgb.R, frgb.G, frgb.B)
 	case purfecterm.LineAttrDoubleTop, purfecterm.LineAttrDoubleBottom:
 		// Rendered at 2x height; only one half shows through the clip.
 		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
@@ -807,6 +910,103 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 		}
 		p.DrawImageMaskTintOffset(0, 0, xPx, yPx, mask, frgb.R, frgb.G, frgb.B)
 	}
+}
+
+// dwlWiden selects the alternative double-width strategy: rasterize at the
+// ordinary size and repeat each column, reproducing the normal row's pixels
+// exactly rather than resampling. Kept for side-by-side comparison
+// (KITTYTK_DWL=widen); the default rasterizes at 2x for the finer outline.
+var dwlWiden = strings.Contains(os.Getenv("KITTYTK_DWL"), "widen")
+
+// dwlDoubleWideMask builds the glyph mask for one DECDWL cell, filling a box
+// twice the ordinary cell width.
+func (t *PurfecTerm) dwlDoubleWideMask(str, family string, cell *purfecterm.Cell,
+	boxW, contentH int, ppu float64, wide, kashL, kashR bool, actx *arabicCellShape) *image.RGBA {
+
+	if dwlWiden {
+		// The ordinary-size raster, in the ordinary cell width — bit for bit
+		// what this glyph looks like on a normal row — widened by repeating
+		// columns, so no pixel is re-derived.
+		natural := boxW / 2
+		if natural < 1 {
+			natural = 1
+		}
+		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, natural, contentH, ppu, wide, cell.Char, kashL, kashR, actx)
+		if mask == nil {
+			return nil
+		}
+		return widenCols(mask, boxW)
+	}
+
+	mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
+	if mask == nil {
+		return nil
+	}
+	return squashRowsRGBA(mask, contentH)
+}
+
+// widenCols stretches an image to dstW columns by repeating source columns —
+// an exact column doubling at the 2:1 ratio double-width asks for. No filter:
+// every output pixel is a source pixel at its original intensity, so the
+// glyph's density and vertical crispness survive the widening untouched.
+func widenCols(src *image.RGBA, dstW int) *image.RGBA {
+	srcW, h := src.Rect.Dx(), src.Rect.Dy()
+	if srcW <= 0 || h <= 0 || dstW <= srcW {
+		return src
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dstW, h))
+	for x := 0; x < dstW; x++ {
+		sx := x * srcW / dstW
+		if sx >= srcW {
+			sx = srcW - 1
+		}
+		for y := 0; y < h; y++ {
+			si := src.PixOffset(src.Rect.Min.X+sx, src.Rect.Min.Y+y)
+			di := dst.PixOffset(x, y)
+			copy(dst.Pix[di:di+4], src.Pix[si:si+4])
+		}
+	}
+	return dst
+}
+
+// squashRowsRGBA box-filters an image down to dstH rows, averaging each output
+// row over the source rows it covers. Used to bring a 2x-tall glyph mask back
+// to one row for a double-width line: nearest-neighbour would drop every other
+// scanline and alias the stroke weights, which is exactly what a doubled
+// heading must not do.
+func squashRowsRGBA(src *image.RGBA, dstH int) *image.RGBA {
+	w, srcH := src.Rect.Dx(), src.Rect.Dy()
+	if w <= 0 || srcH <= 0 || dstH <= 0 || srcH == dstH {
+		return src
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, w, dstH))
+	for y := 0; y < dstH; y++ {
+		y0 := y * srcH / dstH
+		y1 := (y + 1) * srcH / dstH
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
+		if y1 > srcH {
+			y1 = srcH
+		}
+		n := y1 - y0
+		for x := 0; x < w; x++ {
+			var r, g, b, a int
+			for sy := y0; sy < y1; sy++ {
+				si := src.PixOffset(src.Rect.Min.X+x, src.Rect.Min.Y+sy)
+				r += int(src.Pix[si])
+				g += int(src.Pix[si+1])
+				b += int(src.Pix[si+2])
+				a += int(src.Pix[si+3])
+			}
+			o := dst.PixOffset(x, y)
+			dst.Pix[o] = uint8(r / n)
+			dst.Pix[o+1] = uint8(g / n)
+			dst.Pix[o+2] = uint8(b / n)
+			dst.Pix[o+3] = uint8(a / n)
+		}
+	}
+	return dst
 }
 
 // scaleRGBA nearest-neighbor scales an image (glyph stretch for
@@ -1883,7 +2083,10 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 	}
 	buf := t.terminal.Buffer()
 	cellX, cellY := t.screenToCellGfx(event.X, event.Y)
-	hasShift := event.Modifiers&core.ShiftModifier != 0
+	// Shift classically bypasses app mouse tracking for LOCAL grid selection —
+	// except in editor mode, where the grid has no useful local selection and
+	// the guest editor owns shift+click (extend-selection) itself.
+	hasShift := event.Modifiers&core.ShiftModifier != 0 && !t.editorMode
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if event.Button == core.RightButton {
@@ -1935,7 +2138,8 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
 	}
 	buf := t.terminal.Buffer()
 	cellX, cellY := t.screenToCellGfx(event.X, event.Y)
-	hasShift := event.Modifiers&core.ShiftModifier != 0
+	// Editor mode forwards shift (see gfxMousePress).
+	hasShift := event.Modifiers&core.ShiftModifier != 0 && !t.editorMode
 	trackingMode := buf.GetMouseTrackingMode()
 	forwardToPTY := !t.gfx.reportingDisabled && trackingMode != 0 && !hasShift
 
@@ -2015,7 +2219,8 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 		return false
 	}
 	buf := t.terminal.Buffer()
-	hasShift := event.Modifiers&core.ShiftModifier != 0
+	// Editor mode forwards shift (see gfxMousePress).
+	hasShift := event.Modifiers&core.ShiftModifier != 0 && !t.editorMode
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
@@ -2044,9 +2249,19 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 	return true
 }
 
+// Horizontal wheel buttons continue purfecterm's SGR scroll series
+// (MouseScrollUp=64, MouseScrollDown=65): left=66, right=67, matching xterm.
+const (
+	mouseScrollLeftBtn  = 66
+	mouseScrollRightBtn = 67
+)
+
 func (t *PurfecTerm) gfxMouseWheel(event core.MouseWheelEvent) bool {
 	buf := t.terminal.Buffer()
-	hasShift := event.Modifiers&core.ShiftModifier != 0
+	// Editor mode forwards shift+wheel too: the grid never scrolls under an
+	// editor (alt screen), so the local shift-horizontal-scroll is meaningless
+	// there — the guest editor interprets the modifier itself.
+	hasShift := event.Modifiers&core.ShiftModifier != 0 && !t.editorMode
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
@@ -2056,6 +2271,15 @@ func (t *PurfecTerm) gfxMouseWheel(event core.MouseWheelEvent) bool {
 			t.sendMouseEventGfx(purfecterm.MouseScrollUp|mods, cellX, cellY, true)
 		} else if event.DeltaY > 0 {
 			t.sendMouseEventGfx(purfecterm.MouseScrollDown|mods, cellX, cellY, true)
+		}
+		// Horizontal wheel: SGR buttons 66/67 continue purfecterm's scroll
+		// series (Up=64, Down=65). DeltaX>0 = scroll right. (An app whose input
+		// layer decodes 66/67 as left/right acts on it; older decoders that only
+		// know 64/65 ignore the extra buttons rather than mis-scroll vertically.)
+		if event.DeltaX < 0 {
+			t.sendMouseEventGfx(mouseScrollLeftBtn|mods, cellX, cellY, true)
+		} else if event.DeltaX > 0 {
+			t.sendMouseEventGfx(mouseScrollRightBtn|mods, cellX, cellY, true)
 		}
 		return true
 	}
@@ -2288,6 +2512,54 @@ func (t *PurfecTerm) contextMenuID() string {
 // showContextMenu opens the right-click menu (Copy / Paste / Select
 // All / Mouse Reporting toggle) as a popup overlay.
 func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
+	t.showTermItemsMenu(core.UnitPoint{X: event.X, Y: event.Y}, t.contextMenuItems())
+}
+
+// termMenuLayout is the popup menu's measurement: fixed pixel-ish rows on a
+// graphical desktop (the established TextInput/PurfecTerm look), CELL
+// metrics on the text desktop — one full character row per item, cell-
+// aligned width — following the same measurement approach as the Menu
+// dropdowns and the ComboBox popup.
+type termMenuLayout struct {
+	rowH, sepH, width, padTop, indent core.Unit
+	graphical                         bool
+}
+
+func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenuItem) termMenuLayout {
+	if core.FindGraphicalFrames(t) {
+		return termMenuLayout{rowH: gfxMenuItemHeight, sepH: 4, width: gfxMenuWidth, padTop: 2, indent: 8, graphical: true}
+	}
+	// Popups are desktop-surface overlays: like the ComboBox popup, measure
+	// in the SCREEN's denomination (the popup controller's cell metrics),
+	// not this trinket's possibly re-denominated interior.
+	m := core.DefaultCellMetrics()
+	if sm, ok := pc.(interface{ ScreenCellMetrics() core.CellMetrics }); ok {
+		if s := sm.ScreenCellMetrics(); s.CellWidth > 0 && s.CellHeight > 0 {
+			m = s
+		}
+	}
+	cols := 12
+	for _, it := range items {
+		if n := len([]rune(it.label)) + 6; n > cols { // gutter + checkmark room
+			cols = n
+		}
+	}
+	return termMenuLayout{
+		rowH:   m.CellHeight,
+		sepH:   m.CellHeight, // a separator needs a full character row
+		width:  core.Unit(cols) * m.CellWidth,
+		indent: m.CellWidth, // one cell in
+		// no sub-cell padding: rows land exactly on character rows
+	}
+}
+
+// showTermItemsMenu opens a context menu of the given items as a popup
+// overlay anchored at a LOCAL point of this trinket — the shared
+// presentation behind the terminal's right-click menu, reused by the
+// mew-backed Editor for its own (mew-driven) context menu. It works on
+// both desktops: the popup overlay machinery is backend-neutral, and the
+// layout is measured per backend (termMenuLayoutFor).
+func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuItem) {
 	pc := t.PopupController()
 	if pc == nil {
 		pc = t.findPopupControllerTerm()
@@ -2295,33 +2567,33 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 	if pc == nil {
 		return
 	}
-	items := t.contextMenuItems()
+	lay := t.termMenuLayoutFor(pc, items)
 	height := core.Unit(0)
 	for _, it := range items {
 		if it.separator {
-			height += 4
+			height += lay.sepH
 		} else {
-			height += gfxMenuItemHeight
+			height += lay.rowH
 		}
 	}
-	height += 4 // padding
-	at := pc.MapToScreen(t.Self(), core.UnitPoint{X: event.X, Y: event.Y})
+	height += 2 * lay.padTop
+	at := pc.MapToScreen(t.Self(), local)
 	screen := pc.ScreenBounds()
-	if at.X+gfxMenuWidth > screen.X+screen.Width {
-		at.X = screen.X + screen.Width - gfxMenuWidth
+	if at.X+lay.width > screen.X+screen.Width {
+		at.X = screen.X + screen.Width - lay.width
 	}
 	if at.Y+height > screen.Y+screen.Height {
 		at.Y = screen.Y + screen.Height - height
 	}
-	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: gfxMenuWidth, Height: height}
+	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: lay.width, Height: height}
 	t.gfx.menuHover = -1
 
 	itemAt := func(y core.Unit) int {
-		pos := core.Unit(2)
+		pos := lay.padTop
 		for i, it := range items {
-			h := gfxMenuItemHeight
+			h := lay.rowH
 			if it.separator {
-				h = 4
+				h = lay.sepH
 			}
 			if y >= pos && y < pos+h {
 				if it.separator {
@@ -2341,18 +2613,24 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 			bg := style.DefaultStyle().WithFg(style.RGB(32, 32, 32)).WithBg(style.RGB(238, 238, 238))
 			hover := style.DefaultStyle().WithFg(style.RGB(255, 255, 255)).WithBg(style.RGB(56, 120, 220))
 			p.FillRect(core.UnitRect{X: menuBounds.X, Y: menuBounds.Y, Width: menuBounds.Width, Height: menuBounds.Height}, ' ', bg)
-			pos := menuBounds.Y + 2
+			pos := menuBounds.Y + lay.padTop
 			for i, it := range items {
 				if it.separator {
-					p.FillRect(core.UnitRect{X: menuBounds.X + 4, Y: pos + 2, Width: menuBounds.Width - 8, Height: 1}, ' ',
-						style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
-					pos += 4
+					if lay.graphical {
+						p.FillRect(core.UnitRect{X: menuBounds.X + 4, Y: pos + 2, Width: menuBounds.Width - 8, Height: 1}, ' ',
+							style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
+					} else {
+						// Text cells: a full dim rule row.
+						p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.sepH}, '─',
+							bg.WithFg(style.RGB(160, 160, 160)))
+					}
+					pos += lay.sepH
 					continue
 				}
 				st := bg
 				if i == t.gfx.menuHover {
 					st = hover
-					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: gfxMenuItemHeight}, ' ', st)
+					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.rowH}, ' ', st)
 				}
 				label := it.label
 				if it.checked != nil {
@@ -2362,8 +2640,13 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 						label = "  " + label
 					}
 				}
-				p.DrawText(menuBounds.X+8, pos, label, st.WithBg(style.ColorTransparent), nil)
-				pos += gfxMenuItemHeight
+				// Draw with the style's EXPLICIT background: a transparent bg
+				// composites correctly on the graphical backend but resolves to
+				// the terminal's default (dark) background on the text backend,
+				// leaving dark boxes behind the labels. The explicit bg equals
+				// the fill (or hover) color, so the graphical look is unchanged.
+				p.DrawText(menuBounds.X+lay.indent, pos, label, st, nil)
+				pos += lay.rowH
 			}
 		},
 		HandleMouseMove: func(event core.MouseMoveEvent) bool {
@@ -2388,6 +2671,33 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 		},
 	})
 	t.Update()
+}
+
+// cellToLocal maps a 1-based terminal cell to this trinket's local units —
+// the anchor for a popup at that cell. The inverse of screenToCellGfx's
+// uniform-grid part: cell pitch from the effective font (graphical) or the
+// cell metrics (text UI), the terminal's scale factors, and the hit-space
+// snap ratio applied in reverse. An approximation over per-cell width walks
+// (double-width lines), which is fine for a menu anchor.
+func (t *PurfecTerm) cellToLocal(col, row int) core.UnitPoint {
+	baseCW, baseCH := t.cellDims()
+	cw, chh := float64(baseCW), float64(baseCH)
+	if t.terminal != nil {
+		buf := t.terminal.Buffer()
+		cw *= buf.GetHorizontalScale()
+		chh *= buf.GetVerticalScale()
+	}
+	kx, ky := t.gfx.hitKX, t.gfx.hitKY
+	if kx <= 0 {
+		kx = 1
+	}
+	if ky <= 0 {
+		ky = 1
+	}
+	return core.UnitPoint{
+		X: core.Unit(float64(col-1) * cw / kx),
+		Y: core.Unit(float64(row-1) * chh / ky),
+	}
 }
 
 // findPopupControllerTerm walks the parent chain for a popup

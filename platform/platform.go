@@ -163,6 +163,30 @@ type Surface interface {
 	// Cursor control (text caret).
 	SetCursorVisible(visible bool)
 	SetCursorPosition(x, y core.Unit)
+	// SetCursorStyle selects the caret's DECSCUSR shape (0 the platform's
+	// own default, 1/2 blinking/steady block, 3/4 underline, 5/6 bar).
+	SetCursorStyle(style int)
+}
+
+// ApplyTextCaret pushes a frame's platform text-caret request to a surface
+// (see core.TextCaret). The shape goes first, so a caret about to be shown
+// appears already wearing it; no request hides the caret, which is what leaves
+// an unfocused terminal free to paint its own.
+//
+// Every surface handler that finishes a frame calls this — the native
+// one-window-per-surface host and the desktop compositing many windows into one
+// surface alike — so the caret behaves the same in both modes.
+func ApplyTextCaret(s Surface, caret core.TextCaret) {
+	if s == nil {
+		return
+	}
+	if !caret.Visible {
+		s.SetCursorVisible(false)
+		return
+	}
+	s.SetCursorStyle(caret.Style)
+	s.SetCursorPosition(caret.X, caret.Y)
+	s.SetCursorVisible(true)
 }
 
 // SurfaceHandler receives a surface's callbacks, always on the
@@ -177,6 +201,18 @@ type SurfaceHandler interface {
 
 	// Resized reports a new surface size (already applied).
 	Resized(size core.UnitSize)
+}
+
+// PixelAnchoredOnFontZoom is an optional SurfaceHandler refinement consulted
+// by a live host font zoom. A graphical platform re-applies its font size to
+// every open window: the main window keeps its PIXEL size (the unit grid
+// re-derives, as in a resize) while secondary windows normally keep their
+// UNIT size and re-size in pixels. A handler reporting true opts its surface
+// into the pixel-anchored treatment — a maximized torn-off window fills its
+// display's work area, and re-sizing it to preserve units would pull it away
+// from the edges it is snapped to.
+type PixelAnchoredOnFontZoom interface {
+	KeepPixelSizeOnFontZoom() bool
 }
 
 // --- Polling platform: any core.RenderBackend as a one-surface
@@ -360,6 +396,7 @@ func (s *pollingSurface) Size() core.UnitSize         { return s.platform.backen
 func (s *pollingSurface) Metrics() core.CellMetrics   { return s.platform.backend.Metrics() }
 func (s *pollingSurface) SetHandler(h SurfaceHandler) { s.handler = h }
 func (s *pollingSurface) SetCursorVisible(v bool)     { s.platform.backend.SetCursorVisible(v) }
+func (s *pollingSurface) SetCursorStyle(style int)    { s.platform.backend.SetCursorStyle(style) }
 func (s *pollingSurface) SetCursorPosition(x, y core.Unit) {
 	s.platform.backend.SetCursorPosition(x, y)
 }

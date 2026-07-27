@@ -88,11 +88,21 @@ type TUIBackend struct {
 	frontLineAttr []byte
 
 	// Current state
-	currentStyle  style.CellStyle
-	clipRect      core.UnitRect
-	cursorX       int
-	cursorY       int
+	currentStyle style.CellStyle
+	clipRect     core.UnitRect
+	cursorX      int
+	cursorY      int
+	// cursorVisible is what the APP asked for; cursorShown is what the
+	// TERMINAL was last told. They diverge across a present: the hardware
+	// cursor is hidden for the repaint and shown again only once EndFrame has
+	// put it back at its settled position.
 	cursorVisible bool
+	cursorShown   bool
+	// cursorStyle is the DECSCUSR shape the focused trinket asked for, and
+	// cursorStyleSent what the terminal was last told, so an unchanged shape
+	// stays off the wire. Emitted only while the cursor is visible.
+	cursorStyle     int
+	cursorStyleSent int
 
 	// Input handling
 	keyboard   *keyboard.Handler
@@ -311,6 +321,7 @@ func (t *TUIBackend) Shutdown() {
 
 	// Show cursor
 	t.write("\033[?25h")
+	t.cursorShown = true
 
 	// Leave alternate screen
 	t.write("\033[?1049l")
@@ -411,8 +422,13 @@ func (t *TUIBackend) EndFrame() {
 		lineCleared := false
 
 		// After resize, clear each line (and its DEC line mode) before updating.
+		// DECSWL (ESC#5) is what actually retires the line mode: erase-line
+		// clears a row's CONTENT, never its DEC line attribute, so zeroing
+		// frontLineAttr without it left the record saying "normal" while the
+		// terminal kept the row doubled — and the reversion below, which fires
+		// only on a non-zero record, could never rescue it again.
 		if clearLines {
-			sb.WriteString(fmt.Sprintf("\033[%d;1H\033[0m\033[2K", y+1))
+			sb.WriteString(fmt.Sprintf("\033[%d;1H\033#5\033[0m\033[2K", y+1))
 			t.frontLineAttr[y] = 0
 			lineCleared = true
 			termY, termX = y, 0
@@ -442,7 +458,7 @@ func (t *TUIBackend) EndFrame() {
 					if c.DWLFill || c.Char == 0 {
 						continue // fillers/continuations: the carrier covers them
 					}
-					if code := c.Style.Code(); code != penStyle {
+					if code := c.Style.CodeDepth(t.colorDepth); code != penStyle {
 						sb.WriteString(code)
 						penStyle = code
 					}
@@ -504,7 +520,7 @@ func (t *TUIBackend) EndFrame() {
 				sb.WriteString(fmt.Sprintf("\033[%d;%dH", y+1, x+1))
 				termY, termX = y, x
 			}
-			if code := effectiveCell.Style.Code(); code != penStyle {
+			if code := effectiveCell.Style.CodeDepth(t.colorDepth); code != penStyle {
 				sb.WriteString(code)
 				penStyle = code
 			}
@@ -529,6 +545,21 @@ func (t *TUIBackend) EndFrame() {
 		}
 	}
 
+	// The diff addresses cells all over the screen, and a terminal renders the
+	// stream as it parses it — a visible hardware cursor would skate along
+	// with the repaint. Hide it for the duration and let the tail below reveal
+	// it again, once it is back at its settled position. An empty diff needs
+	// no bracket (and must not blink the cursor on an idle present).
+	body := sb.String()
+	var out strings.Builder
+	if body != "" {
+		if t.cursorShown {
+			out.WriteString("\033[?25l")
+			t.cursorShown = false
+		}
+		out.WriteString(body)
+	}
+
 	// Restore cursor position if visible. On a DEC double-width line the
 	// terminal addresses doubled columns, so the X is halved there.
 	if t.cursorVisible {
@@ -536,11 +567,20 @@ func (t *TUIBackend) EndFrame() {
 		if t.cursorY >= 0 && t.cursorY < len(t.frontLineAttr) && t.frontLineAttr[t.cursorY] != 0 {
 			cx /= 2
 		}
-		sb.WriteString(fmt.Sprintf("\033[%d;%dH", t.cursorY+1, cx+1))
-		sb.WriteString("\033[?25h")
+		out.WriteString(fmt.Sprintf("\033[%d;%dH", t.cursorY+1, cx+1))
+		// Shape before visibility, so a cursor about to be shown appears
+		// already wearing it rather than flickering through the last one.
+		if t.cursorStyle != t.cursorStyleSent {
+			out.WriteString(fmt.Sprintf("\033[%d q", t.cursorStyle))
+			t.cursorStyleSent = t.cursorStyle
+		}
+		if !t.cursorShown {
+			out.WriteString("\033[?25h")
+			t.cursorShown = true
+		}
 	}
 
-	t.write(sb.String())
+	t.write(out.String())
 }
 
 // Clear fills the entire surface with a style.
@@ -696,7 +736,7 @@ func (t *TUIBackend) appendCombining(x, row int, ch rune) {
 // DECDHL halves). Returns the columns consumed. EndFrame emits a row whose
 // cells all belong to one DWL mode as a real DEC line (carriers only); a
 // mixed row renders these cells literally, i.e. double-spaced.
-func (t *TUIBackend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style.CellStyle, mode byte) int {
+func (t *TUIBackend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style.CellStyle, mode byte, cellWidth float64) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -705,7 +745,13 @@ func (t *TUIBackend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s st
 	if ch == 0 {
 		ch = ' '
 	}
+	// A terminal grid has whole columns only, so a flex width (which may be
+	// fractional) rounds to the columns the glyph actually occupies; the rune's
+	// own East Asian width is the fallback when no flex width was given.
 	w := cellRuneWidth(ch)
+	if cellWidth > 0 {
+		w = int(cellWidth + 0.5)
+	}
 	if w < 1 {
 		w = 1
 	}
@@ -990,27 +1036,49 @@ func (t *TUIBackend) WaitEvent() core.Event {
 	}
 }
 
-// SetCursorVisible shows or hides the cursor.
+// SetCursorVisible shows or hides the cursor. HIDING takes effect at once;
+// SHOWING is recorded and left to the next present, which addresses the cursor
+// before revealing it — the same rule SetCursorStyle follows, and for the same
+// reason: the cursor must never appear at a stale position, and must never be
+// visible while a repaint drags it across the screen. (Callers show the caret
+// from inside their Frame, so an EndFrame always follows.)
 func (t *TUIBackend) SetCursorVisible(visible bool) {
 	t.mu.Lock()
 	t.cursorVisible = visible
+	hide := !visible && t.cursorShown
+	if hide {
+		t.cursorShown = false
+	}
 	t.mu.Unlock()
 
-	if visible {
-		t.write("\033[?25h")
-	} else {
+	if hide {
 		t.write("\033[?25l")
 	}
 }
 
+// SetCursorStyle records the DECSCUSR shape for the next present. It is not
+// written immediately: a shape only reaches the terminal beside the cursor it
+// belongs to, so it can never reveal or restyle a hidden cursor.
+func (t *TUIBackend) SetCursorStyle(style int) {
+	if style < 0 || style > 6 {
+		return
+	}
+	t.mu.Lock()
+	t.cursorStyle = style
+	t.mu.Unlock()
+}
+
 // SetCursorPosition positions the cursor.
+// The position is recorded, not written: the present addresses the cursor
+// itself, once the repaint that would have dragged it around is done (see
+// EndFrame). Writing here would move a visible cursor mid-frame — the very
+// jump the present's hide/show bracket exists to prevent — and be re-issued
+// moments later anyway.
 func (t *TUIBackend) SetCursorPosition(x, y core.Unit) {
 	t.mu.Lock()
 	t.cursorX = t.metrics.UnitsToCellX(x)
 	t.cursorY = t.metrics.UnitsToCellY(y)
 	t.mu.Unlock()
-
-	t.write(fmt.Sprintf("\033[%d;%dH", t.cursorY+1, t.cursorX+1))
 }
 
 // SupportsColor returns whether the backend supports color.
@@ -1117,8 +1185,10 @@ func (t *TUIBackend) handleKey(key string) {
 		return // Position events don't generate UI events
 	}
 
-	// Check for mouse action events
-	if strings.HasPrefix(key, "Mouse") {
+	// Check for mouse action events — which may arrive MODIFIER-PREFIXED
+	// ("S-MouseRightPress" from a terminal that forwards shifted clicks, as
+	// iTerm2 does), so the mouse-ness test looks past the prefixes.
+	if _, name := core.ParseKeyModifiers(key); strings.HasPrefix(name, "Mouse") {
 		t.handleMouseAction(key)
 		return
 	}
@@ -1158,6 +1228,13 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	y := t.pendingMouseY
 	t.mu.Unlock()
 
+	// Strip modifier prefixes ("S-MouseRightPress") into event modifiers.
+	// Terminals VARY in whether they forward modified clicks to the app —
+	// iTerm2 sends shift+clicks through (shifted), stock Terminal strips
+	// the shift — and a modified mouse event must reach the trinkets with
+	// its modifiers, not be dropped as unknown here.
+	mods, key := core.ParseKeyModifiers(key)
+
 	// Convert cell coordinates to units
 	unitX := t.metrics.CellToUnitsX(x)
 	unitY := t.metrics.CellToUnitsY(y)
@@ -1180,30 +1257,34 @@ func (t *TUIBackend) handleMouseAction(key string) {
 
 	switch key {
 	case "MouseLeftPress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 	case "MouseMiddlePress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.MiddleButton}
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.MiddleButton, Modifiers: mods}
 	case "MouseRightPress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.RightButton}
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
 	case "MousePress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
 	case "MouseLeftRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 	case "MouseMiddleRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.MiddleButton}
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.MiddleButton, Modifiers: mods}
 	case "MouseRightRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.RightButton}
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
 	case "MouseRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
 	case "MouseLeftDrag", "MouseMiddleDrag", "MouseRightDrag", "MouseDrag":
-		event = core.MouseMoveEvent{X: unitX, Y: unitY}
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Modifiers: mods}
 
 	case "MouseScrollUp":
-		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: -1}
+		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: -1, Modifiers: mods}
 	case "MouseScrollDown":
-		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: 1}
+		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: 1, Modifiers: mods}
+	case "MouseScrollLeft":
+		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaX: -1, Modifiers: mods}
+	case "MouseScrollRight":
+		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaX: 1, Modifiers: mods}
 
 	default:
 		return // Unknown mouse event
@@ -1243,4 +1324,3 @@ func detectColorDepth() int {
 	// Default to 16 colors
 	return 16
 }
-
