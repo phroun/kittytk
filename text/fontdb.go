@@ -59,6 +59,19 @@ type fontDB struct {
 	aliases  map[string][]string // canonical alias -> ordered target families
 	def      string              // default family (canonical)
 
+	// sizeScale holds per-FACE optical size multipliers (1.1 = 110% of the
+	// face's natural size), keyed like baselineAdj. Applied to the shaping em,
+	// so on the terminal grid the glyph fills more or less of its fixed cell,
+	// and on the proportional path the whole face renders larger or smaller.
+	sizeScale map[string]float64
+
+	// baselineAdj holds per-FACE baseline corrections in cell units, keyed by
+	// a face-canonical name (spaces/hyphens/underscores stripped, see
+	// faceKey). Applied wherever a request RESOLVES to a concrete family, so
+	// one entry corrects the face through every route that reaches it — any
+	// alias in the ui tree, per-glyph script fallback, or a direct name.
+	baselineAdj map[string]int
+
 	// searchPaths are extra directories (beyond the OS defaults) scanned
 	// by RegisterFontByName; nameIndex is the lazily-built normalized
 	// family-name -> file paths map over searchPaths + OS font dirs, dropped
@@ -68,6 +81,157 @@ type fontDB struct {
 }
 
 func canonical(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+
+// faceKey normalizes a family name for the per-face adjustment map: canonical,
+// then with spaces, hyphens and underscores removed, so "Noto Kufi Arabic",
+// "noto-kufi-arabic" and "NotoKufiArabic" all name the same face and a
+// correction cannot miss on spelling alone.
+func faceKey(name string) string {
+	var b strings.Builder
+	for _, r := range canonical(name) {
+		if r != ' ' && r != '-' && r != '_' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// SetSizeScale records a per-face optical size multiplier: 1.1 renders the
+// face at 110% of the size its own metrics would give it, for balancing a
+// face that reads small or large beside the base ui-term / ui-text faces.
+// 1 (or 0) removes the entry.
+func (e *Engine) SetSizeScale(family string, scale float64) {
+	e.db.mu.Lock()
+	defer e.db.mu.Unlock()
+	k := faceKey(family)
+	if k == "" {
+		return
+	}
+	if scale <= 0 || scale == 1 {
+		delete(e.db.sizeScale, k)
+	} else {
+		if e.db.sizeScale == nil {
+			e.db.sizeScale = map[string]float64{}
+		}
+		e.db.sizeScale[k] = scale
+	}
+	e.bumpEpoch() // shaped runs and cached masks were sized at the old scale
+}
+
+// SizeScale reports the multiplier for the family a NAME resolves to,
+// following the alias chain; 1 when none is recorded.
+func (e *Engine) SizeScale(name string) float64 {
+	e.db.mu.RLock()
+	defer e.db.mu.RUnlock()
+	return e.db.scaleForName(name)
+}
+
+func (db *fontDB) scaleForName(name string) float64 {
+	if len(db.sizeScale) == 0 {
+		return 1
+	}
+	if v, ok := db.sizeScale[faceKey(name)]; ok {
+		return v
+	}
+	if fam, ok := db.resolveFamily(canonical(name), 0); ok {
+		if v, ok := db.sizeScale[faceKey(fam)]; ok {
+			return v
+		}
+	}
+	return 1
+}
+
+// scaleForFace maps a loaded face back to its family and returns that
+// family's multiplier. The variants map holds only faces already loaded, so
+// this never triggers a load; the family count is small enough that a scan
+// costs less than maintaining a reverse index.
+//
+// This is what lets a scale reach a face chosen by per-glyph FALLBACK: the
+// shaping size is computed once from the requested font, but each split run
+// carries the face that will actually paint it.
+func (db *fontDB) scaleForFace(face *gtfont.Face) float64 {
+	if face == nil || len(db.sizeScale) == 0 {
+		return 1
+	}
+	for key, fam := range db.families {
+		for _, v := range fam.variants {
+			if v == face {
+				if sc, ok := db.sizeScale[faceKey(key)]; ok {
+					return sc
+				}
+				return 1
+			}
+		}
+	}
+	return 1
+}
+
+// ScriptFaceFor reports the face NAME a rune actually resolves to when painted
+// with the given primary font: the per-glyph script fallback target
+// (ui-<root>-<script>-<style>) when the rune belongs to a script class the
+// primary does not own, and the primary itself otherwise.
+//
+// Callers that see only the primary family — a terminal cell resolves its font
+// once per cell, while the engine picks the script face per glyph — need this
+// to ask about the face that will really be used.
+func (e *Engine) ScriptFaceFor(primary string, r rune) string {
+	cls := scriptClass(r)
+	if cls == "" {
+		return primary
+	}
+	root, style := scriptContext(primary)
+	if root == "" {
+		root = "ui-term"
+	}
+	if style != "" {
+		return root + "-" + cls + "-" + style
+	}
+	return root + "-" + cls
+}
+
+// SetBaselineAdjust records a per-face baseline correction in CELL UNITS
+// (1/16 of a row), positive moving the face DOWN. It is a delta applied on top
+// of automatic baseline alignment, for a face whose own metrics misplace it.
+// Zero removes the entry.
+func (e *Engine) SetBaselineAdjust(family string, units int) {
+	e.db.mu.Lock()
+	defer e.db.mu.Unlock()
+	k := faceKey(family)
+	if k == "" {
+		return
+	}
+	if units == 0 {
+		delete(e.db.baselineAdj, k)
+		return
+	}
+	if e.db.baselineAdj == nil {
+		e.db.baselineAdj = map[string]int{}
+	}
+	e.db.baselineAdj[k] = units
+	e.bumpEpoch() // cached masks were rasterized at the old placement
+}
+
+// BaselineAdjust reports the correction recorded for the family a NAME
+// resolves to — following the alias chain first, so ui-term-arabic-sans and
+// the concrete "Noto Kufi Arabic" both find the same entry.
+func (e *Engine) BaselineAdjust(name string) int {
+	e.db.mu.RLock()
+	defer e.db.mu.RUnlock()
+	if len(e.db.baselineAdj) == 0 {
+		return 0
+	}
+	// The name as written wins (a correction may be pinned to an alias), then
+	// the concrete family the alias chain lands on.
+	if v, ok := e.db.baselineAdj[faceKey(name)]; ok {
+		return v
+	}
+	if fam, ok := e.db.resolveFamily(canonical(name), 0); ok {
+		if v, ok := e.db.baselineAdj[faceKey(fam)]; ok {
+			return v
+		}
+	}
+	return 0
+}
 
 func newFontDB() *fontDB {
 	db := &fontDB{

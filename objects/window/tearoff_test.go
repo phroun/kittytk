@@ -8,6 +8,11 @@ import (
 	"github.com/phroun/kittytk/platform"
 )
 
+// ppu1 / ppu2 are fixed pixels-per-unit getters for the fakes (the real
+// desktop passes its live pxPerUnit so a font zoom re-anchors mid-session).
+func ppu1() float64 { return 1 }
+func ppu2() float64 { return 2 }
+
 // nativeFakeSurface is an OS window's worth of fake: unit size, px
 // position, and a size setter that reports back through Resized like
 // the real platform (scale 1: pixels are units).
@@ -28,6 +33,7 @@ func (s *nativeFakeSurface) SetHandler(h platform.SurfaceHandler) { s.handler = 
 func (s *nativeFakeSurface) Invalidate(core.UnitRect)             {}
 func (s *nativeFakeSurface) SetCursorVisible(bool)                {}
 func (s *nativeFakeSurface) SetCursorPosition(x, y core.Unit)     {}
+func (s *nativeFakeSurface) SetCursorStyle(int)                   {}
 func (s *nativeFakeSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *nativeFakeSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *nativeFakeSurface) ScreenSizePx() (int, int) {
@@ -60,7 +66,7 @@ func TestTearOffHostEdgeResize(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
 	gx, gy := 700, 380
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 1, func() (int, int) { return gx, gy }, nil)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return gx, gy }, nil)
 
 	// Right edge: press within the grip, drag 40 px right.
 	h.Event(core.MousePressEvent{X: 197, Y: 50, Button: core.LeftButton})
@@ -117,7 +123,7 @@ func TestTearOffHostEdgeResize(t *testing.T) {
 func TestTearOffHostZoom(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
 
 	h.ToggleZoom()
 	if surf.x != 0 || surf.y != 30 || surf.size.Width != 1600 || surf.size.Height != 970 {
@@ -148,7 +154,7 @@ func TestTearOffHostZoom(t *testing.T) {
 func TestTearOffHostKeyboardGeometry(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 2, func() (int, int) { return 0, 0 }, nil)
+	h := NewTearOffHost(win, surf, ppu2, func() (int, int) { return 0, 0 }, nil)
 
 	// Arrow move: -8 units at scale 2 = -16 px.
 	if !h.applyKeyboardBounds(core.UnitRect{X: -8, Y: 0, Width: 200, Height: 100}) {
@@ -172,7 +178,7 @@ func TestTearOffHostLostReleaseDisarms(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
 	gx, gy := 700, 380
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 1, func() (int, int) { return gx, gy }, nil)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return gx, gy }, nil)
 
 	// Armed (as the tear-off arms it), but the release was lost:
 	// hover motion must not move the window.
@@ -202,7 +208,7 @@ func TestTearOffHostLostReleaseDisarms(t *testing.T) {
 func TestTearOffHostTitleDoubleClickZooms(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
 
 	h.Event(core.MousePressEvent{X: 120, Y: 8, Button: core.LeftButton})
 	h.Event(core.MouseReleaseEvent{X: 120, Y: 8, Button: core.LeftButton})
@@ -279,7 +285,7 @@ func TestTearOffHostZoomDragRestoreAndSnap(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
 	gx, gy := 0, 0
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 1, func() (int, int) { return gx, gy }, nil)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return gx, gy }, nil)
 
 	h.ToggleZoom() // 0,30 1600x970
 
@@ -315,7 +321,7 @@ func TestTearOffHostZoomDragRestoreAndSnap(t *testing.T) {
 func TestTearOffHostMinimizeButton(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
 
 	if win.Flags()&WindowFlagNoMinimize != 0 {
 		t.Fatal("minimize masked on a native torn window")
@@ -333,7 +339,7 @@ func TestTearOffHostMinimizeButton(t *testing.T) {
 func TestTearOffHostFocusAndCmdM(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
 
 	h.Event(core.FocusEvent{Focused: false})
 	if win.IsActive() {
@@ -357,7 +363,7 @@ func TestTearOffHostFocusAndCmdM(t *testing.T) {
 func TestTearOffHostOwnsPopups(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 300, Height: 200}, x: 0, y: 0}
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
 
 	// The host is a PopupController and bridges the clipboard.
 	var pc core.PopupController = h
@@ -401,7 +407,7 @@ func TestTearOffHostOwnsPopups(t *testing.T) {
 func TestTornHostModalBlockedSuppressesInput(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}}
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
 
 	blocked := true
 	presses := 0
@@ -435,7 +441,7 @@ func TestTornHostModalBlockedSuppressesInput(t *testing.T) {
 func TestTornHostModalBlockedAllowsTitleDrag(t *testing.T) {
 	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}}
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
 	h.SetModalChecker(func() bool { return true }, nil)
 
 	// Title-bar press (below the 6-unit top grip, above the content, mid-width
@@ -446,10 +452,112 @@ func TestTornHostModalBlockedAllowsTitleDrag(t *testing.T) {
 	}
 
 	// A content press does not start a drag.
-	h2 := NewTearOffHost(NewWindow("t2"), surf, 1, func() (int, int) { return 0, 0 }, nil)
+	h2 := NewTearOffHost(NewWindow("t2"), surf, ppu1, func() (int, int) { return 0, 0 }, nil)
 	h2.SetModalChecker(func() bool { return true }, nil)
 	h2.Event(core.MousePressEvent{X: 100, Y: 60, Button: core.LeftButton})
 	if h2.Dragging() {
 		t.Error("a content press on a blocked torn window must not start a drag")
+	}
+}
+
+// A popup composited on the torn surface (a dropdown menu, a context menu)
+// blocks the cursor shape of the content underneath: hovering over the popup
+// shows the plain arrow, never an I-beam bleeding through from a text-editing
+// trinket below — the same rule the desktop's CursorAt applies.
+func TestTearOffHostPopupBlocksContentCursor(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+	var got core.CursorShape
+	h.SetCursorSetter(func(s core.CursorShape) { got = s })
+
+	// A content trinket that always wants the I-beam (see ibeamContent in
+	// test_manager_cursor_test.go).
+	content := &ibeamContent{}
+	content.TrinketBase = *core.NewTrinketBase()
+	win.SetContent(content)
+
+	// No popup: hovering the content shows the I-beam.
+	h.updateHoverAndCursor(100, 50)
+	if got != core.CursorText {
+		t.Fatalf("without a popup the content's I-beam should show; got %v", got)
+	}
+
+	// A popup over that spot: the arrow shows, not the I-beam through it.
+	h.RegisterPopup(&core.PopupRequest{
+		ID:     "menu",
+		Bounds: core.UnitRect{X: 80, Y: 30, Width: 60, Height: 40},
+	})
+	h.updateHoverAndCursor(100, 50)
+	if got != core.CursorDefault {
+		t.Fatalf("over a popup the arrow should show; got %v", got)
+	}
+
+	// Outside the popup the content's cursor returns.
+	h.updateHoverAndCursor(30, 80)
+	if got != core.CursorText {
+		t.Fatalf("outside the popup the I-beam should return; got %v", got)
+	}
+
+	// Dismissing the popup restores the content cursor under it too.
+	h.UnregisterPopup("menu")
+	h.updateHoverAndCursor(100, 50)
+	if got != core.CursorText {
+		t.Fatalf("after dismissal the I-beam should return; got %v", got)
+	}
+}
+
+// The pixels-per-unit ratio is a LIVE getter: a host font zoom mid-session
+// changes it, and every later px<->unit conversion — the title-drag grab
+// anchor first among them — must re-read it. A snapshot from tear-off time
+// made a title drag at any other zoom misplace the window relative to the
+// pointer.
+func TestTearOffHostDragAnchorTracksLivePPU(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	gx, gy := 700, 380
+	ppu := 1.0
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, func() float64 { return ppu }, func() (int, int) { return gx, gy }, nil)
+
+	// The desktop grabbed the title at unit (40, 8).
+	h.BeginDrag(40, 8)
+	gx, gy = 800, 400
+	h.Event(core.MouseMoveEvent{X: 40, Y: 8, Buttons: core.LeftButton})
+	if surf.x != 800-40 || surf.y != 400-8 {
+		t.Fatalf("ppu 1 drag: window at %d,%d, want %d,%d", surf.x, surf.y, 800-40, 400-8)
+	}
+
+	// The host font zoom doubles pixels-per-unit mid-drag: the same grab
+	// unit now sits twice as many pixels into the title bar.
+	ppu = 2.0
+	gx, gy = 900, 500
+	h.Event(core.MouseMoveEvent{X: 40, Y: 8, Buttons: core.LeftButton})
+	if surf.x != 900-80 || surf.y != 500-16 {
+		t.Fatalf("ppu 2 drag: window at %d,%d, want %d,%d", surf.x, surf.y, 900-80, 500-16)
+	}
+	h.Event(core.MouseReleaseEvent{X: 40, Y: 8, Button: core.LeftButton})
+}
+
+// A ZOOMED torn window opts into the pixel-anchored font-zoom treatment: it
+// fills its display's work area, so the platform must keep its pixel size
+// (re-deriving the unit grid) rather than re-size it away from the edges.
+func TestTearOffHostPixelAnchoredWhenZoomed(t *testing.T) {
+	var _ platform.PixelAnchoredOnFontZoom = (*TearOffHost)(nil)
+
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+	if h.KeepPixelSizeOnFontZoom() {
+		t.Fatal("an un-zoomed torn window keeps its UNIT size, not its pixels")
+	}
+	h.ToggleZoom()
+	if !h.KeepPixelSizeOnFontZoom() {
+		t.Fatal("a zoomed torn window must keep its pixel size through a font zoom")
+	}
+	h.ToggleZoom()
+	if h.KeepPixelSizeOnFontZoom() {
+		t.Fatal("restoring the zoom returns to unit-size preservation")
 	}
 }

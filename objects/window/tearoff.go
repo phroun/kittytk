@@ -19,7 +19,12 @@ type TearOffHost struct {
 	win    *Window
 	surf   platform.Surface
 	native platform.NativeSurface
-	ppu    float64 // device pixels per unit (font_size-aware, may be fractional)
+	// ppu reports the LIVE device pixels-per-unit (font_size-aware, may be
+	// fractional). A getter, not a captured value: the host font zoom can
+	// change the ratio at any time, and a snapshot from tear-off time made
+	// every later px<->unit conversion — the title-drag grab anchor first
+	// among them — land on the wrong pixel.
+	ppu    func() float64
 	global func() (int, int)
 
 	// onRedock runs during a title drag with the pointer at the given
@@ -111,9 +116,8 @@ type TearOffHost struct {
 
 	// setCursor applies a system mouse cursor (wired by the desktop from
 	// the platform's CursorController). nil when the platform can't set
-	// cursors. lastCursor avoids redundant applications.
-	setCursor  func(core.CursorShape)
-	lastCursor core.CursorShape
+	// cursors.
+	setCursor func(core.CursorShape)
 }
 
 // Resize edge bits. The top edge is the title bar (drag handle), so
@@ -132,15 +136,13 @@ const tearResizeGrip core.Unit = 6
 // NewTearOffHost attaches the window to its own surface. Unlike
 // SurfaceHost no chrome is suppressed; maximize/minimize make no
 // sense without a managing desktop and are masked until re-dock.
-// Call on the platform thread.
-func NewTearOffHost(win *Window, surf platform.Surface, ppu float64,
+// Call on the platform thread. ppu reports the live pixels-per-unit
+// (the desktop's pxPerUnit); nil means an unscaled 1:1 surface.
+func NewTearOffHost(win *Window, surf platform.Surface, ppu func() float64,
 	global func() (int, int),
 	onRedock func(globalX, globalY int, grabX, grabY core.Unit) bool) *TearOffHost {
 	h := &TearOffHost{win: win, surf: surf, ppu: ppu, global: global, onRedock: onRedock, resizeGrip: tearResizeGrip}
 	h.native, _ = surf.(platform.NativeSurface)
-	if h.ppu <= 0 {
-		h.ppu = 1
-	}
 
 	// Popups from the torn window's trinkets open on this surface.
 	win.SetPopupController(h)
@@ -274,10 +276,14 @@ func (h *TearOffHost) ResizeGrip() core.Unit { return h.resizeGrip }
 
 // applyCursor sets the system cursor, skipping redundant applications.
 func (h *TearOffHost) applyCursor(shape core.CursorShape) {
-	if h.setCursor == nil || shape == h.lastCursor {
+	if h.setCursor == nil {
 		return
 	}
-	h.lastCursor = shape
+	// Re-assert on every hover, even when the shape is unchanged: the platform
+	// must re-set the OS cursor on each mouse-move (macOS resets it to the arrow
+	// otherwise), so a same-shape short-circuit here would starve it and the
+	// cursor would flip back to the arrow as the pointer moves over the torn
+	// window. The platform's SetCursor is the idempotent, cheap re-set.
 	h.setCursor(shape)
 }
 
@@ -351,6 +357,18 @@ func tornEdgeRects(b core.UnitRect, edges int, grip core.Unit) []core.UnitRect {
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
 // cursor for a plain (non-drag, non-resize) hover over the torn window.
 func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
+	// A popup (dropdown menu, context menu) composited on the torn surface
+	// floats above the content: over it, no trinket cursor from underneath
+	// shows through — just the arrow. Mirrors the desktop's CursorAt rule, so
+	// a torn-off window never shows an I-beam THROUGH an open menu.
+	for _, p := range h.popups {
+		b := p.Bounds
+		if x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
+			h.win.SetResizeHoverRects(nil)
+			h.applyCursor(core.CursorDefault)
+			return
+		}
+	}
 	edges := h.edgeAt(x, y)
 	if edges != 0 {
 		h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), edges, h.resizeGrip))
@@ -504,13 +522,17 @@ func (h *TearOffHost) EndDrag() {
 	h.dragRestored = false
 }
 
-// Frame implements platform.SurfaceHandler.
+// Frame implements platform.SurfaceHandler. Like SurfaceHost, the frame's
+// platform text-caret request is applied after painting — and popups paint
+// last, so a menu open over the window's content owns the caret.
 func (h *TearOffHost) Frame(p *core.Painter) {
 	if h.ghost {
 		// The window lives on the desktop again; this surface only
 		// survives (invisibly) to finish its mouse session.
 		return
 	}
+	p.ResetTextCaretRequest()
+	defer func() { platform.ApplyTextCaret(h.Surface(), p.TextCaretRequest()) }()
 	h.win.Paint(p)
 	// A modally-blocked torn window is darkened, mirroring an in-surface
 	// window suppressed by a modal.
@@ -800,8 +822,15 @@ func (h *TearOffHost) beginResize(x, y core.Unit) bool {
 // Resized and the window re-lays out to the surface.
 // px converts a unit length to device pixels for this surface, tracking
 // font_size (the surface backend renders at the same pixels-per-unit).
+// The ratio is re-read on every call — see the ppu field.
 func (h *TearOffHost) px(u core.Unit) int {
-	return int(math.Round(float64(u) * h.ppu))
+	ppu := 1.0
+	if h.ppu != nil {
+		if v := h.ppu(); v > 0 {
+			ppu = v
+		}
+	}
+	return int(math.Round(float64(u) * ppu))
 }
 
 func (h *TearOffHost) resizeMove() bool {
@@ -876,6 +905,13 @@ func (h *TearOffHost) ToggleZoom() {
 	}
 	h.zoomToWorkArea()
 }
+
+// KeepPixelSizeOnFontZoom implements platform.PixelAnchoredOnFontZoom: a
+// ZOOMED torn window fills its display's work area, so a live font zoom must
+// leave its pixel size alone (the unit grid re-derives, like the main
+// window) — re-sizing it to preserve units would pull it away from the
+// display edges it is snapped to.
+func (h *TearOffHost) KeepPixelSizeOnFontZoom() bool { return h.zoomed }
 
 // zoomToWorkArea saves the current rect and fills the display's work
 // area.

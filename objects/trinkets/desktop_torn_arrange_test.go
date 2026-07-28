@@ -8,6 +8,9 @@ import (
 	"github.com/phroun/kittytk/platform"
 )
 
+// ppu1 is a fixed pixels-per-unit getter for the fakes.
+func ppu1() float64 { return 1 }
+
 // fakeNativeSurface is a minimal platform.NativeSurface for exercising the
 // torn-window Tile/Cascade arrangement.
 type fakeNativeSurface struct {
@@ -24,6 +27,7 @@ func (s *fakeNativeSurface) SetHandler(h platform.SurfaceHandler) { s.handler = 
 func (s *fakeNativeSurface) Invalidate(core.UnitRect)             {}
 func (s *fakeNativeSurface) SetCursorVisible(bool)                {}
 func (s *fakeNativeSurface) SetCursorPosition(x, y core.Unit)     {}
+func (s *fakeNativeSurface) SetCursorStyle(int)                   {}
 func (s *fakeNativeSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *fakeNativeSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *fakeNativeSurface) ScreenSizePx() (int, int)             { return s.pxW, s.pxH }
@@ -45,7 +49,7 @@ func TestArrangeTornAppWindowsTilePlacesMainUpperLeft(t *testing.T) {
 	mk := func(title string) (*window.Window, *fakeNativeSurface) {
 		w := window.NewWindow(title)
 		s := &fakeNativeSurface{pxW: 400, pxH: 300}
-		h := window.NewTearOffHost(w, s, 1, func() (int, int) { return 0, 0 }, nil)
+		h := window.NewTearOffHost(w, s, ppu1, func() (int, int) { return 0, 0 }, nil)
 		d.tornHosts = append(d.tornHosts, h)
 		return w, s
 	}
@@ -79,7 +83,7 @@ func TestArrangeTornAppWindowsHonorsNoResize(t *testing.T) {
 	fixed := window.NewWindow("Fixed")
 	fixed.SetFlags(window.WindowFlagNoResize)
 	fs := &fakeNativeSurface{pxW: 250, pxH: 180}
-	fh := window.NewTearOffHost(fixed, fs, 1, func() (int, int) { return 0, 0 }, nil)
+	fh := window.NewTearOffHost(fixed, fs, ppu1, func() (int, int) { return 0, 0 }, nil)
 	d.tornHosts = append(d.tornHosts, fh)
 
 	app := &mockApp{name: "Demo", main: fixed, windows: []*window.Window{fixed}}
@@ -101,7 +105,7 @@ func TestHideShowTornWindows(t *testing.T) {
 
 	w := window.NewWindow("Torn")
 	s := &fakeNativeSurface{pxW: 400, pxH: 300}
-	h := window.NewTearOffHost(w, s, 1, func() (int, int) { return 0, 0 }, nil)
+	h := window.NewTearOffHost(w, s, ppu1, func() (int, int) { return 0, 0 }, nil)
 	d.tornHosts = append(d.tornHosts, h)
 
 	app := &mockApp{name: "Demo", main: w, windows: []*window.Window{w}}

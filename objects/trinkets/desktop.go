@@ -1179,7 +1179,7 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 	// Host it on the primary surface. No redock: there is no desktop to
 	// dock back to.
 	var host *window.TearOffHost
-	host = window.NewTearOffHost(win, surf, d.pxPerUnit(), gp.GlobalPointerPx,
+	host = window.NewTearOffHost(win, surf, d.pxPerUnit, gp.GlobalPointerPx,
 		func(int, int, core.Unit, core.Unit) bool { return false })
 	host.SetOnClosed(func() { d.dropTornHost(host) })
 	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)
@@ -2880,7 +2880,13 @@ func (h *desktopSurfaceHandler) Frame(painter *core.Painter) {
 
 	size := s.Size()
 	painter.Clear(core.UnitRect{Width: size.Width, Height: size.Height}, theme.Normal)
+	painter.ResetTextCaretRequest()
 	wm.Paint(painter)
+	// The desktop composites every window into ONE surface, so it is the frame
+	// owner here and applies the caret request itself — the same job SurfaceHost
+	// does in native one-window-per-surface mode. Without this a focused
+	// terminal would ask for the platform caret and nothing would place it.
+	platform.ApplyTextCaret(s, painter.TextCaretRequest())
 }
 
 // Resized reports the terminal/window size change.

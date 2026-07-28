@@ -513,7 +513,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 			}
 
 			if mode != 0 {
-				p.DrawCellDWL(x, y, ch, cell.Combining, cellStyle, mode)
+				p.DrawCellDWL(x, y, ch, cell.Combining, cellStyle, mode, w)
 				acc += 2 * w
 				continue
 			}
@@ -528,9 +528,13 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 		}
 	}
 
-	// Draw cursor if focused AND the terminal hasn't hidden its cursor
-	// (some apps like vim/emacs manage their own cursor display)
-	if t.HasFocus() && buf.IsCursorVisible() {
+	// The cursor. A FOCUSED terminal asks the platform for its real caret, so
+	// the outer terminal draws the shape DECSCUSR selected and blinks it
+	// natively — a bar stays a bar, which no cell grid can represent. An
+	// UNFOCUSED one keeps the painted block below, so you can still see where
+	// its caret sits. Either way, a terminal that hid its own cursor (vim,
+	// emacs, mew between frames) gets neither.
+	if buf.IsCursorVisible() {
 		cursorCol, cursorRow := buf.GetCursor()
 		if cursorRow >= 0 && cursorRow < len(cells) && cursorCol >= 0 && cursorCol < t.cols {
 			// The logical cursor column maps to a visual column through the
@@ -552,20 +556,55 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 			cursorX := metrics.CellToUnitsX(int(acc))
 			cursorY := metrics.CellToUnitsY(cursorRow)
 			if cursorX < bounds.Width && cursorY < bounds.Height {
-				// Draw cursor as reverse video
-				var ch rune = ' '
-				if cursorCol < len(cells[cursorRow]) {
-					ch = cells[cursorRow][cursorCol].Char
-					if ch == 0 {
-						ch = ' '
+				if t.HasFocus() {
+					// Hand the platform the caret, in the shape the terminal
+					// asked for. Nothing is painted here: the real cursor is
+					// drawn by the surface underneath us.
+					p.RequestTextCaret(cursorX, cursorY, t.decscusrStyle())
+				} else {
+					// Painted fallback for an unfocused terminal.
+					var ch rune = ' '
+					if cursorCol < len(cells[cursorRow]) {
+						ch = cells[cursorRow][cursorCol].Char
+						if ch == 0 {
+							ch = ' '
+						}
 					}
+					cursorStyle := style.DefaultStyle().
+						WithFg(style.ColorBlack).
+						WithBg(style.ColorWhite)
+					p.DrawCell(cursorX, cursorY, ch, cursorStyle)
 				}
-				cursorStyle := style.DefaultStyle().
-					WithFg(style.ColorBlack).
-					WithBg(style.ColorWhite)
-				p.DrawCell(cursorX, cursorY, ch, cursorStyle)
 			}
 		}
+	}
+}
+
+// decscusrStyle re-encodes the terminal's stored cursor style as the DECSCUSR
+// parameter that produced it. purfecterm splits the code into (shape, blink) on
+// the way in; the platform caret speaks DECSCUSR, so this is the way back out.
+func (t *PurfecTerm) decscusrStyle() int {
+	if t.terminal == nil {
+		return 0
+	}
+	shape, blink := t.terminal.Buffer().GetCursorStyle()
+	return decscusrFor(shape, blink)
+}
+
+// decscusrFor maps purfecterm's (shape, blink) pair back to its DECSCUSR
+// parameter: block 1/2, underline 3/4, bar 5/6, blinking first.
+func decscusrFor(shape, blink int) int {
+	steady := 0
+	if blink == 0 {
+		steady = 1
+	}
+	switch shape {
+	case 1: // underline
+		return 3 + steady
+	case 2: // bar
+		return 5 + steady
+	default: // block
+		return 1 + steady
 	}
 }
 
@@ -768,7 +807,9 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 	// App-owned mouse: relay the encoded press straight to the child.
 	if mode, enc := t.mouseTracking(); mode != 0 {
 		if btn, ok := purfMouseButton(event.Button); ok {
-			t.sendMouseReport(btn, cellX, cellY, true, enc)
+			// Carry the modifier bits (shift/alt/ctrl) so the app can see a
+			// shift+click — an editor guest extends its selection on it.
+			t.sendMouseReport(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, true, enc)
 		}
 		t.Update()
 		return true
@@ -820,7 +861,7 @@ func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// App-owned mouse: relay the encoded release straight to the child.
 	if mode, enc := t.mouseTracking(); mode != 0 {
 		if btn, ok := purfMouseButton(event.Button); ok {
-			t.sendMouseReport(btn, cellX, cellY, false, enc)
+			t.sendMouseReport(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, false, enc)
 		}
 		t.Update()
 		return true
@@ -864,12 +905,13 @@ func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// up, plain motion only under all-motion (1003). Motion the mode does
 	// not report is swallowed (the app owns the mouse either way).
 	if mode, enc := t.mouseTracking(); mode != 0 {
+		mods := gfxMouseModifiers(event.Modifiers)
 		if btn, ok := purfMouseButton(t.heldButton); ok {
 			if mode >= 1002 {
-				t.sendMouseReport(btn|purfecterm.MouseMotionFlag, cellX, cellY, true, enc)
+				t.sendMouseReport(btn|purfecterm.MouseMotionFlag|mods, cellX, cellY, true, enc)
 			}
 		} else if mode >= 1003 {
-			t.sendMouseReport(purfecterm.MouseButtonNone|purfecterm.MouseMotionFlag, cellX, cellY, true, enc)
+			t.sendMouseReport(purfecterm.MouseButtonNone|purfecterm.MouseMotionFlag|mods, cellX, cellY, true, enc)
 		}
 		t.Update()
 		return true
@@ -915,6 +957,11 @@ func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		} else if event.DeltaY > 0 {
 			t.sendMouseReport(purfecterm.MouseScrollDown, cellX, cellY, true, enc)
 		}
+		if event.DeltaX < 0 {
+			t.sendMouseReport(mouseScrollLeftBtn, cellX, cellY, true, enc)
+		} else if event.DeltaX > 0 {
+			t.sendMouseReport(mouseScrollRightBtn, cellX, cellY, true, enc)
+		}
 		t.Update()
 		return true
 	}
@@ -927,6 +974,11 @@ func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		t.terminal.HandleKeyString("MouseScrollUp")
 	} else if event.DeltaY > 0 {
 		t.terminal.HandleKeyString("MouseScrollDown")
+	}
+	if event.DeltaX < 0 {
+		t.terminal.HandleKeyString("MouseScrollLeft")
+	} else if event.DeltaX > 0 {
+		t.terminal.HandleKeyString("MouseScrollRight")
 	}
 	t.Update()
 	return true

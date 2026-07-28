@@ -89,7 +89,7 @@ func TestTUIDWLUniformRowRealMode(t *testing.T) {
 
 	b.BeginFrame()
 	for i, ch := range []rune{'A', 'B', ' ', ' '} {
-		b.DrawCellDWL(b.metrics.CellToUnitsX(2*i), 0, ch, "", s, '6')
+		b.DrawCellDWL(b.metrics.CellToUnitsX(2*i), 0, ch, "", s, '6', 0)
 	}
 	b.EndFrame()
 	got := out.String()
@@ -111,7 +111,7 @@ func TestTUIDWLWideGlyphGroup(t *testing.T) {
 	s := style.DefaultStyle()
 
 	b.BeginFrame()
-	if consumed := b.DrawCellDWL(0, 0, '日', "", s, '6'); consumed != 4 {
+	if consumed := b.DrawCellDWL(0, 0, '日', "", s, '6', 0); consumed != 4 {
 		t.Fatalf("a wide DWL cell should consume 4 columns, got %d", consumed)
 	}
 	b.EndFrame()
@@ -131,8 +131,8 @@ func TestTUIDWLMixedRowDoubleSpaced(t *testing.T) {
 	s := style.DefaultStyle()
 
 	b.BeginFrame()
-	b.DrawCellDWL(b.metrics.CellToUnitsX(0), 0, 'A', "", s, '6')
-	b.DrawCellDWL(b.metrics.CellToUnitsX(2), 0, 'B', "", s, '6')
+	b.DrawCellDWL(b.metrics.CellToUnitsX(0), 0, 'A', "", s, '6', 0)
+	b.DrawCellDWL(b.metrics.CellToUnitsX(2), 0, 'B', "", s, '6', 0)
 	b.DrawText(b.metrics.CellToUnitsX(4), 0, "zz", s, nil)
 	b.EndFrame()
 	got := out.String()
@@ -151,8 +151,8 @@ func TestTUIDWLReversion(t *testing.T) {
 	s := style.DefaultStyle()
 
 	b.BeginFrame()
-	b.DrawCellDWL(0, 0, 'A', "", s, '6')
-	b.DrawCellDWL(b.metrics.CellToUnitsX(2), 0, 'B', "", s, '6')
+	b.DrawCellDWL(0, 0, 'A', "", s, '6', 0)
+	b.DrawCellDWL(b.metrics.CellToUnitsX(2), 0, 'B', "", s, '6', 0)
 	b.EndFrame()
 	if !strings.Contains(out.String(), "\033#6") {
 		t.Fatalf("precondition: DWL row should engage, got %q", out.String())
@@ -163,5 +163,50 @@ func TestTUIDWLReversion(t *testing.T) {
 	b.EndFrame()
 	if !strings.Contains(out.String(), "\033#5") {
 		t.Fatalf("leaving DWL should emit ESC#5, got %q", out.String())
+	}
+}
+
+// A resize clears every line before repainting — and erase-line clears a row's
+// CONTENT, never its DEC line attribute. Zeroing frontLineAttr as part of that
+// clear, without also emitting DECSWL, left the record saying "normal" while
+// the terminal kept the row doubled; the reversion above fires only on a
+// non-zero record, so nothing could retire the mode afterwards and the row
+// stayed double-width for the rest of the session.
+func TestTUIDWLRetiredByLineClear(t *testing.T) {
+	b, out := newTestTUI(4, 1)
+	s := style.DefaultStyle()
+
+	b.BeginFrame()
+	b.DrawCellDWL(0, 0, 'A', "", s, '6', 0)
+	b.DrawCellDWL(b.metrics.CellToUnitsX(2), 0, 'B', "", s, '6', 0)
+	b.EndFrame()
+	if !strings.Contains(out.String(), "\033#6") {
+		t.Fatalf("precondition: DWL row should engage, got %q", out.String())
+	}
+
+	// A resize arms the full-screen line clear; the row now holds ordinary
+	// content, so the terminal must be told to drop the line mode.
+	out.Reset()
+	b.needsLineClear = true
+	b.BeginFrame()
+	b.DrawText(0, 0, "ab", s, nil)
+	b.EndFrame()
+
+	frame := out.String()
+	if !strings.Contains(frame, "\033#5") {
+		t.Fatalf("the line clear must retire the DEC line mode (ESC#5), got %q", frame)
+	}
+	if b.frontLineAttr[0] != 0 {
+		t.Errorf("row 0 should be recorded as normal, got %q", b.frontLineAttr[0])
+	}
+
+	// And a later frame with the row still normal emits no further mode
+	// changes — the record and the terminal now agree.
+	out.Reset()
+	b.BeginFrame()
+	b.DrawText(0, 0, "ab", s, nil)
+	b.EndFrame()
+	if strings.Contains(out.String(), "\033#") {
+		t.Errorf("a settled normal row should emit no DEC line mode, got %q", out.String())
 	}
 }
