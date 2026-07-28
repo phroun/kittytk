@@ -1,6 +1,12 @@
 # KittyTK
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 > **KittyTK** — *image/tty Trinket Kit*
+
+*If you use this, please support me on ko-fi:  [https://ko-fi.com/jeffday](https://ko-fi.com/F2F61JR2B4)*
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/F2F61JR2B4)
 
 A cross-surface UI toolkit in Go. Its components — **trinkets** — render
 either inside a terminal or break out onto their own graphical windows via
