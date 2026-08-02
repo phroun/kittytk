@@ -980,7 +980,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	}
 	fmt.Printf("🎨 Compositor drew %d windows (total surfaces: %d)\n", windowCount, len(r.windowSurfaces))
 	
-	// Step 4: Render popups on top of windows
+	// Step 4: Render popups (currently renders before menus - TODO: swap with Step 5)
 	if childWindowList.Popups != nil && len(childWindowList.Popups) > 0 {
 		fmt.Printf("🎯 Rendering %d popups\n", len(childWindowList.Popups))
 		
@@ -1215,7 +1215,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		}
 	}
 	
-	// Step 5: Render menu dropdown on top of popups
+	// Step 5: Render menu dropdown (currently renders after popups - TODO: should be before)
 	if childWindowList.MenuDropdown != nil {
 		fmt.Printf("🍔 Rendering menu dropdown\n")
 		
