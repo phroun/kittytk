@@ -4060,6 +4060,13 @@ func (d *Desktop) Paint(p *core.Painter) {
 		statusPainter := p.WithOffset(0, y)
 		d.statusBar.Paint(statusPainter)
 	}
+	
+	// Paint popups on top of everything (for compositor mode)
+	// When compositor is active, windows are rendered separately, but popups
+	// (combo box dropdowns, context menus) need to be rendered on the Desktop layer
+	if d.windowManager != nil {
+		d.windowManager.PaintPopups(p)
+	}
 }
 
 // HandleKeyPress handles keyboard input.

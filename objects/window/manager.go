@@ -2997,6 +2997,19 @@ func (m *WindowManager) Paint(p *core.Painter) {
 }
 
 // SetOnWindowAdded sets the window added callback.
+
+// PaintPopups paints only the registered popup overlays.
+// Used by compositor mode to render popups on the Desktop layer.
+func (m *WindowManager) PaintPopups(p *core.Painter) {
+	m.mu.RLock()
+	popups := m.popups
+	m.mu.RUnlock()
+	for _, popup := range popups {
+		if popup.Paint != nil {
+			popup.Paint(p)
+		}
+	}
+}
 func (m *WindowManager) SetOnWindowAdded(handler func(*Window)) {
 	m.mu.Lock()
 	m.onWindowAdded = handler
