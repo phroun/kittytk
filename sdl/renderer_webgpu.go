@@ -856,24 +856,22 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			fmt.Printf("🔄 Updated WindowSurface position to (%d,%d) %dx%d\n",
 				bounds.X, bounds.Y, bounds.Width, bounds.Height)
 			
-			// Clean up old resources AFTER GPU finishes with them (at end of frame)
-			defer func() {
-				if oldUniformBindGroup != nil {
-					oldUniformBindGroup.Release()
-				}
-				if oldUniformBuffer != nil {
-					oldUniformBuffer.Release()
-				}
-				if oldBindGroup != nil {
-					oldBindGroup.Release()
-				}
-				if oldTextureView != nil {
-					oldTextureView.Release()
-				}
-				if oldTexture != nil {
-					oldTexture.Release()
-				}
-			}()
+			// Clean up old resources NOW (new resources are already assigned)
+			if oldUniformBindGroup != nil {
+				oldUniformBindGroup.Release()
+			}
+			if oldUniformBuffer != nil {
+				oldUniformBuffer.Release()
+			}
+			if oldBindGroup != nil {
+				oldBindGroup.Release()
+			}
+			if oldTextureView != nil {
+				oldTextureView.Release()
+			}
+			if oldTexture != nil {
+				oldTexture.Release()
+			}
 		}
 		
 		// Render window to its backend
