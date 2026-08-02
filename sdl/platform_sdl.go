@@ -25,12 +25,7 @@ import (
 
 // WGSL shaders for blitting the UI texture to the screen
 const blitVertexShader = `
-struct PositionUniforms {
-    pos: vec2<f32>,    // Position in NDC (-1 to 1)
-    size: vec2<f32>,   // Size in NDC
-}
-
-@group(2) @binding(0) var<uniform> window_pos: PositionUniforms;
+@group(2) @binding(0) var<uniform> window_rect: vec4<f32>;  // x, y, width, height in NDC
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -39,32 +34,21 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    // Generate a quad with the given position and size in NDC
-    var pos = array<vec2<f32>, 6>(
-        vec2<f32>(0.0, 0.0),      // Bottom-left
-        vec2<f32>(1.0, 0.0),      // Bottom-right
-        vec2<f32>(0.0, 1.0),      // Top-left
-        vec2<f32>(1.0, 0.0),      // Bottom-right
-        vec2<f32>(1.0, 1.0),      // Top-right
-        vec2<f32>(0.0, 1.0)       // Top-left
+    // HARDCODE fullscreen triangle to test
+    var pos = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0)
     );
     
-    // Texture coordinates
-    var texCoords = array<vec2<f32>, 6>(
+    var texCoords = array<vec2<f32>, 3>(
         vec2<f32>(0.0, 1.0),
-        vec2<f32>(1.0, 1.0),
-        vec2<f32>(0.0, 0.0),
-        vec2<f32>(1.0, 1.0),
-        vec2<f32>(1.0, 0.0),
-        vec2<f32>(0.0, 0.0)
+        vec2<f32>(2.0, 1.0),
+        vec2<f32>(0.0, -1.0)
     );
-    
-    // Scale and translate to window position
-    let scaled_pos = pos[vertex_index] * window_pos.size;
-    let ndc_pos = window_pos.pos + scaled_pos;
     
     var output: VertexOutput;
-    output.position = vec4<f32>(ndc_pos, 0.0, 1.0);
+    output.position = vec4<f32>(pos[vertex_index], 0.0, 1.0);
     output.texCoord = texCoords[vertex_index];
     return output;
 }

@@ -346,7 +346,7 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 				View:    surfaceView,
 				LoadOp:  gputypes.LoadOpClear,
 				StoreOp: gputypes.StoreOpStore,
-				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
+				ClearValue: wgpu.Color{R: 1.0, G: 0.0, B: 0.0, A: 1.0}, // RED to verify
 			},
 		},
 	})
@@ -355,8 +355,10 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	renderPass.SetPipeline(r.blitPipeline)
 	renderPass.SetBindGroup(0, bindGroup, nil)
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
+	fmt.Println("🔗 Setting bind group 2...")
 	renderPass.SetBindGroup(2, posBindGroup, nil)
-	renderPass.Draw(6, 1, 0, 0) // Draw quad
+	fmt.Println("🎨 Drawing triangle...")
+	renderPass.Draw(3, 1, 0, 0) // TEMP: Draw triangle to test
 	renderPass.End()
 	
 	// Submit and present
@@ -495,6 +497,10 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	if err != nil {
 		return fmt.Errorf("failed to create position uniform layout: %w", err)
 	}
+	if r.blitPosLayout == nil {
+		return fmt.Errorf("blitPosLayout is nil after creation!")
+	}
+	fmt.Printf("✅ Created blitPosLayout: %p\n", r.blitPosLayout)
 
 	// Create pipeline layout with 3 bind groups: texture, effects, position
 	pipelineLayout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
@@ -1121,7 +1127,10 @@ func (r *WebGPURenderer) createWindowPositionUniforms(bounds core.UnitRect, surf
 
 // createFullscreenPositionUniforms creates uniforms for fullscreen rendering.
 func (r *WebGPURenderer) createFullscreenPositionUniforms() (*wgpu.Buffer, *wgpu.BindGroup, error) {
-	uniformData := []float32{-1.0, -1.0, 2.0, 2.0}
+	// TEST: Try small quad in corner instead of fullscreen
+	uniformData := []float32{-0.5, -0.5, 0.5, 0.5}  // Small quad
+	fmt.Printf("📝 TESTING: Creating SMALL quad uniform: pos=(%f,%f) size=(%f,%f)\n",
+		uniformData[0], uniformData[1], uniformData[2], uniformData[3])
 	
 	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
 		Size:  16,
@@ -1133,6 +1142,8 @@ func (r *WebGPURenderer) createFullscreenPositionUniforms() (*wgpu.Buffer, *wgpu
 	
 	uniformBytes := (*[16]byte)(unsafe.Pointer(&uniformData[0]))[:]
 	r.queue.WriteBuffer(buffer, 0, uniformBytes)
+	fmt.Printf("📝 TESTING: Creating SMALL quad uniform: pos=(%f,%f) size=(%f,%f)\n",
+		uniformData[0], uniformData[1], uniformData[2], uniformData[3])
 	
 	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Layout: r.blitPosLayout,
@@ -1142,8 +1153,19 @@ func (r *WebGPURenderer) createFullscreenPositionUniforms() (*wgpu.Buffer, *wgpu
 	})
 	if err != nil {
 		buffer.Release()
+		fmt.Printf("❌ ERROR creating bind group: %v\n", err)
 		return nil, nil, err
 	}
+	if bindGroup == nil {
+		buffer.Release()
+		return nil, nil, fmt.Errorf("bindGroup is nil!")
+	}
+	if r.blitPosLayout == nil {
+		buffer.Release()
+		bindGroup.Release()
+		return nil, nil, fmt.Errorf("blitPosLayout is nil when creating bind group!")
+	}
+	fmt.Printf("✅ Position bind group: %p, layout: %p\n", bindGroup, r.blitPosLayout)
 	
 	return buffer, bindGroup, nil
 }
