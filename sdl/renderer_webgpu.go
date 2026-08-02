@@ -25,9 +25,9 @@ type WindowSurface struct {
 	width       uint32
 	height      uint32
 	
-	// Per-window positioning (NDC coordinates)
-	posUniformBuffer    *wgpu.Buffer
-	posUniformBindGroup *wgpu.BindGroup
+	// Per-window uniform buffer (for positioning)
+	uniformBuffer    *wgpu.Buffer
+	uniformBindGroup *wgpu.BindGroup
 	
 	// Transform state for compositing
 	translateX  float32
@@ -714,9 +714,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				continue
 			}
 			
-			// Create position uniforms
+			// Create per-window uniform buffer with position
 			surfaceSize := osWindow.backend.Size()
-			posBuffer, posBindGroup, err := r.createWindowPositionUniforms(bounds, surfaceSize)
+			uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(bounds, surfaceSize)
 			if err != nil {
 				bindGroup.Release()
 				textureView.Release()
@@ -725,19 +725,19 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			}
 			
 			surf = &WindowSurface{
-				texture:             texture,
-				textureView:         textureView,
-				bindGroup:           bindGroup,
-				posUniformBuffer:    posBuffer,
-				posUniformBindGroup: posBindGroup,
-				width:               uint32(widthPx),
-				height:              uint32(heightPx),
-				uiWindow:            childIface,
-				backend:             backend,
-				dirty:               true,
-				scaleX:              1.0,
-				scaleY:              1.0,
-				opacity:             1.0,
+				texture:          texture,
+				textureView:      textureView,
+				bindGroup:        bindGroup,
+				uniformBuffer:    uniformBuffer,
+				uniformBindGroup: uniformBindGroup,
+				width:            uint32(widthPx),
+				height:           uint32(heightPx),
+				uiWindow:         childIface,
+				backend:          backend,
+				dirty:            true,
+				scaleX:           1.0,
+				scaleY:           1.0,
+				opacity:          1.0,
 			}
 			r.windowSurfaces[windowID] = surf
 		}
@@ -801,16 +801,16 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				continue
 			}
 			
-			// Recreate position uniforms
-			if surf.posUniformBuffer != nil {
-				surf.posUniformBuffer.Release()
+			// Recreate uniform buffer with new position
+			if surf.uniformBuffer != nil {
+				surf.uniformBuffer.Release()
 			}
-			if surf.posUniformBindGroup != nil {
-				surf.posUniformBindGroup.Release()
+			if surf.uniformBindGroup != nil {
+				surf.uniformBindGroup.Release()
 			}
 			
 			surfaceSize := osWindow.backend.Size()
-			posBuffer, posBindGroup, err := r.createWindowPositionUniforms(bounds, surfaceSize)
+			uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(bounds, surfaceSize)
 			if err != nil {
 				bindGroup.Release()
 				textureView.Release()
@@ -821,8 +821,8 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			surf.texture = texture
 			surf.textureView = textureView
 			surf.bindGroup = bindGroup
-			surf.posUniformBuffer = posBuffer
-			surf.posUniformBindGroup = posBindGroup
+			surf.uniformBuffer = uniformBuffer
+			surf.uniformBindGroup = uniformBindGroup
 			surf.width = uint32(widthPx)
 			surf.height = uint32(heightPx)
 			surf.dirty = true
@@ -941,13 +941,8 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	renderPass.Draw(6, 1, 0, 0) // Draw quad
 	
 	// Draw each child window at its position
-	surfaceSize := osWindow.backend.Size()
+	windowCount := 0
 	for _, childIface := range childWindowList.Windows {
-		win, ok := childIface.(WindowLike)
-		if !ok {
-			continue
-		}
-		
 		winValue := reflect.ValueOf(childIface)
 		windowID := uint32(winValue.Pointer())
 		surf, ok := r.windowSurfaces[windowID]
@@ -955,26 +950,14 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			continue
 		}
 		
-		// Calculate NDC position for this window
-		bounds := win.Bounds()
-		ndcX := (float32(bounds.X) / float32(surfaceSize.Width)) * 2.0 - 1.0
-		ndcY := 1.0 - (float32(bounds.Y) / float32(surfaceSize.Height)) * 2.0
-		ndcWidth := (float32(bounds.Width) / float32(surfaceSize.Width)) * 2.0
-		ndcHeight := (float32(bounds.Height) / float32(surfaceSize.Height)) * 2.0
-		
-		// Write combined uniforms for this window
-		windowUniforms := []float32{
-			0.0, 0.0, 1.0, 0.0,                       // angle, enabled, scale, padding
-			ndcX, ndcY - ndcHeight, ndcWidth, ndcHeight,  // pos_x, pos_y, size_w, size_h
-		}
-		windowUniformBytes := (*[32]byte)(unsafe.Pointer(&windowUniforms[0]))[:]
-		r.queue.WriteBuffer(r.blitUniformBuffer, 0, windowUniformBytes)
-		
-		// Bind texture and draw
+		// Bind texture and per-window uniforms, then draw
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
-		renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
+		renderPass.SetBindGroup(1, surf.uniformBindGroup, nil)  // Per-window uniforms!
 		renderPass.Draw(6, 1, 0, 0) // Draw quad at window position
+		windowCount++
 	}
+	
+	fmt.Printf("🎨 Compositor drew %d windows\n", windowCount)
 	
 	renderPass.End()
 	
@@ -1144,6 +1127,46 @@ func (r *WebGPURenderer) createFullscreenPositionUniforms() (*wgpu.Buffer, *wgpu
 	uniformBytes := (*[16]byte)(unsafe.Pointer(&uniformData[0]))[:]
 	r.queue.WriteBuffer(buffer, 0, uniformBytes)
 	fmt.Printf("📝 TESTING: Creating SMALL quad uniform: pos=(%f,%f) size=(%f,%f)\n",
+
+
+// createWindowUniformBuffer creates a uniform buffer for a window with position data.
+func (r *WebGPURenderer) createWindowUniformBuffer(bounds core.UnitRect, surfaceSize core.UnitSize) (*wgpu.Buffer, *wgpu.BindGroup, error) {
+	// Calculate NDC position
+	ndcX := (float32(bounds.X) / float32(surfaceSize.Width)) * 2.0 - 1.0
+	ndcY := 1.0 - (float32(bounds.Y) / float32(surfaceSize.Height)) * 2.0
+	ndcWidth := (float32(bounds.Width) / float32(surfaceSize.Width)) * 2.0
+	ndcHeight := (float32(bounds.Height) / float32(surfaceSize.Height)) * 2.0
+	
+	// Combined uniforms: effects + position
+	uniformData := []float32{
+		0.0, 0.0, 1.0, 0.0,                       // angle, enabled, scale, padding
+		ndcX, ndcY - ndcHeight, ndcWidth, ndcHeight,  // pos_x, pos_y, size_w, size_h
+	}
+	
+	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  32,
+		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	
+	uniformBytes := (*[32]byte)(unsafe.Pointer(&uniformData[0]))[:]
+	r.queue.WriteBuffer(buffer, 0, uniformBytes)
+	
+	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: r.blitUniformLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: buffer, Size: 32},
+		},
+	})
+	if err != nil {
+		buffer.Release()
+		return nil, nil, err
+	}
+	
+	return buffer, bindGroup, nil
+}
 		uniformData[0], uniformData[1], uniformData[2], uniformData[3])
 	
 	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
