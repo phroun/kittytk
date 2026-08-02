@@ -767,18 +767,21 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		}
 		
 		if needsUpdate {
-			surf.backend, _ = raster.NewScaled(widthPx, heightPx, scale)
-			surf.backend.SetCellMetrics(metrics)
+			newBackend, err := raster.NewScaled(widthPx, heightPx, scale)
+			if err != nil {
+				fmt.Printf("❌ Failed to create backend for window resize: %v\n", err)
+				continue // Skip this window this frame
+			}
 			
-			if surf.texture != nil {
-				surf.texture.Release()
-			}
-			if surf.textureView != nil {
-				surf.textureView.Release()
-			}
-			if surf.bindGroup != nil {
-				surf.bindGroup.Release()
-			}
+			// Store old resources for cleanup AFTER GPU finishes with them
+			oldTexture := surf.texture
+			oldTextureView := surf.textureView
+			oldBindGroup := surf.bindGroup
+			oldUniformBuffer := surf.uniformBuffer
+			oldUniformBindGroup := surf.uniformBindGroup
+			
+			surf.backend = newBackend
+			surf.backend.SetCellMetrics(metrics)
 			
 			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
 				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
@@ -816,13 +819,6 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			}
 			
 			// Recreate uniform buffer with new position
-			if surf.uniformBuffer != nil {
-				surf.uniformBuffer.Release()
-			}
-			if surf.uniformBindGroup != nil {
-				surf.uniformBindGroup.Release()
-			}
-			
 			surfaceSize := osWindow.backend.Size()
 			uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(bounds, surfaceSize)
 			if err != nil {
@@ -843,6 +839,25 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			surf.dirty = true
 			fmt.Printf("🔄 Updated WindowSurface position to (%d,%d) %dx%d\n",
 				bounds.X, bounds.Y, bounds.Width, bounds.Height)
+			
+			// Clean up old resources AFTER GPU finishes with them (at end of frame)
+			defer func() {
+				if oldUniformBindGroup != nil {
+					oldUniformBindGroup.Release()
+				}
+				if oldUniformBuffer != nil {
+					oldUniformBuffer.Release()
+				}
+				if oldBindGroup != nil {
+					oldBindGroup.Release()
+				}
+				if oldTextureView != nil {
+					oldTextureView.Release()
+				}
+				if oldTexture != nil {
+					oldTexture.Release()
+				}
+			}()
 		}
 		
 		// Render window to its backend
