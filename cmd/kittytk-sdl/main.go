@@ -30,7 +30,13 @@ func main() {
 	// configure the app without the command line. Env vars still override.
 	cfg := hostcfg.Load()
 
-	plat := sdlplat.New(cfg.Title, cfg.Width, cfg.Height)
+	// Create platform with configured renderer (software or webgpu)
+	plat, err := sdlplat.New(cfg.Title, cfg.Width, cfg.Height, cfg.Renderer)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create platform: %v\n", err)
+		os.Exit(1)
+	}
+	
 	plat.SetScale(cfg.Scale) // device zoom: pixels per unit at the base font
 
 	// [window] fps=true overlays the render frame rate on the OS title bar;
@@ -118,5 +124,6 @@ func main() {
 		}
 	})
 
-	os.Exit(desktop.RunOn(plat))
+	exitCode := desktop.RunOn(plat)
+	os.Exit(exitCode)
 }

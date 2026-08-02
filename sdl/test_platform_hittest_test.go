@@ -31,12 +31,12 @@ func TestToUnitsInvertsBackendMapping(t *testing.T) {
 			for cells := 0; cells < 6; cells++ {
 				ux := cells * denomW
 				pxx := snapForward(ux, denomW, cwPx)
-				if gx, _ := p.toUnits(int32(pxx), 0); int(gx) != ux {
+				if gx, _ := p.toUnits(int32(pxx), 0, 0); int(gx) != ux {
 					t.Errorf("fs=%d scale=%d: x cell %d (%d px) -> %d units, want %d", fs, scale, cells, pxx, gx, ux)
 				}
 				uy := cells * denomH
 				pxy := snapForward(uy, denomH, chPx)
-				if _, gy := p.toUnits(0, int32(pxy)); int(gy) != uy {
+				if _, gy := p.toUnits(0, int32(pxy), 0); int(gy) != uy {
 					t.Errorf("fs=%d scale=%d: y cell %d (%d px) -> %d units, want %d", fs, scale, cells, pxy, gy, uy)
 				}
 			}
@@ -51,7 +51,7 @@ func TestToUnitsIdentityAtBase(t *testing.T) {
 	p.SetScale(1)
 	p.SetFontSize(12)
 	for _, v := range []int32{0, 1, 7, 8, 16, 100} {
-		if x, y := p.toUnits(v, v); int(x) != int(v) || int(y) != int(v) {
+		if x, y := p.toUnits(v, v, 0); int(x) != int(v) || int(y) != int(v) {
 			t.Errorf("toUnits(%d,%d) = (%d,%d), want identity", v, v, x, y)
 		}
 	}

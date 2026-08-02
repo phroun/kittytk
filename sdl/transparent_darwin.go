@@ -3,9 +3,76 @@
 package sdl
 
 /*
-#cgo LDFLAGS: -framework Cocoa -framework QuartzCore
+#cgo LDFLAGS: -framework Cocoa -framework QuartzCore -framework Metal
+#cgo darwin CFLAGS: -I/opt/homebrew/include -I/usr/local/include
+#cgo darwin LDFLAGS: -L/opt/homebrew/lib -L/usr/local/lib -lSDL2
 #include <objc/runtime.h>
 #include <objc/message.h>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_syswm.h>
+
+// Forward declare SDL_Metal functions
+typedef void* SDL_MetalView;
+extern SDL_MetalView SDL_Metal_CreateView(SDL_Window* window);
+extern void SDL_Metal_DestroyView(SDL_MetalView view);
+extern void* SDL_Metal_GetLayer(SDL_MetalView view);
+
+// kittytk_create_metal_view creates an SDL Metal view and returns its layer
+static void* kittytk_create_metal_view(SDL_Window* window) {
+	if (!window) {
+		return NULL;
+	}
+	
+	SDL_MetalView view = SDL_Metal_CreateView(window);
+	if (!view) {
+		return NULL;
+	}
+	
+	void* layer = SDL_Metal_GetLayer(view);
+	// Note: We don't destroy the view here because it needs to stay alive
+	// The view will be destroyed when the window is destroyed
+	return layer;
+}
+
+// kittytk_get_metal_layer retrieves the CAMetalLayer from an SDL Metal window.
+// SDL creates a Metal view with a Metal layer when SDL_WINDOW_METAL flag is used.
+static void* kittytk_get_metal_layer(void *nswindow) {
+	if (!nswindow) {
+		return NULL;
+	}
+	
+	id win = (id)nswindow;
+	id contentView = ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView"));
+	if (!contentView) {
+		return NULL;
+	}
+	
+	// SDL creates subviews for Metal rendering - find the SDL_metalview
+	id subviews = ((id (*)(id, SEL))objc_msgSend)(contentView, sel_registerName("subviews"));
+	if (!subviews) {
+		return NULL;
+	}
+	
+	unsigned long count = ((unsigned long (*)(id, SEL))objc_msgSend)(subviews, sel_registerName("count"));
+	for (unsigned long i = 0; i < count; i++) {
+		id subview = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
+			subviews, sel_registerName("objectAtIndex:"), i);
+		if (!subview) continue;
+		
+		// Get the layer from this subview
+		id layer = ((id (*)(id, SEL))objc_msgSend)(subview, sel_registerName("layer"));
+		if (!layer) continue;
+		
+		// Check if it's a CAMetalLayer
+		Class metalLayerClass = objc_getClass("CAMetalLayer");
+		if (metalLayerClass && ((BOOL (*)(id, SEL, Class))objc_msgSend)(
+			layer, sel_registerName("isKindOfClass:"), metalLayerClass)) {
+			return (void*)layer;
+		}
+	}
+	
+	return NULL;
+}
 
 static void kittytk_layer_nonopaque(id layer) {
 	if (!layer) {
@@ -119,4 +186,20 @@ func cocoaWindow(win *sdl2.Window) unsafe.Pointer {
 		return nil
 	}
 	return cocoa.Window
+}
+
+// getMetalLayer retrieves the CAMetalLayer from an SDL Metal window
+func getMetalLayer(win *sdl2.Window) unsafe.Pointer {
+	// First try using SDL's Metal functions directly
+	layer := C.kittytk_create_metal_view((*C.SDL_Window)(unsafe.Pointer(win)))
+	if layer != nil {
+		return layer
+	}
+	
+	// Fallback: try to find an existing Metal layer
+	cocoa := cocoaWindow(win)
+	if cocoa == nil {
+		return nil
+	}
+	return C.kittytk_get_metal_layer(cocoa)
 }

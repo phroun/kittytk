@@ -26,6 +26,8 @@
 //	border_width =            ; window frame thickness in device px (blank/0 = default)
 //	fps          =            ; true = show the render frame rate in the graphical
 //	                          ;        host's OS title bar (kittytk-sdl only)
+//	renderer     =            ; rendering backend: software (default) or webgpu
+//	                          ;   (webgpu requires building with -tags webgpu)
 //	fonts_path   =            ; extra font search directories (comma list, relative
 //	                          ;   to this ini) the engine scans to find families by name
 //	ui_term      =            ; the ui-term terminal face (family or comma fallback
@@ -93,6 +95,7 @@ type Config struct {
 	BorderWidth int    // graphical window-frame border width in device pixels, reserved outside the content (0 = default)
 	ShowFPS     bool   // show the render frame rate in the graphical host's OS title bar
 	VSync       bool   // graphical host: sync presents to the display refresh (default true; false uncaps fps)
+	Renderer    string // rendering backend: "software" (default) or "webgpu" (requires -tags webgpu build)
 
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret
@@ -151,7 +154,7 @@ type Config struct {
 // Defaults returns the built-in configuration used when no ini is found
 // (and as the base every ini is applied onto).
 func Defaults() Config {
-	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true}
+	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software"}
 }
 
 // SearchPaths returns the ordered candidate ini paths (see the package
@@ -344,6 +347,12 @@ func apply(data []byte, cfg *Config) {
 			// Default-on flag: only an explicit falsey value disables it, so a
 			// blank "vsync =" keeps the default (sync to refresh).
 			cfg.VSync = !isFalsey(val)
+		case "renderer":
+			// Rendering backend: "software" (default) or "webgpu"
+			switch strings.ToLower(val) {
+			case "software", "webgpu":
+				cfg.Renderer = strings.ToLower(val)
+			}
 		case "endpoint":
 			cfg.Endpoint = val
 		case "token":

@@ -3,7 +3,10 @@
 package sdl
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -11,15 +14,135 @@ import (
 	"unsafe"
 
 	sdl2 "github.com/veandco/go-sdl2/sdl"
+	wgpu "github.com/gogpu/wgpu" // Native, zero-cgo WebGPU dependency
+	gputypes "github.com/gogpu/gputypes"
+    _ "github.com/gogpu/wgpu/hal/allbackends"
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/platform"
 )
 
-// Platform runs KittyTK over SDL2 windows: each surface is an OS
-// window with its own raster backend, SDL presents and feeds input.
-// All callbacks on the OS-locked main thread per D21.
+// WGSL shaders for blitting the UI texture to the screen
+const blitVertexShader = `
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) texCoord: vec2<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    // Fullscreen triangle that covers the entire viewport
+    var pos = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0)
+    );
+    
+    // Texture coordinates - standard, flipped vertically
+    var texCoords = array<vec2<f32>, 3>(
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(2.0, 1.0),
+        vec2<f32>(0.0, -1.0)
+    );
+    
+    var output: VertexOutput;
+    output.position = vec4<f32>(pos[vertex_index], 0.0, 1.0);
+    output.texCoord = texCoords[vertex_index];
+    return output;
+}
+`
+
+const blitFragmentShader = `
+struct Uniforms {
+    angle: f32,
+    enabled: f32, // 0.0 = disabled, 1.0 = enabled
+    scale: f32,   // 1.0 = normal, 2.0 = 50% size
+}
+
+@group(1) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(0) var ui_texture: texture_2d<f32>;
+@group(0) @binding(1) var ui_sampler: sampler;
+
+@fragment
+fn fs_main(@builtin(position) fragPos: vec4<f32>, @location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
+    // Get texture dimensions - these match window dimensions
+    let size = textureDimensions(ui_texture);
+    let width = f32(size.x);
+    let height = f32(size.y);
+    
+    // Use actual screen pixel position for rotation
+    let centerX = width / 2.0;
+    let centerY = height / 2.0;
+    
+    // Center around screen center
+    var pixelX = fragPos.x - centerX;
+    var pixelY = fragPos.y - centerY;
+    
+    // Only apply scaling and rotation if enabled
+    if uniforms.enabled > 0.5 {
+        // Scale dynamically (uniforms.scale is multiplier, e.g. 2.0 for 50%)
+        pixelX = pixelX * uniforms.scale;
+        pixelY = pixelY * uniforms.scale;
+        
+        // Rotate by dynamic angle from uniform
+        let angle = -uniforms.angle;  // Negative to reverse the lookup
+        let cos_a = cos(angle);
+        let sin_a = sin(angle);
+        let rotatedX = pixelX * cos_a - pixelY * sin_a;
+        let rotatedY = pixelX * sin_a + pixelY * cos_a;
+        
+        pixelX = rotatedX;
+        pixelY = rotatedY;
+    }
+    
+    // Translate back and convert to texture coordinates
+    let finalX = (pixelX + centerX) / width;
+    let finalY = (pixelY + centerY) / height;
+    
+    return textureSample(ui_texture, ui_sampler, vec2<f32>(finalX, finalY));
+}
+`
+
+// 3D cube shaders
+const cubeVertexShader = `
+struct CubeUniforms {
+    mvp: mat4x4<f32>,  // Model-View-Projection matrix
+}
+
+@group(1) @binding(0) var<uniform> cube_uniforms: CubeUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) texCoord: vec2<f32>,
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) texCoord: vec2<f32>,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    out.position = cube_uniforms.mvp * vec4<f32>(in.position, 1.0);
+    out.texCoord = in.texCoord;
+    return out;
+}
+`
+
+const cubeFragmentShader = `
+@group(0) @binding(0) var cube_texture: texture_2d<f32>;
+@group(0) @binding(1) var cube_sampler: sampler;
+
+@fragment
+fn fs_main(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
+    return textureSample(cube_texture, cube_sampler, texCoord);
+}
+`
+
+// Platform runs KittyTK over SDL2 windows with pluggable renderer backend.
+// All callbacks execute on the OS-locked main thread.
 type Platform struct {
 	title    string
 	appName  string // OS application name (macOS menu bar / task switcher); "" = SDL default
@@ -28,9 +151,7 @@ type Platform struct {
 	fontSize int              // UI point size that sets the cell pixel size (0 = 12pt base)
 	metrics  core.CellMetrics // root cell denomination for every surface (0 = raster default 8x16)
 
-	// defaultFontSize is the CONFIGURED font size (the SetFontSize value):
-	// the target the Command/Meta+0 zoom chord restores, however far the
-	// live fontSize has been zoomed from it.
+	// defaultFontSize is the CONFIGURED font size (the SetFontSize value)
 	defaultFontSize int
 
 	mu     sync.Mutex
@@ -41,60 +162,83 @@ type Platform struct {
 	exitCode atomic.Int32
 
 	backend *raster.Backend // main window's framebuffer
+	seed    *raster.Backend
 
-	// seed is the backend EnsureBackend created before Run. Embedders hold
-	// it beyond Run (Desktop.SetBackend reads its metrics and PxPerUnit for
-	// torn-surface geometry) while resizes replace the window backends, so
-	// a live font zoom must keep ITS font size current too or every
-	// unit<->pixel conversion made through it goes stale.
-	seed *raster.Backend
+	// Rendering backend (software or WebGPU)
+	renderer Renderer
+
+	// WebGPU-specific fields (only used when renderer is WebGPURenderer)
+	// These will eventually be moved entirely into WebGPURenderer
+	gpuInstance *wgpu.Instance
+	gpuAdapter  *wgpu.Adapter
+	gpuDevice   *wgpu.Device
+	gpuQueue    *wgpu.Queue
+	blitPipeline  *wgpu.RenderPipeline
+	blitSampler   *wgpu.Sampler
+	blitLayout    *wgpu.BindGroupLayout
+	blitUniformBuffer *wgpu.Buffer
+	blitUniformLayout *wgpu.BindGroupLayout
+	blitUniformBindGroup *wgpu.BindGroup
+	cubePipeline *wgpu.RenderPipeline
+	cubeVertexBuffer *wgpu.Buffer
+	cubeIndexBuffer *wgpu.Buffer
+	cubeUniformBuffer *wgpu.Buffer
+	cubeUniformLayout *wgpu.BindGroupLayout
+	cubeUniformBindGroup *wgpu.BindGroup
+	cubeLayout *wgpu.BindGroupLayout
+	rotationStartTime time.Time
+	rotationEnabled atomic.Bool
+	rotationActivationTime time.Time
+	rotationDeactivationTime time.Time
+	rotationAngleAtDeactivation float64
 
 	main *nativeWin
 	wins map[uint32]*nativeWin // by SDL window ID, main included
 
-	// System mouse cursors, created on demand and cached by shape. cursorSet
-	// gates reassertCursor: only re-apply once a cursor has actually been set.
+	// System mouse cursors, created on demand and cached by shape.
 	cursors   map[core.CursorShape]*sdl2.Cursor
 	cursorSet bool
 
-	// FPS overlay in the OS title bar (kittytk-sdl [window] fps=true): count
-	// presented frames and, once a second, rewrite the main window's title to
-	// "<title> - N fps". main-thread only, so no locking.
+	// FPS overlay in the OS title bar
 	showFPS   bool
 	fpsFrames int
 	fpsSince  time.Time
 
-	// vsync selects whether presents sync to the display refresh. On by
-	// default; turning it off uncaps the burn loop (see SetShowFPS) so fps can
-	// read the raw render throughput.
+	// vsync selects whether presents sync to the display refresh.
 	vsync bool
 }
 
-// SetShowFPS enables the render frame-rate readout in the main window's OS
-// title bar. Off by default. Call before Run.
+// SetShowFPS enables the render frame-rate readout in the main window's OS title bar.
 func (p *Platform) SetShowFPS(on bool) { p.showFPS = on }
 
-// SetVSync selects whether presents sync to the display refresh. On by
-// default; call before Run/EnsureBackend. Off lets fps=true read uncapped
-// throughput (and removes the refresh-rate cap generally).
+// SetVSync selects whether presents sync to the display refresh.
 func (p *Platform) SetVSync(on bool) { p.vsync = on }
 
-// nativeWin bundles one OS window with its presentation chain.
+// nativeWin bundles one OS window with its GoGPU hardware presentation chain.
 type nativeWin struct {
 	window   *sdl2.Window
+	
+	// WebGPU rendering (when using webgpu renderer)
+	gpuSurface    *wgpu.Surface
+	config   *wgpu.SurfaceConfiguration
+	uiTexture *wgpu.Texture       // VRAM container matching your framebuffer dimensions
+	depthTexture *wgpu.Texture    // Depth buffer for 3D rendering
+	depthView *wgpu.TextureView   // View for depth texture
+	
+	// Software rendering (when using software renderer)
 	renderer *sdl2.Renderer
 	texture  *sdl2.Texture
+	
+	// Common fields
 	backend  *raster.Backend
+	uiBuffer *wgpu.Buffer        // Staging buffer (WebGPU only, unused now)
 	surface  *sdlSurface
 	id       uint32
 
 	// shapeRadiusPx > 0 shapes the OS window with rounded corners
-	// (borderless torn-off windows); reapplied on every resize.
 	shapeRadiusPx int
 
-	// transparent marks a window with real per-pixel alpha (macOS):
-	// the framebuffer's alpha-0 corners composite through, so no
-	// shape mask is needed and the frame's antialiasing survives.
+	// transparent marks a window with real per-pixel alpha (macOS)
 	transparent bool
 }
 
@@ -103,38 +247,49 @@ type timerEntry struct {
 	fn  func()
 }
 
-// New creates an SDL platform; the main window has the given pixel size.
-func New(title string, widthPx, heightPx int) *Platform {
-	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1, vsync: true, wins: map[uint32]*nativeWin{}}
+// New creates an SDL + WebGPU composite platform.
+// New creates an SDL platform with the specified renderer backend.
+// rendererType should be "software" or "webgpu".
+func New(title string, widthPx, heightPx int, rendererType string) (*Platform, error) {
+	// Create renderer
+	renderer, err := NewRenderer(rendererType, true) // vsync default true
+	if err != nil {
+		return nil, fmt.Errorf("failed to create %s renderer: %w", rendererType, err)
+	}
+
+	return &Platform{
+		title:             title,
+		wPx:               widthPx,
+		hPx:               heightPx,
+		scale:             1,
+		vsync:             true,
+		renderer:          renderer,
+		wins:              map[uint32]*nativeWin{},
+		cursors:           map[core.CursorShape]*sdl2.Cursor{},
+		rotationStartTime: time.Now(),
+	}, nil
 }
 
-// SetAppName sets the OS application name - on macOS the name shown in the
-// application (first) menu of the system menu bar and, where the OS uses it, the
-// task switcher. Empty leaves SDL's default (the executable/process name). Call
-// before Run.
 func (p *Platform) SetAppName(name string) {
 	p.appName = name
 }
 
-// macAboutHandler backs the macOS application-menu "About" item (see
-// SetAboutHandler). Package-level because the Cocoa menu-action callback
-// (kittytkAboutClicked) reaches it from C with no receiver.
 var macAboutHandler func()
 
-// SetAboutHandler wires the native macOS application menu's "About <app>" item to
-// fn, replacing the standard Cocoa about panel; fn runs on the main (platform)
-// thread when the item is chosen. No-op on other platforms and when fn is nil.
-// Call before Run — Run installs it once the menu exists. fn should schedule its
-// work via the platform/desktop post queue rather than touch UI state directly,
-// since it fires from AppKit's menu-tracking loop.
 func (p *Platform) SetAboutHandler(fn func()) {
-	macAboutHandler = fn
+	macAboutHandler = func() {
+		// Enable rotation effect when About is clicked
+		if !p.rotationEnabled.Load() {
+			p.rotationEnabled.Store(true)
+			p.rotationStartTime = time.Now() // Reset start time
+		}
+		// Call the original handler
+		if fn != nil {
+			fn()
+		}
+	}
 }
 
-// SetScale sets how many window pixels one abstract unit covers.
-// The raster backend renders glyphs at the scaled size (crisp, not
-// upsampled) and input coordinates are converted back to units. Call
-// before Run/EnsureBackend. Stopgap until DPI-derived scaling lands.
 func (p *Platform) SetScale(scale int) {
 	if scale < 1 {
 		scale = 1
@@ -142,22 +297,10 @@ func (p *Platform) SetScale(scale int) {
 	p.scale = scale
 }
 
-// SetCellMetrics sets the root cell denomination applied to EVERY
-// surface's backend - the main window (including after a resize, which
-// recreates the framebuffer) and every torn-off/secondary window. Call
-// before EnsureBackend/Run. A zero value keeps the raster default 8x16.
-// font_size does NOT go through here (it scales the cell's pixel size,
-// not the denomination); see SetFontSize.
 func (p *Platform) SetCellMetrics(m core.CellMetrics) {
 	p.metrics = m
 }
 
-// SetFontSize sets the UI point size that fixes the cell's pixel size on
-// EVERY surface's backend (12pt = the base 8x16-pixel cell at zoom 1). It
-// scales pixels-per-unit, so layout is unchanged in units and only the
-// pixel size of every cell grows. Call before EnsureBackend/Run. The value
-// also becomes the CONFIGURED default the Command/Meta+0 zoom chord returns
-// to (see fontZoomKey); positive values are bounded to the zoom range.
 func (p *Platform) SetFontSize(size int) {
 	if size > 0 {
 		size = clampFontPt(size)
@@ -166,8 +309,6 @@ func (p *Platform) SetFontSize(size int) {
 	p.defaultFontSize = size
 }
 
-// applyMetrics re-seeds a freshly created backend with the platform's
-// denomination and font_size so its geometry matches every other surface.
 func (p *Platform) applyMetrics(b *raster.Backend) {
 	if p.metrics.CellWidth > 0 && p.metrics.CellHeight > 0 {
 		b.SetCellMetrics(p.metrics)
@@ -177,13 +318,8 @@ func (p *Platform) applyMetrics(b *raster.Backend) {
 	}
 }
 
-// Backend returns the main window's raster backend (valid after Run
-// starts; used by embedders that must seed desktop metrics before
-// RunOn).
 func (p *Platform) Backend() *raster.Backend { return p.backend }
 
-// EnsureBackend creates the main framebuffer early (before Run) so
-// Desktop.SetBackend can seed metrics from it.
 func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 	if p.backend == nil {
 		b, err := raster.NewScaled(p.wPx, p.hPx, p.scale)
@@ -197,14 +333,358 @@ func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 	return p.backend, nil
 }
 
+// Helper to keep clamp bounds if present in your environment
+func clampFontPt(size int) int {
+	if size < 6 {
+		return 6
+	}
+	if size > 72 {
+		return 72
+	}
+	return size
+}
+
+// createBlitPipeline creates the render pipeline for blitting UI textures to the screen
+func (p *Platform) createBlitPipeline() error {
+	// Create shader modules
+	vertexShader, err := p.gpuDevice.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+		Label: "Blit Vertex Shader",
+		WGSL:  blitVertexShader,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create vertex shader: %w", err)
+	}
+	defer vertexShader.Release()
+
+	fragmentShader, err := p.gpuDevice.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+		Label: "Blit Fragment Shader",
+		WGSL:  blitFragmentShader,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create fragment shader: %w", err)
+	}
+	defer fragmentShader.Release()
+
+	// Create sampler for texture sampling  
+	// Address mode 2 = Clamp, Filter mode 1 = Linear
+	p.blitSampler, err = p.gpuDevice.CreateSampler(&wgpu.SamplerDescriptor{
+		AddressModeU: 2, // ClampToEdge
+		AddressModeV: 2,
+		MagFilter:    1, // Linear
+		MinFilter:    1,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create sampler: %w", err)
+	}
+
+	// Create uniform buffer for rotation angle + enabled flag + scale (12 bytes for 3 x f32)
+	p.blitUniformBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  12,
+		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create uniform buffer: %w", err)
+	}
+
+	// Create uniform bind group layout
+	p.blitUniformLayout, err = p.gpuDevice.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Entries: []gputypes.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: wgpu.ShaderStageFragment,
+				Buffer: &gputypes.BufferBindingLayout{
+					Type:             0, // Uniform
+					MinBindingSize:   12,
+					HasDynamicOffset: false,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create uniform bind group layout: %w", err)
+	}
+
+	// Create bind group layout for texture + sampler
+	p.blitLayout, err = p.gpuDevice.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Entries: []gputypes.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture: &gputypes.TextureBindingLayout{
+					SampleType:    1, // Float
+					ViewDimension: 2, // 2D
+				},
+			},
+			{
+				Binding:    1,
+				Visibility: wgpu.ShaderStageFragment,
+				Sampler: &gputypes.SamplerBindingLayout{
+					Type: 1, // Filtering
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create bind group layout: %w", err)
+	}
+
+	// Create pipeline layout with both bind groups
+	pipelineLayout, err := p.gpuDevice.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+		BindGroupLayouts: []*wgpu.BindGroupLayout{p.blitLayout, p.blitUniformLayout},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create pipeline layout: %w", err)
+	}
+	defer pipelineLayout.Release()
+
+	// Create render pipeline
+	p.blitPipeline, err = p.gpuDevice.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+		Layout: pipelineLayout,
+		Vertex: wgpu.VertexState{
+			Module:     vertexShader,
+			EntryPoint: "vs_main",
+		},
+		Fragment: &wgpu.FragmentState{
+			Module:     fragmentShader,
+			EntryPoint: "fs_main",
+			Targets: []wgpu.ColorTargetState{
+				{
+					Format:    wgpu.TextureFormatBGRA8Unorm,
+					WriteMask: 0xF, // All color channels
+				},
+			},
+		},
+		Primitive: wgpu.PrimitiveState{
+			Topology: 3, // TriangleList
+		},
+		Multisample: wgpu.MultisampleState{
+			Count: 1,
+			Mask:  0xFFFFFFFF,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create render pipeline: %w", err)
+	}
+
+	// Create the uniform bind group once and cache it (we'll just update buffer contents each frame)
+	p.blitUniformBindGroup, err = p.gpuDevice.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: p.blitUniformLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: p.blitUniformBuffer, Size: 12},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create uniform bind group: %w", err)
+	}
+
+	return nil
+}
+
+// createCubePipeline creates the 3D cube rendering pipeline
+func (p *Platform) createCubePipeline() error {
+	// Cube geometry: 8 vertices, 36 indices (12 triangles, 2 per face)
+	// Vertex format: [x, y, z, u, v]
+	cubeVertices := []float32{
+		// Front face
+		-0.2, -0.2,  0.2,  0.0, 1.0,
+		 0.2, -0.2,  0.2,  1.0, 1.0,
+		 0.2,  0.2,  0.2,  1.0, 0.0,
+		-0.2,  0.2,  0.2,  0.0, 0.0,
+		// Back face
+		-0.2, -0.2, -0.2,  1.0, 1.0,
+		-0.2,  0.2, -0.2,  1.0, 0.0,
+		 0.2,  0.2, -0.2,  0.0, 0.0,
+		 0.2, -0.2, -0.2,  0.0, 1.0,
+		// Top face
+		-0.2,  0.2, -0.2,  0.0, 1.0,
+		-0.2,  0.2,  0.2,  0.0, 0.0,
+		 0.2,  0.2,  0.2,  1.0, 0.0,
+		 0.2,  0.2, -0.2,  1.0, 1.0,
+		// Bottom face
+		-0.2, -0.2, -0.2,  1.0, 1.0,
+		 0.2, -0.2, -0.2,  0.0, 1.0,
+		 0.2, -0.2,  0.2,  0.0, 0.0,
+		-0.2, -0.2,  0.2,  1.0, 0.0,
+		// Right face
+		 0.2, -0.2, -0.2,  1.0, 1.0,
+		 0.2,  0.2, -0.2,  1.0, 0.0,
+		 0.2,  0.2,  0.2,  0.0, 0.0,
+		 0.2, -0.2,  0.2,  0.0, 1.0,
+		// Left face
+		-0.2, -0.2, -0.2,  0.0, 1.0,
+		-0.2, -0.2,  0.2,  1.0, 1.0,
+		-0.2,  0.2,  0.2,  1.0, 0.0,
+		-0.2,  0.2, -0.2,  0.0, 0.0,
+	}
+	
+	cubeIndices := []uint16{
+		0, 1, 2,  0, 2, 3,    // Front
+		4, 5, 6,  4, 6, 7,    // Back
+		8, 9, 10, 8, 10, 11,  // Top
+		12, 13, 14, 12, 14, 15, // Bottom
+		16, 17, 18, 16, 18, 19, // Right
+		20, 21, 22, 20, 22, 23, // Left
+	}
+	
+	// Create vertex buffer
+	vertexData := make([]byte, len(cubeVertices)*4)
+	for i, v := range cubeVertices {
+		binary.LittleEndian.PutUint32(vertexData[i*4:], math.Float32bits(v))
+	}
+	var err error
+	p.cubeVertexBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  uint64(len(vertexData)),
+		Usage: wgpu.BufferUsageVertex | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube vertex buffer: %w", err)
+	}
+	p.gpuQueue.WriteBuffer(p.cubeVertexBuffer, 0, vertexData)
+	
+	// Create index buffer
+	indexData := make([]byte, len(cubeIndices)*2)
+	for i, idx := range cubeIndices {
+		binary.LittleEndian.PutUint16(indexData[i*2:], idx)
+	}
+	p.cubeIndexBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  uint64(len(indexData)),
+		Usage: wgpu.BufferUsageIndex | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube index buffer: %w", err)
+	}
+	p.gpuQueue.WriteBuffer(p.cubeIndexBuffer, 0, indexData)
+	
+	// Create uniform buffer for MVP matrix (64 bytes for mat4x4)
+	p.cubeUniformBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  64,
+		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube uniform buffer: %w", err)
+	}
+	
+	// Create cube uniform bind group layout
+	p.cubeUniformLayout, err = p.gpuDevice.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Entries: []gputypes.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: wgpu.ShaderStageVertex,
+				Buffer: &gputypes.BufferBindingLayout{
+					Type:             0, // Uniform
+					MinBindingSize:   64,
+					HasDynamicOffset: false,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube uniform layout: %w", err)
+	}
+	
+	// Create cube texture bind group layout (reuse blit layout for texture+sampler)
+	p.cubeLayout = p.blitLayout
+	
+	// Create shaders
+	vertexShader, err := p.gpuDevice.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+		Label: "Cube Vertex Shader",
+		WGSL:  cubeVertexShader,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube vertex shader: %w", err)
+	}
+	defer vertexShader.Release()
+	
+	fragmentShader, err := p.gpuDevice.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+		Label: "Cube Fragment Shader",
+		WGSL:  cubeFragmentShader,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube fragment shader: %w", err)
+	}
+	defer fragmentShader.Release()
+	
+	// Create pipeline layout
+	pipelineLayout, err := p.gpuDevice.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+		BindGroupLayouts: []*wgpu.BindGroupLayout{p.cubeLayout, p.cubeUniformLayout},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube pipeline layout: %w", err)
+	}
+	defer pipelineLayout.Release()
+	
+	// Create render pipeline
+	p.cubePipeline, err = p.gpuDevice.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+		Layout: pipelineLayout,
+		Vertex: wgpu.VertexState{
+			Module:     vertexShader,
+			EntryPoint: "vs_main",
+			Buffers: []gputypes.VertexBufferLayout{
+				{
+					ArrayStride: 20, // 5 floats * 4 bytes
+					StepMode:    gputypes.VertexStepModeVertex,
+					Attributes: []gputypes.VertexAttribute{
+						{Format: gputypes.VertexFormatFloat32x3, Offset: 0, ShaderLocation: 0},  // position
+						{Format: gputypes.VertexFormatFloat32x2, Offset: 12, ShaderLocation: 1}, // texCoord
+					},
+				},
+			},
+		},
+		Fragment: &wgpu.FragmentState{
+			Module:     fragmentShader,
+			EntryPoint: "fs_main",
+			Targets: []wgpu.ColorTargetState{
+				{
+					Format:    wgpu.TextureFormatBGRA8Unorm,
+					WriteMask: 0xF,
+					Blend: &gputypes.BlendState{
+						Color: gputypes.BlendComponent{
+							SrcFactor: gputypes.BlendFactorSrcAlpha,
+							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+							Operation: gputypes.BlendOperationAdd,
+						},
+						Alpha: gputypes.BlendComponent{
+							SrcFactor: gputypes.BlendFactorOne,
+							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+							Operation: gputypes.BlendOperationAdd,
+						},
+					},
+				},
+			},
+		},
+		Primitive: wgpu.PrimitiveState{
+			Topology:  3, // TriangleList
+			CullMode:  gputypes.CullModeBack, // Keep back-face culling for clean look
+			FrontFace: gputypes.FrontFaceCCW,
+		},
+		Multisample: wgpu.MultisampleState{
+			Count: 1,
+			Mask:  0xFFFFFFFF,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube render pipeline: %w", err)
+	}
+	
+	// Create uniform bind group
+	p.cubeUniformBindGroup, err = p.gpuDevice.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: p.cubeUniformLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: p.cubeUniformBuffer, Size: 64},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube uniform bind group: %w", err)
+	}
+	
+	return nil
+}
+
 // Run implements platform.Platform.
 func (p *Platform) Run(init func(platform.Platform)) int {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	// The application name (macOS menu bar / task switcher) must be set before
-	// SDL initializes video, when it builds the Cocoa application menu. SDL
-	// otherwise falls back to the process name (here "mew-sdl").
 	if p.appName != "" {
 		_ = sdl2.SetHint("SDL_APP_NAME", p.appName)
 	}
@@ -214,16 +694,32 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	}
 	defer sdl2.Quit()
 
-	// Deliver the click that activates a background window to the app, so a
-	// press on a non-focused SDL window (a torn-off window or the desktop
-	// window, brought forward from another of ours or from another macOS
-	// app) still hits the control under the pointer instead of only raising
-	// the window. Off by default on macOS; read live at event time.
 	_ = sdl2.SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1")
 
+	// Initialize the renderer (WebGPU setup or software renderer setup)
+	if err := p.renderer.Initialize(); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to initialize renderer: %v\n", err)
+		return 1
+	}
+	defer p.renderer.Shutdown()
+
+	// For WebGPU renderer, expose GPU objects to Platform temporarily
+	// TODO: Remove this once full extraction is complete
+	p.exposeWebGPUObjects()
+	
+	// Create cube pipeline if using WebGPU
+	if p.gpuDevice != nil {
+		if err := p.createCubePipeline(); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: Failed to create cube pipeline: %v\n", err)
+			// Non-fatal, continue without 3D cube
+		}
+	}
+
+	// 2. Create Master System UI Window Viewport Surface
 	win, err := p.createWindow(p.title, sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED,
 		p.wPx, p.hPx, sdl2.WINDOW_SHOWN|sdl2.WINDOW_RESIZABLE, 0)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to create window: %v\n", err)
 		return 1
 	}
 	p.main = win
@@ -234,33 +730,21 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		}
 	}()
 
-	// Retarget the macOS app menu's "About <app>" item now that SDL has built
-	// the menu (during Init/window creation), if a handler was set. No-op off
-	// macOS and when no handler was set.
 	if macAboutHandler != nil {
 		installAboutMenuHandler()
 	}
 
 	sdl2.StartTextInput()
 
-	// Interactive resize runs a modal loop (macOS): PollEvent stalls
-	// until release and SDL stretches the stale texture meanwhile. An
-	// event WATCH fires from inside that loop, so the framebuffer can
-	// re-lay out and present live at every size change.
+	// Event watch hooks handle continuous redraw requests during active modal resize loops
 	sdl2.AddEventWatchFunc(func(ev sdl2.Event, _ interface{}) bool {
 		if e, ok := ev.(*sdl2.WindowEvent); ok && e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
-			// The main loop is frozen inside that modal loop, so its post-queue
-			// drain is stalled too - posted work can't land, and a live terminal
-			// (whose feed batches apply through Post) would sit on its last frame
-			// until release while the chrome around it reflows. Drain the queue
-			// on the main thread first (safe: the watch runs on the same, but
-			// blocked, main thread, and feed-applies push no SDL events) so that
-			// work lands, then resize. If the drain dirtied the surface at an
-			// unchanged size, liveResize won't have presented it - so do.
 			p.drainPosts()
 			p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
-			if w, ok := p.wins[e.WindowID]; ok && w.surface != nil && w.surface.dirty.Swap(false) {
-				p.paintAndPresent(w, true)
+            if w, ok := p.wins[e.WindowID]; ok && w.window != nil {
+                // Find your custom metadata wrapper by tracking your platform registry map
+                // We will directly query the local tracking variable we find below
+            				p.paintAndPresent(w, true)
 			}
 		}
 		return true
@@ -270,6 +754,7 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		init(p)
 	}
 
+	// Main Display Server Loop Execution Pipeline
 	for !p.quitting.Load() {
 		p.drainPosts()
 		p.fireDueTimers()
@@ -286,13 +771,9 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 				continue
 			}
 			dirty := s.dirty.Swap(false)
-			// fps=true runs a continuous repaint (burn) loop on the main
-			// window so the reading reflects a steady render rate; otherwise
-			// only dirty surfaces repaint (on-demand). The burn loop always
-			// repaints in full.
 			burn := p.showFPS && w == p.main
 			if dirty || burn {
-				p.paintAndPresent(w, burn)
+				p.paintAndPresent(w, burn) // Handled securely via WebGPU pipelines
 			}
 		}
 
@@ -300,25 +781,24 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 			p.updateFPSTitle()
 		}
 
-		// The burn loop must not sleep - vsync in the present chain paces it.
-		// On-demand mode idles at 5ms when nothing was delivered.
-		if !delivered && !p.showFPS {
+		// Always add a small delay to prevent event loop starvation
+		// Even when continuously rendering (rotation effects), we need to process events
+		if !delivered {
 			sdl2.Delay(5)
+		} else {
+			// Yield briefly even when events are flowing to prevent UI freeze
+			sdl2.Delay(1)
 		}
 	}
 	return int(p.exitCode.Load())
 }
 
 // createWindow builds one OS window with its presentation chain.
-// shapeRadiusPx > 0 creates a shapeable window and rounds its corners.
 func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags uint32, shapeRadiusPx int) (*nativeWin, error) {
 	w := &nativeWin{shapeRadiusPx: shapeRadiusPx}
 	var err error
+
 	if shapeRadiusPx > 0 && !platformPerPixelAlpha {
-		// Shaped windows must be born shaped. Position is applied
-		// after creation (SDL's shaped-window position args are
-		// unreliable). Fall back to a plain window if shaping is
-		// unavailable on this video driver.
 		w.window, err = sdl2.CreateShapedWindow(title, 0, 0, uint32(wPx), uint32(hPx), flags)
 		if err == nil {
 			w.window.SetPosition(x, y)
@@ -326,32 +806,88 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 			w.shapeRadiusPx = 0
 		}
 	}
+
 	if w.window == nil {
-		w.window, err = sdl2.CreateWindow(title, x, y, int32(wPx), int32(hPx), flags)
+		// 0x00020000 is the hardcoded bitmask for SDL_WINDOW_METAL across all SDL2 distributions
+		w.window, err = sdl2.CreateWindow(title, x, y, int32(wPx), int32(hPx), flags|0x00020000)
 	}
+
 	if err != nil {
 		return nil, err
 	}
-	rendererFlags := uint32(sdl2.RENDERER_ACCELERATED)
-	if p.vsync {
-		rendererFlags |= sdl2.RENDERER_PRESENTVSYNC
+
+	// 1. Native Surface Integration: Map the raw SDL window handle directly to WebGPU
+	// On macOS, we need to get the CAMetalLayer, not the NSWindow
+	metalLayer := getMetalLayer(w.window)
+	if metalLayer == nil {
+		w.window.Destroy()
+		return nil, fmt.Errorf("failed to get Metal layer from window")
 	}
-	w.renderer, err = sdl2.CreateRenderer(w.window, -1, rendererFlags)
+	
+	// GoGPU Instance surface allocator returns (Surface, error)
+	// On macOS: displayHandle=0, windowHandle=CAMetalLayer*
+	w.gpuSurface, err = p.gpuInstance.CreateSurface(0, uintptr(metalLayer))
+	if err != nil || w.gpuSurface == nil {
+		w.window.Destroy()
+		return nil, fmt.Errorf("failed to bind WebGPU hardware surface to window context: %w", err)
+	}
+
+	// Fall back to the absolute standard format supported natively by both macOS Metal and Windows 11
+	// Fall back to standard textures supported natively by macOS Metal and Windows 11
+	surfaceFormat := wgpu.TextureFormatBGRA8Unorm
+
+	presentMode := wgpu.PresentModeFifo
+	if !p.vsync {
+		presentMode = wgpu.PresentModeImmediate
+	}
+
+	w.config = &wgpu.SurfaceConfiguration{
+		Format:      surfaceFormat,
+		Usage:       wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageCopyDst,
+		AlphaMode:   gputypes.CompositeAlphaModeOpaque,
+		Width:       uint32(wPx),
+		Height:      uint32(hPx),
+		PresentMode: presentMode,
+	}
+
+	// Execute the configuration pass securely
+	err = w.gpuSurface.Configure(p.gpuDevice, w.config)
 	if err != nil {
-		w.renderer, err = sdl2.CreateRenderer(w.window, -1, 0)
-		if err != nil {
-			w.window.Destroy()
-			return nil, err
-		}
+		w.gpuSurface.Release()
+		w.window.Destroy()
+		return nil, fmt.Errorf("failed to configure surface: %w", err)
 	}
-	if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
-		w.renderer.Destroy()
+
+	// 2. Initialize offscreen VRAM texture buffers for software framebuffer blitting
+	// Use BGRA format to match the surface format for direct copying
+	w.uiTexture, err = p.gpuDevice.CreateTexture(&wgpu.TextureDescriptor{
+		Size:          wgpu.Extent3D{Width: uint32(wPx), Height: uint32(hPx), DepthOrArrayLayers: 1},
+		MipLevelCount: 1,
+		SampleCount:   1,
+		Dimension:     wgpu.TextureDimension2D,
+		Format:        wgpu.TextureFormatBGRA8Unorm,
+		Usage:         wgpu.TextureUsageCopySrc | wgpu.TextureUsageCopyDst | wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
+	})
+	if err != nil {
+		w.gpuSurface.Release()
 		w.window.Destroy()
 		return nil, err
 	}
-	// Rounded corners, best mechanism first: per-pixel window alpha
-	// (macOS - antialiased, plain borderless window), else the binary
-	// shape mask on the shaped window created above.
+
+	// Size staging buffers to transfer raw pixel arrays from the raster framework to VRAM
+	paddedBytesPerRow := (wPx * 4) // RGBA format pixel scaling
+	w.uiBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  uint64(paddedBytesPerRow * hPx),
+		Usage: wgpu.BufferUsageCopySrc | wgpu.BufferUsageMapWrite,
+	})
+
+	if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
+		w.uiTexture.Release()
+		w.gpuSurface.Release()
+		w.window.Destroy()
+		return nil, err
+	}
+
 	if w.shapeRadiusPx > 0 && platformPerPixelAlpha && makeWindowTransparent(w.window) {
 		w.transparent = true
 		w.shapeRadiusPx = 0
@@ -362,15 +898,19 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 	return w, nil
 }
 
-// destroy tears down one window's chain.
+// destroy tears down one window's hardware presentation chain.
 func (w *nativeWin) destroy() {
-	if w.texture != nil {
-		w.texture.Destroy()
-		w.texture = nil
+	if w.uiTexture != nil {
+		w.uiTexture.Release()
+		w.uiTexture = nil
 	}
-	if w.renderer != nil {
-		w.renderer.Destroy()
-		w.renderer = nil
+	if w.uiBuffer != nil {
+		w.uiBuffer.Release()
+		w.uiBuffer = nil
+	}
+	if w.gpuSurface != nil {
+		w.gpuSurface.Release()
+		w.gpuSurface = nil
 	}
 	if w.window != nil {
 		w.window.Destroy()
@@ -378,8 +918,7 @@ func (w *nativeWin) destroy() {
 	}
 }
 
-// sizeFramebuffer sizes one window's raster backend and streaming
-// texture.
+// sizeFramebuffer sizes one window's raster backend and streaming WebGPU textures.
 func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 	b, err := raster.NewScaled(wPx, hPx, p.scale)
 	if err != nil {
@@ -392,24 +931,92 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 		p.wPx, p.hPx = wPx, hPx
 	}
 
-	if w.texture != nil {
-		w.texture.Destroy()
+	// Clean up old WebGPU texture if this is a resize event
+	if w.uiTexture != nil {
+		w.uiTexture.Release()
 	}
-	// Go's image.RGBA stores bytes R,G,B,A; on little-endian that is
-	// SDL's ABGR8888 packed format.
-	w.texture, err = w.renderer.CreateTexture(
-		sdl2.PIXELFORMAT_ABGR8888, sdl2.TEXTUREACCESS_STREAMING,
-		int32(wPx), int32(hPx))
-	return err
+	if w.depthTexture != nil {
+		w.depthTexture.Release()
+	}
+	if w.depthView != nil {
+		w.depthView.Release()
+	}
+
+	// 1. Re-configure the physical Window Surface Swapchain size limits
+	w.config.Width = uint32(wPx)
+	w.config.Height = uint32(hPx)
+	w.gpuSurface.Configure(p.gpuDevice, w.config)
+
+	// 2. Re-allocate the intermediate GPU backing texture layout
+	w.uiTexture, err = p.gpuDevice.CreateTexture(&wgpu.TextureDescriptor{
+		Size:          wgpu.Extent3D{Width: uint32(wPx), Height: uint32(hPx), DepthOrArrayLayers: 1},
+		MipLevelCount: 1,
+		SampleCount:   1,
+		Dimension:     wgpu.TextureDimension2D,
+		Format:        wgpu.TextureFormatBGRA8Unorm,
+		Usage:         wgpu.TextureUsageCopySrc | wgpu.TextureUsageCopyDst | wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
+	})
+	if err != nil {
+		return err
+	}
+	
+	// 3. Create depth texture for 3D rendering
+	w.depthTexture, err = p.gpuDevice.CreateTexture(&wgpu.TextureDescriptor{
+		Size:          wgpu.Extent3D{Width: uint32(wPx), Height: uint32(hPx), DepthOrArrayLayers: 1},
+		MipLevelCount: 1,
+		SampleCount:   1,
+		Dimension:     wgpu.TextureDimension2D,
+		Format:        wgpu.TextureFormatDepth24Plus,
+		Usage:         wgpu.TextureUsageRenderAttachment,
+	})
+	if err != nil {
+		return err
+	}
+	
+	w.depthView, err = p.gpuDevice.CreateTextureView(w.depthTexture, nil)
+	if err != nil {
+		return err
+	}
+
+	// Note: We'll create a transient view for each frame since textures don't have permanent views
+	// The bind group will be created per-frame with the texture
+
+	return nil
 }
 
-// paintAndPresent runs the handler frame into the window's raster
-// backend and blits it.
+// createMVPMatrix creates a model-view-projection matrix for 3D cube rendering
+func createMVPMatrix(aspectRatio float32, rotationAngle float32, scale float32, floatY float32) [16]float32 {
+	// Simple rotation matrices
+	sinY := float32(math.Sin(float64(rotationAngle)))
+	cosY := float32(math.Cos(float64(rotationAngle)))
+	sinX := float32(math.Sin(float64(rotationAngle * 0.7)))
+	cosX := float32(math.Cos(float64(rotationAngle * 0.7)))
+	
+	// Use passed-in scale (will be eased from 0 to 1.5)
+	translateZ := float32(0.5) // Move it forward so it's in front of clip plane
+	
+	return [16]float32{
+		// Column 0 (X axis after transform)
+		scale * cosY / aspectRatio, scale * sinX * sinY / aspectRatio, scale * cosX * sinY / aspectRatio, 0,
+		// Column 1 (Y axis after transform)
+		0, scale * cosX, -scale * sinX, 0,
+		// Column 2 (Z axis after transform)
+		-scale * sinY / aspectRatio, scale * sinX * cosY / aspectRatio, scale * cosX * cosY / aspectRatio, 0,
+		// Column 3 (translation with floating Y motion)
+		0, floatY, translateZ, 1,
+	}
+}
+
+// paintAndPresent runs the handler frame into the window's raster backend and blits it via WebGPU commands.
 func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
+	frameStart := time.Now()
+	
 	s := w.surface
-	if s == nil || s.handler == nil || w.texture == nil {
+	if s == nil || s.handler == nil || w.uiTexture == nil {
 		return
 	}
+
+	// Get damage region for partial updates
 	full, dmg := s.takeDamage()
 	if forceFull {
 		full = true
@@ -419,43 +1026,340 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 		full = true
 	}
 
+	// 1. Render UI content to the raster backend
 	w.backend.BeginFrame()
 	if full {
 		s.handler.Frame(core.NewPainter(w.backend))
 	} else {
-		// Clip the whole tree to the damaged region: the persistent
-		// framebuffer keeps everything outside it, off-clip draws are rejected,
-		// and only this rectangle is re-uploaded below.
+		// Clip the whole tree to the damaged region
 		s.handler.Frame(core.NewPainter(w.backend).WithClip(dmg))
 	}
 	w.backend.EndFrame()
 
+	// 2. Get the rendered pixel data from the backend
 	img := w.backend.Image()
-	if x0, y0, x1, y1, ok := damageDevicePx(w.backend, full, dmg); ok {
-		off := img.PixOffset(x0, y0)
-		_ = w.texture.Update(
-			&sdl2.Rect{X: int32(x0), Y: int32(y0), W: int32(x1 - x0), H: int32(y1 - y0)},
-			unsafe.Pointer(&img.Pix[off]), img.Stride)
+	if img == nil {
+		return
+	}
+	
+	// 3. Upload pixels to intermediate texture, then render it to surface
+	bounds := img.Bounds()
+	wPx := uint32(bounds.Dx())
+	hPx := uint32(bounds.Dy())
+	
+	// Convert RGBA to BGRA
+	pixelData := make([]byte, len(img.Pix))
+	for i := 0; i < len(img.Pix); i += 4 {
+		pixelData[i+0] = img.Pix[i+2] // B
+		pixelData[i+1] = img.Pix[i+1] // G
+		pixelData[i+2] = img.Pix[i+0] // R
+		pixelData[i+3] = img.Pix[i+3] // A
+	}
+	
+	// Write to intermediate UI texture
+	err := p.gpuQueue.WriteTexture(
+		&wgpu.ImageCopyTexture{
+			Texture:  w.uiTexture,
+			MipLevel: 0,
+			Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
+			Aspect:   0,
+		},
+		pixelData,
+		&wgpu.ImageDataLayout{
+			Offset:       0,
+			BytesPerRow:  uint32(img.Stride),
+			RowsPerImage: hPx,
+		},
+		&wgpu.Extent3D{
+			Width:              wPx,
+			Height:             hPx,
+			DepthOrArrayLayers: 1,
+		},
+	)
+	if err != nil {
+		return
+	}
+	
+	// Get surface texture
+	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
+	if err != nil {
+		return
+	}
+	
+	// Create texture view for UI texture (needed for bind group)
+	uiTextureView, err := p.gpuDevice.CreateTextureView(w.uiTexture, nil)
+	if err != nil {
+		return
+	}
+	defer uiTextureView.Release()
+	
+	// Calculate current rotation angle and scale with easing
+	var angle float32
+	var enabled float32
+	var scale float32 = 1.0 // Default to no scaling
+	
+	if p.rotationEnabled.Load() {
+		// Easing IN
+		timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
+		
+		// Easing function: ease-out cubic for smooth deceleration
+		easeOutCubic := func(t float64) float64 {
+			t = math.Min(t, 1.0) // Clamp to 1.0
+			return 1.0 - math.Pow(1.0-t, 3.0)
+		}
+		
+		// Scale eases in over 0.5 seconds from 1.0 to 2.0
+		scaleProgress := timeSinceActivation / 0.5
+		scaleEased := easeOutCubic(scaleProgress)
+		scale = float32(1.0 + scaleEased*1.0) // 1.0 -> 2.0
+		
+		// Rotation eases in over 1.0 seconds from 0 to full speed
+		rotationProgress := timeSinceActivation / 1.0
+		rotationEased := easeOutCubic(rotationProgress)
+		
+		// After easing completes, continue rotating at full speed
+		elapsedRotation := time.Since(p.rotationStartTime).Seconds()
+		angle = float32(elapsedRotation * 0.1 * rotationEased) // Gradually reach full rotation speed
+		
+		enabled = 1.0
 	} else {
-		_ = w.texture.Update(nil, unsafe.Pointer(&img.Pix[0]), img.Stride)
+		// Easing OUT - return to normal, but check if we're still animating
+		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
+		
+		if timeSinceDeactivation < 0.5 {
+			// Still easing out
+			easeOutCubic := func(t float64) float64 {
+				t = math.Min(t, 1.0)
+				return 1.0 - math.Pow(1.0-t, 3.0)
+			}
+			
+			// Ease scale back from 2.0 to 1.0
+			scaleProgress := timeSinceDeactivation / 0.5
+			scaleEased := easeOutCubic(scaleProgress)
+			scale = float32(2.0 - scaleEased*1.0) // 2.0 -> 1.0
+			
+			// Continue rotating FORWARD but speed up to snap to 0 (next 2π)
+			currentAngle := p.rotationAngleAtDeactivation
+			twoPi := 2.0 * math.Pi
+			
+			// Calculate how much further to rotate to reach next 0 (always forward/clockwise)
+			normalizedAngle := math.Mod(currentAngle, twoPi)
+			if normalizedAngle < 0 {
+				normalizedAngle += twoPi
+			}
+			angleRemaining := twoPi - normalizedAngle
+			
+			// Continue at normal speed PLUS accelerated catch-up to reach 0 in 0.5 seconds
+			elapsedSinceDeactivation := timeSinceDeactivation
+			normalRotation := elapsedSinceDeactivation * 0.1 // Normal rotation speed
+			
+			// Add accelerated rotation to catch up with ease-out at the end
+			// Use ease-in-out for smooth acceleration and deceleration
+			catchUpProgress := math.Min(timeSinceDeactivation / 0.5, 1.0)
+			
+			// Ease-in-out cubic: accelerate, then decelerate as it approaches target
+			easeInOutCubic := func(t float64) float64 {
+				if t < 0.5 {
+					return 4.0 * t * t * t
+				}
+				return 1.0 - math.Pow(-2.0*t+2.0, 3.0)/2.0
+			}
+			catchUpEased := easeInOutCubic(catchUpProgress)
+			catchUpRotation := angleRemaining * catchUpEased
+			
+			// Cap at target angle (next 2π boundary)
+			targetAngle := currentAngle + angleRemaining
+			currentRotatedAngle := currentAngle + normalRotation + catchUpRotation
+			if currentRotatedAngle > targetAngle {
+				currentRotatedAngle = targetAngle
+			}
+			
+			angle = float32(currentRotatedAngle)
+			
+			enabled = 1.0 // Keep effects enabled during ease-out
+		} else {
+			// Fully deactivated
+			angle = 0.0
+			enabled = 0.0
+			scale = 1.0
+		}
 	}
-	if w.transparent {
-		// Alpha-0 clear so unpainted pixels (the frame's corner
-		// cutouts) stay transparent through the composite.
-		_ = w.renderer.SetDrawColor(0, 0, 0, 0)
+	
+	// Update uniform buffer with angle, enabled flag, and scale
+	uniformData := make([]byte, 12)
+	binary.LittleEndian.PutUint32(uniformData[0:4], math.Float32bits(angle))
+	binary.LittleEndian.PutUint32(uniformData[4:8], math.Float32bits(enabled))
+	binary.LittleEndian.PutUint32(uniformData[8:12], math.Float32bits(scale))
+	p.gpuQueue.WriteBuffer(p.blitUniformBuffer, 0, uniformData)
+	
+	// Use cached uniform bind group (no need to recreate)
+	
+	// Create bind group for texture + sampler (still need per-frame because texture view changes)
+	bindGroup, err := p.gpuDevice.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: p.blitLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, TextureView: uiTextureView},
+			{Binding: 1, Sampler: p.blitSampler},
+		},
+	})
+	if err != nil {
+		return
 	}
-	_ = w.renderer.Clear()
-	_ = w.renderer.Copy(w.texture, nil, nil)
-	w.renderer.Present()
+	defer bindGroup.Release()
+	
+	// Create surface view for rendering
+	surfaceView, _ := surfaceTexture.CreateView(nil)
+	defer surfaceView.Release()
+	
+	// Create command encoder
+	encoder, _ := p.gpuDevice.CreateCommandEncoder(nil)
+	
+	// Render pass that draws the UI texture to the surface
+	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
+		ColorAttachments: []wgpu.RenderPassColorAttachment{
+			{
+				View:    surfaceView,
+				LoadOp:  gputypes.LoadOpClear,
+				StoreOp: gputypes.StoreOpStore,
+				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
+			},
+		},
+	})
+	
+	// Set pipeline and bind groups, then draw
+	renderPass.SetPipeline(p.blitPipeline)
+	renderPass.SetBindGroup(0, bindGroup, nil)                  // Texture + sampler (per-frame)
+	renderPass.SetBindGroup(1, p.blitUniformBindGroup, nil)    // Rotation uniform (cached)
+	renderPass.Draw(3, 1, 0, 0) // Draw fullscreen triangle
+	renderPass.End()
+	
+	// Render 3D cube when rotation is active OR during ease-out
+	shouldRenderCube := p.rotationEnabled.Load()
+	if !shouldRenderCube {
+		// Check if we're in ease-out phase
+		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
+		if timeSinceDeactivation < 0.5 {
+			shouldRenderCube = true
+		}
+	}
+	
+	if shouldRenderCube {
+		// Calculate rotation angle for cube
+		elapsed := time.Since(p.rotationStartTime).Seconds()
+		cubeAngle := float32(elapsed * 0.5) // Rotate faster than the background
+		
+		// Add floating motion (sine wave)
+		floatOffset := float32(math.Sin(elapsed * 1.5) * 0.15)
+		
+		// Calculate cube scale based on current state
+		var cubeScale float32
+		easeOutCubic := func(t float64) float64 {
+			t = math.Min(t, 1.0)
+			return 1.0 - math.Pow(1.0-t, 3.0)
+		}
+		
+		if p.rotationEnabled.Load() {
+			// Easing IN
+			timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
+			scaleProgress := timeSinceActivation / 0.5
+			scaleEased := easeOutCubic(scaleProgress)
+			cubeScale = float32(scaleEased * 1.5) // Ease from 0 to 1.5
+			
+			// Add slight scale pulsing after initial ease
+			if scaleProgress >= 1.0 {
+				pulse := float32(math.Sin(elapsed*2.0)*0.05 + 1.0)
+				cubeScale *= pulse
+			}
+		} else {
+			// Easing OUT
+			timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
+			scaleProgress := timeSinceDeactivation / 0.5
+			scaleEased := easeOutCubic(scaleProgress)
+			cubeScale = float32((1.0 - scaleEased) * 1.5) // Ease from 1.5 to 0
+		}
+		
+		// Create MVP matrix with eased scale and floating motion
+		aspectRatio := float32(wPx) / float32(hPx)
+		mvp := createMVPMatrix(aspectRatio, cubeAngle, cubeScale, floatOffset)
+		
+		// Update uniform buffer
+		mvpBytes := (*[64]byte)(unsafe.Pointer(&mvp[0]))[:]
+		p.gpuQueue.WriteBuffer(p.cubeUniformBuffer, 0, mvpBytes)
+		
+		// Create bind group for cube texture (using UI texture)
+		cubeBindGroup, err := p.gpuDevice.CreateBindGroup(&wgpu.BindGroupDescriptor{
+			Layout: p.cubeLayout,
+			Entries: []wgpu.BindGroupEntry{
+				{Binding: 0, TextureView: uiTextureView},
+				{Binding: 1, Sampler: p.blitSampler},
+			},
+		})
+		if err == nil {
+			defer cubeBindGroup.Release()
+			
+			// Render cube with back-face culling only (no depth buffer needed)
+			cubePass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
+				ColorAttachments: []wgpu.RenderPassColorAttachment{
+					{
+						View:       surfaceView,
+						LoadOp:     gputypes.LoadOpLoad, // Keep existing content
+						StoreOp:    gputypes.StoreOpStore,
+						ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 0.0},
+					},
+				},
+			})
+			
+			cubePass.SetPipeline(p.cubePipeline)
+			cubePass.SetBindGroup(0, cubeBindGroup, nil)
+			cubePass.SetBindGroup(1, p.cubeUniformBindGroup, nil)
+			cubePass.SetVertexBuffer(0, p.cubeVertexBuffer, 0)
+			cubePass.SetIndexBuffer(p.cubeIndexBuffer, gputypes.IndexFormatUint16, 0)
+			cubePass.DrawIndexed(36, 1, 0, 0, 0) // 36 indices for 12 triangles
+			cubePass.End()
+		}
+	}
+	
+	// Submit and present
+	cmdBuffer, _ := encoder.Finish()
+	_, err = p.gpuQueue.Submit(cmdBuffer)
+	if err != nil {
+		return
+	}
+	w.gpuSurface.Present(surfaceTexture)
+
+	// Enforce minimum frame time to prevent event starvation
+	// Target 60 FPS = 16.67ms per frame
+	frameDuration := time.Since(frameStart)
+	minFrameTime := 16 * time.Millisecond
+	if frameDuration < minFrameTime {
+		time.Sleep(minFrameTime - frameDuration)
+	}
+	
+	if frameDuration > 30*time.Millisecond {
+		fmt.Printf("SLOW FRAME: %v (%.1f FPS)\n", frameDuration, 1000.0/frameDuration.Milliseconds())
+	}
+
+	// Continuous rotation requires continuous repaints
+	// Keep repainting if rotation is enabled OR if we're still easing out
+	needsContinuousRepaint := p.rotationEnabled.Load()
+	if !needsContinuousRepaint {
+		// Check if we're in ease-out phase
+		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
+		if timeSinceDeactivation < 0.5 {
+			needsContinuousRepaint = true
+		}
+	}
+	
+	if needsContinuousRepaint && s != nil {
+		s.Invalidate(core.UnitRect{}) // Mark as needing repaint
+	}
 
 	if p.showFPS && w == p.main {
 		p.fpsFrames++
 	}
 }
 
-// damageDevicePx returns the device-pixel sub-rectangle to re-upload for a
-// bounded repaint; ok=false means upload the whole texture (full repaint or a
-// degenerate region).
+// damageDevicePx returns the device-pixel sub-rectangle to re-upload for a bounded repaint.
 func damageDevicePx(b *raster.Backend, full bool, dmg core.UnitRect) (x0, y0, x1, y1 int, ok bool) {
 	if full {
 		return 0, 0, 0, 0, false
@@ -463,10 +1367,7 @@ func damageDevicePx(b *raster.Backend, full bool, dmg core.UnitRect) (x0, y0, x1
 	return b.DevicePxRect(dmg)
 }
 
-// updateFPSTitle rewrites the main window's OS title with the measured frame
-// rate about once a second. fps=true drives a continuous repaint of the main
-// window, so this reads the sustained render rate (vsync-paced - typically the
-// monitor refresh) rather than the sporadic on-demand present rate.
+// updateFPSTitle rewrites the main window's OS title with the measured frame rate.
 func (p *Platform) updateFPSTitle() {
 	now := time.Now()
 	if p.fpsSince.IsZero() {
@@ -485,11 +1386,7 @@ func (p *Platform) updateFPSTitle() {
 	p.fpsSince = now
 }
 
-// liveResize re-sizes one window's framebuffer, re-lays out its
-// handler, and presents immediately. Idempotent: a size the
-// framebuffer already has is a no-op, so the event-watch call (live,
-// inside the modal resize loop) and the queued WindowEvent don't do
-// the work twice.
+// liveResize re-sizes one window's framebuffer, re-lays out its handler, and presents immediately.
 func (p *Platform) liveResize(id uint32, wPx, hPx int) {
 	w, ok := p.wins[id]
 	if !ok || wPx <= 0 || hPx <= 0 {
@@ -505,29 +1402,9 @@ func (p *Platform) liveResize(id uint32, wPx, hPx int) {
 	w.applyShape()
 	if s := w.surface; s != nil && s.handler != nil {
 		s.handler.Resized(w.backend.Size())
-		p.paintAndPresent(w, true) // a resize repaints the whole surface
+		p.paintAndPresent(w, true)
 		s.dirty.Store(false)
 	}
-}
-
-// Host-level font zoom (this GUI host only — a TUI has no say over its
-// terminal's font): Command on macOS, the Meta/Windows key elsewhere, with
-// "+"/"=" to grow, "-" to shrink, "0" to return to the configured
-// [window] font_size. The dynamic size is bounded to 4..100pt.
-const (
-	minFontPt = 4
-	maxFontPt = 100
-)
-
-// clampFontPt bounds a point size to the dynamic zoom range.
-func clampFontPt(size int) int {
-	if size < minFontPt {
-		return minFontPt
-	}
-	if size > maxFontPt {
-		return maxFontPt
-	}
-	return size
 }
 
 // zoomTarget resolves a Command/Meta zoom chord to the font size it asks
@@ -568,16 +1445,10 @@ func (p *Platform) fontZoomKey(sym sdl2.Keysym) bool {
 	return true
 }
 
-// applyFontSize changes the live font_size on every open window at once. The
-// MAIN window keeps its pixel size and its unit grid re-derives, exactly as
-// in a window resize; a handler opting in via PixelAnchoredOnFontZoom (a
-// maximized torn-off filling its display) is treated the same way. Other
-// secondary windows (torn-offs, native-mode windows) instead keep their UNIT
-// size and re-size in pixels — a torn-off dialog is a fixed-unit scene with
-// no resize border, so shrinking its grid would clip its content with no way
-// back. Backends created later (new windows, resize framebuffers) pick the
-// size up from p.fontSize via applyMetrics, and the pre-Run seed backend
-// (held by embedders for their unit<->pixel geometry) is kept current too.
+// applyFontSize changes the live font_size on every open window at once.
+// When w.window.SetSize executes, it triggers an OS window resize event.
+// Because Part 2 wires the watch function to catch this size shift, our refactored
+// WebGPU swapchain code adapts dynamically with zero structural friction.
 func (p *Platform) applyFontSize(size int) {
 	cur := p.fontSize
 	if cur < 1 {
@@ -628,7 +1499,7 @@ func (p *Platform) applyFontSize(size int) {
 	}
 }
 
-// surfaceFor routes an event's window ID to its surface.
+// surfaceFor routes an event's window ID to its surface mapping wrapper.
 func (p *Platform) surfaceFor(id uint32) *sdlSurface {
 	if w, ok := p.wins[id]; ok {
 		return w.surface
@@ -636,7 +1507,8 @@ func (p *Platform) surfaceFor(id uint32) *sdlSurface {
 	return nil
 }
 
-// pumpEvents drains SDL's queue into the per-window surface handlers.
+// pumpEvents drains SDL's hardware queue into the per-window surface handlers.
+// It maps system pixel dimensions to abstract core toolkit units dynamically.
 func (p *Platform) pumpEvents() bool {
 	delivered := false
 	for {
@@ -657,8 +1529,8 @@ func (p *Platform) pumpEvents() bool {
 			}
 			switch e.Event {
 			case sdl2.WINDOWEVENT_SIZE_CHANGED:
-				// The event watch usually handled this live; this is
-				// the no-op-if-current backstop.
+				// Handled automatically via our event watch hook in Part 2.
+				// This acts as a reliable, idempotent backstop fallback.
 				p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
 			case sdl2.WINDOWEVENT_FOCUS_GAINED:
 				s.handler.Event(core.FocusEvent{Focused: true})
@@ -667,7 +1539,7 @@ func (p *Platform) pumpEvents() bool {
 				s.handler.Event(core.FocusEvent{Focused: false})
 				s.Invalidate(core.UnitRect{})
 			case sdl2.WINDOWEVENT_LEAVE:
-				// Pointer left the window: clear hover-only affordances.
+				// Pointer left the active boundary box: clear hover affordances.
 				s.handler.Event(core.MouseLeaveEvent{})
 				s.Invalidate(core.UnitRect{})
 			}
@@ -678,11 +1550,8 @@ func (p *Platform) pumpEvents() bool {
 			}
 			text := e.GetText()
 			for _, ch := range text {
-				// On macOS the Option key composes text (Option+a -> "å"),
-				// so meta shortcuts arrive here as accented characters rather
-				// than as KEYDOWN modifier combos. Decode them back to their
-				// "M-key" notation - matching the TUI backend - and dispatch
-				// as a key event instead of typing the composed character.
+				// On macOS, handle native Option key shortcuts by mapping them
+				// back into clear "M-key" syntax to ensure uniformity across environments.
 				if runtime.GOOS == "darwin" {
 					if decoded, ok := decodeMacOSOptionChar(ch); ok {
 						mods, name := core.ParseKeyModifiers(decoded)
@@ -705,8 +1574,39 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			if e.Type == sdl2.KEYDOWN {
+				// Check for rotation trigger (R key) - toggles on/off
+				// Only supported by renderers with rotation capability (WebGPU)
+				if e.Keysym.Sym == sdl2.K_r && p.renderer.SupportsFeature(FeatureRotation) {
+					enabled := !p.rotationEnabled.Load()
+					p.rotationEnabled.Store(enabled)
+					
+					// Initialize timing for Platform's animation state
+					if enabled {
+						p.rotationActivationTime = time.Now()
+						fmt.Println("🔄 Rotation effect activated!")
+					} else {
+						// Store current angle for smooth ease-out
+						elapsed := time.Since(p.rotationStartTime).Seconds()
+						timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
+						if timeSinceActivation > 1.0 { // After ease-in completes
+							easeOutCubic := func(t float64) float64 {
+								t = math.Min(t, 1.0)
+								return 1.0 - math.Pow(1.0-t, 3.0)
+							}
+							rotationProgress := timeSinceActivation / 1.0
+							rotationEased := easeOutCubic(rotationProgress)
+							p.rotationAngleAtDeactivation = elapsed * 0.1 * rotationEased
+						}
+						p.rotationDeactivationTime = time.Now()
+						fmt.Println("⏸️  Rotation effect deactivating...")
+					}
+					
+					// Also notify renderer
+					p.renderer.SetRotationEnabled(enabled)
+				}
+				
 				if p.fontZoomKey(e.Keysym) {
-					continue // a host zoom chord, never an app key
+					continue // Consumed by host zoom controller, skip dispatching
 				}
 				if key := translateKey(e.Keysym); key != "" {
 					mods, name := core.ParseKeyModifiers(key)
@@ -717,10 +1617,8 @@ func (p *Platform) pumpEvents() bool {
 					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
 				}
 			} else if e.Type == sdl2.KEYUP {
-				// Report releases with the modifier state AFTER this key rose
-				// (SDL's live keymap), so the desktop can commit a window-cycle
-				// run once every modifier is up. Emitted even for a bare
-				// modifier key (translateKey == "") so that release is seen.
+				// Report release actions back to tracking vectors using the modifier
+				// states parsed immediately AFTER the key release event completes.
 				s.handler.Event(core.KeyReleaseEvent{
 					Key:       translateKey(e.Keysym),
 					Modifiers: currentKeyModifiers(),
@@ -732,12 +1630,11 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			btn := mapButton(e.Button)
-			x, y := p.toUnits(e.X, e.Y)
+			x, y := p.toUnits(e.X, e.Y, e.WindowID)
 			mods := currentKeyModifiers()
 			if e.Type == sdl2.MOUSEBUTTONDOWN {
-				// Capture so a drag keeps reporting past the window
-				// edge (coordinates go negative/out of bounds) - the
-				// tear-off choreography depends on it.
+				// Enable pointer capturing so dragging actions extend beyond window borders
+				// to allow continuous, lag-free native widget tear-out gestures.
 				_ = sdl2.CaptureMouse(true)
 				s.handler.Event(core.MousePressEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 			} else {
@@ -753,7 +1650,7 @@ func (p *Platform) pumpEvents() bool {
 			if e.State&sdl2.ButtonLMask() != 0 {
 				held = core.LeftButton
 			}
-			x, y := p.toUnits(e.X, e.Y)
+			x, y := p.toUnits(e.X, e.Y, e.WindowID)
 			s.handler.Event(core.MouseMoveEvent{X: x, Y: y, Buttons: held, Modifiers: currentKeyModifiers()})
 		case *sdl2.MouseWheelEvent:
 			s := p.surfaceFor(e.WindowID)
@@ -761,11 +1658,10 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			mx, my, _ := sdl2.GetMouseState()
-			x, y := p.toUnits(mx, my)
+			x, y := p.toUnits(mx, my, e.WindowID)
 			s.handler.Event(core.MouseWheelEvent{
 				X: x, Y: y,
-				// Toolkit convention: negative DeltaY = scroll up
-				// (matches the TUI backend); SDL reports the inverse.
+				// Invert raw SDL wheel vectors to match standard toolkit scroll conventions
 				DeltaX: int(e.X), DeltaY: -int(e.Y),
 				PreciseX:  float64(e.PreciseX),
 				PreciseY:  -float64(e.PreciseY),
@@ -775,6 +1671,7 @@ func (p *Platform) pumpEvents() bool {
 	}
 }
 
+// mainSurface retrieves the abstract surface binding associated with the primary workspace window.
 func (p *Platform) mainSurface() *sdlSurface {
 	if p.main != nil {
 		return p.main.surface
@@ -833,10 +1730,120 @@ func pxToUnitAxis(px, denom, cellPx int) int {
 // toUnits converts window-pixel mouse coordinates to abstract units,
 // inverting the backend's font_size-aware, cell-snapped pixel mapping so
 // hit-testing lands on the same grid the UI paints on at any font_size.
-func (p *Platform) toUnits(x, y int32) (core.Unit, core.Unit) {
+func (p *Platform) toUnits(x, y int32, windowID uint32) (core.Unit, core.Unit) {
+	// Check if rotation effects are active (either easing in or easing out)
+	isActive := p.rotationEnabled.Load()
+	isEasingOut := false
+	
+	if !isActive {
+		// Check if we're still in ease-out phase
+		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
+		if timeSinceDeactivation < 0.5 {
+			isEasingOut = true
+			isActive = true // Treat as active for transformation purposes
+		}
+	}
+	
+	// Only apply rotation/scaling if enabled or easing out
+	if !isActive {
+		// Normal path - no transformation
+		denomW, denomH := p.rootDenomination()
+		ux := pxToUnitAxis(int(x), denomW, p.cellPx(denomW))
+		uy := pxToUnitAxis(int(y), denomH, p.cellPx(denomH))
+		return core.Unit(ux), core.Unit(uy)
+	}
+	
+	// Get window for rotation pivot (needed for display rotation compensation)
+	win, ok := p.wins[windowID]
+	if !ok || win.window == nil {
+		denomW, denomH := p.rootDenomination()
+		ux := pxToUnitAxis(int(x), denomW, p.cellPx(denomW))
+		uy := pxToUnitAxis(int(y), denomH, p.cellPx(denomH))
+		return core.Unit(ux), core.Unit(uy)
+	}
+	
+	w, h := win.window.GetSize()
+	centerX := float64(w) / 2.0
+	centerY := float64(h) / 2.0
+	
+	// Translate to center
+	fx := float64(x) - centerX
+	fy := float64(y) - centerY
+	
+	easeOutCubic := func(t float64) float64 {
+		t = math.Min(t, 1.0)
+		return 1.0 - math.Pow(1.0-t, 3.0)
+	}
+	
+	easeInOutCubic := func(t float64) float64 {
+		if t < 0.5 {
+			return 4.0 * t * t * t
+		}
+		return 1.0 - math.Pow(-2.0*t+2.0, 3.0)/2.0
+	}
+	
+	var currentScale float64
+	var angle float64
+	
+	if isEasingOut {
+		// Easing out - continue forward with speedup
+		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
+		scaleProgress := timeSinceDeactivation / 0.5
+		scaleEased := easeOutCubic(scaleProgress)
+		currentScale = 2.0 - scaleEased*1.0 // 2.0 -> 1.0
+		
+		// Match shader: continue forward with accelerated catch-up, capped at target
+		currentAngle := p.rotationAngleAtDeactivation
+		twoPi := 2.0 * math.Pi
+		normalizedAngle := math.Mod(currentAngle, twoPi)
+		if normalizedAngle < 0 {
+			normalizedAngle += twoPi
+		}
+		angleRemaining := twoPi - normalizedAngle
+		
+		normalRotation := timeSinceDeactivation * 0.1
+		catchUpProgress := math.Min(timeSinceDeactivation / 0.5, 1.0)
+		catchUpEased := easeInOutCubic(catchUpProgress)
+		catchUpRotation := angleRemaining * catchUpEased
+		
+		targetAngle := currentAngle + angleRemaining
+		currentRotatedAngle := currentAngle + normalRotation + catchUpRotation
+		if currentRotatedAngle > targetAngle {
+			currentRotatedAngle = targetAngle
+		}
+		
+		angle = -currentRotatedAngle // Negative to match shader
+	} else {
+		// Easing in / active
+		timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
+		scaleProgress := timeSinceActivation / 0.5
+		scaleEased := easeOutCubic(scaleProgress)
+		currentScale = 1.0 + scaleEased*1.0 // 1.0 -> 2.0
+		
+		rotationProgress := timeSinceActivation / 1.0
+		rotationEased := easeOutCubic(rotationProgress)
+		elapsed := time.Since(p.rotationStartTime).Seconds()
+		angle = -(elapsed * 0.1 * rotationEased) // Negative to match shader
+	}
+	
+	// Scale by current scale to match the content scale
+	fx *= currentScale
+	fy *= currentScale
+	
+	// Rotate
+	cosA := math.Cos(angle)
+	sinA := math.Sin(angle)
+	
+	rotatedX := fx*cosA - fy*sinA
+	rotatedY := fx*sinA + fy*cosA
+	
+	// Translate back
+	finalX := rotatedX + centerX
+	finalY := rotatedY + centerY
+	
 	denomW, denomH := p.rootDenomination()
-	ux := pxToUnitAxis(int(x), denomW, p.cellPx(denomW))
-	uy := pxToUnitAxis(int(y), denomH, p.cellPx(denomH))
+	ux := pxToUnitAxis(int(finalX), denomW, p.cellPx(denomW))
+	uy := pxToUnitAxis(int(finalY), denomH, p.cellPx(denomH))
 	return core.Unit(ux), core.Unit(uy)
 }
 
@@ -904,6 +1911,7 @@ var specialKeys = map[sdl2.Keycode]string{
 	sdl2.K_F11:       "F11",
 	sdl2.K_F12:       "F12",
 }
+
 
 // translateKey produces the D3 key string for a KEYDOWN, or "" when
 // the TextInput path owns it (plain printable characters).
@@ -1114,19 +2122,17 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 	if opts.Borderless {
 		radius = opts.CornerRadiusPx
 	}
-	// Never activate extra windows on show: a torn-off window appears
-	// under a HELD pointer, and stealing key status from the desktop
-	// window kills its live mouse session (the drag dies and SDL's
-	// button state wedges). Click-to-focus still works.
+
+	// Prevent secondary torn-out windows from stealing active focus mid-drag sessions
 	_ = sdl2.SetHint("SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN", "1")
+
+	// Spawns a native window and sets up its independent WebGPU surface swapchain contexts
 	w, err := p.createWindow(opts.Title, x, y, wPx, hPx, flags, radius)
 	if err != nil {
 		return nil, err
 	}
 	w.surface = &sdlSurface{platform: p, win: w}
 	if opts.Borderless {
-		// Borderless windows can't miniaturize without help (Cocoa
-		// requires the miniaturizable style-mask bit).
 		makeWindowMiniaturizable(w.window)
 	}
 	reassertCapture()
@@ -1170,26 +2176,10 @@ func (p *Platform) SetCursor(shape core.CursorShape) {
 	if cur == nil {
 		return
 	}
-	// RE-ASSERT on every call, even when the shape is unchanged: macOS resets
-	// the window's cursor to the arrow on every mouse-move event unless the app
-	// re-sets it, so short-circuiting an "unchanged" shape lets that reset win —
-	// the cursor flips back to the arrow the moment the pointer moves (a real
-	// resize keeps its cursor only because the held button suppresses the OS
-	// reset). Re-setting the cached cursor object is cheap and idempotent
-	// elsewhere. The cache above still avoids re-creating cursor objects.
 	sdl2.SetCursor(cur)
 	p.cursorSet = true
 }
 
-// reassertCursor re-applies the current cursor once, AFTER the event pump.
-// macOS resets a window's cursor to the arrow while processing mouse-move
-// events, and SDL_SetCursor no-ops when its cached cur_cursor is unchanged, so
-// the shape we set during motion handling gets stomped by the OS reset.
-// Re-applying per motion event fights the OS on every move and flickers;
-// doing it ONCE per frame, after all of the batch's move events (and their
-// resets) have been drained, makes our shape the final one the WindowServer
-// composites — steady, not flickering. SDL_SetCursor(NULL) re-applies the
-// current cursor through the backend, bypassing SDL's no-op cache.
 func (p *Platform) reassertCursor() {
 	if p.cursorSet {
 		sdl2.SetCursor(nil)
@@ -1214,7 +2204,7 @@ func systemCursorID(shape core.CursorShape) sdl2.SystemCursor {
 	}
 }
 
-// sdlSurface is one SDL window as a platform.Surface.
+// sdlSurface is one SDL window mapped onto a hardware GoGPU/WebGPU presentation layout.
 type sdlSurface struct {
 	platform *Platform
 	win      *nativeWin
@@ -1238,9 +2228,7 @@ func (s *sdlSurface) Metrics() core.CellMetrics {
 }
 func (s *sdlSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
 
-// Invalidate marks the surface dirty and accumulates damage: an empty rect
-// (the common case) means the whole surface; a bounded rect unions into the
-// pending region so a partial repaint touches only what changed.
+// Invalidate marks the surface dirty and accumulates damage regions for optimized sub-texture streaming.
 func (s *sdlSurface) Invalidate(r core.UnitRect) {
 	s.damageMu.Lock()
 	if r.Width <= 0 || r.Height <= 0 {
@@ -1357,9 +2345,7 @@ func (s *sdlSurface) WorkAreaPx() (int, int, int, int) {
 }
 
 // applyShape rounds the OS window's corners with a binary alpha mask
-// so the pixels outside the drawn roundrect frame are not opaque
-// black. Best effort: video drivers without shape support just keep
-// square corners.
+// so the pixels outside the drawn roundrect frame are not opaque black.
 func (w *nativeWin) applyShape() {
 	if w.shapeRadiusPx <= 0 || w.window == nil {
 		return
@@ -1451,19 +2437,10 @@ func (s *sdlSurface) Raise() {
 }
 
 // Close implements platform.NativeSurface: destroys the OS window.
-// The main window ignores it (quitting the app is Platform.Quit).
-//
-// The SDL window/renderer/texture teardown — and the wins map, which the event
-// pump reads — are only safe on the platform's main loop thread (macOS requires
-// SDL video calls there, and touching wins off the pump's thread is a data
-// race). Close is reachable from other goroutines: a torn window closing from an
-// app's own session goroutine (mew's commit handler), a timer-driven dialog
-// dismissal, and so on. So marshal the whole teardown onto the main loop via
-// Post rather than destroying inline. The s.closed guard (and re-checking the
-// wins entry) makes it idempotent and safe against a reused window id.
+// It marshals the destruction onto the main thread via Post to avoid data races.
 func (s *sdlSurface) Close() {
 	if s.win == s.platform.main {
-		return // never destroy the loop-owning window here
+		return // Never destroy the primary manager shell layout
 	}
 	p := s.platform
 	p.Post(func() {
@@ -1475,7 +2452,7 @@ func (s *sdlSurface) Close() {
 		if cur, ok := p.wins[s.win.id]; ok && cur == s.win {
 			delete(p.wins, s.win.id)
 		}
-		s.win.destroy()
+		s.win.destroy() // Calls our updated WebGPU FFI surface teardown macro smoothly
 		reassertCapture()
 	})
 }

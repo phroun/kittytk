@@ -14,6 +14,12 @@ require (
 )
 
 require (
+	github.com/go-webgpu/goffi v0.6.2 // indirect
+	github.com/go-webgpu/webgpu v0.5.4 // indirect
+	github.com/gogpu/gpucontext v0.24.0 // indirect
+	github.com/gogpu/gputypes v0.5.1 // indirect
+	github.com/gogpu/naga v0.17.16 // indirect
+	github.com/gogpu/wgpu v0.30.32 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	golang.org/x/net v0.57.0 // indirect
