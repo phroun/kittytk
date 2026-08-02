@@ -766,15 +766,21 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			needsUpdate = surf.lastBounds.X != bounds.X || surf.lastBounds.Y != bounds.Y
 		}
 		
+		fmt.Printf("🔍 Window size check: surf(%dx%d) vs new(%dx%d), needsUpdate=%v\n",
+			surf.width, surf.height, widthPx, heightPx, needsUpdate)
+		
 		if needsUpdate {
 			// CRITICAL: Invalidate the window BEFORE we recreate the backend
 			// This ensures the window knows it needs a full repaint
+			fmt.Printf("🔧 Window needs update (resize/move detected)\n")
 			type Invalidator interface {
 				Invalidate()
 			}
 			if invalidatable, ok := win.(Invalidator); ok {
+				fmt.Printf("✅ Calling window.Invalidate() before resize\n")
 				invalidatable.Invalidate()
-				fmt.Printf("✅ Invalidated window before resize\n")
+			} else {
+				fmt.Printf("❌ Window doesn't implement Invalidate() interface!\n")
 			}
 			
 			newBackend, err := raster.NewScaled(widthPx, heightPx, scale)

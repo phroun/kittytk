@@ -1034,6 +1034,12 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 		p.backend = b
 		p.wPx, p.hPx = wPx, hPx
 	}
+	
+	// CRITICAL: Invalidate the surface so handler knows to repaint everything
+	// The backend is new and empty - we need a full repaint
+	if w.surface != nil {
+		w.surface.Invalidate(core.UnitRect{}) // Empty rect = invalidate all
+	}
 
 	// Clean up old WebGPU texture if this is a resize event
 	if w.uiTexture != nil {
