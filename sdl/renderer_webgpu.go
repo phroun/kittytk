@@ -767,6 +767,16 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		}
 		
 		if needsUpdate {
+			// CRITICAL: Invalidate the window BEFORE we recreate the backend
+			// This ensures the window knows it needs a full repaint
+			type Invalidator interface {
+				Invalidate()
+			}
+			if invalidatable, ok := win.(Invalidator); ok {
+				invalidatable.Invalidate()
+				fmt.Printf("✅ Invalidated window before resize\n")
+			}
+			
 			newBackend, err := raster.NewScaled(widthPx, heightPx, scale)
 			if err != nil {
 				fmt.Printf("❌ Failed to create backend for window resize: %v\n", err)
@@ -862,24 +872,6 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		
 		// Render window to its backend
 		surf.backend.BeginFrame()
-		
-		// If window was just resized, pre-fill with a background color
-		// Window Paint() might not repaint everything if damage tracking thinks nothing changed
-		if surf.dirty {
-			img := surf.backend.Image()
-			if img != nil {
-				// Fill with dark gray (typical window background) instead of black
-				// This way unpainted areas blend in better
-				bgColor := []byte{32, 32, 32, 255} // Dark gray, opaque
-				for i := 0; i < len(img.Pix); i += 4 {
-					img.Pix[i+0] = bgColor[0] // R
-					img.Pix[i+1] = bgColor[1] // G
-					img.Pix[i+2] = bgColor[2] // B
-					img.Pix[i+3] = bgColor[3] // A
-				}
-			}
-		}
-		
 		painter := core.NewPainter(surf.backend)
 		win.Paint(painter)
 		surf.backend.EndFrame()
