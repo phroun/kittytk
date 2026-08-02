@@ -4,8 +4,8 @@ package sdl
 
 import (
 	"fmt"
-	"reflect"
 	"time"
+	"unsafe"
 
 	wgpu "github.com/gogpu/wgpu"
 	gputypes "github.com/gogpu/gputypes"
@@ -35,7 +35,9 @@ type WindowSurface struct {
 	dirty       bool // needs re-render
 	
 	// UI Window compositor support (for child windows within an OS window)
-	uiWindow    interface{}      // UI Window trinket (interface{} to avoid import cycle)
+	// If uiWindow is non-nil, this surface represents a UI child window
+	// that should be composited with others in its parent OS window
+	uiWindow    interface{}      // *window.Window - interface to avoid import cycle
 	backend     *raster.Backend  // Per-window raster backend for UI windows
 	zOrder      int              // Z-order for compositing (higher = on top)
 }
@@ -278,9 +280,535 @@ func (r *WebGPURenderer) ResizeWindowRenderer(w *nativeWin, pxW, pxH int) error 
 
 // Present renders using WebGPU pipeline
 func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
-	// TODO: Extract WebGPU presentation logic from platform_sdl.go
-	// This includes uploading backend pixels, running blit/cube passes, presenting
-	return fmt.Errorf("WebGPURenderer.Present not yet implemented")
+	// This method is being replaced by RenderFrame for compositing mode
+	// For now, keep the old direct rendering as fallback
+	return fmt.Errorf("Present deprecated - use RenderFrame instead")
+}
+
+// RenderFrame handles rendering for a single window:
+// 1. Render the window to its off-screen texture (if needed)
+// 2. Composite the texture to the window's surface
+// 3. Present the result
+// Note: mainWindow and windows[0] should be the same window in current architecture
+func (r *WebGPURenderer) RenderFrame(mainWindow *nativeWin, windows []*nativeWin, renderWindow func(*nativeWin)) error {
+	// First call - log that we're using the compositor
+	if r.firstCompositorFrame {
+		fmt.Println("🎨 GPU Compositor Active")
+		r.firstCompositorFrame = false
+	}
+	
+	if len(windows) == 0 {
+		return nil
+	}
+	
+	// Currently, we render each window independently (windows should have 1 element)
+	// Future: true compositing will render multiple child windows onto a parent
+	
+	// Step 1: Render each window to its off-screen texture
+	for _, win := range windows {
+		surf, ok := r.windowSurfaces[win.id]
+		if !ok {
+			continue // No surface for this window
+		}
+		
+		// Render this window's content
+		renderWindow(win)
+		
+		// Upload the raster backend pixels to the window's GPU texture
+		img := win.backend.Image()
+		if img == nil {
+			continue
+		}
+		
+		// Get actual image dimensions
+		bounds := img.Bounds()
+		imgWidth := uint32(bounds.Dx())
+		imgHeight := uint32(bounds.Dy())
+		
+		// Check if image size matches surface size - resize if needed
+		if imgWidth != surf.width || imgHeight != surf.height {
+			// Image size changed - recreate the surface texture at the new size
+			// This happens during window resize
+			surf.width = imgWidth
+			surf.height = imgHeight
+			
+			// Recreate texture
+			if surf.texture != nil {
+				surf.texture.Release()
+			}
+			if surf.textureView != nil {
+				surf.textureView.Release()
+			}
+			if surf.bindGroup != nil {
+				surf.bindGroup.Release()
+			}
+			
+			// Create new texture at correct size
+			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
+				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
+				Dimension: wgpu.TextureDimension2D,
+				Size: wgpu.Extent3D{
+					Width:              imgWidth,
+					Height:             imgHeight,
+					DepthOrArrayLayers: 1,
+				},
+				Format:     wgpu.TextureFormatBGRA8Unorm,
+				MipLevelCount: 1,
+				SampleCount:   1,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to recreate texture: %w", err)
+			}
+			surf.texture = texture
+			
+			// Create texture view
+			textureView, err := r.device.CreateTextureView(texture, nil)
+			if err != nil {
+				texture.Release()
+				return fmt.Errorf("failed to create texture view: %w", err)
+			}
+			surf.textureView = textureView
+			
+			// Create bind group
+			bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+				Layout: r.blitLayout,
+				Entries: []wgpu.BindGroupEntry{
+					{Binding: 0, TextureView: textureView},
+					{Binding: 1, Sampler: r.blitSampler},
+				},
+			})
+			if err != nil {
+				textureView.Release()
+				texture.Release()
+				return fmt.Errorf("failed to create bind group: %w", err)
+			}
+			surf.bindGroup = bindGroup
+		}
+		
+		// Convert RGBA to BGRA and ensure proper stride
+		// WebGPU requires BytesPerRow to be aligned to 256 bytes
+		bytesPerPixel := uint32(4)
+		bytesPerRow := imgWidth * bytesPerPixel
+		
+		// Align to 256 bytes as required by WebGPU
+		alignment := uint32(256)
+		alignedBytesPerRow := ((bytesPerRow + alignment - 1) / alignment) * alignment
+		
+		pixelData := make([]byte, alignedBytesPerRow*imgHeight)
+		
+		// Copy and convert RGBA to BGRA row by row
+		for y := uint32(0); y < imgHeight; y++ {
+			srcOffset := y * uint32(img.Stride)
+			dstOffset := y * alignedBytesPerRow
+			
+			for x := uint32(0); x < imgWidth; x++ {
+				srcIdx := srcOffset + x*4
+				dstIdx := dstOffset + x*4
+				
+				pixelData[dstIdx+0] = img.Pix[srcIdx+2] // B
+				pixelData[dstIdx+1] = img.Pix[srcIdx+1] // G
+				pixelData[dstIdx+2] = img.Pix[srcIdx+0] // R
+				pixelData[dstIdx+3] = img.Pix[srcIdx+3] // A
+			}
+		}
+		
+		// Write to window's texture
+		err := r.queue.WriteTexture(
+			&wgpu.ImageCopyTexture{
+				Texture:  surf.texture,
+				MipLevel: 0,
+				Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
+				Aspect:   0,
+			},
+			pixelData,
+			&wgpu.ImageDataLayout{
+				Offset:       0,
+				BytesPerRow:  alignedBytesPerRow,
+				RowsPerImage: imgHeight,
+			},
+			&wgpu.Extent3D{
+				Width:              imgWidth,
+				Height:             imgHeight,
+				DepthOrArrayLayers: 1,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("failed to upload window texture: %w", err)
+		}
+		
+		surf.dirty = false
+	}
+	
+	// Step 2: Composite all windows to the main screen surface
+	// Get the main window's surface texture
+	surfaceTexture, _, err := mainWindow.gpuSurface.GetCurrentTexture()
+	if err != nil {
+		return err
+	}
+	
+	surfaceView, err := surfaceTexture.CreateView(nil)
+	if err != nil {
+		return err
+	}
+	defer surfaceView.Release()
+	
+	// Create command encoder
+	encoder, err := r.device.CreateCommandEncoder(nil)
+	if err != nil {
+		return err
+	}
+	
+	// Begin render pass - clear to black
+	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
+		ColorAttachments: []wgpu.RenderPassColorAttachment{
+			{
+				View:    surfaceView,
+				LoadOp:  gputypes.LoadOpClear,
+				StoreOp: gputypes.StoreOpStore,
+				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
+			},
+		},
+	})
+	
+	// Draw each window as a textured quad (in Z order)
+	renderPass.SetPipeline(r.blitPipeline)
+	
+
+// RenderFrameWithChildWindows implements UI child window compositing.
+// Each UI Window is rendered to its own off-screen texture, then all textures
+// are composited together with Z-ordering, transforms, and effects.
+func (r *WebGPURenderer) RenderFrameWithChildWindows(
+	osWindow *nativeWin,
+	childWindowList *platform.ChildWindowList,
+	scale int,
+) error {
+	if r.firstCompositorFrame {
+		if childWindowList != nil {
+			fmt.Printf("🎨 GPU Compositor Active - compositing %d UI child windows\n", len(childWindowList.Windows))
+		} else {
+			fmt.Println("🎨 GPU Compositor Active - no child windows")
+		}
+		r.firstCompositorFrame = false
+	}
+	
+	if childWindowList == nil || len(childWindowList.Windows) == 0 {
+		// No child windows, just clear the screen
+		surfaceTexture, _, err := osWindow.gpuSurface.GetCurrentTexture()
+		if err != nil {
+			return err
+		}
+		
+		surfaceView, err := r.device.CreateTextureView(surfaceTexture, nil)
+		if err != nil {
+			return err
+		}
+		defer surfaceView.Release()
+		
+		encoder, err := r.device.CreateCommandEncoder(nil)
+		if err != nil {
+			return err
+		}
+		
+		renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
+			ColorAttachments: []wgpu.RenderPassColorAttachment{
+				{
+					View:    surfaceView,
+					LoadOp:  gputypes.LoadOpClear,
+					StoreOp: gputypes.StoreOpStore,
+					ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
+				},
+			},
+		})
+		renderPass.End()
+		
+		cmdBuffer, _ := encoder.Finish()
+		_, err = r.queue.Submit(cmdBuffer)
+		if err != nil {
+			return err
+		}
+		osWindow.gpuSurface.Present(surfaceTexture)
+		return nil
+	}
+	
+	// Cast child windows to the actual type
+	// We use reflection-like approach to avoid import cycles
+	type WindowLike interface {
+		Bounds() core.UnitRect
+		Paint(*core.Painter)
+	}
+	
+	// Step 1: Render each child window to its own texture
+	for _, childIface := range childWindowList.Windows {
+		win, ok := childIface.(WindowLike)
+		if !ok {
+			continue // Skip if not a window
+		}
+		
+		bounds := win.Bounds()
+		if bounds.Width <= 0 || bounds.Height <= 0 {
+			continue // Skip zero-size windows
+		}
+		
+		// Calculate pixel dimensions based on metrics
+		// Use the OS window's backend metrics
+		metrics := osWindow.backend.Metrics()
+		widthPx := osWindow.backend.PxX(bounds.Width)
+		heightPx := osWindow.backend.PxY(bounds.Height)
+		
+		if widthPx <= 0 || heightPx <= 0 {
+			continue
+		}
+		
+		// Get or create WindowSurface for this UI window
+		// Use the window's pointer as a unique ID
+		windowID := uint32(uintptr(unsafe.Pointer(&childIface)))
+		surf, ok := r.windowSurfaces[windowID]
+		
+		if !ok || surf.backend == nil {
+			// Create new surface for this UI window
+			backend, err := raster.NewScaled(widthPx, heightPx, scale)
+			if err != nil {
+				continue
+			}
+			
+			// Copy metrics from OS window backend
+			backend.SetMetrics(metrics)
+			backend.SetFont(osWindow.backend.Font())
+			
+			// Create GPU texture
+			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
+				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
+				Dimension: wgpu.TextureDimension2D,
+				Size: wgpu.Extent3D{
+					Width:              uint32(widthPx),
+					Height:             uint32(heightPx),
+					DepthOrArrayLayers: 1,
+				},
+				Format:        wgpu.TextureFormatBGRA8Unorm,
+				MipLevelCount: 1,
+				SampleCount:   1,
+			})
+			if err != nil {
+				continue
+			}
+			
+			textureView, err := r.device.CreateTextureView(texture, nil)
+			if err != nil {
+				texture.Release()
+				continue
+			}
+			
+			bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+				Layout: r.blitLayout,
+				Entries: []wgpu.BindGroupEntry{
+					{Binding: 0, TextureView: textureView},
+					{Binding: 1, Sampler: r.blitSampler},
+				},
+			})
+			if err != nil {
+				textureView.Release()
+				texture.Release()
+				continue
+			}
+			
+			surf = &WindowSurface{
+				texture:     texture,
+				textureView: textureView,
+				bindGroup:   bindGroup,
+				width:       uint32(widthPx),
+				height:      uint32(heightPx),
+				uiWindow:    childIface,
+				backend:     backend,
+				dirty:       true,
+				scaleX:      1.0,
+				scaleY:      1.0,
+				opacity:     1.0,
+			}
+			r.windowSurfaces[windowID] = surf
+		}
+		
+		// Check if window was resized
+		if int(surf.width) != widthPx || int(surf.height) != heightPx {
+			// Recreate backend and texture at new size
+			surf.backend, _ = raster.NewScaled(widthPx, heightPx, scale)
+			surf.backend.SetMetrics(metrics)
+			surf.backend.SetFont(osWindow.backend.Font())
+			
+			// Recreate GPU texture
+			if surf.texture != nil {
+				surf.texture.Release()
+			}
+			if surf.textureView != nil {
+				surf.textureView.Release()
+			}
+			if surf.bindGroup != nil {
+				surf.bindGroup.Release()
+			}
+			
+			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
+				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
+				Dimension: wgpu.TextureDimension2D,
+				Size: wgpu.Extent3D{
+					Width:              uint32(widthPx),
+					Height:             uint32(heightPx),
+					DepthOrArrayLayers: 1,
+				},
+				Format:        wgpu.TextureFormatBGRA8Unorm,
+				MipLevelCount: 1,
+				SampleCount:   1,
+			})
+			if err != nil {
+				continue
+			}
+			
+			textureView, err := r.device.CreateTextureView(texture, nil)
+			if err != nil {
+				texture.Release()
+				continue
+			}
+			
+			bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+				Layout: r.blitLayout,
+				Entries: []wgpu.BindGroupEntry{
+					{Binding: 0, TextureView: textureView},
+					{Binding: 1, Sampler: r.blitSampler},
+				},
+			})
+			if err != nil {
+				textureView.Release()
+				texture.Release()
+				continue
+			}
+			
+			surf.texture = texture
+			surf.textureView = textureView
+			surf.bindGroup = bindGroup
+			surf.width = uint32(widthPx)
+			surf.height = uint32(heightPx)
+			surf.dirty = true
+		}
+		
+		// Render this window to its backend
+		surf.backend.BeginFrame()
+		painter := core.NewPainter(surf.backend)
+		win.Paint(painter)
+		surf.backend.EndFrame()
+		
+		// Upload to GPU texture
+		img := surf.backend.Image()
+		if img != nil {
+			bounds := img.Bounds()
+			imgWidth := uint32(bounds.Dx())
+			imgHeight := uint32(bounds.Dy())
+			
+			// Convert RGBA to BGRA with proper alignment
+			bytesPerPixel := uint32(4)
+			bytesPerRow := imgWidth * bytesPerPixel
+			alignment := uint32(256)
+			alignedBytesPerRow := ((bytesPerRow + alignment - 1) / alignment) * alignment
+			
+			pixelData := make([]byte, alignedBytesPerRow*imgHeight)
+			
+			for y := uint32(0); y < imgHeight; y++ {
+				srcOffset := y * uint32(img.Stride)
+				dstOffset := y * alignedBytesPerRow
+				
+				for x := uint32(0); x < imgWidth; x++ {
+					srcIdx := srcOffset + x*4
+					dstIdx := dstOffset + x*4
+					
+					pixelData[dstIdx+0] = img.Pix[srcIdx+2] // B
+					pixelData[dstIdx+1] = img.Pix[srcIdx+1] // G
+					pixelData[dstIdx+2] = img.Pix[srcIdx+0] // R
+					pixelData[dstIdx+3] = img.Pix[srcIdx+3] // A
+				}
+			}
+			
+			r.queue.WriteTexture(
+				&wgpu.ImageCopyTexture{
+					Texture:  surf.texture,
+					MipLevel: 0,
+					Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
+					Aspect:   0,
+				},
+				pixelData,
+				&wgpu.ImageDataLayout{
+					Offset:       0,
+					BytesPerRow:  alignedBytesPerRow,
+					RowsPerImage: imgHeight,
+				},
+				&wgpu.Extent3D{
+					Width:              imgWidth,
+					Height:             imgHeight,
+					DepthOrArrayLayers: 1,
+				},
+			)
+		}
+		
+		surf.dirty = false
+	}
+	
+	// Step 2: Composite all windows to the OS window's surface
+	surfaceTexture, _, err := osWindow.gpuSurface.GetCurrentTexture()
+	if err != nil {
+		return err
+	}
+	
+	surfaceView, err := r.device.CreateTextureView(surfaceTexture, nil)
+	if err != nil {
+		return err
+	}
+	defer surfaceView.Release()
+	
+	encoder, err := r.device.CreateCommandEncoder(nil)
+	if err != nil {
+		return err
+	}
+	
+	// Begin render pass - clear to Desktop background
+	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
+		ColorAttachments: []wgpu.RenderPassColorAttachment{
+			{
+				View:    surfaceView,
+				LoadOp:  gputypes.LoadOpClear,
+				StoreOp: gputypes.StoreOpStore,
+				ClearValue: wgpu.Color{R: 0.2, G: 0.2, B: 0.2, A: 1.0}, // Gray background
+			},
+		},
+	})
+	
+	// Draw each window as a textured quad in Z order
+	renderPass.SetPipeline(r.blitPipeline)
+	
+	for _, childIface := range childWindowList.Windows {
+		windowID := uint32(uintptr(unsafe.Pointer(&childIface)))
+		surf, ok := r.windowSurfaces[windowID]
+		if !ok {
+			continue
+		}
+		
+		// Set bind groups
+		renderPass.SetBindGroup(0, surf.bindGroup, nil)
+		renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
+		
+		// TODO: Apply window position and transforms
+		// For now, just draw fullscreen (will fix in next step)
+		
+		// Draw fullscreen triangle
+		renderPass.Draw(3, 1, 0, 0)
+	}
+	
+	renderPass.End()
+	
+	// Submit and present
+	cmdBuffer, _ := encoder.Finish()
+	_, err = r.queue.Submit(cmdBuffer)
+	if err != nil {
+		return err
+	}
+	osWindow.gpuSurface.Present(surfaceTexture)
+	
+	return nil
 }
 
 // ApplyWindowShape applies rounded corners (WebGPU uses fragment shader clipping)
@@ -481,422 +1009,4 @@ func (r *WebGPURenderer) SetWindowTransform(windowID uint32, translateX, transla
 // RotationEnabled returns whether rotation effect is active
 func (r *WebGPURenderer) RotationEnabled() bool {
 	return r.rotationEnabled
-}
-
-
-// RenderFrame implements the Renderer interface for per-window compositing.
-// For now, this is a simple implementation that just renders and presents.
-func (r *WebGPURenderer) RenderFrame(w *nativeWin, windows []*nativeWin, renderWindow func(*nativeWin)) error {
-	// Call the render callback for this window
-	renderWindow(w)
-	
-	// Present the rendered content
-	return r.Present(w, w.backend)
-}
-
-
-// RenderFrameWithChildWindows implements per-child-window GPU compositing.
-// Each UI child window is rendered to its own GPU texture, then all textures
-// are composited together with Z-ordering, transforms, and effects.
-func (r *WebGPURenderer) RenderFrameWithChildWindows(
-	osWindow *nativeWin,
-	childWindowList *platform.ChildWindowList,
-	scale int,
-	renderWindow func(*nativeWin),
-) error {
-	if r.firstCompositorFrame {
-		if childWindowList != nil {
-			fmt.Printf("🎨 GPU Compositor Active - compositing %d UI child windows\n", len(childWindowList.Windows))
-		}
-		r.firstCompositorFrame = false
-	}
-	
-	if childWindowList == nil || len(childWindowList.Windows) == 0 {
-		// No child windows, just render normally
-		renderWindow(osWindow)
-		return r.Present(osWindow, osWindow.backend)
-	}
-	
-	// Step 0: Render Desktop base layer (background, menu, status, dock - NOT windows)
-	// The desktopSurfaceHandler.Frame() will call Desktop.Paint() when windows exist
-	renderWindow(osWindow)
-	
-	// Step 1: Render each child window to its own texture
-	type WindowLike interface {
-		Bounds() core.UnitRect
-		Paint(*core.Painter)
-	}
-	
-	for _, childIface := range childWindowList.Windows {
-		win, ok := childIface.(WindowLike)
-		if !ok {
-			continue
-		}
-		
-		bounds := win.Bounds()
-		if bounds.Width <= 0 || bounds.Height <= 0 {
-			continue
-		}
-		
-		// Calculate pixel dimensions
-		backendImg := osWindow.backend.Image()
-		if backendImg == nil {
-			continue
-		}
-		backendSize := osWindow.backend.Size()
-		metrics := osWindow.backend.Metrics()
-		
-		backendBounds := backendImg.Bounds()
-		pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
-		pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
-		
-		widthPx := int(float64(bounds.Width) * pixelsPerUnitW)
-		heightPx := int(float64(bounds.Height) * pixelsPerUnitH)
-		
-		if widthPx <= 0 || heightPx <= 0 {
-			continue
-		}
-		
-		// Get stable window ID
-		winValue := reflect.ValueOf(childIface)
-		windowID := uint32(winValue.Pointer())
-		surf, ok := r.windowSurfaces[windowID]
-		
-		if !ok || surf.backend == nil {
-			// Create new surface
-			backend, err := raster.NewScaled(widthPx, heightPx, scale)
-			if err != nil {
-				continue
-			}
-			backend.SetCellMetrics(metrics)
-			
-			// Create GPU texture
-			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
-				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
-				Dimension: wgpu.TextureDimension2D,
-				Size: wgpu.Extent3D{
-					Width:              uint32(widthPx),
-					Height:             uint32(heightPx),
-					DepthOrArrayLayers: 1,
-				},
-				Format:        wgpu.TextureFormatBGRA8Unorm,
-				MipLevelCount: 1,
-				SampleCount:   1,
-			})
-			if err != nil {
-				continue
-			}
-			
-			textureView, err := r.device.CreateTextureView(texture, nil)
-			if err != nil {
-				texture.Release()
-				continue
-			}
-			
-			bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-				Layout: r.blitLayout,
-				Entries: []wgpu.BindGroupEntry{
-					{Binding: 0, TextureView: textureView},
-					{Binding: 1, Sampler: r.blitSampler},
-				},
-			})
-			if err != nil {
-				textureView.Release()
-				texture.Release()
-				continue
-			}
-			
-			surf = &WindowSurface{
-				texture:     texture,
-				textureView: textureView,
-				bindGroup:   bindGroup,
-				width:       uint32(widthPx),
-				height:      uint32(heightPx),
-				uiWindow:    childIface,
-				backend:     backend,
-				dirty:       true,
-				scaleX:      1.0,
-				scaleY:      1.0,
-				opacity:     1.0,
-			}
-			r.windowSurfaces[windowID] = surf
-		}
-		
-		// Check if window was resized
-		if int(surf.width) != widthPx || int(surf.height) != heightPx {
-			surf.backend, _ = raster.NewScaled(widthPx, heightPx, scale)
-			surf.backend.SetCellMetrics(metrics)
-			
-			if surf.texture != nil {
-				surf.texture.Release()
-			}
-			if surf.textureView != nil {
-				surf.textureView.Release()
-			}
-			if surf.bindGroup != nil {
-				surf.bindGroup.Release()
-			}
-			
-			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
-				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
-				Dimension: wgpu.TextureDimension2D,
-				Size: wgpu.Extent3D{
-					Width:              uint32(widthPx),
-					Height:             uint32(heightPx),
-					DepthOrArrayLayers: 1,
-				},
-				Format:        wgpu.TextureFormatBGRA8Unorm,
-				MipLevelCount: 1,
-				SampleCount:   1,
-			})
-			if err != nil {
-				continue
-			}
-			
-			textureView, err := r.device.CreateTextureView(texture, nil)
-			if err != nil {
-				texture.Release()
-				continue
-			}
-			
-			bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-				Layout: r.blitLayout,
-				Entries: []wgpu.BindGroupEntry{
-					{Binding: 0, TextureView: textureView},
-					{Binding: 1, Sampler: r.blitSampler},
-				},
-			})
-			if err != nil {
-				textureView.Release()
-				texture.Release()
-				continue
-			}
-			
-			surf.texture = texture
-			surf.textureView = textureView
-			surf.bindGroup = bindGroup
-			surf.width = uint32(widthPx)
-			surf.height = uint32(heightPx)
-			surf.dirty = true
-		}
-		
-		// Render window to its backend
-		surf.backend.BeginFrame()
-		painter := core.NewPainter(surf.backend)
-		win.Paint(painter)
-		surf.backend.EndFrame()
-		
-		// Upload to GPU texture
-		img := surf.backend.Image()
-		if img != nil {
-			bounds := img.Bounds()
-			imgWidth := uint32(bounds.Dx())
-			imgHeight := uint32(bounds.Dy())
-			
-			bytesPerPixel := uint32(4)
-			bytesPerRow := imgWidth * bytesPerPixel
-			alignment := uint32(256)
-			alignedBytesPerRow := ((bytesPerRow + alignment - 1) / alignment) * alignment
-			
-			pixelData := make([]byte, alignedBytesPerRow*imgHeight)
-			
-			for y := uint32(0); y < imgHeight; y++ {
-				srcOffset := y * uint32(img.Stride)
-				dstOffset := y * alignedBytesPerRow
-				
-				for x := uint32(0); x < imgWidth; x++ {
-					srcIdx := srcOffset + x*4
-					dstIdx := dstOffset + x*4
-					
-					pixelData[dstIdx+0] = img.Pix[srcIdx+2] // B
-					pixelData[dstIdx+1] = img.Pix[srcIdx+1] // G
-					pixelData[dstIdx+2] = img.Pix[srcIdx+0] // R
-					pixelData[dstIdx+3] = img.Pix[srcIdx+3] // A
-				}
-			}
-			
-			r.queue.WriteTexture(
-				&wgpu.ImageCopyTexture{
-					Texture:  surf.texture,
-					MipLevel: 0,
-					Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
-					Aspect:   0,
-				},
-				pixelData,
-				&wgpu.ImageDataLayout{
-					Offset:       0,
-					BytesPerRow:  alignedBytesPerRow,
-					RowsPerImage: imgHeight,
-				},
-				&wgpu.Extent3D{
-					Width:              imgWidth,
-					Height:             imgHeight,
-					DepthOrArrayLayers: 1,
-				},
-			)
-		}
-		
-		surf.dirty = false
-	}
-	
-	// Step 2: Upload Desktop base layer
-	desktopTexture, desktopView, desktopBindGroup, err := r.uploadBackendToTexture(osWindow.backend)
-	if err != nil {
-		return fmt.Errorf("failed to upload Desktop base: %w", err)
-	}
-	defer desktopTexture.Release()
-	defer desktopView.Release()
-	defer desktopBindGroup.Release()
-	
-	// Step 3: Composite all textures
-	surfaceTexture, _, err := osWindow.gpuSurface.GetCurrentTexture()
-	if err != nil {
-		return err
-	}
-	
-	surfaceView, err := surfaceTexture.CreateView(nil)
-	if err != nil {
-		return err
-	}
-	defer surfaceView.Release()
-	
-	encoder, err := r.device.CreateCommandEncoder(nil)
-	if err != nil {
-		return err
-	}
-	
-	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
-		ColorAttachments: []wgpu.RenderPassColorAttachment{
-			{
-				View:    surfaceView,
-				LoadOp:  gputypes.LoadOpClear,
-				StoreOp: gputypes.StoreOpStore,
-				ClearValue: wgpu.Color{R: 0.2, G: 0.2, B: 0.2, A: 1.0},
-			},
-		},
-	})
-	
-	renderPass.SetPipeline(r.blitPipeline)
-	
-	// Draw Desktop base first
-	renderPass.SetBindGroup(0, desktopBindGroup, nil)
-	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-	renderPass.Draw(3, 1, 0, 0)
-	
-	// Draw each child window
-	for _, childIface := range childWindowList.Windows {
-		winValue := reflect.ValueOf(childIface)
-		windowID := uint32(winValue.Pointer())
-		surf, ok := r.windowSurfaces[windowID]
-		if !ok {
-			continue
-		}
-		
-		renderPass.SetBindGroup(0, surf.bindGroup, nil)
-		renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-		renderPass.Draw(3, 1, 0, 0)
-	}
-	
-	renderPass.End()
-	
-	cmdBuffer, _ := encoder.Finish()
-	_, err = r.queue.Submit(cmdBuffer)
-	if err != nil {
-		return err
-	}
-	osWindow.gpuSurface.Present(surfaceTexture)
-	
-	return nil
-}
-
-
-// uploadBackendToTexture creates a GPU texture from a raster backend.
-func (r *WebGPURenderer) uploadBackendToTexture(backend *raster.Backend) (*wgpu.Texture, *wgpu.TextureView, *wgpu.BindGroup, error) {
-	img := backend.Image()
-	if img == nil {
-		return nil, nil, nil, fmt.Errorf("backend has no image")
-	}
-	
-	bounds := img.Bounds()
-	width := uint32(bounds.Dx())
-	height := uint32(bounds.Dy())
-	
-	texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
-		Size: wgpu.Extent3D{
-			Width:              width,
-			Height:             height,
-			DepthOrArrayLayers: 1,
-		},
-		MipLevelCount: 1,
-		SampleCount:   1,
-		Dimension:     wgpu.TextureDimension2D,
-		Format:        wgpu.TextureFormatBGRA8Unorm,
-		Usage:         wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
-	})
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	
-	bytesPerPixel := uint32(4)
-	bytesPerRow := width * bytesPerPixel
-	alignment := uint32(256)
-	alignedBytesPerRow := ((bytesPerRow + alignment - 1) / alignment) * alignment
-	
-	pixelData := make([]byte, alignedBytesPerRow*height)
-	
-	for y := uint32(0); y < height; y++ {
-		srcOffset := y * uint32(img.Stride)
-		dstOffset := y * alignedBytesPerRow
-		
-		for x := uint32(0); x < width; x++ {
-			srcIdx := srcOffset + x*4
-			dstIdx := dstOffset + x*4
-			
-			pixelData[dstIdx+0] = img.Pix[srcIdx+2] // B
-			pixelData[dstIdx+1] = img.Pix[srcIdx+1] // G
-			pixelData[dstIdx+2] = img.Pix[srcIdx+0] // R
-			pixelData[dstIdx+3] = img.Pix[srcIdx+3] // A
-		}
-	}
-	
-	r.queue.WriteTexture(
-		&wgpu.ImageCopyTexture{
-			Texture:  texture,
-			MipLevel: 0,
-			Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
-			Aspect:   0,
-		},
-		pixelData,
-		&wgpu.ImageDataLayout{
-			Offset:       0,
-			BytesPerRow:  alignedBytesPerRow,
-			RowsPerImage: height,
-		},
-		&wgpu.Extent3D{
-			Width:              width,
-			Height:             height,
-			DepthOrArrayLayers: 1,
-		},
-	)
-	
-	textureView, err := r.device.CreateTextureView(texture, nil)
-	if err != nil {
-		texture.Release()
-		return nil, nil, nil, err
-	}
-	
-	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Layout: r.blitLayout,
-		Entries: []wgpu.BindGroupEntry{
-			{Binding: 0, TextureView: textureView},
-			{Binding: 1, Sampler: r.blitSampler},
-		},
-	})
-	if err != nil {
-		textureView.Release()
-		texture.Release()
-		return nil, nil, nil, err
-	}
-	
-	return texture, textureView, bindGroup, nil
 }

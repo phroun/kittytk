@@ -2881,7 +2881,22 @@ func (h *desktopSurfaceHandler) Frame(painter *core.Painter) {
 	size := s.Size()
 	painter.Clear(core.UnitRect{Width: size.Width, Height: size.Height}, theme.Normal)
 	painter.ResetTextCaretRequest()
-	wm.Paint(painter)
+	
+	// When the GPU compositor is active (has child windows), it will render
+	// windows separately to individual textures. We only paint the Desktop
+	// chrome here (background, menu, status, dock). The compositor detects
+	// this by checking if GetChildWindows() returns windows.
+	if wm != nil {
+		windows := wm.Windows()
+		if len(windows) == 0 {
+			// No windows, paint normally
+			wm.Paint(painter)
+		} else {
+			// Compositor will handle windows - only paint Desktop chrome
+			d.Paint(painter)
+		}
+	}
+	
 	// The desktop composites every window into ONE surface, so it is the frame
 	// owner here and applies the caret request itself — the same job SurfaceHost
 	// does in native one-window-per-surface mode. Without this a focused
@@ -2902,6 +2917,11 @@ func (h *desktopSurfaceHandler) Resized(size core.UnitSize) {
 	}
 }
 
+
+// GetChildWindows forwards to Desktop to implement platform.WindowProvider
+func (h *desktopSurfaceHandler) GetChildWindows() *platform.ChildWindowList {
+	return h.d.GetChildWindows()
+}
 // Event dispatches one input event, then requests a frame (parity
 // with the historical render-after-events loop).
 func (h *desktopSurfaceHandler) Event(ev core.Event) bool {
@@ -4074,6 +4094,7 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
+
 	// If dock has focus, forward keys to it
 	if d.dockRow != nil && d.dockRow.HasFocus() {
 		return d.dockRow.HandleKeyPress(event)
@@ -4092,6 +4113,24 @@ func (d *Desktop) PaintMenuDropdown(p *core.Painter) {
 	if d.menuBar != nil {
 		d.menuBar.PaintDropdown(p)
 	}
+}
+
+// GetChildWindows implements platform.WindowProvider to enable GPU compositing
+// of child windows. Returns the list of managed windows for the compositor.
+func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
+	if d.windowManager == nil {
+		return nil
+	}
+	windows := d.windowManager.Windows()
+	if len(windows) == 0 {
+		return nil
+	}
+	// Convert to platform.ChildWindowList
+	result := make([]interface{}, len(windows))
+	for i, w := range windows {
+		result[i] = w
+	}
+	return &platform.ChildWindowList{Windows: result}
 }
 
 // HandleMousePress handles mouse clicks.

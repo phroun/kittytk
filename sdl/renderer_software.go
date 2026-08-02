@@ -3,11 +3,13 @@
 package sdl
 
 import (
+	"fmt"
 	"unsafe"
 	
 	sdl2 "github.com/veandco/go-sdl2/sdl"
 
 	"github.com/phroun/kittytk/backend/raster"
+	"github.com/phroun/kittytk/platform"
 )
 
 // SoftwareRenderer implements CPU-based rasterization with SDL2's
@@ -119,11 +121,18 @@ func (r *SoftwareRenderer) Present(w *nativeWin, backend *raster.Backend) error 
 	return nil
 }
 
+// RenderFrame is not used by software renderer (uses Present directly)
+func (r *SoftwareRenderer) RenderFrame(w *nativeWin, windows []*nativeWin, renderWindow func(*nativeWin)) error {
+	// Software renderer doesn't do compositing - just calls Present per window
+	return nil
+}
+
 // ApplyWindowShape applies rounded corners using SDL shape
 func (r *SoftwareRenderer) ApplyWindowShape(w *nativeWin, radiusPx int, transparent bool) error {
 	// Transparent windows don't need shape masks (macOS per-pixel alpha)
 	if transparent {
 		return nil
+
 	}
 
 	if radiusPx <= 0 {
@@ -151,4 +160,10 @@ func (r *SoftwareRenderer) SetWindowTransform(windowID uint32, translateX, trans
 func (r *SoftwareRenderer) SupportsFeature(feature RendererFeature) bool {
 	// Software renderer doesn't support GPU features
 	return false
+}
+
+// RenderFrameWithChildWindows is not implemented for software renderer.
+// Software renderer uses the old direct rendering path.
+func (r *SoftwareRenderer) RenderFrameWithChildWindows(w *nativeWin, childWindows *platform.ChildWindowList, scale int, renderWindow func(*nativeWin)) error {
+	return fmt.Errorf("child window compositing not supported by software renderer")
 }

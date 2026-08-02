@@ -25,6 +25,13 @@ import (
 
 // WGSL shaders for blitting the UI texture to the screen
 const blitVertexShader = `
+struct PositionUniforms {
+    pos: vec2<f32>,    // Position in NDC (-1 to 1)
+    size: vec2<f32>,   // Size in NDC
+}
+
+@group(2) @binding(0) var<uniform> window_pos: PositionUniforms;
+
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) texCoord: vec2<f32>,
@@ -32,22 +39,32 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    // Fullscreen triangle that covers the entire viewport
-    var pos = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0)
+    // Generate a quad with the given position and size in NDC
+    var pos = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 0.0),      // Bottom-left
+        vec2<f32>(1.0, 0.0),      // Bottom-right
+        vec2<f32>(0.0, 1.0),      // Top-left
+        vec2<f32>(1.0, 0.0),      // Bottom-right
+        vec2<f32>(1.0, 1.0),      // Top-right
+        vec2<f32>(0.0, 1.0)       // Top-left
     );
     
-    // Texture coordinates - standard, flipped vertically
-    var texCoords = array<vec2<f32>, 3>(
+    // Texture coordinates
+    var texCoords = array<vec2<f32>, 6>(
         vec2<f32>(0.0, 1.0),
-        vec2<f32>(2.0, 1.0),
-        vec2<f32>(0.0, -1.0)
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(0.0, 0.0)
     );
+    
+    // Scale and translate to window position
+    let scaled_pos = pos[vertex_index] * window_pos.size;
+    let ndc_pos = window_pos.pos + scaled_pos;
     
     var output: VertexOutput;
-    output.position = vec4<f32>(pos[vertex_index], 0.0, 1.0);
+    output.position = vec4<f32>(ndc_pos, 0.0, 1.0);
     output.texCoord = texCoords[vertex_index];
     return output;
 }
@@ -765,15 +782,102 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		delivered := p.pumpEvents()
 		p.reassertCursor()
 
+		// Check if any windows need rendering
+		anyDirty := false
 		for _, w := range p.wins {
 			s := w.surface
 			if s == nil {
 				continue
 			}
-			dirty := s.dirty.Swap(false)
-			burn := p.showFPS && w == p.main
-			if dirty || burn {
-				p.paintAndPresent(w, burn) // Handled securely via WebGPU pipelines
+			if s.dirty.Load() || (p.showFPS && w == p.main) {
+				anyDirty = true
+				break
+			}
+		}
+
+		// If using compositor (WebGPU renderer with RenderFrame), check for UI child windows
+		if anyDirty && p.renderer.SupportsFeature(FeatureCompositing) {
+			// Render each OS window
+			for _, w := range p.wins {
+				s := w.surface
+				if s == nil {
+					continue
+				}
+				dirty := s.dirty.Swap(false)
+				if !dirty {
+					continue
+				}
+				
+				// Check if this window's handler has UI child windows
+				if provider, ok := s.handler.(platform.WindowProvider); ok {
+					if childWindowList := provider.GetChildWindows(); childWindowList != nil && len(childWindowList.Windows) > 0 {
+						// Use child window compositor
+						// Pass a render function that renders the Desktop base layer
+						err := p.renderer.RenderFrameWithChildWindows(w, childWindowList, p.scale, func(win *nativeWin) {
+							// Render this window's content to its backend
+							s := win.surface
+							if s == nil || s.handler == nil {
+								return
+							}
+							
+							full, dmg := s.takeDamage()
+							if !full && (dmg.Width <= 0 || dmg.Height <= 0) {
+								full = true
+							}
+							
+							win.backend.BeginFrame()
+							if full {
+								s.handler.Frame(core.NewPainter(win.backend))
+							} else {
+								s.handler.Frame(core.NewPainter(win.backend).WithClip(dmg))
+							}
+							win.backend.EndFrame()
+						})
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Child window compositor error on window %d: %v\n", w.id, err)
+						}
+						continue
+					}
+				}
+				
+				// No child windows, use regular single-window rendering
+				err := p.renderer.RenderFrame(w, []*nativeWin{w}, func(win *nativeWin) {
+					// Render this window's content to its backend
+					s := win.surface
+					if s == nil || s.handler == nil {
+						return
+					}
+					
+					full, dmg := s.takeDamage()
+					if !full && (dmg.Width <= 0 || dmg.Height <= 0) {
+						full = true
+					}
+					
+					win.backend.BeginFrame()
+					if full {
+						s.handler.Frame(core.NewPainter(win.backend))
+					} else {
+						s.handler.Frame(core.NewPainter(win.backend).WithClip(dmg))
+					}
+					win.backend.EndFrame()
+				})
+				
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Compositor error on window %d: %v\n", w.id, err)
+				}
+			}
+		} else if anyDirty {
+			// Fallback: render each window individually (software renderer)
+			for _, w := range p.wins {
+				s := w.surface
+				if s == nil {
+					continue
+				}
+				dirty := s.dirty.Swap(false)
+				burn := p.showFPS && w == p.main
+				if dirty || burn {
+					p.paintAndPresent(w, burn)
+				}
 			}
 		}
 
@@ -895,11 +999,21 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 	w.applyShape()
 	w.id, _ = w.window.GetID()
 	p.wins[w.id] = w
+	
+	// Create renderer resources for this window (compositor texture)
+	if err := p.renderer.CreateWindowRenderer(w, wPx, hPx); err != nil {
+		// Non-fatal for software renderer, but log it
+		fmt.Fprintf(os.Stderr, "WARNING: Failed to create window renderer resources: %v\n", err)
+	}
+	
 	return w, nil
 }
 
 // destroy tears down one window's hardware presentation chain.
 func (w *nativeWin) destroy() {
+	// Note: We can't call p.renderer.DestroyWindowRenderer here because we don't have access to Platform
+	// The renderer cleanup will happen when Platform shuts down
+	
 	if w.uiTexture != nil {
 		w.uiTexture.Release()
 		w.uiTexture = nil
@@ -1576,33 +1690,39 @@ func (p *Platform) pumpEvents() bool {
 			if e.Type == sdl2.KEYDOWN {
 				// Check for rotation trigger (R key) - toggles on/off
 				// Only supported by renderers with rotation capability (WebGPU)
+				// Note: Rotation not yet implemented in compositor mode
 				if e.Keysym.Sym == sdl2.K_r && p.renderer.SupportsFeature(FeatureRotation) {
-					enabled := !p.rotationEnabled.Load()
-					p.rotationEnabled.Store(enabled)
-					
-					// Initialize timing for Platform's animation state
-					if enabled {
-						p.rotationActivationTime = time.Now()
-						fmt.Println("🔄 Rotation effect activated!")
+					if p.renderer.SupportsFeature(FeatureCompositing) {
+						fmt.Println("⚠️  Rotation effect not yet implemented for compositor mode")
+						fmt.Println("    Compositor enables per-window transforms - rotation coming soon!")
 					} else {
-						// Store current angle for smooth ease-out
-						elapsed := time.Since(p.rotationStartTime).Seconds()
-						timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
-						if timeSinceActivation > 1.0 { // After ease-in completes
-							easeOutCubic := func(t float64) float64 {
-								t = math.Min(t, 1.0)
-								return 1.0 - math.Pow(1.0-t, 3.0)
+						enabled := !p.rotationEnabled.Load()
+						p.rotationEnabled.Store(enabled)
+						
+						// Initialize timing for Platform's animation state
+						if enabled {
+							p.rotationActivationTime = time.Now()
+							fmt.Println("🔄 Rotation effect activated!")
+						} else {
+							// Store current angle for smooth ease-out
+							elapsed := time.Since(p.rotationStartTime).Seconds()
+							timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
+							if timeSinceActivation > 1.0 { // After ease-in completes
+								easeOutCubic := func(t float64) float64 {
+									t = math.Min(t, 1.0)
+									return 1.0 - math.Pow(1.0-t, 3.0)
+								}
+								rotationProgress := timeSinceActivation / 1.0
+								rotationEased := easeOutCubic(rotationProgress)
+								p.rotationAngleAtDeactivation = elapsed * 0.1 * rotationEased
 							}
-							rotationProgress := timeSinceActivation / 1.0
-							rotationEased := easeOutCubic(rotationProgress)
-							p.rotationAngleAtDeactivation = elapsed * 0.1 * rotationEased
+							p.rotationDeactivationTime = time.Now()
+							fmt.Println("⏸️  Rotation effect deactivating...")
 						}
-						p.rotationDeactivationTime = time.Now()
-						fmt.Println("⏸️  Rotation effect deactivating...")
+						
+						// Also notify renderer
+						p.renderer.SetRotationEnabled(enabled)
 					}
-					
-					// Also notify renderer
-					p.renderer.SetRotationEnabled(enabled)
 				}
 				
 				if p.fontZoomKey(e.Keysym) {

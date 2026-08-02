@@ -203,6 +203,22 @@ type SurfaceHandler interface {
 	Resized(size core.UnitSize)
 }
 
+// ChildWindowList wraps a list of child windows for compositor enumeration.
+// Uses a concrete type to avoid []interface{} syntax issues across modules.
+type ChildWindowList struct {
+	Windows []interface{}
+}
+
+// WindowProvider is an optional Surface Handler interface that allows
+// the platform to enumerate UI child windows for GPU compositing.
+// Desktop implements this to expose its window manager's windows.
+type WindowProvider interface {
+	// GetChildWindows returns the list of child windows that should be
+	// composited together. Returns nil if no child windows exist or
+	// compositor should not be used.
+	GetChildWindows() *ChildWindowList
+}
+
 // PixelAnchoredOnFontZoom is an optional SurfaceHandler refinement consulted
 // by a live host font zoom. A graphical platform re-applies its font size to
 // every open window: the main window keeps its PIXEL size (the unit grid

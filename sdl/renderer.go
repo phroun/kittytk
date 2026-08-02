@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/phroun/kittytk/backend/raster"
+	"github.com/phroun/kittytk/platform"
 )
 
 // Renderer is the interface for different rendering backends (software, WebGPU).
@@ -31,6 +32,16 @@ type Renderer interface {
 
 	// Present renders the backend's pixel buffer to the window and displays it
 	Present(w *nativeWin, backend *raster.Backend) error
+	
+	// RenderFrame handles the full frame: render windows to textures, composite, and present
+	// This is where per-window compositing happens
+	RenderFrame(w *nativeWin, windows []*nativeWin, renderWindow func(*nativeWin)) error
+	
+	// RenderFrameWithChildWindows handles UI child window compositing.
+	// Renders each UI child window to its own texture, then composites them all.
+	// scale is the device scale factor for creating backends
+	// renderWindow is a callback to render the base Desktop content
+	RenderFrameWithChildWindows(w *nativeWin, childWindows *platform.ChildWindowList, scale int, renderWindow func(*nativeWin)) error
 
 	// ApplyWindowShape applies rounded corners to a window (for torn-off windows)
 	// radiusPx is in device pixels, transparent indicates per-pixel alpha support
@@ -50,10 +61,10 @@ type Renderer interface {
 type RendererFeature int
 
 const (
-	FeatureRotation   RendererFeature = iota // 2D rotation transforms
-	FeatureScale                              // 2D scaling transforms
-	Feature3DCube                             // 3D rendering (demo cube)
-	FeatureCompositing                        // GPU compositing with effects
+	FeatureRotation    RendererFeature = iota // 2D rotation transforms
+	FeatureScale                               // 2D scaling transforms
+	Feature3DCube                              // 3D rendering (demo cube)
+	FeatureCompositing                         // GPU compositing with per-window surfaces
 )
 
 // NewRenderer creates a renderer based on the requested type.
