@@ -514,6 +514,18 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 				{
 					Format:    wgpu.TextureFormatBGRA8Unorm,
 					WriteMask: 0xF,
+					Blend: &gputypes.BlendState{
+						Color: gputypes.BlendComponent{
+							SrcFactor: gputypes.BlendFactorSrcAlpha,
+							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+							Operation: gputypes.BlendOperationAdd,
+						},
+						Alpha: gputypes.BlendComponent{
+							SrcFactor: gputypes.BlendFactorOne,
+							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+							Operation: gputypes.BlendOperationAdd,
+						},
+					},
 				},
 			},
 		},
