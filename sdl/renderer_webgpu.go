@@ -43,6 +43,7 @@ type WindowSurface struct {
 	uiWindow    interface{}      // UI Window trinket (interface{} to avoid import cycle)
 	backend     *raster.Backend  // Per-window raster backend for UI windows
 	zOrder      int              // Z-order for compositing (higher = on top)
+	lastBounds  core.UnitRect    // Last known position/size for change detection
 }
 
 // WebGPURenderer implements GPU-accelerated rendering with WebGPU.
@@ -741,6 +742,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				scaleX:           1.0,
 				scaleY:           1.0,
 				opacity:          1.0,
+				lastBounds:       bounds, // Store initial position
 			}
 			r.windowSurfaces[windowID] = surf
 		}
@@ -748,11 +750,8 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		// Check if window was resized or moved
 		needsUpdate := int(surf.width) != widthPx || int(surf.height) != heightPx
 		if !needsUpdate {
-			// Check if position changed
-			if storedWin, ok := surf.uiWindow.(WindowLike); ok {
-				storedBounds := storedWin.Bounds()
-				needsUpdate = storedBounds.X != bounds.X || storedBounds.Y != bounds.Y
-			}
+			// Check if position changed by comparing to last known bounds
+			needsUpdate = surf.lastBounds.X != bounds.X || surf.lastBounds.Y != bounds.Y
 		}
 		
 		if needsUpdate {
@@ -828,7 +827,10 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			surf.uniformBindGroup = uniformBindGroup
 			surf.width = uint32(widthPx)
 			surf.height = uint32(heightPx)
+			surf.lastBounds = bounds  // Update stored position
 			surf.dirty = true
+			fmt.Printf("🔄 Updated WindowSurface position to (%d,%d) %dx%d\n",
+				bounds.X, bounds.Y, bounds.Width, bounds.Height)
 		}
 		
 		// Render window to its backend
@@ -946,11 +948,15 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	// Draw each child window at its position
 	// Draw each child window with its pre-baked uniforms
 	windowCount := 0
+	fmt.Printf("🔍 childWindowList has %d windows, windowSurfaces has %d\n", 
+		len(childWindowList.Windows), len(r.windowSurfaces))
+	
 	for _, childIface := range childWindowList.Windows {
 		winValue := reflect.ValueOf(childIface)
 		windowID := uint32(winValue.Pointer())
 		surf, ok := r.windowSurfaces[windowID]
 		if !ok {
+			fmt.Printf("⚠️  Window ID %d in childWindowList but not in windowSurfaces!\n", windowID)
 			continue
 		}
 		

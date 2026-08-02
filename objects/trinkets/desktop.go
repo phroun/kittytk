@@ -4122,6 +4122,7 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 		return nil
 	}
 	windows := d.windowManager.Windows()
+	fmt.Printf("🪟 GetChildWindows: windowManager.Windows() returned %d windows\n", len(windows))
 	if len(windows) == 0 {
 		return nil
 	}
@@ -4129,7 +4130,10 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 	result := make([]interface{}, len(windows))
 	for i, w := range windows {
 		result[i] = w
+		bounds := w.Bounds()
+		fmt.Printf("  [%d] Window at (%d,%d) %dx%d\n", i, bounds.X, bounds.Y, bounds.Width, bounds.Height)
 	}
+	fmt.Printf("🪟 GetChildWindows returning %d windows\n", len(result))
 	return &platform.ChildWindowList{Windows: result}
 }
 
