@@ -984,32 +984,42 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	if childWindowList.Popups != nil && len(childWindowList.Popups) > 0 {
 		fmt.Printf("🎯 Rendering %d popups\n", len(childWindowList.Popups))
 		
-		for _, popupIface := range childWindowList.Popups {
+		for popupIdx, popupIface := range childWindowList.Popups {
+			fmt.Printf("  [%d] Processing popup...\n", popupIdx)
+			
 			// Use reflection to access PopupOverlay fields (can't import window package - circular dep)
 			popupValue := reflect.ValueOf(popupIface)
 			if popupValue.Kind() == reflect.Ptr {
 				popupValue = popupValue.Elem()
 			}
 			
+			fmt.Printf("  [%d] Popup type: %v, kind: %v\n", popupIdx, popupValue.Type(), popupValue.Kind())
+			
 			boundsField := popupValue.FieldByName("Bounds")
 			paintField := popupValue.FieldByName("Paint")
 			
 			if !boundsField.IsValid() || !paintField.IsValid() {
-				fmt.Printf("⚠️  Popup missing Bounds or Paint field\n")
+				fmt.Printf("⚠️  [%d] Popup missing Bounds or Paint field (boundsValid=%v, paintValid=%v)\n", 
+					popupIdx, boundsField.IsValid(), paintField.IsValid())
 				continue
 			}
 			
 			bounds, ok := boundsField.Interface().(core.UnitRect)
 			if !ok {
+				fmt.Printf("⚠️  [%d] Bounds field is not UnitRect\n", popupIdx)
 				continue
 			}
 			
+			fmt.Printf("  [%d] Popup bounds: (%d,%d) %dx%d\n", popupIdx, bounds.X, bounds.Y, bounds.Width, bounds.Height)
+			
 			if bounds.Width <= 0 || bounds.Height <= 0 {
+				fmt.Printf("⚠️  [%d] Invalid bounds size\n", popupIdx)
 				continue
 			}
 			
 			paintFunc, ok := paintField.Interface().(func(*core.Painter))
 			if !ok || paintFunc == nil {
+				fmt.Printf("⚠️  [%d] Paint field is not valid function\n", popupIdx)
 				continue
 			}
 			
@@ -1028,22 +1038,29 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			widthPx := int(float64(bounds.Width) * pixelsPerUnitW)
 			heightPx := int(float64(bounds.Height) * pixelsPerUnitH)
 			
+			fmt.Printf("  [%d] Popup pixel size: %dx%d\n", popupIdx, widthPx, heightPx)
+			
 			if widthPx <= 0 || heightPx <= 0 {
+				fmt.Printf("⚠️  [%d] Invalid pixel size\n", popupIdx)
 				continue
 			}
 			
 			// Create temporary backend for popup
+			fmt.Printf("  [%d] Creating backend...\n", popupIdx)
 			popupBackend, err := raster.NewScaled(widthPx, heightPx, scale)
 			if err != nil {
+				fmt.Printf("❌ [%d] Failed to create backend: %v\n", popupIdx, err)
 				continue
 			}
 			popupBackend.SetCellMetrics(metrics)
 			
 			// Render popup to backend
+			fmt.Printf("  [%d] Calling Paint function...\n", popupIdx)
 			popupBackend.BeginFrame()
 			painter := core.NewPainter(popupBackend)
 			paintFunc(painter)
 			popupBackend.EndFrame()
+			fmt.Printf("  [%d] Paint complete\n", popupIdx)
 			
 			// Upload popup to temporary texture
 			popupImg := popupBackend.Image()
@@ -1149,12 +1166,15 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			
 			fmt.Printf("✅ Drew popup at (%d,%d) %dx%d\n", bounds.X, bounds.Y, bounds.Width, bounds.Height)
 			
-			// Clean up temporary resources
-			popupUniformBindGroup.Release()
-			popupUniformBuffer.Release()
-			popupBindGroup.Release()
-			popupTextureView.Release()
-			popupTexture.Release()
+			// DON'T release yet - must stay alive until after Submit()
+			// Store for cleanup after GPU submission
+			defer func() {
+				popupUniformBindGroup.Release()
+				popupUniformBuffer.Release()
+				popupBindGroup.Release()
+				popupTextureView.Release()
+				popupTexture.Release()
+			}()
 		}
 	}
 	
