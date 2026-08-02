@@ -1219,20 +1219,159 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	if childWindowList.MenuDropdown != nil {
 		fmt.Printf("🍔 Rendering menu dropdown\n")
 		
-		// Extract Paint function via reflection
+		// Menu dropdown structure from Desktop.GetChildWindows
+		type MenuDropdownInfo struct {
+			Bounds core.UnitRect
+			Paint  func(*core.Painter)
+		}
+		
 		menuValue := reflect.ValueOf(childWindowList.MenuDropdown)
 		if menuValue.Kind() == reflect.Ptr {
 			menuValue = menuValue.Elem()
 		}
 		
+		boundsField := menuValue.FieldByName("Bounds")
 		paintField := menuValue.FieldByName("Paint")
-		if paintField.IsValid() {
-			if paintFunc, ok := paintField.Interface().(func(*core.Painter)); ok && paintFunc != nil {
-				// Menu dropdowns paint themselves - we need to render the whole Desktop
-				// layer again but only the menu part will show
-				// TODO: This is inefficient - we should get menu bounds and render just that region
-				// For now, just log that we detected it
-				fmt.Printf("🍔 Menu dropdown detected but not yet rendered as separate layer\n")
+		
+		if !boundsField.IsValid() || !paintField.IsValid() {
+			fmt.Printf("⚠️  Menu dropdown missing Bounds or Paint field\n")
+		} else {
+			bounds, ok := boundsField.Interface().(core.UnitRect)
+			if !ok || bounds.Width <= 0 || bounds.Height <= 0 {
+				fmt.Printf("⚠️  Menu dropdown has invalid bounds\n")
+			} else {
+				paintFunc, ok := paintField.Interface().(func(*core.Painter))
+				if !ok || paintFunc == nil {
+					fmt.Printf("⚠️  Menu dropdown Paint function invalid\n")
+				} else {
+					fmt.Printf("🍔 Menu bounds: (%d,%d) %dx%d\n", bounds.X, bounds.Y, bounds.Width, bounds.Height)
+					
+					// Calculate pixel dimensions
+					backendImg := osWindow.backend.Image()
+					if backendImg != nil {
+						backendSize := osWindow.backend.Size()
+						metrics := osWindow.backend.Metrics()
+						
+						backendBounds := backendImg.Bounds()
+						pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
+						pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
+						
+						widthPx := int(float64(bounds.Width) * pixelsPerUnitW)
+						heightPx := int(float64(bounds.Height) * pixelsPerUnitH)
+						
+						if widthPx > 0 && heightPx > 0 {
+							// Create backend for menu
+							menuBackend, err := raster.NewScaled(widthPx, heightPx, scale)
+							if err == nil {
+								menuBackend.SetCellMetrics(metrics)
+								
+								// Render menu with negative offset
+								menuBackend.BeginFrame()
+								painter := core.NewPainter(menuBackend)
+								offsetPainter := painter.WithOffset(-bounds.X, -bounds.Y)
+								paintFunc(offsetPainter)
+								menuBackend.EndFrame()
+								
+								// Upload to texture
+								menuImg := menuBackend.Image()
+								if menuImg != nil {
+									imgBounds := menuImg.Bounds()
+									imgWidth := uint32(imgBounds.Dx())
+									imgHeight := uint32(imgBounds.Dy())
+									
+									menuTexture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
+										Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
+										Dimension: wgpu.TextureDimension2D,
+										Size: wgpu.Extent3D{
+											Width:              imgWidth,
+											Height:             imgHeight,
+											DepthOrArrayLayers: 1,
+										},
+										Format:        wgpu.TextureFormatBGRA8Unorm,
+										MipLevelCount: 1,
+										SampleCount:   1,
+									})
+									if err == nil {
+										menuTextureView, err := r.device.CreateTextureView(menuTexture, nil)
+										if err == nil {
+											menuBindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+												Layout: r.blitLayout,
+												Entries: []wgpu.BindGroupEntry{
+													{Binding: 0, TextureView: menuTextureView},
+													{Binding: 1, Sampler: r.blitSampler},
+												},
+											})
+											if err == nil {
+												// Upload pixels
+												bytesPerPixel := uint32(4)
+												bytesPerRow := imgWidth * bytesPerPixel
+												alignment := uint32(256)
+												alignedBytesPerRow := ((bytesPerRow + alignment - 1) / alignment) * alignment
+												
+												pixelData := make([]byte, alignedBytesPerRow*imgHeight)
+												
+												for y := uint32(0); y < imgHeight; y++ {
+													srcOffset := y * uint32(menuImg.Stride)
+													dstOffset := y * alignedBytesPerRow
+													
+													for x := uint32(0); x < imgWidth; x++ {
+														srcIdx := srcOffset + x*4
+														dstIdx := dstOffset + x*4
+														
+														pixelData[dstIdx+0] = menuImg.Pix[srcIdx+2] // B
+														pixelData[dstIdx+1] = menuImg.Pix[srcIdx+1] // G
+														pixelData[dstIdx+2] = menuImg.Pix[srcIdx+0] // R
+														pixelData[dstIdx+3] = menuImg.Pix[srcIdx+3] // A
+													}
+												}
+												
+												r.queue.WriteTexture(
+													&wgpu.ImageCopyTexture{
+														Texture:  menuTexture,
+														MipLevel: 0,
+														Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
+														Aspect:   0,
+													},
+													pixelData,
+													&wgpu.ImageDataLayout{
+														Offset:       0,
+														BytesPerRow:  alignedBytesPerRow,
+														RowsPerImage: imgHeight,
+													},
+													&wgpu.Extent3D{
+														Width:              imgWidth,
+														Height:             imgHeight,
+														DepthOrArrayLayers: 1,
+													},
+												)
+												
+												// Create uniforms
+												menuUniformBuffer, menuUniformBindGroup, err := r.createWindowUniformBuffer(bounds, backendSize)
+												if err == nil {
+													// Draw menu
+													renderPass.SetBindGroup(0, menuBindGroup, nil)
+													renderPass.SetBindGroup(1, menuUniformBindGroup, nil)
+													renderPass.Draw(6, 1, 0, 0)
+													
+													fmt.Printf("✅ Drew menu dropdown at (%d,%d) %dx%d\n", bounds.X, bounds.Y, bounds.Width, bounds.Height)
+													
+													// Defer cleanup
+													defer func() {
+														menuUniformBindGroup.Release()
+														menuUniformBuffer.Release()
+														menuBindGroup.Release()
+														menuTextureView.Release()
+														menuTexture.Release()
+													}()
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 	}

@@ -4145,15 +4145,21 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 	// Check if menu bar has an active dropdown
 	var menuDropdown interface{} = nil
 	if d.menuBar != nil && d.menuBar.ActiveMenu() != nil {
-		// Create a fake "popup" that will render the menu dropdown
-		menuDropdown = &struct {
-			Paint func(*core.Painter)
-		}{
-			Paint: func(p *core.Painter) {
-				d.menuBar.PaintDropdown(p)
-			},
+		menuBounds := d.menuBar.ActiveMenuBounds()
+		if !menuBounds.IsEmpty() {
+			// Create a struct that provides bounds and paint function
+			menuDropdown = &struct {
+				Bounds core.UnitRect
+				Paint  func(*core.Painter)
+			}{
+				Bounds: menuBounds,
+				Paint: func(p *core.Painter) {
+					d.menuBar.PaintDropdown(p)
+				},
+			}
+			fmt.Printf("🪟 GetChildWindows: menuBar has active dropdown at (%d,%d) %dx%d\n",
+				menuBounds.X, menuBounds.Y, menuBounds.Width, menuBounds.Height)
 		}
-		fmt.Printf("🪟 GetChildWindows: menuBar has active dropdown\n")
 	}
 	
 	fmt.Printf("🪟 GetChildWindows returning %d windows, %d popups, menuDropdown=%v\n", 
