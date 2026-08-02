@@ -980,6 +980,184 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	}
 	fmt.Printf("🎨 Compositor drew %d windows (total surfaces: %d)\n", windowCount, len(r.windowSurfaces))
 	
+	// Step 4: Render popups on top of everything
+	if childWindowList.Popups != nil && len(childWindowList.Popups) > 0 {
+		fmt.Printf("🎯 Rendering %d popups\n", len(childWindowList.Popups))
+		
+		for _, popupIface := range childWindowList.Popups {
+			// Use reflection to access PopupOverlay fields (can't import window package - circular dep)
+			popupValue := reflect.ValueOf(popupIface)
+			if popupValue.Kind() == reflect.Ptr {
+				popupValue = popupValue.Elem()
+			}
+			
+			boundsField := popupValue.FieldByName("Bounds")
+			paintField := popupValue.FieldByName("Paint")
+			
+			if !boundsField.IsValid() || !paintField.IsValid() {
+				fmt.Printf("⚠️  Popup missing Bounds or Paint field\n")
+				continue
+			}
+			
+			bounds, ok := boundsField.Interface().(core.UnitRect)
+			if !ok {
+				continue
+			}
+			
+			if bounds.Width <= 0 || bounds.Height <= 0 {
+				continue
+			}
+			
+			paintFunc, ok := paintField.Interface().(func(*core.Painter))
+			if !ok || paintFunc == nil {
+				continue
+			}
+			
+			// Calculate pixel dimensions
+			backendImg := osWindow.backend.Image()
+			if backendImg == nil {
+				continue
+			}
+			backendSize := osWindow.backend.Size()
+			metrics := osWindow.backend.Metrics()
+			
+			backendBounds := backendImg.Bounds()
+			pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
+			pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
+			
+			widthPx := int(float64(bounds.Width) * pixelsPerUnitW)
+			heightPx := int(float64(bounds.Height) * pixelsPerUnitH)
+			
+			if widthPx <= 0 || heightPx <= 0 {
+				continue
+			}
+			
+			// Create temporary backend for popup
+			popupBackend, err := raster.NewScaled(widthPx, heightPx, scale)
+			if err != nil {
+				continue
+			}
+			popupBackend.SetCellMetrics(metrics)
+			
+			// Render popup to backend
+			popupBackend.BeginFrame()
+			painter := core.NewPainter(popupBackend)
+			paintFunc(painter)
+			popupBackend.EndFrame()
+			
+			// Upload popup to temporary texture
+			popupImg := popupBackend.Image()
+			if popupImg == nil {
+				continue
+			}
+			
+			imgBounds := popupImg.Bounds()
+			imgWidth := uint32(imgBounds.Dx())
+			imgHeight := uint32(imgBounds.Dy())
+			
+			popupTexture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
+				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
+				Dimension: wgpu.TextureDimension2D,
+				Size: wgpu.Extent3D{
+					Width:              imgWidth,
+					Height:             imgHeight,
+					DepthOrArrayLayers: 1,
+				},
+				Format:        wgpu.TextureFormatBGRA8Unorm,
+				MipLevelCount: 1,
+				SampleCount:   1,
+			})
+			if err != nil {
+				continue
+			}
+			
+			popupTextureView, err := r.device.CreateTextureView(popupTexture, nil)
+			if err != nil {
+				popupTexture.Release()
+				continue
+			}
+			
+			popupBindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+				Layout: r.blitLayout,
+				Entries: []wgpu.BindGroupEntry{
+					{Binding: 0, TextureView: popupTextureView},
+					{Binding: 1, Sampler: r.blitSampler},
+				},
+			})
+			if err != nil {
+				popupTextureView.Release()
+				popupTexture.Release()
+				continue
+			}
+			
+			// Upload BGRA pixels to texture
+			bytesPerPixel := uint32(4)
+			bytesPerRow := imgWidth * bytesPerPixel
+			alignment := uint32(256)
+			alignedBytesPerRow := ((bytesPerRow + alignment - 1) / alignment) * alignment
+			
+			pixelData := make([]byte, alignedBytesPerRow*imgHeight)
+			
+			for y := uint32(0); y < imgHeight; y++ {
+				srcOffset := y * uint32(popupImg.Stride)
+				dstOffset := y * alignedBytesPerRow
+				
+				for x := uint32(0); x < imgWidth; x++ {
+					srcIdx := srcOffset + x*4
+					dstIdx := dstOffset + x*4
+					
+					pixelData[dstIdx+0] = popupImg.Pix[srcIdx+2] // B
+					pixelData[dstIdx+1] = popupImg.Pix[srcIdx+1] // G
+					pixelData[dstIdx+2] = popupImg.Pix[srcIdx+0] // R
+					pixelData[dstIdx+3] = popupImg.Pix[srcIdx+3] // A
+				}
+			}
+			
+			r.queue.WriteTexture(
+				&wgpu.ImageCopyTexture{
+					Texture:  popupTexture,
+					MipLevel: 0,
+					Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
+					Aspect:   0,
+				},
+				pixelData,
+				&wgpu.ImageDataLayout{
+					Offset:       0,
+					BytesPerRow:  alignedBytesPerRow,
+					RowsPerImage: imgHeight,
+				},
+				&wgpu.Extent3D{
+					Width:              imgWidth,
+					Height:             imgHeight,
+					DepthOrArrayLayers: 1,
+				},
+			)
+			
+			// Create uniform buffer with popup position
+			popupUniformBuffer, popupUniformBindGroup, err := r.createWindowUniformBuffer(bounds, backendSize)
+			if err != nil {
+				popupBindGroup.Release()
+				popupTextureView.Release()
+				popupTexture.Release()
+				continue
+			}
+			
+			// Draw popup
+			renderPass.SetBindGroup(0, popupBindGroup, nil)
+			renderPass.SetBindGroup(1, popupUniformBindGroup, nil)
+			renderPass.Draw(6, 1, 0, 0)
+			
+			fmt.Printf("✅ Drew popup at (%d,%d) %dx%d\n", bounds.X, bounds.Y, bounds.Width, bounds.Height)
+			
+			// Clean up temporary resources
+			popupUniformBindGroup.Release()
+			popupUniformBuffer.Release()
+			popupBindGroup.Release()
+			popupTextureView.Release()
+			popupTexture.Release()
+		}
+	}
+	
 	renderPass.End()
 	
 	cmdBuffer, _ := encoder.Finish()

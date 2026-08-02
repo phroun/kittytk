@@ -4061,12 +4061,9 @@ func (d *Desktop) Paint(p *core.Painter) {
 		d.statusBar.Paint(statusPainter)
 	}
 	
-	// Paint popups on top of everything (for compositor mode)
-	// When compositor is active, windows are rendered separately, but popups
-	// (combo box dropdowns, context menus) need to be rendered on the Desktop layer
-	if d.windowManager != nil {
-		d.windowManager.PaintPopups(p)
-	}
+	// NOTE: Popups are NOT painted here in compositor mode!
+	// They must be rendered AFTER windows to appear on top.
+	// The compositor handles popup rendering separately.
 }
 
 // HandleKeyPress handles keyboard input.
@@ -4140,8 +4137,16 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 		bounds := w.Bounds()
 		fmt.Printf("  [%d] Window at (%d,%d) %dx%d\n", i, bounds.X, bounds.Y, bounds.Width, bounds.Height)
 	}
-	fmt.Printf("🪟 GetChildWindows returning %d windows\n", len(result))
-	return &platform.ChildWindowList{Windows: result}
+	
+	// Get popups from window manager
+	popups := d.windowManager.GetPopups()
+	fmt.Printf("🪟 GetChildWindows: windowManager.GetPopups() returned %d popups\n", len(popups))
+	
+	fmt.Printf("🪟 GetChildWindows returning %d windows, %d popups\n", len(result), len(popups))
+	return &platform.ChildWindowList{
+		Windows: result,
+		Popups:  popups,
+	}
 }
 
 // HandleMousePress handles mouse clicks.

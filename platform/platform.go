@@ -207,6 +207,7 @@ type SurfaceHandler interface {
 // Uses a concrete type to avoid []interface{} syntax issues across modules.
 type ChildWindowList struct {
 	Windows []interface{}
+	Popups  []interface{} // Popup overlays to render on top of windows
 }
 
 // WindowProvider is an optional Surface Handler interface that allows
