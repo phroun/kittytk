@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"time"
+	"unsafe"
 
 	wgpu "github.com/gogpu/wgpu"
 	gputypes "github.com/gogpu/gputypes"
@@ -23,6 +24,10 @@ type WindowSurface struct {
 	bindGroup   *wgpu.BindGroup
 	width       uint32
 	height      uint32
+	
+	// Per-window positioning (NDC coordinates)
+	posUniformBuffer    *wgpu.Buffer
+	posUniformBindGroup *wgpu.BindGroup
 	
 	// Transform state for compositing
 	translateX  float32
@@ -58,6 +63,7 @@ type WebGPURenderer struct {
 	blitUniformBuffer    *wgpu.Buffer
 	blitUniformLayout    *wgpu.BindGroupLayout
 	blitUniformBindGroup *wgpu.BindGroup
+	blitPosLayout        *wgpu.BindGroupLayout // Per-window position uniforms
 
 	// Rotation/scale effect state
 	rotationStartTime           time.Time
@@ -287,6 +293,14 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	defer textureView.Release()
 	defer bindGroup.Release()
 	
+	// Create fullscreen position uniforms
+	posBuffer, posBindGroup, err := r.createFullscreenPositionUniforms()
+	if err != nil {
+		return err
+	}
+	defer posBuffer.Release()
+	defer posBindGroup.Release()
+	
 	// Get surface texture
 	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
 	if err != nil {
@@ -321,7 +335,8 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	renderPass.SetPipeline(r.blitPipeline)
 	renderPass.SetBindGroup(0, bindGroup, nil)
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-	renderPass.Draw(3, 1, 0, 0)
+	renderPass.SetBindGroup(2, posBindGroup, nil)
+	renderPass.Draw(6, 1, 0, 0) // Draw quad
 	renderPass.End()
 	
 	// Submit and present
@@ -434,9 +449,27 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 		return fmt.Errorf("failed to create bind group layout: %w", err)
 	}
 
-	// Create pipeline layout
+	// Create bind group layout for per-window position uniforms (NDC coordinates)
+	r.blitPosLayout, err = r.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Entries: []gputypes.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: wgpu.ShaderStageVertex,
+				Buffer: &gputypes.BufferBindingLayout{
+					Type:             0, // Uniform
+					MinBindingSize:   16, // vec4: x, y, width, height in NDC
+					HasDynamicOffset: false,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create position uniform layout: %w", err)
+	}
+
+	// Create pipeline layout with 3 bind groups: texture, effects, position
 	pipelineLayout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
-		BindGroupLayouts: []*wgpu.BindGroupLayout{r.blitLayout, r.blitUniformLayout},
+		BindGroupLayouts: []*wgpu.BindGroupLayout{r.blitLayout, r.blitUniformLayout, r.blitPosLayout},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline layout: %w", err)
@@ -658,24 +691,45 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				continue
 			}
 			
+			// Create position uniforms
+			surfaceSize := osWindow.backend.Size()
+			posBuffer, posBindGroup, err := r.createWindowPositionUniforms(bounds, surfaceSize)
+			if err != nil {
+				bindGroup.Release()
+				textureView.Release()
+				texture.Release()
+				continue
+			}
+			
 			surf = &WindowSurface{
-				texture:     texture,
-				textureView: textureView,
-				bindGroup:   bindGroup,
-				width:       uint32(widthPx),
-				height:      uint32(heightPx),
-				uiWindow:    childIface,
-				backend:     backend,
-				dirty:       true,
-				scaleX:      1.0,
-				scaleY:      1.0,
-				opacity:     1.0,
+				texture:             texture,
+				textureView:         textureView,
+				bindGroup:           bindGroup,
+				posUniformBuffer:    posBuffer,
+				posUniformBindGroup: posBindGroup,
+				width:               uint32(widthPx),
+				height:              uint32(heightPx),
+				uiWindow:            childIface,
+				backend:             backend,
+				dirty:               true,
+				scaleX:              1.0,
+				scaleY:              1.0,
+				opacity:             1.0,
 			}
 			r.windowSurfaces[windowID] = surf
 		}
 		
-		// Check if window was resized
-		if int(surf.width) != widthPx || int(surf.height) != heightPx {
+		// Check if window was resized or moved
+		needsUpdate := int(surf.width) != widthPx || int(surf.height) != heightPx
+		if !needsUpdate {
+			// Check if position changed
+			if storedWin, ok := surf.uiWindow.(WindowLike); ok {
+				storedBounds := storedWin.Bounds()
+				needsUpdate = storedBounds.X != bounds.X || storedBounds.Y != bounds.Y
+			}
+		}
+		
+		if needsUpdate {
 			surf.backend, _ = raster.NewScaled(widthPx, heightPx, scale)
 			surf.backend.SetCellMetrics(metrics)
 			
@@ -724,9 +778,28 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				continue
 			}
 			
+			// Recreate position uniforms
+			if surf.posUniformBuffer != nil {
+				surf.posUniformBuffer.Release()
+			}
+			if surf.posUniformBindGroup != nil {
+				surf.posUniformBindGroup.Release()
+			}
+			
+			surfaceSize := osWindow.backend.Size()
+			posBuffer, posBindGroup, err := r.createWindowPositionUniforms(bounds, surfaceSize)
+			if err != nil {
+				bindGroup.Release()
+				textureView.Release()
+				texture.Release()
+				continue
+			}
+			
 			surf.texture = texture
 			surf.textureView = textureView
 			surf.bindGroup = bindGroup
+			surf.posUniformBuffer = posBuffer
+			surf.posUniformBindGroup = posBindGroup
 			surf.width = uint32(widthPx)
 			surf.height = uint32(heightPx)
 			surf.dirty = true
@@ -800,6 +873,14 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	defer desktopView.Release()
 	defer desktopBindGroup.Release()
 	
+	// Create fullscreen position uniforms for Desktop
+	desktopPosBuffer, desktopPosBindGroup, err := r.createFullscreenPositionUniforms()
+	if err != nil {
+		return fmt.Errorf("failed to create Desktop position uniforms: %w", err)
+	}
+	defer desktopPosBuffer.Release()
+	defer desktopPosBindGroup.Release()
+	
 	// Step 3: Composite all textures
 	surfaceTexture, _, err := osWindow.gpuSurface.GetCurrentTexture()
 	if err != nil {
@@ -830,12 +911,13 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	
 	renderPass.SetPipeline(r.blitPipeline)
 	
-	// Draw Desktop base first
+	// Draw Desktop base first (fullscreen)
 	renderPass.SetBindGroup(0, desktopBindGroup, nil)
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-	renderPass.Draw(3, 1, 0, 0)
+	renderPass.SetBindGroup(2, desktopPosBindGroup, nil)
+	renderPass.Draw(6, 1, 0, 0) // Draw quad (6 vertices)
 	
-	// Draw each child window
+	// Draw each child window at its position
 	for _, childIface := range childWindowList.Windows {
 		winValue := reflect.ValueOf(childIface)
 		windowID := uint32(winValue.Pointer())
@@ -844,9 +926,11 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			continue
 		}
 		
+		// Bind texture, effects uniforms, and position uniforms
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
 		renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-		renderPass.Draw(3, 1, 0, 0)
+		renderPass.SetBindGroup(2, surf.posUniformBindGroup, nil)
+		renderPass.Draw(6, 1, 0, 0) // Draw quad at window position
 	}
 	
 	renderPass.End()
@@ -951,4 +1035,72 @@ func (r *WebGPURenderer) uploadBackendToTexture(backend *raster.Backend) (*wgpu.
 	}
 	
 	return texture, textureView, bindGroup, nil
+}
+
+
+// createWindowPositionUniforms creates position uniforms for a window at the given bounds.
+func (r *WebGPURenderer) createWindowPositionUniforms(bounds core.UnitRect, surfaceSize core.UnitSize) (*wgpu.Buffer, *wgpu.BindGroup, error) {
+	// Convert unit coordinates to NDC (-1 to 1)
+	// NDC: (-1, -1) is bottom-left, (1, 1) is top-right
+	ndcX := (float32(bounds.X) / float32(surfaceSize.Width)) * 2.0 - 1.0
+	ndcY := 1.0 - (float32(bounds.Y) / float32(surfaceSize.Height)) * 2.0 // Flip Y
+	ndcWidth := (float32(bounds.Width) / float32(surfaceSize.Width)) * 2.0
+	ndcHeight := (float32(bounds.Height) / float32(surfaceSize.Height)) * 2.0
+	
+	// Adjust Y for bottom-left origin
+	uniformData := []float32{ndcX, ndcY - ndcHeight, ndcWidth, ndcHeight}
+	
+	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  16,
+		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	
+	// Convert float32 slice to bytes
+	uniformBytes := (*[16]byte)(unsafe.Pointer(&uniformData[0]))[:]
+	r.queue.WriteBuffer(buffer, 0, uniformBytes)
+	
+	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: r.blitPosLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: buffer, Size: 16},
+		},
+	})
+	if err != nil {
+		buffer.Release()
+		return nil, nil, err
+	}
+	
+	return buffer, bindGroup, nil
+}
+
+// createFullscreenPositionUniforms creates uniforms for fullscreen rendering.
+func (r *WebGPURenderer) createFullscreenPositionUniforms() (*wgpu.Buffer, *wgpu.BindGroup, error) {
+	uniformData := []float32{-1.0, -1.0, 2.0, 2.0}
+	
+	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  16,
+		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	
+	uniformBytes := (*[16]byte)(unsafe.Pointer(&uniformData[0]))[:]
+	r.queue.WriteBuffer(buffer, 0, uniformBytes)
+	
+	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: r.blitPosLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: buffer, Size: 16},
+		},
+	})
+	if err != nil {
+		buffer.Release()
+		return nil, nil, err
+	}
+	
+	return buffer, bindGroup, nil
 }
