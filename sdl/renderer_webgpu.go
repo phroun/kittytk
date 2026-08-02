@@ -861,7 +861,23 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		}
 		
 		// Render window to its backend
+		// Note: After resize, the backend is new and needs a full paint
 		surf.backend.BeginFrame()
+		
+		// If window was just resized, clear the backend to ensure full repaint
+		// (window might skip painting if it thinks nothing changed)
+		wasResized := int(surf.width) != widthPx || int(surf.height) != heightPx ||
+			surf.lastBounds.X != bounds.X || surf.lastBounds.Y != bounds.Y
+		if wasResized {
+			// Clear to transparent so we don't show stale content
+			img := surf.backend.Image()
+			if img != nil {
+				for i := range img.Pix {
+					img.Pix[i] = 0
+				}
+			}
+		}
+		
 		painter := core.NewPainter(surf.backend)
 		win.Paint(painter)
 		surf.backend.EndFrame()
@@ -872,6 +888,12 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			bounds := img.Bounds()
 			imgWidth := uint32(bounds.Dx())
 			imgHeight := uint32(bounds.Dy())
+			
+			// Verify texture size matches backend size
+			if imgWidth != surf.width || imgHeight != surf.height {
+				fmt.Printf("⚠️  Size mismatch! Texture: %dx%d, Backend: %dx%d\n",
+					surf.width, surf.height, imgWidth, imgHeight)
+			}
 			
 			bytesPerPixel := uint32(4)
 			bytesPerRow := imgWidth * bytesPerPixel
