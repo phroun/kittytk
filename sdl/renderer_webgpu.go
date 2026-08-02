@@ -894,16 +894,6 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	}
 	// DON'T defer - must stay alive until after Submit
 	
-	// Create fullscreen position uniforms for Desktop
-	desktopPosBuffer, desktopPosBindGroup, err := r.createFullscreenPositionUniforms()
-	if err != nil {
-		desktopBindGroup.Release()
-		desktopView.Release()
-		desktopTexture.Release()
-		return fmt.Errorf("failed to create Desktop position uniforms: %w", err)
-	}
-	// DON'T defer - must stay alive until after Submit
-	
 	// Step 3: Composite all textures
 	surfaceTexture, _, err := osWindow.gpuSurface.GetCurrentTexture()
 	if err != nil {
@@ -912,8 +902,6 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	
 	surfaceView, err := surfaceTexture.CreateView(nil)
 	if err != nil {
-		desktopPosBindGroup.Release()
-		desktopPosBuffer.Release()
 		desktopBindGroup.Release()
 		desktopView.Release()
 		desktopTexture.Release()
@@ -940,13 +928,26 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	renderPass.SetPipeline(r.blitPipeline)
 	
 	// Draw Desktop base first (fullscreen)
+	// Write combined uniforms for fullscreen
+	desktopUniforms := []float32{
+		0.0, 0.0, 1.0, 0.0,   // angle, enabled, scale, padding
+		-1.0, -1.0, 2.0, 2.0,  // pos_x, pos_y, size_w, size_h (fullscreen)
+	}
+	desktopUniformBytes := (*[32]byte)(unsafe.Pointer(&desktopUniforms[0]))[:]
+	r.queue.WriteBuffer(r.blitUniformBuffer, 0, desktopUniformBytes)
+	
 	renderPass.SetBindGroup(0, desktopBindGroup, nil)
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-	renderPass.SetBindGroup(2, desktopPosBindGroup, nil)
-	renderPass.Draw(6, 1, 0, 0) // Draw quad (6 vertices)
+	renderPass.Draw(3, 1, 0, 0) // Draw triangle
 	
 	// Draw each child window at its position
+	surfaceSize := osWindow.backend.Size()
 	for _, childIface := range childWindowList.Windows {
+		win, ok := childIface.(WindowLike)
+		if !ok {
+			continue
+		}
+		
 		winValue := reflect.ValueOf(childIface)
 		windowID := uint32(winValue.Pointer())
 		surf, ok := r.windowSurfaces[windowID]
@@ -954,11 +955,25 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			continue
 		}
 		
-		// Bind texture, effects uniforms, and position uniforms
+		// Calculate NDC position for this window
+		bounds := win.Bounds()
+		ndcX := (float32(bounds.X) / float32(surfaceSize.Width)) * 2.0 - 1.0
+		ndcY := 1.0 - (float32(bounds.Y) / float32(surfaceSize.Height)) * 2.0
+		ndcWidth := (float32(bounds.Width) / float32(surfaceSize.Width)) * 2.0
+		ndcHeight := (float32(bounds.Height) / float32(surfaceSize.Height)) * 2.0
+		
+		// Write combined uniforms for this window
+		windowUniforms := []float32{
+			0.0, 0.0, 1.0, 0.0,                       // angle, enabled, scale, padding
+			ndcX, ndcY - ndcHeight, ndcWidth, ndcHeight,  // pos_x, pos_y, size_w, size_h
+		}
+		windowUniformBytes := (*[32]byte)(unsafe.Pointer(&windowUniforms[0]))[:]
+		r.queue.WriteBuffer(r.blitUniformBuffer, 0, windowUniformBytes)
+		
+		// Bind texture and draw
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
 		renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-		renderPass.SetBindGroup(2, surf.posUniformBindGroup, nil)
-		renderPass.Draw(6, 1, 0, 0) // Draw quad at window position
+		renderPass.Draw(3, 1, 0, 0) // Draw triangle at window position
 	}
 	
 	renderPass.End()
@@ -968,8 +983,6 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	
 	// Release temporary resources after GPU has the commands
 	surfaceView.Release()
-	desktopPosBindGroup.Release()
-	desktopPosBuffer.Release()
 	desktopBindGroup.Release()
 	desktopView.Release()
 	desktopTexture.Release()
