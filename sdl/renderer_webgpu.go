@@ -278,9 +278,61 @@ func (r *WebGPURenderer) ResizeWindowRenderer(w *nativeWin, pxW, pxH int) error 
 
 // Present renders using WebGPU pipeline
 func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
-	// TODO: Extract WebGPU presentation logic from platform_sdl.go
-	// This includes uploading backend pixels, running blit/cube passes, presenting
-	return fmt.Errorf("WebGPURenderer.Present not yet implemented")
+	// Upload backend to temporary texture and blit to screen
+	texture, textureView, bindGroup, err := r.uploadBackendToTexture(backend)
+	if err != nil {
+		return err
+	}
+	defer texture.Release()
+	defer textureView.Release()
+	defer bindGroup.Release()
+	
+	// Get surface texture
+	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
+	if err != nil {
+		return err
+	}
+	
+	surfaceView, err := surfaceTexture.CreateView(nil)
+	if err != nil {
+		return err
+	}
+	defer surfaceView.Release()
+	
+	// Create command encoder
+	encoder, err := r.device.CreateCommandEncoder(nil)
+	if err != nil {
+		return err
+	}
+	
+	// Begin render pass
+	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
+		ColorAttachments: []wgpu.RenderPassColorAttachment{
+			{
+				View:    surfaceView,
+				LoadOp:  gputypes.LoadOpClear,
+				StoreOp: gputypes.StoreOpStore,
+				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
+			},
+		},
+	})
+	
+	// Draw fullscreen quad with backend texture
+	renderPass.SetPipeline(r.blitPipeline)
+	renderPass.SetBindGroup(0, bindGroup, nil)
+	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
+	renderPass.Draw(3, 1, 0, 0)
+	renderPass.End()
+	
+	// Submit and present
+	cmdBuffer, _ := encoder.Finish()
+	_, err = r.queue.Submit(cmdBuffer)
+	if err != nil {
+		return err
+	}
+	w.gpuSurface.Present(surfaceTexture)
+	
+	return nil
 }
 
 // ApplyWindowShape applies rounded corners (WebGPU uses fragment shader clipping)
