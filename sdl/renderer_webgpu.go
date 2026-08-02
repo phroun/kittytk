@@ -724,6 +724,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				continue
 			}
 			
+			fmt.Printf("✨ Created WindowSurface for window at (%d,%d) %dx%d\n", 
+				bounds.X, bounds.Y, bounds.Width, bounds.Height)
+			
 			surf = &WindowSurface{
 				texture:          texture,
 				textureView:      textureView,
@@ -942,6 +945,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	
 	// Draw each child window at its position
 	// Draw each child window with its pre-baked uniforms
+	windowCount := 0
 	for _, childIface := range childWindowList.Windows {
 		winValue := reflect.ValueOf(childIface)
 		windowID := uint32(winValue.Pointer())
@@ -954,7 +958,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
 		renderPass.SetBindGroup(1, surf.uniformBindGroup, nil)  // Per-window uniforms!
 		renderPass.Draw(6, 1, 0, 0) // Draw quad at window position
+		windowCount++
 	}
+	fmt.Printf("🎨 Compositor drew %d windows (total surfaces: %d)\n", windowCount, len(r.windowSurfaces))
 	
 	renderPass.End()
 	
