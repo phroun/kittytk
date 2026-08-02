@@ -347,7 +347,7 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	renderPass.SetPipeline(r.blitPipeline)
 	renderPass.SetBindGroup(0, bindGroup, nil)
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-	renderPass.Draw(3, 1, 0, 0) // Draw triangle
+	renderPass.Draw(6, 1, 0, 0) // Draw quad (6 vertices)
 	renderPass.End()
 	
 	// Submit and present
@@ -938,7 +938,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	
 	renderPass.SetBindGroup(0, desktopBindGroup, nil)
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-	renderPass.Draw(3, 1, 0, 0) // Draw triangle
+	renderPass.Draw(6, 1, 0, 0) // Draw quad
 	
 	// Draw each child window at its position
 	surfaceSize := osWindow.backend.Size()
@@ -973,7 +973,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		// Bind texture and draw
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
 		renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-		renderPass.Draw(3, 1, 0, 0) // Draw triangle at window position
+		renderPass.Draw(6, 1, 0, 0) // Draw quad at window position
 	}
 	
 	renderPass.End()

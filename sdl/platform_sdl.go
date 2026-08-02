@@ -46,17 +46,23 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    // Fullscreen triangle using position from uniforms
-    var pos = array<vec2<f32>, 3>(
-        vec2<f32>(0.0, 0.0),
-        vec2<f32>(2.0, 0.0),
-        vec2<f32>(0.0, 2.0)
+    // Generate a proper quad (2 triangles = 6 vertices)
+    var pos = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 0.0),  // Triangle 1: bottom-left
+        vec2<f32>(1.0, 0.0),  //            bottom-right
+        vec2<f32>(0.0, 1.0),  //            top-left
+        vec2<f32>(1.0, 0.0),  // Triangle 2: bottom-right
+        vec2<f32>(1.0, 1.0),  //            top-right
+        vec2<f32>(0.0, 1.0)   //            top-left
     );
     
-    var texCoords = array<vec2<f32>, 3>(
-        vec2<f32>(0.0, 1.0),
-        vec2<f32>(2.0, 1.0),
-        vec2<f32>(0.0, -1.0)
+    var texCoords = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 1.0),  // Flipped Y for texture
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(0.0, 0.0)
     );
     
     // Apply position and size from uniforms
