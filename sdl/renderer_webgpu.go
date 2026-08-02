@@ -861,18 +861,21 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		}
 		
 		// Render window to its backend
-		// Note: After resize, the backend is new and needs a full paint
 		surf.backend.BeginFrame()
 		
-		// If window was just resized (surf.dirty), clear the backend first
-		// Window Paint() might not repaint everything if it thinks nothing changed
+		// If window was just resized, pre-fill with a background color
+		// Window Paint() might not repaint everything if damage tracking thinks nothing changed
 		if surf.dirty {
-			// Clear to the desktop background color so unpainted areas aren't black
 			img := surf.backend.Image()
 			if img != nil {
-				// Fill with transparent first
-				for i := range img.Pix {
-					img.Pix[i] = 0
+				// Fill with dark gray (typical window background) instead of black
+				// This way unpainted areas blend in better
+				bgColor := []byte{32, 32, 32, 255} // Dark gray, opaque
+				for i := 0; i < len(img.Pix); i += 4 {
+					img.Pix[i+0] = bgColor[0] // R
+					img.Pix[i+1] = bgColor[1] // G
+					img.Pix[i+2] = bgColor[2] // B
+					img.Pix[i+3] = bgColor[3] // A
 				}
 			}
 		}
@@ -1005,13 +1008,6 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		surf, ok := r.windowSurfaces[windowID]
 		if !ok {
 			fmt.Printf("⚠️  Window ID %d in childWindowList but not in windowSurfaces!\n", windowID)
-			continue
-		}
-		
-		// Skip drawing if window was just resized (dirty flag set)
-		// Window content might not be fully repainted yet - wait for next frame
-		if surf.dirty {
-			fmt.Printf("⏭️  Skipping window draw - just resized, waiting for repaint\n")
 			continue
 		}
 		
