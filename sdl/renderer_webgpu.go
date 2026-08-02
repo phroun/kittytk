@@ -920,7 +920,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				View:    surfaceView,
 				LoadOp:  gputypes.LoadOpClear,
 				StoreOp: gputypes.StoreOpStore,
-				ClearValue: wgpu.Color{R: 0.2, G: 0.2, B: 0.2, A: 1.0},
+				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
 			},
 		},
 	})
