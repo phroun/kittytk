@@ -296,21 +296,17 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	}
 	// NOTE: Don't defer release - must stay alive until after GPU Submit()
 	
-	// Create fullscreen position uniforms
-	posBuffer, posBindGroup, err := r.createFullscreenPositionUniforms()
-	if err != nil {
-		texture.Release()
-		textureView.Release()
-		bindGroup.Release()
-		return err
+	// Write combined uniforms: effects (angle=0, enabled=0, scale=1, padding=0) + position (fullscreen: -1,-1,2,2)
+	combinedUniforms := []float32{
+		0.0, 0.0, 1.0, 0.0,  // angle, enabled, scale, padding
+		-1.0, -1.0, 2.0, 2.0,  // pos_x, pos_y, size_w, size_h (fullscreen)
 	}
-	// NOTE: Don't defer release - must stay alive until after GPU Submit()
+	uniformBytes := (*[32]byte)(unsafe.Pointer(&combinedUniforms[0]))[:]
+	r.queue.WriteBuffer(r.blitUniformBuffer, 0, uniformBytes)
 	
 	// Get surface texture
 	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
 	if err != nil {
-		posBindGroup.Release()
-		posBuffer.Release()
 		bindGroup.Release()
 		textureView.Release()
 		texture.Release()
@@ -319,8 +315,6 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	
 	surfaceView, err := surfaceTexture.CreateView(nil)
 	if err != nil {
-		posBindGroup.Release()
-		posBuffer.Release()
 		bindGroup.Release()
 		textureView.Release()
 		texture.Release()
@@ -331,8 +325,6 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	encoder, err := r.device.CreateCommandEncoder(nil)
 	if err != nil {
 		surfaceView.Release()
-		posBindGroup.Release()
-		posBuffer.Release()
 		bindGroup.Release()
 		textureView.Release()
 		texture.Release()
@@ -346,19 +338,16 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 				View:    surfaceView,
 				LoadOp:  gputypes.LoadOpClear,
 				StoreOp: gputypes.StoreOpStore,
-				ClearValue: wgpu.Color{R: 1.0, G: 0.0, B: 0.0, A: 1.0}, // RED to verify
+				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
 			},
 		},
 	})
 	
-	// Draw fullscreen quad with backend texture
+	// Draw fullscreen triangle with backend texture
 	renderPass.SetPipeline(r.blitPipeline)
 	renderPass.SetBindGroup(0, bindGroup, nil)
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-	fmt.Println("🔗 Setting bind group 2...")
-	renderPass.SetBindGroup(2, posBindGroup, nil)
-	fmt.Println("🎨 Drawing triangle...")
-	renderPass.Draw(3, 1, 0, 0) // TEMP: Draw triangle to test
+	renderPass.Draw(3, 1, 0, 0) // Draw triangle
 	renderPass.End()
 	
 	// Submit and present
@@ -367,8 +356,6 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	
 	// NOW we can release resources after GPU has the commands
 	surfaceView.Release()
-	posBindGroup.Release()
-	posBuffer.Release()
 	bindGroup.Release()
 	textureView.Release()
 	texture.Release()
@@ -429,9 +416,10 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 		return fmt.Errorf("failed to create sampler: %w", err)
 	}
 
-	// Create uniform buffer for rotation angle + enabled flag + scale
+	// Create uniform buffer for combined uniforms (effects + position)
+	// 8 floats: angle, enabled, scale, padding, pos_x, pos_y, size_w, size_h
 	r.blitUniformBuffer, err = r.device.CreateBuffer(&wgpu.BufferDescriptor{
-		Size:  12,
+		Size:  32,  // 8 floats = 32 bytes
 		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
 	})
 	if err != nil {
@@ -443,10 +431,10 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 		Entries: []gputypes.BindGroupLayoutEntry{
 			{
 				Binding:    0,
-				Visibility: wgpu.ShaderStageFragment,
+				Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment,  // Both stages
 				Buffer: &gputypes.BufferBindingLayout{
 					Type:             0, // Uniform
-					MinBindingSize:   12,
+					MinBindingSize:   32, // 8 floats
 					HasDynamicOffset: false,
 				},
 			},
@@ -502,9 +490,9 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	}
 	fmt.Printf("✅ Created blitPosLayout: %p\n", r.blitPosLayout)
 
-	// Create pipeline layout with 3 bind groups: texture, effects, position
+	// Create pipeline layout with 2 bind groups: texture, combined uniforms
 	pipelineLayout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
-		BindGroupLayouts: []*wgpu.BindGroupLayout{r.blitLayout, r.blitUniformLayout, r.blitPosLayout},
+		BindGroupLayouts: []*wgpu.BindGroupLayout{r.blitLayout, r.blitUniformLayout},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline layout: %w", err)
@@ -544,7 +532,7 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	r.blitUniformBindGroup, err = r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Layout: r.blitUniformLayout,
 		Entries: []wgpu.BindGroupEntry{
-			{Binding: 0, Buffer: r.blitUniformBuffer, Size: 12},
+			{Binding: 0, Buffer: r.blitUniformBuffer, Size: 32},
 		},
 	})
 	if err != nil {

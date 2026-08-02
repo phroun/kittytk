@@ -25,7 +25,19 @@ import (
 
 // WGSL shaders for blitting the UI texture to the screen
 const blitVertexShader = `
-@group(2) @binding(0) var<uniform> window_rect: vec4<f32>;  // x, y, width, height in NDC
+// Combined uniforms in group 1 (since group 2 doesn't work)
+struct CombinedUniforms {
+    angle: f32,      // rotation (from effects)
+    enabled: f32,    // effects enabled
+    scale: f32,      // effects scale  
+    padding1: f32,   // padding to 16 bytes
+    pos_x: f32,      // window x in NDC
+    pos_y: f32,      // window y in NDC
+    size_w: f32,     // window width in NDC
+    size_h: f32,     // window height in NDC
+}
+
+@group(1) @binding(0) var<uniform> uniforms: CombinedUniforms;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -34,11 +46,11 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    // HARDCODE fullscreen triangle to test
+    // Fullscreen triangle using position from uniforms
     var pos = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0)
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(2.0, 0.0),
+        vec2<f32>(0.0, 2.0)
     );
     
     var texCoords = array<vec2<f32>, 3>(
@@ -47,61 +59,37 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
         vec2<f32>(0.0, -1.0)
     );
     
+    // Apply position and size from uniforms
+    let scaled_pos = pos[vertex_index] * vec2<f32>(uniforms.size_w, uniforms.size_h);
+    let final_pos = vec2<f32>(uniforms.pos_x, uniforms.pos_y) + scaled_pos;
+    
     var output: VertexOutput;
-    output.position = vec4<f32>(pos[vertex_index], 0.0, 1.0);
+    output.position = vec4<f32>(final_pos, 0.0, 1.0);
     output.texCoord = texCoords[vertex_index];
     return output;
 }
 `
 
 const blitFragmentShader = `
-struct Uniforms {
+struct CombinedUniforms {
     angle: f32,
-    enabled: f32, // 0.0 = disabled, 1.0 = enabled
-    scale: f32,   // 1.0 = normal, 2.0 = 50% size
+    enabled: f32,
+    scale: f32,
+    padding1: f32,
+    pos_x: f32,
+    pos_y: f32,
+    size_w: f32,
+    size_h: f32,
 }
 
-@group(1) @binding(0) var<uniform> uniforms: Uniforms;
+@group(1) @binding(0) var<uniform> uniforms: CombinedUniforms;
 @group(0) @binding(0) var ui_texture: texture_2d<f32>;
 @group(0) @binding(1) var ui_sampler: sampler;
 
 @fragment
 fn fs_main(@builtin(position) fragPos: vec4<f32>, @location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
-    // Get texture dimensions - these match window dimensions
-    let size = textureDimensions(ui_texture);
-    let width = f32(size.x);
-    let height = f32(size.y);
-    
-    // Use actual screen pixel position for rotation
-    let centerX = width / 2.0;
-    let centerY = height / 2.0;
-    
-    // Center around screen center
-    var pixelX = fragPos.x - centerX;
-    var pixelY = fragPos.y - centerY;
-    
-    // Only apply scaling and rotation if enabled
-    if uniforms.enabled > 0.5 {
-        // Scale dynamically (uniforms.scale is multiplier, e.g. 2.0 for 50%)
-        pixelX = pixelX * uniforms.scale;
-        pixelY = pixelY * uniforms.scale;
-        
-        // Rotate by dynamic angle from uniform
-        let angle = -uniforms.angle;  // Negative to reverse the lookup
-        let cos_a = cos(angle);
-        let sin_a = sin(angle);
-        let rotatedX = pixelX * cos_a - pixelY * sin_a;
-        let rotatedY = pixelX * sin_a + pixelY * cos_a;
-        
-        pixelX = rotatedX;
-        pixelY = rotatedY;
-    }
-    
-    // Translate back and convert to texture coordinates
-    let finalX = (pixelX + centerX) / width;
-    let finalY = (pixelY + centerY) / height;
-    
-    return textureSample(ui_texture, ui_sampler, vec2<f32>(finalX, finalY));
+    // Sample texture
+    return textureSample(ui_texture, ui_sampler, texCoord);
 }
 `
 
