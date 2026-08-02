@@ -1057,20 +1057,38 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			// Render popup to backend
 			fmt.Printf("  [%d] Calling Paint function...\n", popupIdx)
 			popupBackend.BeginFrame()
+			
+			// CRITICAL: The popup's Paint function expects a painter at screen origin (0,0)
+			// and will call WithOffset(popupBounds.X, popupBounds.Y) to position itself.
+			// But our backend is SIZED to the popup, starting at (0,0).
+			// Solution: Offset the painter NEGATIVELY so when Paint adds the offset, it ends at (0,0)
 			painter := core.NewPainter(popupBackend)
-			paintFunc(painter)
+			offsetPainter := painter.WithOffset(-bounds.X, -bounds.Y)
+			
+			paintFunc(offsetPainter)
 			popupBackend.EndFrame()
 			fmt.Printf("  [%d] Paint complete\n", popupIdx)
 			
 			// Upload popup to temporary texture
 			popupImg := popupBackend.Image()
 			if popupImg == nil {
+				fmt.Printf("❌ [%d] Backend returned nil image\n", popupIdx)
 				continue
 			}
 			
 			imgBounds := popupImg.Bounds()
 			imgWidth := uint32(imgBounds.Dx())
 			imgHeight := uint32(imgBounds.Dy())
+			
+			// Check if popup has any visible pixels (non-transparent)
+			visiblePixels := 0
+			for i := 3; i < len(popupImg.Pix); i += 4 {
+				if popupImg.Pix[i] > 0 { // Check alpha channel
+					visiblePixels++
+				}
+			}
+			fmt.Printf("  [%d] Popup image: %dx%d, %d/%d visible pixels\n", 
+				popupIdx, imgWidth, imgHeight, visiblePixels, imgWidth*imgHeight)
 			
 			popupTexture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
 				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
@@ -1153,11 +1171,20 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			// Create uniform buffer with popup position
 			popupUniformBuffer, popupUniformBindGroup, err := r.createWindowUniformBuffer(bounds, backendSize)
 			if err != nil {
+				fmt.Printf("❌ [%d] Failed to create uniform buffer: %v\n", popupIdx, err)
 				popupBindGroup.Release()
 				popupTextureView.Release()
 				popupTexture.Release()
 				continue
 			}
+			
+			// Debug: Show what NDC coordinates we calculated
+			ndcX := (float32(bounds.X) / float32(backendSize.Width)) * 2.0 - 1.0
+			ndcY := 1.0 - (float32(bounds.Y) / float32(backendSize.Height)) * 2.0
+			ndcWidth := (float32(bounds.Width) / float32(backendSize.Width)) * 2.0
+			ndcHeight := (float32(bounds.Height) / float32(backendSize.Height)) * 2.0
+			fmt.Printf("  [%d] NDC coords: x=%f, y=%f, w=%f, h=%f (backendSize=%dx%d)\n", 
+				popupIdx, ndcX, ndcY-ndcHeight, ndcWidth, ndcHeight, backendSize.Width, backendSize.Height)
 			
 			// Draw popup
 			renderPass.SetBindGroup(0, popupBindGroup, nil)
