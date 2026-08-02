@@ -284,38 +284,58 @@ func (r *WebGPURenderer) ResizeWindowRenderer(w *nativeWin, pxW, pxH int) error 
 
 // Present renders using WebGPU pipeline
 func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
+	img := backend.Image()
+	if img == nil {
+		return fmt.Errorf("backend image is nil")
+	}
+	
 	// Upload backend to temporary texture and blit to screen
 	texture, textureView, bindGroup, err := r.uploadBackendToTexture(backend)
 	if err != nil {
 		return err
 	}
-	defer texture.Release()
-	defer textureView.Release()
-	defer bindGroup.Release()
+	// NOTE: Don't defer release - must stay alive until after GPU Submit()
 	
 	// Create fullscreen position uniforms
 	posBuffer, posBindGroup, err := r.createFullscreenPositionUniforms()
 	if err != nil {
+		texture.Release()
+		textureView.Release()
+		bindGroup.Release()
 		return err
 	}
-	defer posBuffer.Release()
-	defer posBindGroup.Release()
+	// NOTE: Don't defer release - must stay alive until after GPU Submit()
 	
 	// Get surface texture
 	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
 	if err != nil {
+		posBindGroup.Release()
+		posBuffer.Release()
+		bindGroup.Release()
+		textureView.Release()
+		texture.Release()
 		return err
 	}
 	
 	surfaceView, err := surfaceTexture.CreateView(nil)
 	if err != nil {
+		posBindGroup.Release()
+		posBuffer.Release()
+		bindGroup.Release()
+		textureView.Release()
+		texture.Release()
 		return err
 	}
-	defer surfaceView.Release()
 	
 	// Create command encoder
 	encoder, err := r.device.CreateCommandEncoder(nil)
 	if err != nil {
+		surfaceView.Release()
+		posBindGroup.Release()
+		posBuffer.Release()
+		bindGroup.Release()
+		textureView.Release()
+		texture.Release()
 		return err
 	}
 	
@@ -342,6 +362,15 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	// Submit and present
 	cmdBuffer, _ := encoder.Finish()
 	_, err = r.queue.Submit(cmdBuffer)
+	
+	// NOW we can release resources after GPU has the commands
+	surfaceView.Release()
+	posBindGroup.Release()
+	posBuffer.Release()
+	bindGroup.Release()
+	textureView.Release()
+	texture.Release()
+	
 	if err != nil {
 		return err
 	}
@@ -869,17 +898,17 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	if err != nil {
 		return fmt.Errorf("failed to upload Desktop base: %w", err)
 	}
-	defer desktopTexture.Release()
-	defer desktopView.Release()
-	defer desktopBindGroup.Release()
+	// DON'T defer - must stay alive until after Submit
 	
 	// Create fullscreen position uniforms for Desktop
 	desktopPosBuffer, desktopPosBindGroup, err := r.createFullscreenPositionUniforms()
 	if err != nil {
+		desktopBindGroup.Release()
+		desktopView.Release()
+		desktopTexture.Release()
 		return fmt.Errorf("failed to create Desktop position uniforms: %w", err)
 	}
-	defer desktopPosBuffer.Release()
-	defer desktopPosBindGroup.Release()
+	// DON'T defer - must stay alive until after Submit
 	
 	// Step 3: Composite all textures
 	surfaceTexture, _, err := osWindow.gpuSurface.GetCurrentTexture()
@@ -889,9 +918,14 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	
 	surfaceView, err := surfaceTexture.CreateView(nil)
 	if err != nil {
+		desktopPosBindGroup.Release()
+		desktopPosBuffer.Release()
+		desktopBindGroup.Release()
+		desktopView.Release()
+		desktopTexture.Release()
 		return err
 	}
-	defer surfaceView.Release()
+	// DON'T defer - release after Submit
 	
 	encoder, err := r.device.CreateCommandEncoder(nil)
 	if err != nil {
@@ -937,6 +971,15 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	
 	cmdBuffer, _ := encoder.Finish()
 	_, err = r.queue.Submit(cmdBuffer)
+	
+	// Release temporary resources after GPU has the commands
+	surfaceView.Release()
+	desktopPosBindGroup.Release()
+	desktopPosBuffer.Release()
+	desktopBindGroup.Release()
+	desktopView.Release()
+	desktopTexture.Release()
+	
 	if err != nil {
 		return err
 	}
