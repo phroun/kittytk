@@ -941,7 +941,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	renderPass.Draw(6, 1, 0, 0) // Draw quad
 	
 	// Draw each child window at its position
-	windowCount := 0
+	// Draw each child window with its pre-baked uniforms
 	for _, childIface := range childWindowList.Windows {
 		winValue := reflect.ValueOf(childIface)
 		windowID := uint32(winValue.Pointer())
@@ -954,10 +954,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
 		renderPass.SetBindGroup(1, surf.uniformBindGroup, nil)  // Per-window uniforms!
 		renderPass.Draw(6, 1, 0, 0) // Draw quad at window position
-		windowCount++
 	}
-	
-	fmt.Printf("🎨 Compositor drew %d windows\n", windowCount)
 	
 	renderPass.End()
 	
@@ -1071,65 +1068,8 @@ func (r *WebGPURenderer) uploadBackendToTexture(backend *raster.Backend) (*wgpu.
 }
 
 
-// createWindowPositionUniforms creates position uniforms for a window at the given bounds.
-func (r *WebGPURenderer) createWindowPositionUniforms(bounds core.UnitRect, surfaceSize core.UnitSize) (*wgpu.Buffer, *wgpu.BindGroup, error) {
-	// Convert unit coordinates to NDC (-1 to 1)
-	// NDC: (-1, -1) is bottom-left, (1, 1) is top-right
-	ndcX := (float32(bounds.X) / float32(surfaceSize.Width)) * 2.0 - 1.0
-	ndcY := 1.0 - (float32(bounds.Y) / float32(surfaceSize.Height)) * 2.0 // Flip Y
-	ndcWidth := (float32(bounds.Width) / float32(surfaceSize.Width)) * 2.0
-	ndcHeight := (float32(bounds.Height) / float32(surfaceSize.Height)) * 2.0
-	
-	// Adjust Y for bottom-left origin
-	uniformData := []float32{ndcX, ndcY - ndcHeight, ndcWidth, ndcHeight}
-	
-	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
-		Size:  16,
-		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	
-	// Convert float32 slice to bytes
-	uniformBytes := (*[16]byte)(unsafe.Pointer(&uniformData[0]))[:]
-	r.queue.WriteBuffer(buffer, 0, uniformBytes)
-	
-	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Layout: r.blitPosLayout,
-		Entries: []wgpu.BindGroupEntry{
-			{Binding: 0, Buffer: buffer, Size: 16},
-		},
-	})
-	if err != nil {
-		buffer.Release()
-		return nil, nil, err
-	}
-	
-	return buffer, bindGroup, nil
-}
 
-// createFullscreenPositionUniforms creates uniforms for fullscreen rendering.
-func (r *WebGPURenderer) createFullscreenPositionUniforms() (*wgpu.Buffer, *wgpu.BindGroup, error) {
-	// TEST: Try small quad in corner instead of fullscreen
-	uniformData := []float32{-0.5, -0.5, 0.5, 0.5}  // Small quad
-	fmt.Printf("📝 TESTING: Creating SMALL quad uniform: pos=(%f,%f) size=(%f,%f)\n",
-		uniformData[0], uniformData[1], uniformData[2], uniformData[3])
-	
-	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
-		Size:  16,
-		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	
-	uniformBytes := (*[16]byte)(unsafe.Pointer(&uniformData[0]))[:]
-	r.queue.WriteBuffer(buffer, 0, uniformBytes)
-	fmt.Printf("📝 TESTING: Creating SMALL quad uniform: pos=(%f,%f) size=(%f,%f)\n",
-
-
-// createWindowUniformBuffer creates a uniform buffer for a window with position data.
+// createWindowUniformBuffer creates a uniform buffer for a window with position baked in.
 func (r *WebGPURenderer) createWindowUniformBuffer(bounds core.UnitRect, surfaceSize core.UnitSize) (*wgpu.Buffer, *wgpu.BindGroup, error) {
 	// Calculate NDC position
 	ndcX := (float32(bounds.X) / float32(surfaceSize.Width)) * 2.0 - 1.0
@@ -1164,32 +1104,6 @@ func (r *WebGPURenderer) createWindowUniformBuffer(bounds core.UnitRect, surface
 		buffer.Release()
 		return nil, nil, err
 	}
-	
-	return buffer, bindGroup, nil
-}
-		uniformData[0], uniformData[1], uniformData[2], uniformData[3])
-	
-	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Layout: r.blitPosLayout,
-		Entries: []wgpu.BindGroupEntry{
-			{Binding: 0, Buffer: buffer, Size: 16},
-		},
-	})
-	if err != nil {
-		buffer.Release()
-		fmt.Printf("❌ ERROR creating bind group: %v\n", err)
-		return nil, nil, err
-	}
-	if bindGroup == nil {
-		buffer.Release()
-		return nil, nil, fmt.Errorf("bindGroup is nil!")
-	}
-	if r.blitPosLayout == nil {
-		buffer.Release()
-		bindGroup.Release()
-		return nil, nil, fmt.Errorf("blitPosLayout is nil when creating bind group!")
-	}
-	fmt.Printf("✅ Position bind group: %p, layout: %p\n", bindGroup, r.blitPosLayout)
 	
 	return buffer, bindGroup, nil
 }
