@@ -1034,6 +1034,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			}
 			
 			// Calculate pixel dimensions
+			// Add padding for outer stroke (user requested 2px for thicker lines)
+			strokePadding := 4 // 2px on each side
+			
 			backendImg := osWindow.backend.Image()
 			if backendImg == nil {
 				continue
@@ -1045,10 +1048,10 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
 			pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
 			
-			widthPx := int(float64(bounds.Width) * pixelsPerUnitW)
-			heightPx := int(float64(bounds.Height) * pixelsPerUnitH)
+			widthPx := int(float64(bounds.Width) * pixelsPerUnitW) + strokePadding
+			heightPx := int(float64(bounds.Height) * pixelsPerUnitH) + strokePadding
 			
-			fmt.Printf("  [%d] Popup pixel size: %dx%d\n", popupIdx, widthPx, heightPx)
+			fmt.Printf("  [%d] Popup pixel size: %dx%d (with %dpx padding)\n", popupIdx, widthPx, heightPx, strokePadding)
 			
 			if widthPx <= 0 || heightPx <= 0 {
 				fmt.Printf("⚠️  [%d] Invalid pixel size\n", popupIdx)
@@ -1070,10 +1073,11 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			
 			// CRITICAL: The popup's Paint function expects a painter at screen origin (0,0)
 			// and will call WithOffset(popupBounds.X, popupBounds.Y) to position itself.
-			// But our backend is SIZED to the popup, starting at (0,0).
-			// Solution: Offset the painter NEGATIVELY so when Paint adds the offset, it ends at (0,0)
+			// Our backend is SIZED to the popup PLUS padding for the outer stroke.
+			// The stroke is drawn outside bounds, so we offset by -(bounds - padding)
 			painter := core.NewPainter(popupBackend)
-			offsetPainter := painter.WithOffset(-bounds.X, -bounds.Y)
+			strokeOffset := core.Unit(2) // 2 device pixels in units (user requested)
+			offsetPainter := painter.WithOffset(-bounds.X+strokeOffset, -bounds.Y+strokeOffset)
 			
 			paintFunc(offsetPainter)
 			popupBackend.EndFrame()
@@ -1179,7 +1183,14 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			)
 			
 			// Create uniform buffer with popup position
-			popupUniformBuffer, popupUniformBindGroup, err := r.createWindowUniformBuffer(bounds, backendSize)
+			// Adjust position by stroke offset since texture is larger
+			adjustedBounds := core.UnitRect{
+				X:      bounds.X - strokeOffset,
+				Y:      bounds.Y - strokeOffset,
+				Width:  bounds.Width + strokeOffset*2,
+				Height: bounds.Height + strokeOffset*2,
+			}
+			popupUniformBuffer, popupUniformBindGroup, err := r.createWindowUniformBuffer(adjustedBounds, backendSize)
 			if err != nil {
 				fmt.Printf("❌ [%d] Failed to create uniform buffer: %v\n", popupIdx, err)
 				popupBindGroup.Release()
@@ -1252,12 +1263,16 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 						backendSize := osWindow.backend.Size()
 						metrics := osWindow.backend.Metrics()
 						
+						// Add padding for outer stroke
+						strokePadding := 4 // 2px on each side
+						strokeOffset := core.Unit(2)
+						
 						backendBounds := backendImg.Bounds()
 						pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
 						pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
 						
-						widthPx := int(float64(bounds.Width) * pixelsPerUnitW)
-						heightPx := int(float64(bounds.Height) * pixelsPerUnitH)
+						widthPx := int(float64(bounds.Width) * pixelsPerUnitW) + strokePadding
+						heightPx := int(float64(bounds.Height) * pixelsPerUnitH) + strokePadding
 						
 						if widthPx > 0 && heightPx > 0 {
 							// Create backend for menu
@@ -1265,10 +1280,10 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 							if err == nil {
 								menuBackend.SetCellMetrics(metrics)
 								
-								// Render menu with negative offset
+								// Render menu with negative offset adjusted for padding
 								menuBackend.BeginFrame()
 								painter := core.NewPainter(menuBackend)
-								offsetPainter := painter.WithOffset(-bounds.X, -bounds.Y)
+								offsetPainter := painter.WithOffset(-bounds.X+strokeOffset, -bounds.Y+strokeOffset)
 								paintFunc(offsetPainter)
 								menuBackend.EndFrame()
 								
@@ -1345,8 +1360,14 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 													},
 												)
 												
-												// Create uniforms
-												menuUniformBuffer, menuUniformBindGroup, err := r.createWindowUniformBuffer(bounds, backendSize)
+												// Create uniforms with adjusted bounds for padding
+												adjustedBounds := core.UnitRect{
+													X:      bounds.X - strokeOffset,
+													Y:      bounds.Y - strokeOffset,
+													Width:  bounds.Width + strokeOffset*2,
+													Height: bounds.Height + strokeOffset*2,
+												}
+												menuUniformBuffer, menuUniformBindGroup, err := r.createWindowUniformBuffer(adjustedBounds, backendSize)
 												if err == nil {
 													// Draw menu
 													renderPass.SetBindGroup(0, menuBindGroup, nil)
