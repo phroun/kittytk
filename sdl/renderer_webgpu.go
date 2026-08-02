@@ -993,6 +993,16 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				popupValue = popupValue.Elem()
 			}
 			
+			// Get ID for debugging
+			idField := popupValue.FieldByName("ID")
+			popupID := "unknown"
+			if idField.IsValid() {
+				if id, ok := idField.Interface().(string); ok {
+					popupID = id
+				}
+			}
+			fmt.Printf("  [%d] Popup ID: %s\n", popupIdx, popupID)
+			
 			fmt.Printf("  [%d] Popup type: %v, kind: %v\n", popupIdx, popupValue.Type(), popupValue.Kind())
 			
 			boundsField := popupValue.FieldByName("Bounds")
@@ -1202,6 +1212,28 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				popupTextureView.Release()
 				popupTexture.Release()
 			}()
+		}
+	}
+	
+	// Step 5: Render menu dropdown if active (on top of popups for proper z-order)
+	if childWindowList.MenuDropdown != nil {
+		fmt.Printf("🍔 Rendering menu dropdown\n")
+		
+		// Extract Paint function via reflection
+		menuValue := reflect.ValueOf(childWindowList.MenuDropdown)
+		if menuValue.Kind() == reflect.Ptr {
+			menuValue = menuValue.Elem()
+		}
+		
+		paintField := menuValue.FieldByName("Paint")
+		if paintField.IsValid() {
+			if paintFunc, ok := paintField.Interface().(func(*core.Painter)); ok && paintFunc != nil {
+				// Menu dropdowns paint themselves - we need to render the whole Desktop
+				// layer again but only the menu part will show
+				// TODO: This is inefficient - we should get menu bounds and render just that region
+				// For now, just log that we detected it
+				fmt.Printf("🍔 Menu dropdown detected but not yet rendered as separate layer\n")
+			}
 		}
 	}
 	

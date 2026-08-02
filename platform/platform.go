@@ -206,8 +206,9 @@ type SurfaceHandler interface {
 // ChildWindowList wraps a list of child windows for compositor enumeration.
 // Uses a concrete type to avoid []interface{} syntax issues across modules.
 type ChildWindowList struct {
-	Windows []interface{}
-	Popups  []interface{} // Popup overlays to render on top of windows
+	Windows      []interface{}
+	Popups       []interface{} // Popup overlays to render on top of windows
+	MenuDropdown interface{}   // Active menu dropdown (nil if none)
 }
 
 // WindowProvider is an optional Surface Handler interface that allows

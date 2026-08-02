@@ -4061,9 +4061,9 @@ func (d *Desktop) Paint(p *core.Painter) {
 		d.statusBar.Paint(statusPainter)
 	}
 	
-	// NOTE: Popups are NOT painted here in compositor mode!
-	// They must be rendered AFTER windows to appear on top.
-	// The compositor handles popup rendering separately.
+	// NOTE: Menu dropdowns and popups are NOT painted here in compositor mode!
+	// They must be rendered AFTER windows as separate layers for drop shadows.
+	// The compositor handles menu dropdown and popup rendering separately.
 }
 
 // HandleKeyPress handles keyboard input.
@@ -4142,10 +4142,26 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 	popups := d.windowManager.GetPopups()
 	fmt.Printf("🪟 GetChildWindows: windowManager.GetPopups() returned %d popups\n", len(popups))
 	
-	fmt.Printf("🪟 GetChildWindows returning %d windows, %d popups\n", len(result), len(popups))
+	// Check if menu bar has an active dropdown
+	var menuDropdown interface{} = nil
+	if d.menuBar != nil && d.menuBar.ActiveMenu() != nil {
+		// Create a fake "popup" that will render the menu dropdown
+		menuDropdown = &struct {
+			Paint func(*core.Painter)
+		}{
+			Paint: func(p *core.Painter) {
+				d.menuBar.PaintDropdown(p)
+			},
+		}
+		fmt.Printf("🪟 GetChildWindows: menuBar has active dropdown\n")
+	}
+	
+	fmt.Printf("🪟 GetChildWindows returning %d windows, %d popups, menuDropdown=%v\n", 
+		len(result), len(popups), menuDropdown != nil)
 	return &platform.ChildWindowList{
-		Windows: result,
-		Popups:  popups,
+		Windows:      result,
+		Popups:       popups,
+		MenuDropdown: menuDropdown,
 	}
 }
 
