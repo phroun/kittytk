@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/phroun/argwild"
+
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
@@ -24,11 +26,47 @@ import (
 	sdlplat "github.com/phroun/kittytk/sdl"
 )
 
+// rendererFromArgs applies command-line renderer switches on top of the
+// configured engine: --webgpu and --software (alias --sdl) pick one
+// directly, --renderer=NAME passes a name through (validated by the
+// platform). The last switch on the line wins; an explicitly disabled
+// switch ("--webgpu-") is ignored.
+func rendererFromArgs(r *argwild.Result, configured string) string {
+	renderer := configured
+	if r == nil {
+		return renderer
+	}
+	for _, set := range r.ArgSets() {
+		for _, sw := range set.Switches {
+			if sw.IsOff() {
+				continue
+			}
+			switch sw.Name {
+			case "webgpu":
+				renderer = "webgpu"
+			case "software", "sdl":
+				renderer = "software"
+			case "renderer":
+				if v, ok := sw.First(); ok {
+					renderer = v.AsString()
+				}
+			}
+		}
+	}
+	return renderer
+}
+
 func main() {
 	// Launch options come from kittytk.ini (current dir, then the exe's
 	// folder, then the user config dir), so a non-technical user can
 	// configure the app without the command line. Env vars still override.
 	cfg := hostcfg.Load()
+
+	// Command-line switches beat the file for this launch:
+	// --webgpu | --software | --renderer=NAME.
+	if parsed, err := argwild.Parse(); err == nil {
+		cfg.Renderer = rendererFromArgs(parsed, cfg.Renderer)
+	}
 
 	// Create platform with configured renderer (software or webgpu)
 	plat, err := sdlplat.New(cfg.Title, cfg.Width, cfg.Height, cfg.Renderer)
