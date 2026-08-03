@@ -20,6 +20,8 @@ package sdlcompat
 
 import (
 	"fmt"
+	"os"
+	"runtime"
 	"unsafe"
 
 	sdl3 "github.com/Zyko0/go-sdl3/sdl"
@@ -47,15 +49,74 @@ func Init(flags sdl3.InitFlags) error {
 
 var libLoaded bool
 
+// loadLibrary opens libSDL3, trying the plain library name first and
+// then the usual install prefixes.
+//
+// The bare name alone is not enough: dyld searches /usr/lib and the
+// dyld cache, but Homebrew installs to /opt/homebrew (Apple Silicon)
+// or /usr/local (Intel), and neither is on the default search path. A
+// correctly installed SDL3 would otherwise fail to load with a
+// confusing "no such file". KITTYTK_SDL3 overrides the search outright
+// for an SDL built somewhere else.
 func loadLibrary() error {
 	if libLoaded {
 		return nil
 	}
-	if err := sdl3.LoadLibrary(sdl3.Path()); err != nil {
-		return fmt.Errorf("sdl3: %w (is libSDL3 installed?)", err)
+
+	// An embedded build carries its own SDL3 and never searches.
+	if embeddedSDL {
+		if err := loadEmbedded(); err != nil {
+			return err
+		}
+		libLoaded = true
+		return nil
 	}
-	libLoaded = true
-	return nil
+
+	candidates := libraryCandidates()
+
+	var firstErr error
+	for _, path := range candidates {
+		if path == "" {
+			continue
+		}
+		if err := sdl3.LoadLibrary(path); err == nil {
+			libLoaded = true
+			return nil
+		} else if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return fmt.Errorf("sdl3: could not load libSDL3 (tried %v): %w"+
+		"\n\tinstall it (macOS: brew install sdl3) or set KITTYTK_SDL3 to its path",
+		candidates, firstErr)
+}
+
+// libraryCandidates lists where libSDL3 might live, most specific
+// first. dyld and ld.so search neither Homebrew prefix by default, so
+// a correctly installed SDL3 is invisible to a bare library name.
+func libraryCandidates() []string {
+	var c []string
+	if custom := os.Getenv("KITTYTK_SDL3"); custom != "" {
+		c = append(c, custom)
+	}
+	c = append(c, sdl3.Path())
+	switch runtime.GOOS {
+	case "darwin":
+		c = append(c,
+			"/opt/homebrew/lib/libSDL3.dylib", // Homebrew, Apple Silicon
+			"/opt/homebrew/opt/sdl3/lib/libSDL3.dylib",
+			"/usr/local/lib/libSDL3.dylib", // Homebrew, Intel
+			"/opt/local/lib/libSDL3.dylib", // MacPorts
+		)
+	case "linux":
+		c = append(c,
+			"libSDL3.so",
+			"/usr/local/lib/libSDL3.so.0",
+			"/usr/lib/x86_64-linux-gnu/libSDL3.so.0",
+			"/usr/lib/aarch64-linux-gnu/libSDL3.so.0",
+		)
+	}
+	return c
 }
 func Quit()                           { sdl3.Quit() }
 func Delay(ms uint32)                 { sdl3.Delay(ms) }

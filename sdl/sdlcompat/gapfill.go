@@ -3,7 +3,6 @@
 package sdlcompat
 
 import (
-	"runtime"
 	"sync"
 	"unsafe"
 
@@ -22,16 +21,19 @@ var gapfillOnce sync.Once
 
 // bindGaps runs after Init has opened libSDL3.
 func bindGaps() {
-	name := "libSDL3.so.0"
-	switch runtime.GOOS {
-	case "darwin":
-		name = "libSDL3.dylib"
-	case "windows":
-		name = "SDL3.dll"
+	// Reopen the library the binding already loaded. dlopen is
+	// refcounted, so this hands back the same handle — but it has to
+	// find the file by the same widened search, since Homebrew's
+	// prefixes are not on dyld's default path.
+	var lib uintptr
+	for _, name := range libraryCandidates() {
+		if h, err := purego.Dlopen(name, purego.RTLD_LAZY|purego.RTLD_GLOBAL); err == nil {
+			lib = h
+			break
+		}
 	}
-	lib, err := purego.Dlopen(name, purego.RTLD_LAZY|purego.RTLD_GLOBAL)
-	if err != nil {
-		return // no SDL3 present; the binding's own load will report it
+	if lib == 0 {
+		return // no SDL3 present; Init reports it
 	}
 	// Registration panics on a missing symbol, so probe first: an SDL3
 	// built without the Metal backend simply has no layer to hand back.
