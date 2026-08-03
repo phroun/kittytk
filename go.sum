@@ -1,3 +1,9 @@
+github.com/Zyko0/go-sdl3 v0.1.1 h1:tXlnEcEJa9eqyzaBpCktOGteJGbUfnvG6ocURdsspHw=
+github.com/Zyko0/go-sdl3 v0.1.1/go.mod h1:LOqUd6DUUkCO/8quWPfovV1Ep/nr/aw0uBT5vdlAIQY=
+github.com/Zyko0/purego-gen v0.0.0-20250727121216-3bcd331a1e0c h1:3z1BdpfvUbaP7oXjPabl7STN7zz88S432hZJ8M095kI=
+github.com/Zyko0/purego-gen v0.0.0-20250727121216-3bcd331a1e0c/go.mod h1:xpUxPkAb7v0Ffn/NGp1XpD+tZly4dpSPI7DTAFT37es=
+github.com/ebitengine/purego v0.10.0 h1:QIw4xfpWT6GWTzaW5XEKy3HXoqrJGx1ijYHzTF0/ISU=
+github.com/ebitengine/purego v0.10.0/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/go-text/render v0.2.1 h1:qwHhxqGUjjg4L0XyJWj7M7bpY75NZM+kBpv2Yfw5mcg=
 github.com/go-text/render v0.2.1/go.mod h1:HCCAq8MUlm/WRcXshBb4K/n+IkjeXQ1c2Ba+yICSm0A=
 github.com/go-text/typesetting v0.3.4 h1:YYurUOtEb9kGSOz4uE3k4OpBGsp1dDL8+fjCeaFamAU=

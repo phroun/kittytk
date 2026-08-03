@@ -3,6 +3,8 @@ module github.com/phroun/kittytk
 go 1.25.0
 
 require (
+	github.com/Zyko0/go-sdl3 v0.1.1
+	github.com/ebitengine/purego v0.10.0
 	github.com/go-text/render v0.2.1
 	github.com/go-text/typesetting v0.3.4
 	github.com/gogpu/gputypes v0.5.1
@@ -17,6 +19,7 @@ require (
 )
 
 require (
+	github.com/Zyko0/purego-gen v0.0.0-20250727121216-3bcd331a1e0c // indirect
 	github.com/go-webgpu/goffi v0.6.2 // indirect
 	github.com/go-webgpu/webgpu v0.5.4 // indirect
 	github.com/gogpu/gpucontext v0.24.0 // indirect
