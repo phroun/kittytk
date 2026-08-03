@@ -385,6 +385,7 @@ const (
 	KEYDOWN         = 1
 	KEYUP           = 2
 	MOUSEBUTTONDOWN = 3
+	MOUSEBUTTONUP   = 4
 
 	WINDOWEVENT_SIZE_CHANGED = 1
 	WINDOWEVENT_FOCUS_GAINED = 2
@@ -501,12 +502,12 @@ func translate(ev *sdl3.Event) Event {
 
 	case sdl3.EVENT_MOUSE_BUTTON_DOWN, sdl3.EVENT_MOUSE_BUTTON_UP:
 		m := ev.MouseButtonEvent()
-		state := uint8(0)
+		typ, state := uint32(MOUSEBUTTONUP), uint8(0)
 		if ev.Type == sdl3.EVENT_MOUSE_BUTTON_DOWN {
-			state = 1
+			typ, state = MOUSEBUTTONDOWN, 1
 		}
 		return &MouseButtonEvent{
-			Type:     uint32(ev.Type),
+			Type:     typ,
 			WindowID: uint32(m.WindowID),
 			Button:   m.Button,
 			State:    state,
@@ -525,10 +526,14 @@ func translate(ev *sdl3.Event) Event {
 
 	case sdl3.EVENT_MOUSE_WHEEL:
 		m := ev.MouseWheelEvent()
+		// SDL3 split what SDL2 called X/Y: its X/Y are FRACTIONAL
+		// amounts (SDL2's PreciseX/Y), and the whole-tick counts SDL2
+		// put in X/Y are now IntegerX/IntegerY. Truncating the float
+		// instead would round every sub-tick trackpad scroll to zero.
 		return &MouseWheelEvent{
 			WindowID: uint32(m.WindowID),
-			X:        int32(m.X),
-			Y:        int32(m.Y),
+			X:        m.IntegerX,
+			Y:        m.IntegerY,
 			PreciseX: m.X,
 			PreciseY: m.Y,
 		}
