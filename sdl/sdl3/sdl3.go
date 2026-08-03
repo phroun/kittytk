@@ -382,6 +382,25 @@ func StartTextInput(w *Window) error { return w.w.StartTextInput() }
 // than the absence showing up as "typing does nothing" in one window.
 func TextInputActive(w *Window) bool { return w.w.TextInputActive() }
 
+// SetTextInputArea tells the OS where the caret is, in WINDOW pixels, so
+// an input method can put its candidate window under the text being
+// typed instead of at some default corner. cursorPx is the caret's
+// offset from the rect's left edge.
+//
+// This is what places the CJK candidate list, the macOS press-and-hold
+// accent picker, and the emoji picker. SDL2 had the global
+// SDL_SetTextInputRect; SDL3 scopes it to a window and adds the cursor
+// offset, the same move it made with StartTextInput.
+func SetTextInputArea(w *Window, xPx, yPx, wPx, hPx, cursorPx int) error {
+	r := csdl.Rect{X: int32(xPx), Y: int32(yPx), W: int32(wPx), H: int32(hPx)}
+	return w.w.SetTextInputArea(&r, int32(cursorPx))
+}
+
+// ClearTextInputArea forgets the caret position, for a surface with no
+// caret to report. An input method then falls back to its own placement
+// rather than anchoring on a stale rectangle.
+func ClearTextInputArea(w *Window) error { return w.w.SetTextInputArea(nil, 0) }
+
 // --- clipboard ---
 
 func SetClipboardText(text string) error { return csdl.SetClipboardText(text) }

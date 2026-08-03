@@ -569,8 +569,10 @@ func (h *TearOffHost) FrameBase(p *core.Painter) {
 	h.win.SetMenuDropdownComposited(true)
 	defer h.win.SetMenuDropdownComposited(false)
 
+	// The caret is not applied here: the popups this host handed to the
+	// compositor paint on layers above, and one of them may claim it.
+	// The host gathers every layer's request and applies the winner.
 	p.ResetTextCaretRequest()
-	defer func() { platform.ApplyTextCaret(h.Surface(), p.TextCaretRequest()) }()
 	h.win.Paint(p)
 	if h.isModalBlocked() {
 		b := h.win.Bounds()

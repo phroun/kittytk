@@ -26,9 +26,9 @@ type ComboBox struct {
 
 	// Scroll state for drop-down
 	scrollOffset     int
-	maxVisible       int           // User-configured maximum (0 = auto-size to screen)
-	popupVisibleRows int           // Actual visible rows for current popup (calculated from screen space)
-	popupDropUp      bool          // popup opened above the box (drop-up) rather than below
+	maxVisible       int  // User-configured maximum (0 = auto-size to screen)
+	popupVisibleRows int  // Actual visible rows for current popup (calculated from screen space)
+	popupDropUp      bool // popup opened above the box (drop-up) rather than below
 
 	// popupScreenMetrics is the screen/desktop denomination captured
 	// when the popup opens; popup-space geometry, painting, and input

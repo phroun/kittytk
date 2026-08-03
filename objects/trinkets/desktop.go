@@ -3084,10 +3084,12 @@ func (h *desktopSurfaceHandler) FrameBase(painter *core.Painter) {
 
 	painter.ResetTextCaretRequest()
 	d.Paint(painter)
-	// Child windows paint on compositor layers, so no caret request can
-	// arrive through this painter; this keeps the caret state coherent
-	// for chrome-only frames.
-	platform.ApplyTextCaret(s, painter.TextCaretRequest())
+	// The caret is deliberately NOT applied here. Child windows, menus
+	// and popups paint on compositor layers of their own, and any of
+	// them may claim the caret; the host gathers every layer's request
+	// (this one included) and applies the single winner. Applying the
+	// chrome-only request here would hide a focused window's caret for
+	// the rest of the frame.
 }
 
 // Resized reports the terminal/window size change.

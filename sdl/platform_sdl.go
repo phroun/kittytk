@@ -140,6 +140,21 @@ type nativeWin struct {
 	// arrives as input, the handler invalidates after every input event,
 	// and without this the whole window repainted and re-uploaded per
 	// mouse move to produce the picture already on screen.
+	// frameCaret is the platform-caret request the COMPOSITOR gathered
+	// this frame. Child windows and overlays paint into textures of
+	// their own, so their requests never reach the painter the base
+	// layer applies; the compositor collects them and the platform
+	// applies the winner to the surface. frameCaretSet distinguishes
+	// "no layer asked for it" (hide) from "the compositor did not run".
+	frameCaret    core.TextCaret
+	frameCaretSet bool
+
+	// baseCaret is the caret request from the BASE layer's own paint —
+	// desktop chrome, or a torn window's frame. The compositor seeds the
+	// frame's caret from it so chrome can hold the caret when no layer
+	// above asks for it.
+	baseCaret core.TextCaret
+
 	painted        paintSignature
 	paintedAt      time.Time
 	paintedBackend *raster.Backend
@@ -771,13 +786,23 @@ func (p *Platform) paintBackend(w *nativeWin, forceFull, baseOnly bool) {
 	}
 
 	w.backend.BeginFrame()
+	painter := core.NewPainter(w.backend)
+	painter.ResetTextCaretRequest()
 	if full {
-		frame(core.NewPainter(w.backend))
+		frame(painter)
 	} else {
 		// Clip the whole tree to the damaged region
-		frame(core.NewPainter(w.backend).WithClip(dmg))
+		frame(painter.WithClip(dmg))
 	}
 	w.backend.EndFrame()
+
+	// Keep the base layer's own caret request. When compositing, the
+	// handler must NOT apply it — layers painted above may claim the
+	// caret instead, and the platform applies the single winner after
+	// the compositor has seen them all.
+	if baseOnly {
+		w.baseCaret = painter.TextCaretRequest()
+	}
 
 	// A rounded window carries its shape in its own pixels: clear the
 	// corners so they composite as nothing. Must run after EVERY frame,
@@ -802,10 +827,16 @@ func (p *Platform) presentWindow(w *nativeWin, forceFull bool) {
 	if p.renderer.SupportsFeature(FeatureCompositing) {
 		if provider, ok := s.handler.(platform.WindowProvider); ok {
 			if childWindowList := provider.GetChildWindows(); childWindowList != nil {
+				w.frameCaretSet = false
 				err := p.renderer.RenderFrameWithChildWindows(w, childWindowList, p.scale, func(win *nativeWin) {
 					p.paintBackend(win, forceFull, true)
 				})
 				if err == nil {
+					// The compositor gathered the frame's caret from the
+					// layers; the surface is the platform's to talk to.
+					if w.frameCaretSet {
+						platform.ApplyTextCaret(s, w.frameCaret)
+					}
 					p.scheduleAnimationFrame(s)
 					return
 				}
@@ -1793,6 +1824,15 @@ type sdlSurface struct {
 	damageMu   sync.Mutex
 	damageFull bool
 	damageRect core.UnitRect
+
+	// caretVisible/caretX/caretY are the last caret this surface reported
+	// to the OS, so an unchanged caret costs no SDL call. There is no
+	// OS-drawn caret on a graphical surface — trinkets paint their own —
+	// so the position exists purely to place an input method's candidate
+	// window. See SetCursorPosition.
+	caretVisible bool
+	caretX       core.Unit
+	caretY       core.Unit
 }
 
 func (s *sdlSurface) Size() core.UnitSize {
@@ -1850,9 +1890,72 @@ func unionUnitRect(a, b core.UnitRect) core.UnitRect {
 	}
 	return core.UnitRect{X: x0, Y: y0, Width: x1 - x0, Height: y1 - y0}
 }
-func (s *sdlSurface) SetCursorVisible(bool)            {}
-func (s *sdlSurface) SetCursorPosition(x, y core.Unit) {}
-func (s *sdlSurface) SetCursorStyle(int)               {}
+
+// SetCursorVisible tracks whether any trinket wants the platform caret.
+// Nothing is drawn either way — a graphical surface has no OS caret, and
+// trinkets paint their own — but with no caret there is no sensible
+// place for an input method's candidate window, so the area is cleared
+// and the OS falls back to its own placement.
+func (s *sdlSurface) SetCursorVisible(visible bool) {
+	if s.closed || s.win == nil || s.win.window == nil || s.caretVisible == visible {
+		return
+	}
+	s.caretVisible = visible
+	if !visible {
+		_ = sdl3.ClearTextInputArea(s.win.window)
+		return
+	}
+	s.applyTextInputArea()
+}
+
+// SetCursorPosition reports the caret to the OS as the text input area,
+// which is what anchors an input method's candidate window under the
+// text being typed: the CJK candidate list, macOS's press-and-hold
+// accent picker, the emoji picker. Without it they appear at whatever
+// corner the OS last used.
+//
+// The toolkit already computes this every frame — a focused trinket
+// calls Painter.RequestTextCaret and the surface host applies the
+// winning request (see core/textcaret.go) — so this only has to convert
+// and forward it. On the TUI surface the same call moves the real
+// terminal cursor; here there is no cursor to move, only an input method
+// to inform.
+func (s *sdlSurface) SetCursorPosition(x, y core.Unit) {
+	if s.closed || s.win == nil || s.win.window == nil {
+		return
+	}
+	if s.caretVisible && s.caretX == x && s.caretY == y {
+		return // unchanged: no need to tell the OS again
+	}
+	s.caretX, s.caretY = x, y
+	if s.caretVisible {
+		s.applyTextInputArea()
+	}
+}
+
+// applyTextInputArea pushes the recorded caret to SDL in window pixels,
+// as a one-cell box with the cursor at its left edge.
+func (s *sdlSurface) applyTextInputArea() {
+	b := s.win.backend
+	if b == nil {
+		return
+	}
+	m := b.Metrics()
+	x0, y0 := b.UnitToPxX(s.caretX), b.UnitToPxY(s.caretY)
+	wPx := b.UnitToPxX(s.caretX+m.CellWidth) - x0
+	hPx := b.UnitToPxY(s.caretY+m.CellHeight) - y0
+	if wPx <= 0 {
+		wPx = 1
+	}
+	if hPx <= 0 {
+		hPx = 1
+	}
+	_ = sdl3.SetTextInputArea(s.win.window, x0, y0, wPx, hPx, 0)
+}
+
+// SetCursorStyle is a no-op: the DECSCUSR shapes describe a terminal's
+// own caret, and a graphical surface has none to shape.
+func (s *sdlSurface) SetCursorStyle(int) {}
 
 // ScreenPositionPx implements platform.NativeSurface.
 func (s *sdlSurface) ScreenPositionPx() (int, int) {

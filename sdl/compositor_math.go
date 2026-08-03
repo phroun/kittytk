@@ -304,6 +304,21 @@ func needsRepaint(last, now paintSignature, sinceLastPaint, heartbeat time.Durat
 	return now != last
 }
 
+// caretInSurface shifts a caret request made inside a compositor layer
+// into surface coordinates. A layer paints into its own texture at that
+// texture's origin, so a trinket deep inside it asks for the caret in
+// the layer's local space; the OS needs it relative to the window.
+//
+// An invisible request stays invisible and keeps no position.
+func caretInSurface(caret core.TextCaret, layer core.UnitRect) core.TextCaret {
+	if !caret.Visible {
+		return core.TextCaret{}
+	}
+	caret.X += layer.X
+	caret.Y += layer.Y
+	return caret
+}
+
 // gpuRowAlignment is WebGPU's required bytes-per-row alignment for
 // texture uploads.
 const gpuRowAlignment = 256

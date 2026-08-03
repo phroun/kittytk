@@ -413,3 +413,30 @@ func TestHeartbeatIntervalStaggers(t *testing.T) {
 		t.Error("heartbeatInterval is not deterministic")
 	}
 }
+
+// A caret asked for inside a compositor layer is in that LAYER's
+// coordinates — the layer paints into a texture of its own, at that
+// texture's origin. The OS needs it relative to the window, so it has to
+// be shifted by where the layer sits.
+func TestCaretInSurface(t *testing.T) {
+	layer := core.UnitRect{X: 120, Y: 64, Width: 300, Height: 200}
+
+	got := caretInSurface(core.TextCaret{Visible: true, X: 16, Y: 32, Style: 5}, layer)
+	want := core.TextCaret{Visible: true, X: 136, Y: 96, Style: 5}
+	if got != want {
+		t.Errorf("caretInSurface = %+v, want %+v", got, want)
+	}
+
+	// No request stays no request, and carries no stale position: an
+	// invisible caret with coordinates would place an input method's
+	// candidate window at a caret that is not there.
+	if got := caretInSurface(core.TextCaret{X: 16, Y: 32}, layer); got != (core.TextCaret{}) {
+		t.Errorf("caretInSurface of an invisible request = %+v, want the zero value", got)
+	}
+
+	// A layer at the origin is the identity.
+	caret := core.TextCaret{Visible: true, X: 8, Y: 4}
+	if got := caretInSurface(caret, core.UnitRect{Width: 100, Height: 100}); got != caret {
+		t.Errorf("caretInSurface at the origin = %+v, want %+v unchanged", got, caret)
+	}
+}

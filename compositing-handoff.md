@@ -272,11 +272,38 @@ desktop.SetWallpaperFile(path)                   # or SetWallpaperImage(*image.R
 PNG, JPEG and GIF decode; a bad path is reported and the current
 wallpaper is left alone, so a typo cannot blank the desktop.
 
+## The platform caret, and the IME
+
+A trinket asks for the platform caret while it holds focus
+(`Painter.RequestTextCaret`), last request of a frame wins. In a
+single-surface frame the handler applies the winner itself. **Under the
+compositor it must not**: every child window, menu and popup paints into
+a texture of its own, so their requests never reach the base layer's
+painter, and applying the chrome-only request there would hide a focused
+window's caret for the rest of the frame.
+
+So the compositor gathers them — seeded from the base layer, then each
+window in z-order (`caretInSurface` shifts a request out of its layer's
+local coordinates), then overlays — and the platform applies the single
+winner to the surface. A window whose paint is skipped by the texture
+cache keeps the caret it last asked for, cached alongside its texture.
+
+On a graphical surface there is **no OS-drawn caret** — trinkets paint
+their own. The position exists only to tell an input method where the
+text is: `SDL_SetTextInputArea` anchors the CJK candidate list, macOS's
+press-and-hold accent picker and the emoji picker under the caret
+instead of at a default corner. `SetCursorStyle` stays a no-op (DECSCUSR
+shapes describe a terminal's caret) and `SetCursorVisible` only clears
+the area, so an input method falls back to its own placement rather than
+a stale rectangle.
+
+Still missing: **`SDL_EVENT_TEXT_EDITING`**. The adapter's `translate()`
+does not handle it, so preedit — the underlined in-progress characters
+before a CJK commit — is invisible. That needs an event through to the
+focused trinket and TextInput rendering it inline without treating it as
+committed content.
+
 ## Known gaps (not regressions)
-- **Text caret in compositor mode**: windows paint on their own layers,
-  so a focused terminal's caret request cannot reach the OS surface
-  through the base-layer painter. Needs caret plumbing from the
-  per-window paint to the platform (pre-existing gap, now documented).
 - **Compositor repaints every window every frame** — per-window damage
   is tracked (`surf.dirty`) but not yet honored. Optimization, not
   correctness.

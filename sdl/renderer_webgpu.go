@@ -92,6 +92,12 @@ type WindowSurface struct {
 	painted   paintSignature
 	paintedAt time.Time // drives the heartbeat repaint
 
+	// caret is this window's platform-caret request from its last paint,
+	// already in SURFACE coordinates. Cached alongside the texture for
+	// the same reason: a window whose paint is skipped still wants the
+	// caret where it last put it, and recomputing it would mean painting.
+	caret core.TextCaret
+
 	// UI Window compositor support (for child windows within an OS window)
 	uiWindow interface{}     // UI Window trinket (interface{} to avoid import cycle)
 	backend  *raster.Backend // Per-window raster backend for UI windows
@@ -1098,6 +1104,14 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		}
 	}
 
+	// The frame's platform-caret request. Child windows and overlays each
+	// paint into a texture of their own, so their requests never reach
+	// the base layer's painter — they are gathered here in paint order
+	// and the last visible one wins, exactly the rule a single-surface
+	// frame follows. Seeded from the base layer so desktop chrome can
+	// hold the caret when nothing above claims it.
+	frameCaret := osWindow.baseCaret
+
 	// Step 1: Render each child window to its own texture
 	type WindowLike interface {
 		Bounds() core.UnitRect
@@ -1342,8 +1356,15 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			heartbeatInterval(windowID), surf.dirty, compositorAlwaysRepaint) {
 			surf.backend.BeginFrame()
 			painter := core.NewPainter(surf.backend)
+			painter.ResetTextCaretRequest()
 			win.Paint(painter)
 			surf.backend.EndFrame()
+
+			// A window paints into its OWN texture, so a caret request
+			// made inside it is in the window's local coordinates and
+			// never reaches the painter the base layer applies. Carry it
+			// out here, shifted to surface coordinates.
+			surf.caret = caretInSurface(painter.TextCaretRequest(), bounds)
 
 			// Upload to GPU texture
 			if img := surf.backend.Image(); img != nil {
@@ -1480,7 +1501,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			// drawOverlay those bounds so the stroke lands well inside
 			// the padded texture instead of on its edge.
 			bounds := winBounds
-			cleanup, err := r.drawOverlay(renderPass, osWindow,
+			cleanup, _, err := r.drawOverlay(renderPass, osWindow,
 				outsetBounds(bounds, overlayStrokeOffset),
 				func(p *core.Painter) { hw.PaintTearHalo(p, bounds) }, scale)
 			if err == nil {
@@ -1499,6 +1520,13 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		if cleanup, err := r.drawShadow(renderPass, desktopBindGroup, winBounds, core.UnitRect{},
 			surfaceSize, framePpuW, framePpuH, frameAspect, windowShadowSpec); err == nil && cleanup != nil {
 			overlayCleanups = append(overlayCleanups, cleanup)
+		}
+
+		// Paint order IS z-order, and the last request of a frame wins
+		// (see core/textcaret.go), so a window higher in the stack takes
+		// the caret from one below.
+		if surf.caret.Visible {
+			frameCaret = surf.caret
 		}
 
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
@@ -1522,8 +1550,11 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				surfaceSize, framePpuW, framePpuH, frameAspect, overlayShadowSpec); err == nil && cleanup != nil {
 				overlayCleanups = append(overlayCleanups, cleanup)
 			}
-			if cleanup, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
+			if cleanup, caret, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
 				overlayCleanups = append(overlayCleanups, cleanup)
+				if caret.Visible {
+					frameCaret = caret
+				}
 			} else {
 				fmt.Fprintf(os.Stderr, "compositor: menu dropdown layer failed: %v\n", err)
 			}
@@ -1541,13 +1572,21 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			surfaceSize, framePpuW, framePpuH, frameAspect, overlayShadowSpec); err == nil && cleanup != nil {
 			overlayCleanups = append(overlayCleanups, cleanup)
 		}
-		if cleanup, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
+		if cleanup, caret, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
 			overlayCleanups = append(overlayCleanups, cleanup)
+			if caret.Visible {
+				frameCaret = caret
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "compositor: popup layer failed: %v\n", err)
 		}
 	}
 	renderPass.End()
+
+	// The frame's caret goes to the platform, which owns the surface.
+	// Empty means no layer asked for it, which correctly hides it.
+	osWindow.frameCaret = frameCaret
+	osWindow.frameCaretSet = true
 
 	// Rotation demo: while the effect runs, spin the cube (textured with
 	// the desktop content) over the composited scene.
@@ -2259,10 +2298,10 @@ func (r *WebGPURenderer) drawOverlay(
 	bounds core.UnitRect,
 	paint func(*core.Painter),
 	scale int,
-) (func(), error) {
+) (func(), core.TextCaret, error) {
 	backendImg := osWindow.backend.Image()
 	if backendImg == nil {
-		return nil, fmt.Errorf("OS window backend has no image")
+		return nil, core.TextCaret{}, fmt.Errorf("OS window backend has no image")
 	}
 	backendSize := osWindow.backend.Size()
 	metrics := osWindow.backend.Metrics()
@@ -2276,12 +2315,12 @@ func (r *WebGPURenderer) drawOverlay(
 	// so texture pixels match the outset on-screen quad exactly.
 	widthPx, heightPx, _, _ := overlayTexturePx(bounds, pixelsPerUnitW, pixelsPerUnitH, overlayStrokeOffset)
 	if widthPx <= 0 || heightPx <= 0 {
-		return nil, fmt.Errorf("overlay pixel size %dx%d invalid", widthPx, heightPx)
+		return nil, core.TextCaret{}, fmt.Errorf("overlay pixel size %dx%d invalid", widthPx, heightPx)
 	}
 
 	overlayBackend, err := raster.NewScaled(widthPx, heightPx, scale)
 	if err != nil {
-		return nil, err
+		return nil, core.TextCaret{}, err
 	}
 	overlayBackend.SetCellMetrics(metrics)
 	overlayBackend.SetFontSize(osWindow.backend.FontSize())
@@ -2291,17 +2330,22 @@ func (r *WebGPURenderer) drawOverlay(
 	// stroke padding), so a negative offset cancels that placement.
 	overlayBackend.BeginFrame()
 	painter := core.NewPainter(overlayBackend)
+	painter.ResetTextCaretRequest()
 	paint(painter.WithOffset(-bounds.X+overlayStrokeOffset, -bounds.Y+overlayStrokeOffset))
 	overlayBackend.EndFrame()
 
+	// The paint function offsets itself to the overlay's bounds, so a
+	// caret request from inside it is already in surface coordinates.
+	caret := painter.TextCaretRequest()
+
 	img := overlayBackend.Image()
 	if img == nil {
-		return nil, fmt.Errorf("overlay backend returned no image")
+		return nil, core.TextCaret{}, fmt.Errorf("overlay backend returned no image")
 	}
 
 	texture, textureView, bindGroup, err := r.createBoundTexture(img)
 	if err != nil {
-		return nil, err
+		return nil, core.TextCaret{}, err
 	}
 
 	// The on-screen quad grows by the same padding the texture gained.
@@ -2315,7 +2359,7 @@ func (r *WebGPURenderer) drawOverlay(
 		bindGroup.Release()
 		textureView.Release()
 		texture.Release()
-		return nil, err
+		return nil, core.TextCaret{}, err
 	}
 
 	renderPass.SetBindGroup(0, bindGroup, nil)
@@ -2329,5 +2373,5 @@ func (r *WebGPURenderer) drawOverlay(
 		textureView.Release()
 		texture.Release()
 	}
-	return cleanup, nil
+	return cleanup, caret, nil
 }

@@ -290,3 +290,52 @@ func TestBaseRevisionMovesForNonTrinketRepaintRequests(t *testing.T) {
 		})
 	}
 }
+
+// caretProbe asks for the platform caret at a fixed local position while
+// it paints, the way a focused text field does.
+type caretProbe struct {
+	core.TrinketBase
+	x, y core.Unit
+}
+
+func newCaretProbe(x, y core.Unit) *caretProbe {
+	p := &caretProbe{x: x, y: y}
+	p.TrinketBase = *core.NewTrinketBase()
+	p.Init(p)
+	return p
+}
+
+func (c *caretProbe) Paint(p *core.Painter) { p.RequestTextCaret(c.x, c.y, 2) }
+
+// FrameBase must NOT apply the caret itself. Child windows, menus and
+// popups paint on compositor layers of their own and any of them may
+// claim the caret; the host gathers every layer's request and applies
+// the single winner. A chrome-only request applied here would hide a
+// focused window's caret for the rest of the frame — which is why a
+// docked window's caret never reached the OS at all.
+func TestFrameBaseLeavesTheCaretToTheHost(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(400, 200)
+	d := NewDesktop()
+	d.SetBackend(px)
+	surf := &msSurface{size: core.UnitSize{Width: 400, Height: 200}}
+	d.surface = surf
+	h := &desktopSurfaceHandler{d: d}
+
+	// A focused trinket in the desktop's own content asks for the caret.
+	d.SetContent(newCaretProbe(10, 20))
+
+	surf.caretCalls = 0
+	h.FrameBase(core.NewPainter(px))
+	if surf.caretCalls != 0 {
+		t.Errorf("FrameBase touched the surface caret %d times, want 0 — "+
+			"the host applies the winner across all layers", surf.caretCalls)
+	}
+
+	// Frame, the non-compositing path, still owns it.
+	surf.caretCalls = 0
+	h.Frame(core.NewPainter(px))
+	if surf.caretCalls == 0 {
+		t.Error("Frame did not apply the caret; the single-surface present has no one else to do it")
+	}
+}
