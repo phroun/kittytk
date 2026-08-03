@@ -456,6 +456,19 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 
 			if isCursor {
 				t.drawCursorOverlay(painter, scheme, focused, cursorShape, cellX, cellY, cellW, cellH, ppu)
+
+				// Report where the text is, so an input method can put its
+				// candidate window under the cursor: the CJK candidate
+				// list, macOS's press-and-hold accent picker, the emoji
+				// picker. Without it they open at a corner of the window.
+				//
+				// Only the position — this path DRAWS its own cursor just
+				// above, so asking for a platform caret as well would be
+				// asking for a second one. (The cell path does ask, because
+				// there the outer terminal draws it and nothing here can.)
+				if focused {
+					painter.RequestTextInputArea(core.Unit(math.Round(cellX)), core.Unit(math.Round(cellY)))
+				}
 			}
 		}
 
