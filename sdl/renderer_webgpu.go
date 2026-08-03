@@ -348,11 +348,15 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 		},
 	})
 
-	// Draw fullscreen quad with backend texture
-	renderPass.SetPipeline(r.blitPipeline)
-	renderPass.SetBindGroup(0, bindGroup, nil)
-	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-	renderPass.Draw(6, 1, 0, 0) // Draw quad (6 vertices)
+	// Draw fullscreen quad with backend texture. (Under
+	// KITTYTK_ALPHA_TEST a transparent window presents the bare alpha-0
+	// clear instead — see alphaPresentTest.)
+	if !(alphaPresentTest && w.transparent) {
+		renderPass.SetPipeline(r.blitPipeline)
+		renderPass.SetBindGroup(0, bindGroup, nil)
+		renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
+		renderPass.Draw(6, 1, 0, 0) // Draw quad (6 vertices)
+	}
 	renderPass.End()
 
 	// Rotation demo: spin the cube over the scene while the effect runs.
@@ -1331,7 +1335,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			continue
 		}
 
+		haloActive := false
 		if hw, isHalo := childIface.(tearHaloWindow); isHalo && hw.TearIndicatorActive() {
+			haloActive = true
 			if wl, isWin := childIface.(WindowLike); isWin {
 				winBounds := wl.Bounds()
 				// The halo rect is the window outset by its margin; give
@@ -1346,13 +1352,16 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			}
 		}
 
-		if clipOK {
+		// A window with its tear-off halo up escapes the client-area
+		// clip along with the halo — the "lifting over the chrome, about
+		// to break out" affordance (matches the software path).
+		if clipOK && !haloActive {
 			renderPass.SetScissorRect(uint32(clipX), uint32(clipY), uint32(clipW), uint32(clipH))
 		}
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
 		renderPass.SetBindGroup(1, surf.uniformBindGroup, nil)
 		renderPass.Draw(6, 1, 0, 0) // Draw quad at window position
-		if clipOK {
+		if clipOK && !haloActive {
 			renderPass.SetScissorRect(0, 0, uint32(surfacePxW), uint32(surfacePxH))
 		}
 	}

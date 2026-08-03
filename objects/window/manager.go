@@ -2909,6 +2909,7 @@ func (m *WindowManager) Paint(p *core.Painter) {
 	m.mu.RLock()
 	desktop := m.desktop
 	windows := m.windows
+	screenBounds := m.screenBounds
 	m.mu.RUnlock()
 
 	// Paint desktop
@@ -2937,8 +2938,17 @@ func (m *WindowManager) Paint(p *core.Painter) {
 			// left off-screen by a desktop shrink are nudged into view.
 			bounds := m.displayBounds(win)
 
-			// Calculate visible portion within client area
-			visibleBounds := bounds.Intersection(clientArea)
+			// The clip normally keeps windows out of chrome territory.
+			// While the tear-off affordance is active the window escapes
+			// it along with its halo — visually "lifting" over the menu
+			// and status bars, about to break out of the desktop.
+			windowArea := clientArea
+			if win.TearIndicatorActive() {
+				windowArea = screenBounds
+			}
+
+			// Calculate visible portion within the effective area
+			visibleBounds := bounds.Intersection(windowArea)
 			if visibleBounds.IsEmpty() {
 				continue
 			}
