@@ -135,6 +135,11 @@ type WebGPURenderer struct {
 	windowSurfaces       map[uint32]*WindowSurface // windowID -> surface
 	firstCompositorFrame bool                      // Track first compositor call
 
+	// The desktop's tiled wallpaper (one small texture, repeat-sampled)
+	// and the sampler that repeats it.
+	wallpaper        wallpaperCache
+	wallpaperSampler *wgpu.Sampler
+
 	// Cached base layers (desktop chrome), one per OS window. Held
 	// across frames: the base is the largest texture on screen, and it
 	// used to be allocated, painted, converted and uploaded in full
@@ -226,6 +231,10 @@ func (r *WebGPURenderer) Shutdown() {
 	}
 	for id := range r.baseLayers {
 		r.releaseBaseLayer(id)
+	}
+	r.wallpaper.release()
+	if r.wallpaperSampler != nil {
+		r.wallpaperSampler.Release()
 	}
 
 	// Clean up cube resources
@@ -554,6 +563,20 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create sampler: %w", err)
+	}
+
+	// The wallpaper's sampler REPEATS instead of clamping, which is what
+	// tiles the desktop background in hardware. Nearest filtering keeps a
+	// hard-edged pattern crisp: the quad maps the tile 1:1 to pixels, so
+	// there is nothing to interpolate and linear would only soften it.
+	r.wallpaperSampler, err = r.device.CreateSampler(&wgpu.SamplerDescriptor{
+		AddressModeU: 0, // Repeat
+		AddressModeV: 0,
+		MagFilter:    0, // Nearest
+		MinFilter:    0,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create wallpaper sampler: %w", err)
 	}
 
 	// Create uniform buffer for combined uniforms (effects + position +
@@ -1385,16 +1408,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 
 	renderPass.SetPipeline(r.blitPipeline)
 
-	// Draw Desktop base first: a fullscreen quad carrying the current
-	// effect state like every other layer.
 	surfaceSize := osWindow.backend.Size()
-	r.writeCombinedUniforms(r.blitUniformBuffer,
-		core.UnitRect{Width: surfaceSize.Width, Height: surfaceSize.Height},
-		surfaceSize, frameAspect)
-
-	renderPass.SetBindGroup(0, desktopBindGroup, nil)
-	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
-	renderPass.Draw(6, 1, 0, 0) // Draw quad
 
 	// Overlay/halo GPU resources must outlive Submit below; the deferred
 	// cleanups run when this function returns, after Present.
@@ -1404,6 +1418,29 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			cleanup()
 		}
 	}()
+
+	// The wallpaper is the bottom of everything: one small tile repeated
+	// across the surface by the sampler. The base layer above it cleared
+	// to transparent, so it shows through wherever the desktop chrome
+	// does not paint.
+	if cleanup, err := r.drawWallpaper(renderPass, childWindowList.Wallpaper,
+		surfaceSize, surfacePxW, surfacePxH, frameAspect); err == nil {
+		if cleanup != nil {
+			overlayCleanups = append(overlayCleanups, cleanup)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "compositor: wallpaper layer failed: %v\n", err)
+	}
+
+	// Then the Desktop base: a fullscreen quad carrying the current
+	// effect state like every other layer.
+	r.writeCombinedUniforms(r.blitUniformBuffer,
+		core.UnitRect{Width: surfaceSize.Width, Height: surfaceSize.Height},
+		surfaceSize, frameAspect)
+
+	renderPass.SetBindGroup(0, desktopBindGroup, nil)
+	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
+	renderPass.Draw(6, 1, 0, 0) // Draw quad
 
 	// Windows never paint over desktop chrome: their quads are scissored
 	// to the client area (surface minus menu bar, status bar, dock),
@@ -1639,6 +1676,7 @@ func (r *WebGPURenderer) writeCombinedUniforms(buffer *wgpu.Buffer, bounds core.
 		// mode 0 and the shadow fields unused; the rest of the block
 		// stays zeroed.
 	}
+	data.setTile(1, 1) // sample the texture once across the quad
 	r.queue.WriteBuffer(buffer, 0, combinedUniformBytes(&data))
 }
 
@@ -1856,8 +1894,9 @@ func (r *WebGPURenderer) createShadowUniformBuffer(
 		s.rect1[0], s.rect1[1], s.rect1[2], s.rect1[3],
 		s.rect2[0], s.rect2[1], s.rect2[2], s.rect2[3],
 		s.punch[0], s.punch[1], s.punch[2], s.punch[3],
-		shadowDebugFlag, 0, 0, 0, 0, 0,
+		shadowDebugFlag,
 	}
+	data.setTile(1, 1) // unused by the shadow branch, but never zero
 	r.queue.WriteBuffer(buffer, 0, combinedUniformBytes(&data))
 
 	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
@@ -1871,6 +1910,135 @@ func (r *WebGPURenderer) createShadowUniformBuffer(
 		return nil, nil, err
 	}
 	return buffer, bindGroup, nil
+}
+
+// wallpaperCache is the desktop's background tile on the GPU: one small
+// texture, bound with a REPEAT-addressed sampler so the hardware tiles
+// it across the whole surface.
+//
+// This is what lets the wallpaper be any size at no cost. The old path
+// filled every pixel of the desktop on the CPU from an 8x8 bitmap; here
+// a 16x16 pattern and a 512x512 photograph are the same single quad, and
+// the tile uploads only when its revision moves.
+type wallpaperCache struct {
+	texture     *wgpu.Texture
+	textureView *wgpu.TextureView
+	bindGroup   *wgpu.BindGroup
+	widthPx     uint32
+	heightPx    uint32
+	revision    uint64
+	valid       bool
+}
+
+func (w *wallpaperCache) release() {
+	if w.bindGroup != nil {
+		w.bindGroup.Release()
+		w.bindGroup = nil
+	}
+	if w.textureView != nil {
+		w.textureView.Release()
+		w.textureView = nil
+	}
+	if w.texture != nil {
+		w.texture.Release()
+		w.texture = nil
+	}
+	w.valid = false
+}
+
+// drawWallpaper records the tiled desktop background: a fullscreen quad
+// whose texture coordinates run 0..surface/tile, sampled with repeat.
+// The tile is uploaded only when its revision changes.
+//
+// It draws FIRST, under the base layer, which is why the base layer
+// clears to transparent — see the desktop's FrameBase.
+func (r *WebGPURenderer) drawWallpaper(
+	renderPass *wgpu.RenderPassEncoder,
+	layer *platform.WallpaperLayer,
+	surfaceSize core.UnitSize,
+	surfacePxW, surfacePxH int,
+	aspect float32,
+) (func(), error) {
+	if layer == nil || layer.Tile == nil || surfacePxW <= 0 || surfacePxH <= 0 {
+		return nil, nil
+	}
+	bounds := layer.Tile.Bounds()
+	tileW, tileH := bounds.Dx(), bounds.Dy()
+	if tileW <= 0 || tileH <= 0 {
+		return nil, nil
+	}
+
+	if !r.wallpaper.valid || r.wallpaper.revision != layer.Revision ||
+		r.wallpaper.widthPx != uint32(tileW) || r.wallpaper.heightPx != uint32(tileH) {
+		r.wallpaper.release()
+
+		texture, textureView, _, err := r.createBoundTexture(layer.Tile)
+		if err != nil {
+			return nil, err
+		}
+		// Rebound against the repeat sampler; createBoundTexture's own
+		// bind group clamps, which would stretch one tile's edge pixels
+		// across the whole desktop instead of repeating it.
+		bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+			Layout: r.blitLayout,
+			Entries: []wgpu.BindGroupEntry{
+				{Binding: 0, TextureView: textureView},
+				{Binding: 1, Sampler: r.wallpaperSampler},
+			},
+		})
+		if err != nil {
+			textureView.Release()
+			texture.Release()
+			return nil, err
+		}
+		r.wallpaper = wallpaperCache{
+			texture:     texture,
+			textureView: textureView,
+			bindGroup:   bindGroup,
+			widthPx:     uint32(tileW),
+			heightPx:    uint32(tileH),
+			revision:    layer.Revision,
+			valid:       true,
+		}
+	}
+
+	// Uniforms for a fullscreen quad, with the texture repeated exactly
+	// as many times as the tile fits across the surface. A fractional
+	// remainder is what the last partial row and column should show, so
+	// no rounding here.
+	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  combinedUniformSize,
+		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return nil, err
+	}
+	angle, enabledF, scale, _ := r.effectParams()
+	x, y, w, h := windowNDC(
+		core.UnitRect{Width: surfaceSize.Width, Height: surfaceSize.Height}, surfaceSize)
+	data := combinedUniformData{angle, enabledF, scale, aspect, x, y, w, h}
+	data.setTile(float32(surfacePxW)/float32(tileW), float32(surfacePxH)/float32(tileH))
+	r.queue.WriteBuffer(buffer, 0, combinedUniformBytes(&data))
+
+	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: r.blitUniformLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: buffer, Size: combinedUniformSize},
+		},
+	})
+	if err != nil {
+		buffer.Release()
+		return nil, err
+	}
+
+	renderPass.SetBindGroup(0, r.wallpaper.bindGroup, nil)
+	renderPass.SetBindGroup(1, bindGroup, nil)
+	renderPass.Draw(6, 1, 0, 0)
+
+	return func() {
+		bindGroup.Release()
+		buffer.Release()
+	}, nil
 }
 
 // refreshBaseLayer returns the OS window's cached base-layer texture,

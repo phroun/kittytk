@@ -97,6 +97,13 @@ type Config struct {
 	VSync       bool   // graphical host: sync presents to the display refresh (default true; false uncaps fps)
 	Renderer    string // rendering backend: "software" (default) or "webgpu" (requires -tags webgpu build)
 
+	// Wallpaper is a path to a PNG/JPEG/GIF tiled across the desktop
+	// ([window] wallpaper=, --wallpaper=PATH, or KITTYTK_WALLPAPER).
+	// Empty keeps the built-in 8x8 pattern. The image is REPEATED from
+	// the surface origin, not stretched, so its size is free to be
+	// anything.
+	Wallpaper string
+
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret
 
@@ -353,6 +360,8 @@ func apply(data []byte, cfg *Config) {
 			case "software", "webgpu":
 				cfg.Renderer = strings.ToLower(val)
 			}
+		case "wallpaper":
+			cfg.Wallpaper = val
 		case "endpoint":
 			cfg.Endpoint = val
 		case "token":
@@ -413,6 +422,21 @@ func stripInlineComment(v string) string {
 		}
 	}
 	return v
+}
+
+// WallpaperEnv names the environment variable that overrides the
+// configured wallpaper. It is the quickest way to try one: no ini edit,
+// no rebuild, just a path on the command line.
+const WallpaperEnv = "KITTYTK_WALLPAPER"
+
+// ResolveWallpaper returns the wallpaper image path to use: $KITTYTK_WALLPAPER
+// if set (env wins, as everywhere else here), else the ini's wallpaper,
+// else empty for the built-in pattern.
+func (c Config) ResolveWallpaper() string {
+	if p := os.Getenv(WallpaperEnv); p != "" {
+		return p
+	}
+	return c.Wallpaper
 }
 
 // ResolveEndpoint returns the endpoint to serve on: $KITTYTK_DISPLAY if

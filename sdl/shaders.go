@@ -39,14 +39,18 @@ struct CombinedUniforms {
     punch_max: vec2<f32>,
     debug: f32,
 
-    // Trailing padding. WGSL sizes the fields above at 112 bytes; padding
+    // Texture repeats across the quad. (1,1) for an ordinary layer, which
+    // samples its texture once; the wallpaper sets surface/tile so the
+    // sampler repeats a small tile over the whole desktop instead of the
+    // CPU filling every pixel. Needs a REPEAT-addressed sampler to mean
+    // anything — see wallpaperSampler.
+    tile: vec2<f32>,
+
+    // Trailing padding. WGSL sizes the fields above at 120 bytes; padding
     // to 128 keeps the Go side a round [32]float32 and the binding size a
     // multiple of 16, which every backend's uniform rules are happy with.
     pad0: f32,
     pad1: f32,
-    pad2: f32,
-    pad3: f32,
-    pad4: f32,
 }
 
 @group(1) @binding(0) var<uniform> uniforms: CombinedUniforms;
@@ -132,14 +136,18 @@ struct CombinedUniforms {
     punch_max: vec2<f32>,
     debug: f32,
 
-    // Trailing padding. WGSL sizes the fields above at 112 bytes; padding
+    // Texture repeats across the quad. (1,1) for an ordinary layer, which
+    // samples its texture once; the wallpaper sets surface/tile so the
+    // sampler repeats a small tile over the whole desktop instead of the
+    // CPU filling every pixel. Needs a REPEAT-addressed sampler to mean
+    // anything — see wallpaperSampler.
+    tile: vec2<f32>,
+
+    // Trailing padding. WGSL sizes the fields above at 120 bytes; padding
     // to 128 keeps the Go side a round [32]float32 and the binding size a
     // multiple of 16, which every backend's uniform rules are happy with.
     pad0: f32,
     pad1: f32,
-    pad2: f32,
-    pad3: f32,
-    pad4: f32,
 }
 
 @group(1) @binding(0) var<uniform> uniforms: CombinedUniforms;
@@ -163,7 +171,7 @@ fn fs_main(@builtin(position) fragPos: vec4<f32>, @location(0) texCoord: vec2<f3
     // which want uniform control flow. mode is uniform so a branch would
     // be legal, but sampling first sidesteps the question entirely and
     // costs one fetch on the handful of shadow quads per frame.
-    let tex = textureSample(ui_texture, ui_sampler, texCoord);
+    let tex = textureSample(ui_texture, ui_sampler, texCoord * uniforms.tile);
     if (uniforms.mode < 0.5) {
         return tex;
     }
@@ -251,7 +259,21 @@ const (
 	combinedUniformSize   = combinedUniformFloats * 4
 )
 
+// combinedUniformTileWord is where the block's `tile` vec2 starts. A
+// vec2 needs 8-byte alignment, so WGSL slips an unnamed pad word in
+// after `debug` — hence 28 rather than 27. Every layer MUST write (1,1)
+// here: the fragment stage multiplies its texture coordinates by it, so
+// a zeroed tile collapses the whole layer onto a single texel.
+const combinedUniformTileWord = 28
+
 type combinedUniformData [combinedUniformFloats]float32
+
+// setTile writes the texture-repeat factor. Ordinary layers pass (1,1);
+// the wallpaper passes surface/tile so the sampler repeats.
+func (d *combinedUniformData) setTile(x, y float32) {
+	d[combinedUniformTileWord] = x
+	d[combinedUniformTileWord+1] = y
+}
 
 // combinedUniformBytes views the block as raw bytes for WriteBuffer.
 func combinedUniformBytes(d *combinedUniformData) []byte {

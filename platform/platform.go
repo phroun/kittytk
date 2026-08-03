@@ -11,6 +11,7 @@
 package platform
 
 import (
+	"image"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -225,6 +226,26 @@ type ChildWindowList struct {
 	// report one, which makes the base repaint every frame as before.
 	BaseRevision    uint64
 	HasBaseRevision bool
+
+	// Wallpaper is the desktop's background tile, for a host that can
+	// repeat a texture across the surface. Nil means the base layer
+	// painted its own background and there is nothing to draw under it.
+	Wallpaper *WallpaperLayer
+}
+
+// WallpaperLayer is one wallpaper tile, repeated from the surface origin
+// across the whole surface, underneath every other layer.
+//
+// The tile's size is its own business: repeating happens in the GPU's
+// sampler, so a 16x16 pattern and a 512x512 photograph cost the same one
+// quad. Only the size of the upload differs, and Revision means that
+// happens once rather than every frame.
+type WallpaperLayer struct {
+	Tile *image.RGBA
+
+	// Revision changes whenever Tile's pixels would. A host holding an
+	// uploaded copy re-uploads only when it moves.
+	Revision uint64
 }
 
 // WindowProvider is an optional Surface Handler interface that allows

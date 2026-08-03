@@ -1,6 +1,7 @@
 package trinkets
 
 import (
+	"image"
 	"testing"
 
 	"github.com/phroun/kittytk/backend/raster"
@@ -150,5 +151,109 @@ func TestDesktopBaseRevisionIgnoresWindowActivity(t *testing.T) {
 	d.SetWallpaperChunk(4)
 	if got := baseRev(); got == before {
 		t.Error("base revision did not move when the wallpaper changed")
+	}
+}
+
+// The wallpaper reaches the compositor as ONE tile plus a revision,
+// whatever its size — repeating happens in the GPU's sampler, so the
+// layer costs a quad instead of a fill over every pixel of the desktop.
+func TestDesktopOffersWallpaperTileToCompositor(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 240)
+	d := NewDesktop()
+	d.SetBackend(px)
+	d.surface = &msSurface{size: core.UnitSize{Width: 800, Height: 240}}
+	var provider platform.WindowProvider = &desktopSurfaceHandler{d: d}
+
+	// The default 8x8 pattern is rendered into a tile, so it takes the
+	// same path a custom image does.
+	list := provider.GetChildWindows()
+	if list == nil || list.Wallpaper == nil || list.Wallpaper.Tile == nil {
+		t.Fatal("no wallpaper layer offered for the built-in pattern")
+	}
+	patternRev := list.Wallpaper.Revision
+	if b := list.Wallpaper.Tile.Bounds(); b.Dx() != 8*2 || b.Dy() != 8*2 {
+		t.Errorf("pattern tile is %dx%d, want 16x16 (8 bits at the default chunk of 2)",
+			b.Dx(), b.Dy())
+	}
+
+	// An arbitrary-size image replaces it, at its own size.
+	custom := image.NewRGBA(image.Rect(0, 0, 37, 91))
+	d.SetWallpaperImage(custom)
+
+	list = provider.GetChildWindows()
+	if list.Wallpaper.Tile != custom {
+		t.Error("the custom wallpaper image was not offered to the compositor")
+	}
+	if b := list.Wallpaper.Tile.Bounds(); b.Dx() != 37 || b.Dy() != 91 {
+		t.Errorf("custom tile is %dx%d, want its own 37x91 — it must not be resized",
+			b.Dx(), b.Dy())
+	}
+	if list.Wallpaper.Revision == patternRev {
+		t.Error("the revision did not move for a new wallpaper; it would never be re-uploaded")
+	}
+}
+
+// The tile's revision moves when the pattern's COLORS change, not just
+// its bits — a theme switch repaints the wallpaper without touching the
+// pattern, and a revision that missed it would leave the old tile
+// uploaded forever.
+func TestWallpaperRevisionTracksPatternInputs(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 240)
+	d := NewDesktop()
+	d.SetBackend(px)
+	d.surface = &msSurface{size: core.UnitSize{Width: 800, Height: 240}}
+
+	_, before := d.WallpaperTile()
+
+	d.SetWallpaperChunk(4)
+	_, afterChunk := d.WallpaperTile()
+	if afterChunk == before {
+		t.Error("revision did not move when the chunk size changed")
+	}
+
+	d.SetWallpaperPattern([8]uint8{0xF0, 0x0F, 0xF0, 0x0F, 0xF0, 0x0F, 0xF0, 0x0F})
+	_, afterPattern := d.WallpaperTile()
+	if afterPattern == afterChunk {
+		t.Error("revision did not move when the pattern changed")
+	}
+
+	// And it holds still when nothing changed, or the tile would upload
+	// every frame.
+	_, again := d.WallpaperTile()
+	if again != afterPattern {
+		t.Errorf("revision moved from %d to %d with nothing changed", afterPattern, again)
+	}
+}
+
+// FrameBase leaves the background to the compositor's wallpaper layer:
+// it clears to transparent and Paint skips the fill, so the tiled quad
+// underneath shows through. On a surface with no alpha it falls back to
+// the opaque clear and the CPU-tiled wallpaper.
+func TestFrameBaseClearsTransparentForWallpaper(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(200, 120)
+	d := NewDesktop()
+	d.SetBackend(px)
+	d.surface = &msSurface{size: core.UnitSize{Width: 200, Height: 120}}
+	h := &desktopSurfaceHandler{d: d}
+
+	h.FrameBase(core.NewPainter(px))
+
+	// Somewhere in the middle of the desktop, clear of every bar: the
+	// base layer must have left it transparent for the wallpaper.
+	img := px.Image()
+	o := img.PixOffset(100, 60)
+	if a := img.Pix[o+3]; a != 0 {
+		t.Errorf("desktop background alpha = %d after FrameBase, want 0 — "+
+			"the wallpaper layer underneath would be hidden", a)
+	}
+
+	// Frame (the non-compositing path) still paints an opaque background.
+	h.Frame(core.NewPainter(px))
+	if a := img.Pix[img.PixOffset(100, 60)+3]; a == 0 {
+		t.Error("Frame left the desktop background transparent; " +
+			"the non-compositing present would show nothing")
 	}
 }

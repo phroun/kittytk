@@ -206,8 +206,51 @@ If a window ever shows stale content, one run with `=always` settles
 whether this cache is the cause; the fix is then to find the mutation
 that changes pixels without notifying.
 
-Still uncached: the desktop **base layer** repaints, re-uploads, and
-allocates a fresh texture every frame. Same treatment would apply.
+The **base layer** (desktop chrome) is cached the same way. Its signal is
+the harder half: windows are the desktop's own trinket children, so a
+keystroke in a window bumps the desktop's counter too. `GetChildWindows`
+therefore reports `BaseRevision = desktop's revision − Σ(the revisions of
+the windows it is handing over as layers)`. Those changes bumped both by
+one, so they cancel exactly, leaving a number that moves only for what
+`FrameBase` paints. It nets out nesting too: a change in an MDI child
+bumps the child, its parent window and the desktop, and the parent's term
+cancels the desktop's.
+
+## The wallpaper is a tiled texture
+
+The desktop background is **one tile, repeated by the GPU's sampler** —
+not a fill across every pixel. A 16×16 pattern and a 1024×1024 photograph
+are the same single quad; only the upload differs, and that happens once
+per revision rather than once per frame.
+
+- `wallpaperSampler` addresses **Repeat** with **Nearest** filtering. The
+  quad maps the tile 1:1 to pixels, so there is nothing to interpolate
+  and linear would only soften a hard-edged pattern.
+- The uniform block's `tile` vec2 is `surfacePx / tilePx`; the fragment
+  stage multiplies its texture coordinates by it. **Every layer must
+  write (1,1)** — a zeroed tile collapses the layer onto one texel.
+- The built-in 8×8 two-color pattern is *rendered into a tile*
+  (`Desktop.WallpaperTile`), so the default wallpaper takes the same path
+  a custom image does. Its revision folds in the pattern bits, the chunk
+  size and the fill colors, so a theme switch re-uploads without anyone
+  hooking a setter.
+- `FrameBase` **clears to transparent** and `Paint` skips the background
+  fill, so the tiled quad underneath shows through wherever the chrome
+  does not paint. A surface with no alpha (or any host that does not take
+  the wallpaper as a layer) falls back to the opaque clear and
+  `Painter.TileImage` on the CPU, so the software renderer looks the same.
+
+Setting one, quickest first:
+
+```
+KITTYTK_WALLPAPER=~/pictures/weave.png ./bin/kittytk-sdl --webgpu
+./bin/kittytk-sdl --wallpaper=/path/tile.png     # --wallpaper- for the built-in
+[window] wallpaper = /path/tile.png              # kittytk.ini
+desktop.SetWallpaperFile(path)                   # or SetWallpaperImage(*image.RGBA)
+```
+
+PNG, JPEG and GIF decode; a bad path is reported and the current
+wallpaper is left alone, so a typo cannot blank the desktop.
 
 ## Known gaps (not regressions)
 - **Text caret in compositor mode**: windows paint on their own layers,

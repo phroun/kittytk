@@ -1537,6 +1537,52 @@ func (b *Backend) FillPattern(r core.UnitRect, pattern [8]uint8, chunkPx int, s 
 	}
 }
 
+// ClearTransparent implements core.SurfaceClearer: the whole surface
+// back to (0,0,0,0), ignoring clips. The GPU compositor's base layer
+// starts this way so the wallpaper quad underneath shows through
+// wherever the desktop chrome does not paint.
+func (b *Backend) ClearTransparent() {
+	clear(b.img.Pix)
+}
+
+// TileImagePx implements core.ImageTiler: repeat tile across r, anchored
+// at the SURFACE origin rather than the rect's, so the pattern does not
+// jump when the rect moves — the same anchoring FillPattern uses and the
+// same the compositor's repeat sampler produces.
+func (b *Backend) TileImagePx(r core.UnitRect, tile *image.RGBA) {
+	tb := tile.Bounds()
+	tw, th := tb.Dx(), tb.Dy()
+	if tw <= 0 || th <= 0 {
+		return
+	}
+
+	x0, y0 := b.pxX(r.X), b.pxY(r.Y)
+	x1, y1 := b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height)
+	if b.hasClip {
+		x0, y0 = max(x0, b.clipPxX0), max(y0, b.clipPxY0)
+		x1, y1 = min(x1, b.clipPxX1), min(y1, b.clipPxY1)
+	}
+	x0, y0 = max(x0, 0), max(y0, 0)
+	x1, y1 = min(x1, b.w), min(y1, b.h)
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
+
+	// One row of the destination is built by copying runs out of the
+	// tile, so the inner loop is a memmove per run rather than per pixel.
+	for y := y0; y < y1; y++ {
+		src := tile.Pix[(mod(y, th))*tile.Stride:]
+		dstRow := b.img.Pix[b.img.PixOffset(x0, y):]
+		for x, done := x0, 0; x < x1; {
+			sx := mod(x, tw)
+			run := min(tw-sx, x1-x)
+			copy(dstRow[done*4:(done+run)*4], src[sx*4:(sx+run)*4])
+			x += run
+			done += run
+		}
+	}
+}
+
 func mod(a, m int) int {
 	r := a % m
 	if r < 0 {

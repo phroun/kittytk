@@ -26,6 +26,31 @@ import (
 	sdlplat "github.com/phroun/kittytk/sdl"
 )
 
+// wallpaperFromArgs applies --wallpaper=PATH on top of the configured
+// image. Last one on the line wins; "--wallpaper-" turns it off and goes
+// back to the built-in pattern.
+func wallpaperFromArgs(r *argwild.Result, configured string) string {
+	wallpaper := configured
+	if r == nil {
+		return wallpaper
+	}
+	for _, set := range r.ArgSets() {
+		for _, sw := range set.Switches {
+			if sw.Name != "wallpaper" {
+				continue
+			}
+			if sw.IsOff() {
+				wallpaper = ""
+				continue
+			}
+			if v, ok := sw.First(); ok {
+				wallpaper = v.AsString()
+			}
+		}
+	}
+	return wallpaper
+}
+
 // rendererFromArgs applies command-line renderer switches on top of the
 // configured engine: --webgpu and --software (alias --sdl) pick one
 // directly, --renderer=NAME passes a name through (validated by the
@@ -66,6 +91,7 @@ func main() {
 	// --webgpu | --software | --renderer=NAME.
 	if parsed, err := argwild.Parse(); err == nil {
 		cfg.Renderer = rendererFromArgs(parsed, cfg.Renderer)
+		cfg.Wallpaper = wallpaperFromArgs(parsed, cfg.Wallpaper)
 	}
 
 	// Create platform with configured renderer (software or webgpu)
@@ -74,7 +100,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to create platform: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	plat.SetScale(cfg.Scale) // device zoom: pixels per unit at the base font
 
 	// [window] fps=true overlays the render frame rate on the OS title bar;
@@ -134,6 +160,17 @@ func main() {
 	// The UI font stays one cell tall in UNITS (12); font_size makes it
 	// render larger by growing the cell's pixel size, not its unit count.
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})
+
+	// Wallpaper: KITTYTK_WALLPAPER, then --wallpaper=PATH, then the ini's
+	// [window] wallpaper. Any size — it is repeated from the surface
+	// origin, by the GPU's sampler under the compositor. A bad path is
+	// reported and the built-in pattern stays, so a typo cannot leave the
+	// desktop blank.
+	if path := cfg.ResolveWallpaper(); path != "" {
+		if err := desktop.SetWallpaperFile(path); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
+		}
+	}
 
 	// The desktop's own (windowless) application owns the base menu bar
 	// until a client dials in. It is context-only: the host has no editing

@@ -412,3 +412,33 @@ func TestResolveNativeValues(t *testing.T) {
 		}
 	}
 }
+
+// The wallpaper is configurable three ways, and the environment wins —
+// the same precedence every other host option uses, and the one that
+// makes trying a second wallpaper a matter of prefixing the command.
+func TestResolveWallpaperPrefersEnv(t *testing.T) {
+	t.Setenv(WallpaperEnv, "")
+
+	cfg := Config{Wallpaper: "/from/ini.png"}
+	if got := cfg.ResolveWallpaper(); got != "/from/ini.png" {
+		t.Errorf("ResolveWallpaper = %q, want the ini's value", got)
+	}
+
+	t.Setenv(WallpaperEnv, "/from/env.png")
+	if got := cfg.ResolveWallpaper(); got != "/from/env.png" {
+		t.Errorf("ResolveWallpaper = %q, want the environment's value", got)
+	}
+
+	if got := (Config{}).ResolveWallpaper(); got != "/from/env.png" {
+		t.Errorf("ResolveWallpaper = %q, want the environment's value with no ini setting", got)
+	}
+}
+
+// [window] wallpaper = <path> is the ini key.
+func TestParseWallpaperKey(t *testing.T) {
+	var cfg Config
+	apply([]byte("[window]\nwallpaper = /pictures/weave.png\n"), &cfg)
+	if cfg.Wallpaper != "/pictures/weave.png" {
+		t.Errorf("Wallpaper = %q, want the parsed path", cfg.Wallpaper)
+	}
+}
