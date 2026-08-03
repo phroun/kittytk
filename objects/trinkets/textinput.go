@@ -756,10 +756,14 @@ func (t *TextInput) Paint(p *core.Painter) {
 					// Cell surfaces fall back to the reverse-video block.
 					if !p.DrawCaret(caretX, 0, font.LineHeight(), barStyle) {
 						// The character under the block comes from the run
-						// actually on screen, indexed the way everything
-						// else here is: scrolled and composition-aware. The
-						// committed text indexed by cursorPos showed the
-						// wrong character the moment the field scrolled.
+						// actually on screen. Indexing the COMMITTED text
+						// by cursorPos agreed with this for as long as the
+						// two runs held the same characters - the scroll
+						// offset cancels, since caretX is measured over the
+						// scrolled run from that same character. A
+						// composition breaks that: it is spliced into the
+						// painted run and absent from the committed one, so
+						// cursorPos lands on the wrong side of it.
 						var cursorChar rune = ' '
 						if cursorDisp < len(displayText) {
 							cursorChar = displayText[cursorDisp]
