@@ -249,12 +249,19 @@ type GraphicalModer interface {
 	GraphicalMode() bool
 }
 
-// SurfaceClearer is an optional RenderBackend capability: reset the
-// WHOLE surface to fully transparent, ignoring clips. A compositing host
-// uses it before painting a layer that is meant to sit over something
-// else — the desktop's chrome layer clears this way so the GPU-tiled
-// wallpaper underneath shows through everywhere the chrome does not
-// paint. Cell surfaces have no alpha and omit it.
+// SurfaceClearer is an optional RenderBackend capability: reset pixels
+// to fully transparent, WITHIN THE CLIP. A compositing host uses it
+// before painting a layer meant to sit over something else — the
+// desktop's chrome layer clears this way so the GPU-tiled wallpaper
+// underneath shows through everywhere the chrome does not paint.
+//
+// Honoring the clip is the whole contract. A frame repainting only its
+// damaged region gets a clipped painter, and a clear that ignored that
+// would erase the chrome outside the region and then not repaint it —
+// the menu bar and status bar flickering out, with the wallpaper showing
+// through where they had been.
+//
+// Cell surfaces have no alpha and omit it.
 type SurfaceClearer interface {
 	ClearTransparent()
 }
@@ -961,14 +968,14 @@ func (p *Painter) Graphical() bool {
 // FillPattern tiles an 8x8 two-color bitmap across the rect when the
 // backend supports it (see PatternFiller). Returns false on cell
 // surfaces; the caller then falls back to its rune fill.
-// ClearTransparent resets the whole surface to fully transparent (see
-// SurfaceClearer), ignoring the clip. Returns false where the surface
-// has no alpha to clear.
+// ClearTransparent resets the clipped region to fully transparent (see
+// SurfaceClearer). Returns false where the surface has no alpha to clear.
 func (p *Painter) ClearTransparent() bool {
 	sc, ok := p.backend.(SurfaceClearer)
 	if !ok {
 		return false
 	}
+	p.applyClip()
 	sc.ClearTransparent()
 	return true
 }

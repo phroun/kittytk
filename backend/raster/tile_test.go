@@ -95,11 +95,12 @@ func TestTileImagePxDegenerate(t *testing.T) {
 	}
 }
 
-// ClearTransparent resets the whole surface, ignoring the clip: the
-// compositor's base layer starts this way so the wallpaper quad under it
-// shows through everywhere the chrome does not paint. A clip-respecting
-// clear would leave last frame's pixels outside it.
-func TestClearTransparentIgnoresClip(t *testing.T) {
+// ClearTransparent stays INSIDE the clip. A frame repainting only its
+// damaged region gets a clipped painter, so a clear that ran wholesale
+// would erase chrome the frame is not going to redraw — which is exactly
+// how the menu bar and status bar flickered out, with the wallpaper
+// showing through where they had been.
+func TestClearTransparentRespectsClip(t *testing.T) {
 	b, err := New(32, 32)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -108,9 +109,30 @@ func TestClearTransparentIgnoresClip(t *testing.T) {
 	b.SetClip(core.UnitRect{Width: 8, Height: 8})
 	b.ClearTransparent()
 
-	for _, pt := range [][2]int{{0, 0}, {4, 4}, {20, 20}, {31, 31}} {
-		o := b.img.PixOffset(pt[0], pt[1])
-		if a := b.img.Pix[o+3]; a != 0 {
+	for _, pt := range [][2]int{{0, 0}, {4, 4}, {7, 7}} {
+		if a := b.img.Pix[b.img.PixOffset(pt[0], pt[1])+3]; a != 0 {
+			t.Errorf("pixel (%d,%d) inside the clip: alpha = %d, want 0", pt[0], pt[1], a)
+		}
+	}
+	for _, pt := range [][2]int{{8, 0}, {20, 20}, {31, 31}} {
+		if a := b.img.Pix[b.img.PixOffset(pt[0], pt[1])+3]; a != 255 {
+			t.Errorf("pixel (%d,%d) outside the clip: alpha = %d, want it untouched (255) — "+
+				"a damage-clipped frame would not repaint it", pt[0], pt[1], a)
+		}
+	}
+}
+
+// With no clip set it still clears everything.
+func TestClearTransparentClearsAllWhenUnclipped(t *testing.T) {
+	b, err := New(32, 32)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	b.Clear(style.CellStyle{Bg: style.RGB(255, 255, 255)})
+	b.ClearTransparent()
+
+	for _, pt := range [][2]int{{0, 0}, {20, 20}, {31, 31}} {
+		if a := b.img.Pix[b.img.PixOffset(pt[0], pt[1])+3]; a != 0 {
 			t.Errorf("pixel (%d,%d) alpha = %d, want 0", pt[0], pt[1], a)
 		}
 	}

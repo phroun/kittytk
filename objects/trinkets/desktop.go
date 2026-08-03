@@ -2919,6 +2919,13 @@ const tickHeartbeatTicks = 20
 // full repaint was also requested. A degenerate rect escalates to a full
 // repaint. Only ever called with main-surface rects (see IsMainSurfaceController).
 func (d *Desktop) InvalidateRect(r core.UnitRect) {
+	// A repaint request like any other, and it reaches no trinket's
+	// Update(), so nothing else moves the counter a base-layer cache
+	// keys on. Without this a bounded animation on the main surface — a
+	// ticking clock in the status bar, a blinking caret — would freeze
+	// until the compositor's heartbeat came round.
+	d.NoteSubtreeRepaint()
+
 	if r.Width <= 0 || r.Height <= 0 {
 		d.needsFrame.Store(true)
 		return

@@ -257,3 +257,36 @@ func TestFrameBaseClearsTransparentForWallpaper(t *testing.T) {
 			"the non-compositing present would show nothing")
 	}
 }
+
+// Repaint requests that never reach a trinket's Update() must still move
+// the base layer's revision, or a compositor caching its texture would
+// hold a stale one. Both of these bypass the trinket path entirely.
+func TestBaseRevisionMovesForNonTrinketRepaintRequests(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 240)
+	d := NewDesktop()
+	d.SetBackend(px)
+	d.surface = &msSurface{size: core.UnitSize{Width: 800, Height: 240}}
+
+	for _, tc := range []struct {
+		name    string
+		request func()
+	}{
+		{"RequestUpdate (wallpaper and theme setters call it)", d.RequestUpdate},
+		{"InvalidateRect (a ticking clock, a blinking caret)", func() {
+			d.InvalidateRect(core.UnitRect{X: 10, Y: 10, Width: 40, Height: 8})
+		}},
+		{"InvalidateRect with a degenerate rect", func() {
+			d.InvalidateRect(core.UnitRect{})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := d.SubtreeRepaintRevision()
+			tc.request()
+			if d.SubtreeRepaintRevision() == before {
+				t.Error("revision did not move; the base layer would keep a stale texture " +
+					"until the compositor's heartbeat")
+			}
+		})
+	}
+}

@@ -1537,12 +1537,31 @@ func (b *Backend) FillPattern(r core.UnitRect, pattern [8]uint8, chunkPx int, s 
 	}
 }
 
-// ClearTransparent implements core.SurfaceClearer: the whole surface
-// back to (0,0,0,0), ignoring clips. The GPU compositor's base layer
-// starts this way so the wallpaper quad underneath shows through
-// wherever the desktop chrome does not paint.
+// ClearTransparent implements core.SurfaceClearer: the clipped region
+// back to (0,0,0,0). The GPU compositor's base layer starts this way so
+// the wallpaper quad underneath shows through wherever the desktop
+// chrome does not paint.
+//
+// Clipped, not wholesale: a frame repainting only its damaged region
+// passes a clipped painter, and clearing outside it would wipe chrome
+// that this frame is not going to redraw.
 func (b *Backend) ClearTransparent() {
-	clear(b.img.Pix)
+	x0, y0, x1, y1 := 0, 0, b.w, b.h
+	if b.hasClip {
+		x0, y0 = max(x0, b.clipPxX0), max(y0, b.clipPxY0)
+		x1, y1 = min(x1, b.clipPxX1), min(y1, b.clipPxY1)
+	}
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
+	if x0 == 0 && y0 == 0 && x1 == b.w && y1 == b.h {
+		clear(b.img.Pix)
+		return
+	}
+	for y := y0; y < y1; y++ {
+		o := b.img.PixOffset(x0, y)
+		clear(b.img.Pix[o : o+(x1-x0)*4])
+	}
 }
 
 // TileImagePx implements core.ImageTiler: repeat tile across r, anchored

@@ -554,12 +554,17 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	}
 	defer fragmentShader.Release()
 
-	// Create sampler
+	// Create sampler. Named constants, not the numbers that used to be
+	// here with comments claiming 2 meant ClampToEdge and 1 meant Linear
+	// — 2 is Repeat and 1 is Nearest. It never mattered for ordinary
+	// layers, which sample inside [0,1] at 1:1, but it made the
+	// wallpaper's sampler below look like a copy of a working example
+	// when it was nothing of the kind.
 	r.blitSampler, err = r.device.CreateSampler(&wgpu.SamplerDescriptor{
-		AddressModeU: 2, // ClampToEdge
-		AddressModeV: 2,
-		MagFilter:    1, // Linear
-		MinFilter:    1,
+		AddressModeU: gputypes.AddressModeClampToEdge,
+		AddressModeV: gputypes.AddressModeClampToEdge,
+		MagFilter:    gputypes.FilterModeNearest,
+		MinFilter:    gputypes.FilterModeNearest,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create sampler: %w", err)
@@ -570,10 +575,10 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	// hard-edged pattern crisp: the quad maps the tile 1:1 to pixels, so
 	// there is nothing to interpolate and linear would only soften it.
 	r.wallpaperSampler, err = r.device.CreateSampler(&wgpu.SamplerDescriptor{
-		AddressModeU: 0, // Repeat
-		AddressModeV: 0,
-		MagFilter:    0, // Nearest
-		MinFilter:    0,
+		AddressModeU: gputypes.AddressModeRepeat,
+		AddressModeV: gputypes.AddressModeRepeat,
+		MagFilter:    gputypes.FilterModeNearest,
+		MinFilter:    gputypes.FilterModeNearest,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create wallpaper sampler: %w", err)
