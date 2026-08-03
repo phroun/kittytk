@@ -258,6 +258,24 @@ type WindowProvider interface {
 	GetChildWindows() *ChildWindowList
 }
 
+// RepaintRevisionProvider is an optional SurfaceHandler capability: a
+// counter that changes whenever the handler would paint something
+// different. A host holding the last frame's pixels — every graphical
+// host does, in a texture — repaints only when it moves.
+//
+// It exists for surfaces that DRAG. Moving an OS window changes nothing
+// about what the surface contains, but the move arrives as input, and a
+// handler that invalidates after input (most do, as a parity contract
+// with the terminal) asks for a full repaint of a picture identical to
+// the one already on screen. Reporting a revision lets the host notice.
+//
+// Only equality between two readings is meaningful, never the value.
+// A handler that does not implement this repaints every frame, which is
+// what every handler did before it existed.
+type RepaintRevisionProvider interface {
+	RepaintRevision() uint64
+}
+
 // BaseLayerPainter is an optional SurfaceHandler refinement for GPU
 // compositing. FrameBase paints only the surface's base layer (desktop
 // chrome: background, menu bar, dock, status bar) and leaves child

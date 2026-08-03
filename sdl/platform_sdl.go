@@ -131,6 +131,20 @@ type nativeWin struct {
 	// pixels of every painted frame — the mechanism that actually
 	// shapes the window, independent of renderer and platform.
 	cornerRadiusPx int
+
+	// painted tracks what the backend's pixels currently show, so a
+	// frame can tell "nothing about this surface changed" from "repaint
+	// it". pixelsDirty says those pixels have not reached the GPU yet.
+	//
+	// This is what makes dragging a torn-off window cheap. The move
+	// arrives as input, the handler invalidates after every input event,
+	// and without this the whole window repainted and re-uploaded per
+	// mouse move to produce the picture already on screen.
+	painted        paintSignature
+	paintedAt      time.Time
+	paintedBackend *raster.Backend
+	pixelsDirty    bool
+	paintedValid   bool
 }
 
 type timerEntry struct {
@@ -808,6 +822,50 @@ func (p *Platform) scheduleAnimationFrame(s *sdlSurface) {
 	}
 }
 
+// surfaceNeedsRepaint reports whether a window's backend pixels are
+// stale. A handler that reports no repaint revision repaints every
+// frame, which is what every handler did before revisions existed.
+//
+// The backend's identity is part of it: a resize or font zoom replaces
+// the backend with a fresh zero-filled one, and a check that compared
+// only sizes could keep serving a black surface when the new one
+// happened to match the old one's dimensions.
+func (p *Platform) surfaceNeedsRepaint(w *nativeWin, forceFull bool) bool {
+	if forceFull || compositorAlwaysRepaint || w.backend == nil {
+		return true
+	}
+	s := w.surface
+	if s == nil || s.handler == nil {
+		return true
+	}
+	provider, ok := s.handler.(platform.RepaintRevisionProvider)
+	if !ok {
+		return true
+	}
+
+	sig := paintSignature{
+		revision:    provider.RepaintRevision(),
+		hasRevision: true,
+		fontSize:    w.backend.FontSize(),
+		metrics:     w.backend.Metrics(),
+	}
+	if img := w.backend.Image(); img != nil {
+		sig.widthPx, sig.heightPx = img.Bounds().Dx(), img.Bounds().Dy()
+	}
+
+	now := time.Now()
+	stale := !w.paintedValid || w.paintedBackend != w.backend ||
+		needsRepaint(w.painted, sig, now.Sub(w.paintedAt), heartbeatInterval(w.id), false, false)
+	if !stale {
+		return false
+	}
+	w.painted = sig
+	w.paintedAt = now
+	w.paintedBackend = w.backend
+	w.paintedValid = true
+	return true
+}
+
 // paintAndPresent runs the handler frame into the window's raster backend and
 // presents it as a single surface (no child window compositing).
 func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
@@ -818,7 +876,15 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 		return
 	}
 
-	p.paintBackend(w, forceFull, false)
+	// Repaint only when the surface would look different. The renderer
+	// still presents every frame from the pixels it already holds, so
+	// the present cadence is unchanged and nothing can go stale on an
+	// expose — only the CPU paint, the pixel conversion and the upload
+	// are skipped.
+	if p.surfaceNeedsRepaint(w, forceFull) {
+		p.paintBackend(w, forceFull, false)
+		w.pixelsDirty = true
+	}
 
 	// The GPU blit, the effects, and the rounded-corner punch-out all
 	// live in the renderer, so there is exactly ONE implementation of

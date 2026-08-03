@@ -93,6 +93,11 @@ type TearOffHost struct {
 	// trinkets inside the torn window: they belong to THIS surface.
 	popups []*PopupOverlay
 
+	// popupEpoch moves whenever a popup is registered or unregistered.
+	// Popups are not in the window's trinket subtree, so nothing else
+	// would tell a host caching this surface's pixels that one appeared.
+	popupEpoch uint64
+
 	// Clipboard bridge for trinkets that have no desktop in their
 	// ancestry while torn (the desktop wires the platform clipboard).
 	clipGet func() string
@@ -421,6 +426,7 @@ func (h *TearOffHost) RegisterPopup(request *core.PopupRequest) {
 		HandleMouseWheel:   request.HandleMouseWheel,
 		OnDismiss:          request.OnDismiss,
 	})
+	h.popupEpoch++
 	h.surf.Invalidate(core.UnitRect{})
 }
 
@@ -429,6 +435,7 @@ func (h *TearOffHost) UnregisterPopup(id string) {
 	for i, p := range h.popups {
 		if p.ID == id {
 			h.popups = append(h.popups[:i], h.popups[i+1:]...)
+			h.popupEpoch++
 			h.surf.Invalidate(core.UnitRect{})
 			return
 		}
@@ -569,6 +576,22 @@ func (h *TearOffHost) FrameBase(p *core.Painter) {
 		b := h.win.Bounds()
 		h.win.PaintModalDim(p, core.UnitRect{Width: b.Width, Height: b.Height})
 	}
+}
+
+// RepaintRevision implements platform.RepaintRevisionProvider: what the
+// torn window would paint is its own subtree plus its popups.
+//
+// Dragging a torn window is why this exists. The move arrives as input,
+// Event invalidates the surface after every input event, and the host
+// would otherwise repaint the entire window and re-upload its pixels for
+// each mouse move — to produce the picture already on screen. The OS is
+// moving the window; its contents did not change.
+func (h *TearOffHost) RepaintRevision() uint64 {
+	rev := h.win.SubtreeRepaintRevision()
+	// Popups live on the host, not in the window's trinket subtree, so
+	// opening or closing one moves nothing above. Their CONTENT changes
+	// do bump the window (the trinket that changed is inside it).
+	return rev*31 + h.popupEpoch
 }
 
 // GetChildWindows implements platform.WindowProvider so a torn-off

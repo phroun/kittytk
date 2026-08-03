@@ -3,6 +3,7 @@ package sdl
 import (
 	"image"
 	"math"
+	"os"
 	"time"
 
 	"github.com/phroun/kittytk/core"
@@ -240,6 +241,14 @@ type paintSignature struct {
 	widthPx  int
 	heightPx int
 }
+
+// compositorAlwaysRepaint restores the unconditional repaint under
+// KITTYTK_COMPOSITOR_REPAINT=always. A surface showing stale content is
+// the failure mode every cache here can have, and one run with this set
+// says in a second whether a cache is the cause. It lives with the pure
+// math because both present paths honour it — the compositor's layers
+// and the plain single-surface present alike.
+var compositorAlwaysRepaint = os.Getenv("KITTYTK_COMPOSITOR_REPAINT") == "always"
 
 // compositorHeartbeat is how long a cached window texture may go without
 // a repaint, and compositorHeartbeatSpread how far past that a given

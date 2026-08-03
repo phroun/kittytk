@@ -196,3 +196,80 @@ func TestTearOffHostMenuDropdownBecomesLayer(t *testing.T) {
 		t.Errorf("Frame painted the dropdown %d times, want 1 (the complete-scene contract)", mb.painted)
 	}
 }
+
+// A torn-off window reports a repaint revision, and dragging it does not
+// move that revision. This is the whole reason the capability exists:
+// the move arrives as input, Event invalidates the surface after EVERY
+// input event as a parity contract, and the host would otherwise repaint
+// the entire window and re-upload its pixels for each mouse move — to
+// produce the picture already on screen. The OS is moving the window.
+func TestTearOffHostDragDoesNotChangeRepaintRevision(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	gx, gy := 700, 310
+	win := NewWindow("torn")
+	win.SetBounds(core.UnitRect{Width: 200, Height: 100})
+	win.Layout()
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return gx, gy }, nil)
+
+	var _ platform.RepaintRevisionProvider = h
+
+	// The gesture the desktop hands over on tear-off: a title grab, then
+	// moves that reposition the OS window.
+	h.BeginDrag(40, 8)
+	startX := surf.x
+	before := h.RepaintRevision()
+
+	for i := 1; i <= 5; i++ {
+		gx = 700 + i*10
+		h.Event(core.MouseMoveEvent{X: 40, Y: 8, Buttons: core.LeftButton})
+	}
+
+	if surf.x == startX {
+		t.Fatalf("the window did not move (x stayed %d); this test proves nothing", startX)
+	}
+	if got := h.RepaintRevision(); got != before {
+		t.Errorf("repaint revision moved from %d to %d across a drag; "+
+			"every mouse move would repaint and re-upload the whole window", before, got)
+	}
+}
+
+// Opening a popup DOES move it: popups are not in the window's trinket
+// subtree, so nothing else would tell a host caching this surface's
+// pixels that one appeared.
+func TestTearOffHostPopupMovesRepaintRevision(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}}
+	h := NewTearOffHost(NewWindow("torn"), surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+	before := h.RepaintRevision()
+	h.RegisterPopup(&core.PopupRequest{
+		ID:     "menu",
+		Bounds: core.UnitRect{X: 10, Y: 20, Width: 40, Height: 32},
+		Paint:  func(*core.Painter) {},
+	})
+	opened := h.RepaintRevision()
+	if opened == before {
+		t.Fatal("opening a popup did not move the revision; it would never be drawn")
+	}
+
+	h.UnregisterPopup("menu")
+	if h.RepaintRevision() == opened {
+		t.Error("closing a popup did not move the revision; it would never be erased")
+	}
+}
+
+// And a real content change inside the window moves it, or the window
+// would freeze until the heartbeat.
+func TestTearOffHostContentChangeMovesRepaintRevision(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}}
+	win := NewWindow("torn")
+	content := core.NewTrinketBase()
+	content.Init(content)
+	win.SetContent(content)
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+	before := h.RepaintRevision()
+	content.Update()
+	if h.RepaintRevision() == before {
+		t.Error("a change inside the torn window did not move its repaint revision")
+	}
+}

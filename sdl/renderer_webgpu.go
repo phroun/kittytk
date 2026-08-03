@@ -373,12 +373,15 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 		return fmt.Errorf("backend image is nil")
 	}
 
-	// Upload backend to temporary texture and blit to screen
-	texture, textureView, bindGroup, err := r.uploadBackendToTexture(backend)
+	// The window's texture is CACHED, and its pixels are re-uploaded only
+	// when the platform repainted them. Allocating and filling a
+	// full-surface texture per frame is what made dragging a torn-off
+	// window stutter while the composited desktop stayed smooth.
+	layer, err := r.refreshPresentTexture(w, backend)
 	if err != nil {
 		return err
 	}
-	// NOTE: Don't defer release - must stay alive until after GPU Submit()
+	bindGroup := layer.bindGroup
 
 	// Fullscreen quad carrying the current rotation-demo effect state.
 	aspect := float32(1)
@@ -401,17 +404,11 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	// Get surface texture
 	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
 	if err != nil {
-		bindGroup.Release()
-		textureView.Release()
-		texture.Release()
 		return err
 	}
 
 	surfaceView, err := surfaceTexture.CreateView(nil)
 	if err != nil {
-		bindGroup.Release()
-		textureView.Release()
-		texture.Release()
 		return err
 	}
 
@@ -419,9 +416,6 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	encoder, err := r.device.CreateCommandEncoder(nil)
 	if err != nil {
 		surfaceView.Release()
-		bindGroup.Release()
-		textureView.Release()
-		texture.Release()
 		return err
 	}
 
@@ -456,7 +450,7 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	// Rotation demo: spin the cube over the scene while the effect runs.
 	var cubeCleanup func()
 	if _, _, _, active := r.effectParams(); active {
-		if cleanup, cubeErr := r.recordCubePass(encoder, surfaceView, textureView, aspect); cubeErr == nil {
+		if cleanup, cubeErr := r.recordCubePass(encoder, surfaceView, layer.textureView, aspect); cubeErr == nil {
 			cubeCleanup = cleanup
 		}
 	}
@@ -465,14 +459,13 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	cmdBuffer, _ := encoder.Finish()
 	_, err = r.queue.Submit(cmdBuffer)
 
-	// NOW we can release resources after GPU has the commands
+	// NOW we can release resources after GPU has the commands. The
+	// window's own texture is NOT among them — it is cached across
+	// frames.
 	if cubeCleanup != nil {
 		cubeCleanup()
 	}
 	surfaceView.Release()
-	bindGroup.Release()
-	textureView.Release()
-	texture.Release()
 
 	if err != nil {
 		return err
@@ -2130,6 +2123,60 @@ func (r *WebGPURenderer) refreshBaseLayer(
 	return base, nil
 }
 
+// refreshPresentTexture returns the cached full-surface texture for a
+// window presented WITHOUT compositing (a torn-off window, or any
+// surface whose handler exposes no child windows), re-uploading its
+// pixels only when the platform actually repainted them.
+//
+// It shares the baseLayer cache with the compositor: both are "this OS
+// window's full-surface texture", and a window only ever takes one path
+// or the other in a given frame.
+func (r *WebGPURenderer) refreshPresentTexture(w *nativeWin, backend *raster.Backend) (*baseLayer, error) {
+	img := backend.Image()
+	if img == nil {
+		return nil, fmt.Errorf("backend image is nil")
+	}
+	pxW, pxH := uint32(img.Bounds().Dx()), uint32(img.Bounds().Dy())
+	if pxW == 0 || pxH == 0 {
+		return nil, fmt.Errorf("backend is %dx%d", pxW, pxH)
+	}
+
+	if r.baseLayers == nil {
+		r.baseLayers = make(map[uint32]*baseLayer)
+	}
+	layer := r.baseLayers[w.id]
+
+	// A different backend means a resize or font zoom handed us fresh
+	// zero-filled memory; its pixels have to reach the GPU whatever the
+	// dirty flag says.
+	if layer == nil || layer.texture == nil ||
+		layer.widthPx != pxW || layer.heightPx != pxH ||
+		layer.paintedBackend != backend {
+		if layer != nil {
+			layer.release()
+		}
+		texture, textureView, bindGroup, err := r.createBoundTexture(img)
+		if err != nil {
+			delete(r.baseLayers, w.id)
+			return nil, err
+		}
+		layer = &baseLayer{
+			texture:     texture,
+			textureView: textureView,
+			bindGroup:   bindGroup,
+			widthPx:     pxW,
+			heightPx:    pxH,
+		}
+		r.baseLayers[w.id] = layer
+	} else if w.pixelsDirty {
+		r.uploadPixels(layer.texture, img)
+	}
+
+	layer.paintedBackend = backend
+	w.pixelsDirty = false
+	return layer, nil
+}
+
 // releaseBaseLayer drops an OS window's cached base layer (window
 // closed, or the renderer shutting down).
 func (r *WebGPURenderer) releaseBaseLayer(id uint32) {
@@ -2149,12 +2196,6 @@ func subtreeRepaintRevision(child interface{}) (rev uint64, ok bool) {
 	}
 	return tracker.SubtreeRepaintRevision(), true
 }
-
-// compositorAlwaysRepaint restores the unconditional repaint under
-// KITTYTK_COMPOSITOR_REPAINT=always. A window showing stale content is
-// the failure mode this cache can have, and one run with this set says
-// in a second whether the cache is the cause.
-var compositorAlwaysRepaint = os.Getenv("KITTYTK_COMPOSITOR_REPAINT") == "always"
 
 // compositorStats prints how much of the per-window work each second of
 // frames actually did, under KITTYTK_COMPOSITOR_STATS.

@@ -195,6 +195,26 @@ about once a second — **staggered** by a hash of the window id, because
 every window is first painted in the same frame and a shared interval
 would put a full repaint of the whole desk into one frame every second.
 
+### The non-compositing present is cached too
+
+A surface presented WITHOUT compositing — a torn-off window with no popup
+open — went through `paintAndPresent`, which repainted the whole window
+and had `Present` allocate, fill and free a full-surface texture every
+frame. Dragging one stuttered while the composited desktop stayed smooth.
+
+Both are now skipped when nothing changed, via
+`platform.RepaintRevisionProvider` (`TearOffHost` implements it). The
+present still happens every frame from the pixels already held, so the
+cadence is unchanged and nothing can go stale on an expose; only the
+paint, the conversion and the upload are skipped.
+
+The reason a *drag* needs this at all: `TearOffHost.Event` invalidates
+the whole surface after **every** input event — a deliberate parity
+contract with the terminal, where trinkets do not invalidate precisely.
+A move is input, so it asked for a full repaint of a picture identical to
+the one on screen. Rather than unpick that contract, the revision lets
+the host notice the picture did not change.
+
 Diagnostics:
 
 ```

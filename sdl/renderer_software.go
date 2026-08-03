@@ -112,11 +112,15 @@ func (r *SoftwareRenderer) Present(w *nativeWin, backend *raster.Backend) error 
 		return nil // Window not ready
 	}
 
-	// Get backend image
-	img := backend.Image()
-
-	// Update texture with backend pixels
-	_ = w.texture.Update(nil, img.Pix, img.Stride)
+	// Re-upload only what was repainted. The streaming texture keeps its
+	// last contents otherwise, so a frame that changed nothing — every
+	// frame of a window drag, where the OS moves the window and the
+	// picture is identical — costs a copy to screen and nothing more.
+	if w.pixelsDirty {
+		img := backend.Image()
+		_ = w.texture.Update(nil, img.Pix, img.Stride)
+		w.pixelsDirty = false
+	}
 
 	// Render to screen
 	if w.transparent {
