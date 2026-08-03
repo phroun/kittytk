@@ -236,11 +236,10 @@ static void kittytk_make_window_transparent(void *nswindow) {
 //
 // radiusPx is in device pixels; CALayer geometry is in points, so it is
 // divided by the layer's contentsScale.
-static void kittytk_round_metal_layer(void *metalLayer, double radiusPx) {
-	if (!metalLayer) {
+static void kittytk_round_one_layer(id layer, double radiusPx) {
+	if (!layer) {
 		return;
 	}
-	id layer = (id)metalLayer;
 	double scale = ((double (*)(id, SEL))objc_msgSend)(
 		layer, sel_registerName("contentsScale"));
 	if (scale <= 0) {
@@ -250,14 +249,61 @@ static void kittytk_round_metal_layer(void *metalLayer, double radiusPx) {
 		layer, sel_registerName("setCornerRadius:"), (CGFloat)(radiusPx / scale));
 	((void (*)(id, SEL, signed char))objc_msgSend)(
 		layer, sel_registerName("setMasksToBounds:"), 1);
-	// The layer must also be non-opaque, or Core Animation composites
-	// it as a filled rect and the rounding never shows. CAMetalLayer
-	// defaults to opaque, and the WebGPU surface configuration does not
-	// change it.
+}
+
+// kittytk_round_metal_layer rounds a CAMetalLayer and makes it
+// non-opaque. The rounding alone does nothing for the layer's OWN
+// drawable (that goes to the window server rather than through the
+// layer's mask), but the non-opacity is required either way.
+static void kittytk_round_metal_layer(void *metalLayer, double radiusPx) {
+	if (!metalLayer) {
+		return;
+	}
+	id layer = (id)metalLayer;
+	kittytk_round_one_layer(layer, radiusPx);
+	// CAMetalLayer defaults to opaque and the WebGPU surface
+	// configuration never changes it; an opaque layer discards alpha no
+	// matter what the renderer clears to.
 	((void (*)(id, SEL, signed char))objc_msgSend)(
 		layer, sel_registerName("setOpaque:"), 0);
 	((void (*)(id, SEL, void*))objc_msgSend)(
 		layer, sel_registerName("setBackgroundColor:"), NULL);
+}
+
+// kittytk_round_window_layers rounds the window's whole layer chain.
+//
+// masksToBounds on a PARENT layer clips that layer's SUBLAYERS, and the
+// Metal layer is a sublayer of the content view's backing layer — so
+// rounding the parent is what can actually clip Metal output, which
+// rounding the Metal layer itself cannot.
+static void kittytk_round_window_layers(void *nswindow, void *metalLayer, double radiusPx) {
+	if (nswindow) {
+		id win = (id)nswindow;
+		id view = ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView"));
+		if (view) {
+			// The content view must be layer-backed for its layer to
+			// clip anything.
+			((void (*)(id, SEL, signed char))objc_msgSend)(
+				view, sel_registerName("setWantsLayer:"), 1);
+			kittytk_round_one_layer(
+				((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("layer")), radiusPx);
+
+			// And each subview's enclosing layer (the Metal view's).
+			id subviews = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
+			if (subviews) {
+				unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(
+					subviews, sel_registerName("count"));
+				unsigned long i;
+				for (i = 0; i < n; i++) {
+					id sv = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
+						subviews, sel_registerName("objectAtIndex:"), i);
+					kittytk_round_one_layer(
+						((id (*)(id, SEL))objc_msgSend)(sv, sel_registerName("layer")), radiusPx);
+				}
+			}
+		}
+	}
+	kittytk_round_metal_layer(metalLayer, radiusPx);
 }
 
 // kittytk_reassert_layer_alpha re-applies non-opacity to a CAMetalLayer
@@ -342,11 +388,11 @@ func roundWindowLayer(win *sdl2.Window, radiusPx int) bool {
 	if cocoa == nil {
 		return false
 	}
+	// Round the whole layer chain: the content view's backing layer is
+	// what can actually clip the Metal sublayer, so a missing Metal
+	// layer is not a failure.
 	layer := C.kittytk_get_metal_layer(cocoa)
-	if layer == nil {
-		return false
-	}
-	C.kittytk_round_metal_layer(layer, C.double(radiusPx))
+	C.kittytk_round_window_layers(cocoa, layer, C.double(radiusPx))
 	return true
 }
 

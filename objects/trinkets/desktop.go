@@ -4132,10 +4132,11 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 	if d.windowManager == nil {
 		return nil
 	}
+	// An empty desktop is still composited: menu dropdowns and popups
+	// are compositor layers of their own, and they need their shadows
+	// (and correct z-order) whether or not any window happens to be
+	// open. Only a desktop with no window manager at all opts out.
 	windows := d.windowManager.Windows()
-	if len(windows) == 0 {
-		return nil
-	}
 	result := make([]interface{}, len(windows))
 	for i, w := range windows {
 		result[i] = w

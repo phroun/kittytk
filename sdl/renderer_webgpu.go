@@ -1030,8 +1030,8 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	r.frameSeq++
 	defer r.evictStaleShadows()
 
-	if childWindowList == nil || len(childWindowList.Windows) == 0 {
-		// No child windows, just render normally
+	if childWindowList == nil {
+		// Nothing to composite at all: render and present as one surface.
 		renderWindow(osWindow)
 		return r.Present(osWindow, osWindow.backend)
 	}

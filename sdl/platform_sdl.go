@@ -899,7 +899,7 @@ func (p *Platform) presentWindow(w *nativeWin, forceFull bool) {
 
 	if p.renderer.SupportsFeature(FeatureCompositing) {
 		if provider, ok := s.handler.(platform.WindowProvider); ok {
-			if childWindowList := provider.GetChildWindows(); childWindowList != nil && len(childWindowList.Windows) > 0 {
+			if childWindowList := provider.GetChildWindows(); childWindowList != nil {
 				err := p.renderer.RenderFrameWithChildWindows(w, childWindowList, p.scale, func(win *nativeWin) {
 					p.paintBackend(win, forceFull, true)
 				})
