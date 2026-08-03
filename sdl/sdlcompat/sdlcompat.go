@@ -19,6 +19,8 @@
 package sdlcompat
 
 import (
+	"unsafe"
+
 	sdl3 "github.com/Zyko0/go-sdl3/sdl"
 	"github.com/ebitengine/purego"
 )
@@ -459,4 +461,134 @@ func AddEventWatchFunc(fn func(Event, interface{}) bool, userdata interface{}) {
 		return 1
 	})
 	_ = sdl3.AddEventWatch(sdl3.EventFilter(cb))
+}
+
+// --- renderer / textures ---
+//
+// SDL3 reworked this API: the renderer is created by driver NAME rather
+// than by flags (vsync is a separate call), textures blit through
+// RenderTexture with float rects, and "accelerated vs software" is a
+// driver choice rather than a flag bit.
+
+type Renderer struct {
+	r *sdl3.Renderer
+}
+
+type Texture struct {
+	t *sdl3.Texture
+	w int32
+	h int32
+	f uint32
+}
+
+// Renderer creation flags kept for call-site compatibility. SDL3 has no
+// flag word: ACCELERATED is the default driver, and vsync is applied
+// separately, so these only carry intent.
+const (
+	RENDERER_ACCELERATED  = 1 << 0
+	RENDERER_PRESENTVSYNC = 1 << 1
+	RENDERER_SOFTWARE     = 1 << 2
+)
+
+const TEXTUREACCESS_STREAMING = sdl3.TEXTUREACCESS_STREAMING
+
+// CreateRenderer picks a driver for the window. index is ignored (SDL2
+// used -1 for "first supporting the flags"); PRESENTVSYNC in flags
+// switches vsync on afterwards, and SOFTWARE asks for SDL3's "software"
+// driver by name.
+func CreateRenderer(w *Window, index int, flags uint32) (*Renderer, error) {
+	name := ""
+	if flags&RENDERER_SOFTWARE != 0 {
+		name = "software"
+	}
+	r, err := w.w.CreateRenderer(name)
+	if err != nil {
+		return nil, err
+	}
+	if flags&RENDERER_PRESENTVSYNC != 0 {
+		_ = r.SetVSync(1)
+	}
+	return &Renderer{r: r}, nil
+}
+
+func (r *Renderer) Destroy() { r.r.Destroy() }
+
+func (r *Renderer) CreateTexture(format uint32, access sdl3.TextureAccess, w, h int32) (*Texture, error) {
+	t, err := r.r.CreateTexture(sdl3.PixelFormat(format), access, int(w), int(h))
+	if err != nil {
+		return nil, err
+	}
+	return &Texture{t: t, w: w, h: h, f: format}, nil
+}
+
+func (r *Renderer) SetDrawColor(red, g, b, a uint8) error {
+	return r.r.SetDrawColor(red, g, b, a)
+}
+
+func (r *Renderer) Clear() error   { return r.r.Clear() }
+func (r *Renderer) Present() error { return r.r.Present() }
+
+// Copy blits a whole texture over the whole render target — the only
+// form the host uses. SDL3's rects are floats.
+func (r *Renderer) Copy(t *Texture, src, dst *Rect) error {
+	return r.r.RenderTexture(t.t, nil, nil)
+}
+
+func (t *Texture) Destroy() { t.t.Destroy() }
+
+// Update uploads pixels into a streaming texture. The host passes the
+// whole surface, so the rect is always nil.
+func (t *Texture) Update(rect *Rect, pixels []byte, pitch int) error {
+	return t.t.Update(nil, pixels, int32(pitch))
+}
+
+// Query reports the texture's creation parameters, SDL2-style. SDL3
+// exposes size as floats and drops the combined query, so the values
+// are remembered at creation.
+func (t *Texture) Query() (uint32, int, int32, int32, error) {
+	return t.f, int(sdl3.TEXTUREACCESS_STREAMING), t.w, t.h, nil
+}
+
+// --- native handles ---
+//
+// SDL3 replaced SDL_GetWindowWMInfo with typed window properties.
+
+// MetalLayer returns the CAMetalLayer for a window, creating the
+// backing Metal view on first use (macOS/iOS only; nil elsewhere).
+func (w *Window) MetalLayer() unsafe.Pointer {
+	view := w.w.Metal_CreateView()
+	if view == 0 {
+		return nil
+	}
+	return metalGetLayer(uintptr(view))
+}
+
+// CocoaWindow returns the NSWindow* for a window, or nil off macOS.
+func (w *Window) CocoaWindow() unsafe.Pointer {
+	props, err := w.w.Properties()
+	if err != nil {
+		return nil
+	}
+	return unsafe.Pointer(props.PointerProperty("SDL.window.cocoa.window", nil))
+}
+
+// X11Handles returns the X11 Display* and Window id, or (0,0) when the
+// window is not an X11 window.
+func (w *Window) X11Handles() (uintptr, uintptr) {
+	props, err := w.w.Properties()
+	if err != nil {
+		return 0, 0
+	}
+	display := uintptr(unsafe.Pointer(props.PointerProperty("SDL.window.x11.display", nil)))
+	window := uintptr(props.NumberProperty("SDL.window.x11.window", 0))
+	return display, window
+}
+
+// Win32HWND returns the HWND for a window, or 0 off Windows.
+func (w *Window) Win32HWND() uintptr {
+	props, err := w.w.Properties()
+	if err != nil {
+		return 0
+	}
+	return uintptr(unsafe.Pointer(props.PointerProperty("SDL.window.win32.hwnd", nil)))
 }
