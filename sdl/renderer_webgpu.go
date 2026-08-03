@@ -1771,10 +1771,22 @@ func (r *WebGPURenderer) drawShadow(
 	spec shadowSpec,
 ) (func(), error) {
 	if caster.IsEmpty() || r.shadowPipeline == nil {
+		if shadowDebugFlag != 0 && shadowDebugCount < 8 {
+			shadowDebugCount++
+			fmt.Fprintf(os.Stderr, "kittytk-shadow: SKIPPED casterEmpty=%v pipelineNil=%v\n",
+				caster.IsEmpty(), r.shadowPipeline == nil)
+		}
 		return nil, nil
 	}
 
 	quad := shadowQuadBounds(caster, anchor, spec)
+	if shadowDebugFlag != 0 && shadowDebugCount < 8 {
+		shadowDebugCount++
+		x, y, w, h := windowNDC(quad, surfaceSize)
+		fmt.Fprintf(os.Stderr,
+			"kittytk-shadow: caster=%+v quad=%+v surface=%+v ndc=(%.3f,%.3f %.3fx%.3f) ppu=(%.2f,%.2f)\n",
+			caster, quad, surfaceSize, x, y, w, h, ppuW, ppuH)
+	}
 
 	// Position uniforms place the quad, exactly like any other layer.
 	posBuffer, posBindGroup, err := r.createWindowUniformBuffer(quad, surfaceSize, aspect)
@@ -1852,6 +1864,9 @@ var shadowDebugFlag = func() float32 {
 	}
 	return 0
 }()
+
+// shadowDebugCount bounds the debug chatter to the first few shadows.
+var shadowDebugCount int
 
 // initShadowPipeline builds the drop-shadow pipeline: the shared blit
 // vertex stage (so shadows position and rotate with their layers) and
