@@ -296,6 +296,66 @@ func clampIdx(i, n int) int {
 	return i
 }
 
+// punchRoundedCorners clears the pixels outside a rounded rectangle
+// covering the whole image, with antialiased coverage on the curve.
+//
+// This is how a rounded window actually gets its shape: the pixels we
+// present carry it. CAMetalLayer ignores cornerRadius/masksToBounds for
+// its drawable (the drawable goes to the window server rather than
+// through the layer's mask), and SDL's shaped-window API is gone in
+// SDL3 — but a transparent corner in the framebuffer works on every
+// renderer and every platform.
+//
+// image.RGBA is alpha-premultiplied, so every channel scales by the
+// coverage: a cleared pixel is (0,0,0,0), which composites as nothing
+// rather than as an additive black fringe.
+func punchRoundedCorners(img *image.RGBA, radiusPx int) {
+	if img == nil || radiusPx <= 0 {
+		return
+	}
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	r := radiusPx
+	if max := w / 2; r > max {
+		r = max
+	}
+	if max := h / 2; r > max {
+		r = max
+	}
+	if r <= 0 {
+		return
+	}
+
+	rf := float64(r)
+	for j := 0; j < r; j++ {
+		for i := 0; i < r; i++ {
+			// Distance from the corner circle's center to this pixel's
+			// center; coverage ramps across the last pixel of the edge.
+			dx := rf - float64(i) - 0.5
+			dy := rf - float64(j) - 0.5
+			d := math.Sqrt(dx*dx + dy*dy)
+			cov := rf - d + 0.5
+			if cov >= 1 {
+				continue // fully inside
+			}
+			if cov < 0 {
+				cov = 0
+			}
+			scale := func(x, y int) {
+				o := img.PixOffset(b.Min.X+x, b.Min.Y+y)
+				img.Pix[o+0] = uint8(float64(img.Pix[o+0])*cov + 0.5)
+				img.Pix[o+1] = uint8(float64(img.Pix[o+1])*cov + 0.5)
+				img.Pix[o+2] = uint8(float64(img.Pix[o+2])*cov + 0.5)
+				img.Pix[o+3] = uint8(float64(img.Pix[o+3])*cov + 0.5)
+			}
+			scale(i, j)
+			scale(w-1-i, j)
+			scale(i, h-1-j)
+			scale(w-1-i, h-1-j)
+		}
+	}
+}
+
 // gpuRowAlignment is WebGPU's required bytes-per-row alignment for
 // texture uploads.
 const gpuRowAlignment = 256

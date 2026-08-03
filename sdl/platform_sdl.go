@@ -3,7 +3,6 @@
 package sdl
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	sdl2 "github.com/veandco/go-sdl2/sdl"
 	wgpu "github.com/gogpu/wgpu" // Native, zero-cgo WebGPU dependency
@@ -252,10 +250,16 @@ type nativeWin struct {
 	// transparent marks a window with real per-pixel alpha (macOS)
 	transparent bool
 
-	// layerRadiusPx > 0 rounds the window by clipping its Core
-	// Animation layer; re-applied per present because surface
-	// configuration can reset layer state.
+	// layerRadiusPx > 0 asks Core Animation to keep this window's layer
+	// non-opaque (and rounds it, where that has any effect);
+	// re-applied per present because surface configuration can reset
+	// layer state.
 	layerRadiusPx int
+
+	// cornerRadiusPx > 0 rounds the window by clearing the corner
+	// pixels of every painted frame — the mechanism that actually
+	// shapes the window, independent of renderer and platform.
+	cornerRadiusPx int
 }
 
 type timerEntry struct {
@@ -395,7 +399,10 @@ func (p *Platform) roundedCornerMechanism() string {
 	case "layer":
 		return "layer"
 	}
-	if platformPerPixelAlpha && p.gpuDevice != nil {
+	if platformPerPixelAlpha {
+		// macOS: the window/layer alpha arrangement. SDL's shaped-window
+		// API is gone in SDL3 (SetShape reports NONSHAPEABLE), so it is
+		// not a fallback here for either renderer.
 		return "layer"
 	}
 	return "shape"
@@ -666,15 +673,20 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 					"kittytk-alpha: layer rounding: transparent=%v layerFound=%v\n",
 					transparent, rounded)
 			}
-			if transparent && rounded {
+			if transparent {
 				w.transparent = true
-				w.layerRadiusPx = w.shapeRadiusPx
-				w.shapeRadiusPx = 0 // geometry comes from the layer, not a shape mask
+				w.cornerRadiusPx = w.shapeRadiusPx
+				if rounded {
+					w.layerRadiusPx = w.shapeRadiusPx
+				}
+				w.shapeRadiusPx = 0 // the frame's own pixels carry the shape
 			}
 		case "perpixel":
-			// The drawn frame's own alpha cuts the corners.
+			// The drawn frame's own alpha cuts the corners, with no
+			// Core Animation involvement at all.
 			if makeWindowTransparent(w.window) {
 				w.transparent = true
+				w.cornerRadiusPx = w.shapeRadiusPx
 				w.shapeRadiusPx = 0
 			}
 		}
@@ -864,6 +876,14 @@ func (p *Platform) paintBackend(w *nativeWin, forceFull, baseOnly bool) {
 		frame(core.NewPainter(w.backend).WithClip(dmg))
 	}
 	w.backend.EndFrame()
+
+	// A rounded window carries its shape in its own pixels: clear the
+	// corners so they composite as nothing. Must run after EVERY frame,
+	// including damage-clipped ones, since the handler repaints over
+	// them whenever the damage reaches a corner.
+	if w.cornerRadiusPx > 0 {
+		punchRoundedCorners(w.backend.Image(), w.cornerRadiusPx)
+	}
 }
 
 // presentWindow is the ONE way a window reaches the screen: it paints the
@@ -924,339 +944,12 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 
 	p.paintBackend(w, forceFull, false)
 
-	// Without a GPU presentation chain (software renderer), the renderer
-	// blits the backend through SDL textures instead.
-	if p.gpuDevice == nil || w.uiTexture == nil {
-		if err := p.renderer.Present(w, w.backend); err != nil {
-			fmt.Fprintf(os.Stderr, "Present error on window %d: %v\n", w.id, err)
-		}
-		return
+	// The GPU blit, the effects, and the rounded-corner punch-out all
+	// live in the renderer, so there is exactly ONE implementation of
+	// them — this path used to carry a second, drifting copy.
+	if err := p.renderer.Present(w, w.backend); err != nil {
+		fmt.Fprintf(os.Stderr, "Present error on window %d: %v\n", w.id, err)
 	}
-
-	img := w.backend.Image()
-	if img == nil {
-		return
-	}
-
-	// 3. Upload pixels to intermediate texture, then render it to surface
-	bounds := img.Bounds()
-	wPx := uint32(bounds.Dx())
-	hPx := uint32(bounds.Dy())
-	
-	// Convert RGBA to BGRA
-	pixelData := make([]byte, len(img.Pix))
-	for i := 0; i < len(img.Pix); i += 4 {
-		pixelData[i+0] = img.Pix[i+2] // B
-		pixelData[i+1] = img.Pix[i+1] // G
-		pixelData[i+2] = img.Pix[i+0] // R
-		pixelData[i+3] = img.Pix[i+3] // A
-	}
-	
-	// Write to intermediate UI texture
-	err := p.gpuQueue.WriteTexture(
-		&wgpu.ImageCopyTexture{
-			Texture:  w.uiTexture,
-			MipLevel: 0,
-			Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
-			Aspect:   0,
-		},
-		pixelData,
-		&wgpu.ImageDataLayout{
-			Offset:       0,
-			BytesPerRow:  uint32(img.Stride),
-			RowsPerImage: hPx,
-		},
-		&wgpu.Extent3D{
-			Width:              wPx,
-			Height:             hPx,
-			DepthOrArrayLayers: 1,
-		},
-	)
-	if err != nil {
-		return
-	}
-	
-	// Surface configuration can reset the Metal layer's opacity state,
-	// and an opaque layer discards alpha whatever we clear to.
-	if w.transparent {
-		reassertWindowAlpha(w.window)
-	}
-	if w.layerRadiusPx > 0 {
-		roundWindowLayer(w.window, w.layerRadiusPx)
-	}
-
-	// Get surface texture
-	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
-	if err != nil {
-		return
-	}
-	
-	// Create texture view for UI texture (needed for bind group)
-	uiTextureView, err := p.gpuDevice.CreateTextureView(w.uiTexture, nil)
-	if err != nil {
-		return
-	}
-	defer uiTextureView.Release()
-	
-	// Calculate current rotation angle and scale with easing
-	var angle float32
-	var enabled float32
-	var scale float32 = 1.0 // Default to no scaling
-	
-	if p.rotationEnabled.Load() {
-		// Easing IN
-		timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
-		
-		// Easing function: ease-out cubic for smooth deceleration
-		easeOutCubic := func(t float64) float64 {
-			t = math.Min(t, 1.0) // Clamp to 1.0
-			return 1.0 - math.Pow(1.0-t, 3.0)
-		}
-		
-		// Scale eases in over 0.5 seconds from 1.0 to 2.0
-		scaleProgress := timeSinceActivation / 0.5
-		scaleEased := easeOutCubic(scaleProgress)
-		scale = float32(1.0 + scaleEased*1.0) // 1.0 -> 2.0
-		
-		// Rotation eases in over 1.0 seconds from 0 to full speed
-		rotationProgress := timeSinceActivation / 1.0
-		rotationEased := easeOutCubic(rotationProgress)
-		
-		// After easing completes, continue rotating at full speed
-		elapsedRotation := time.Since(p.rotationStartTime).Seconds()
-		angle = float32(elapsedRotation * 0.1 * rotationEased) // Gradually reach full rotation speed
-		
-		enabled = 1.0
-	} else {
-		// Easing OUT - return to normal, but check if we're still animating
-		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
-		
-		if timeSinceDeactivation < 0.5 {
-			// Still easing out
-			easeOutCubic := func(t float64) float64 {
-				t = math.Min(t, 1.0)
-				return 1.0 - math.Pow(1.0-t, 3.0)
-			}
-			
-			// Ease scale back from 2.0 to 1.0
-			scaleProgress := timeSinceDeactivation / 0.5
-			scaleEased := easeOutCubic(scaleProgress)
-			scale = float32(2.0 - scaleEased*1.0) // 2.0 -> 1.0
-			
-			// Continue rotating FORWARD but speed up to snap to 0 (next 2π)
-			currentAngle := p.rotationAngleAtDeactivation
-			twoPi := 2.0 * math.Pi
-			
-			// Calculate how much further to rotate to reach next 0 (always forward/clockwise)
-			normalizedAngle := math.Mod(currentAngle, twoPi)
-			if normalizedAngle < 0 {
-				normalizedAngle += twoPi
-			}
-			angleRemaining := twoPi - normalizedAngle
-			
-			// Continue at normal speed PLUS accelerated catch-up to reach 0 in 0.5 seconds
-			elapsedSinceDeactivation := timeSinceDeactivation
-			normalRotation := elapsedSinceDeactivation * 0.1 // Normal rotation speed
-			
-			// Add accelerated rotation to catch up with ease-out at the end
-			// Use ease-in-out for smooth acceleration and deceleration
-			catchUpProgress := math.Min(timeSinceDeactivation / 0.5, 1.0)
-			
-			// Ease-in-out cubic: accelerate, then decelerate as it approaches target
-			easeInOutCubic := func(t float64) float64 {
-				if t < 0.5 {
-					return 4.0 * t * t * t
-				}
-				return 1.0 - math.Pow(-2.0*t+2.0, 3.0)/2.0
-			}
-			catchUpEased := easeInOutCubic(catchUpProgress)
-			catchUpRotation := angleRemaining * catchUpEased
-			
-			// Cap at target angle (next 2π boundary)
-			targetAngle := currentAngle + angleRemaining
-			currentRotatedAngle := currentAngle + normalRotation + catchUpRotation
-			if currentRotatedAngle > targetAngle {
-				currentRotatedAngle = targetAngle
-			}
-			
-			angle = float32(currentRotatedAngle)
-			
-			enabled = 1.0 // Keep effects enabled during ease-out
-		} else {
-			// Fully deactivated
-			angle = 0.0
-			enabled = 0.0
-			scale = 1.0
-		}
-	}
-	
-	// Update the full 32-byte CombinedUniforms block the blit shader reads:
-	// effects (angle, enabled, scale, padding) plus a fullscreen quad
-	// position. Writing only the effects half would leave the position half
-	// at whatever a previous frame put there.
-	aspect := float32(1)
-	if hPx > 0 {
-		aspect = float32(wPx) / float32(hPx)
-	}
-	uniformData := make([]byte, 32)
-	binary.LittleEndian.PutUint32(uniformData[0:4], math.Float32bits(angle))
-	binary.LittleEndian.PutUint32(uniformData[4:8], math.Float32bits(enabled))
-	binary.LittleEndian.PutUint32(uniformData[8:12], math.Float32bits(scale))
-	binary.LittleEndian.PutUint32(uniformData[12:16], math.Float32bits(aspect))
-	binary.LittleEndian.PutUint32(uniformData[16:20], math.Float32bits(-1.0)) // pos_x
-	binary.LittleEndian.PutUint32(uniformData[20:24], math.Float32bits(-1.0)) // pos_y
-	binary.LittleEndian.PutUint32(uniformData[24:28], math.Float32bits(2.0))  // size_w
-	binary.LittleEndian.PutUint32(uniformData[28:32], math.Float32bits(2.0))  // size_h
-	p.gpuQueue.WriteBuffer(p.blitUniformBuffer, 0, uniformData)
-	
-	// Use cached uniform bind group (no need to recreate)
-	
-	// Create bind group for texture + sampler (still need per-frame because texture view changes)
-	bindGroup, err := p.gpuDevice.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Layout: p.blitLayout,
-		Entries: []wgpu.BindGroupEntry{
-			{Binding: 0, TextureView: uiTextureView},
-			{Binding: 1, Sampler: p.blitSampler},
-		},
-	})
-	if err != nil {
-		return
-	}
-	defer bindGroup.Release()
-	
-	// Create surface view for rendering
-	surfaceView, _ := surfaceTexture.CreateView(nil)
-	defer surfaceView.Release()
-	
-	// Create command encoder
-	encoder, _ := p.gpuDevice.CreateCommandEncoder(nil)
-	
-	// Render pass that draws the UI texture to the surface. A transparent
-	// (per-pixel alpha) window must clear to alpha 0 or its rounded
-	// corners composite as opaque black.
-	clearAlpha := 1.0
-	if w.transparent {
-		clearAlpha = 0.0
-	}
-	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
-		ColorAttachments: []wgpu.RenderPassColorAttachment{
-			{
-				View:    surfaceView,
-				LoadOp:  gputypes.LoadOpClear,
-				StoreOp: gputypes.StoreOpStore,
-				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: clearAlpha},
-			},
-		},
-	})
-	
-	// Set pipeline and bind groups, then draw. The blit vertex shader
-	// generates a two-triangle quad, so this MUST draw all 6 vertices:
-	// drawing 3 paints exactly half the window and leaves the other half
-	// as the clear color — the diagonal "black triangle" resize artifact.
-	// (Under KITTYTK_ALPHA_TEST a transparent window presents the bare
-	// alpha-0 clear instead, isolating the compositing chain from the
-	// painted content.)
-	if !(alphaPresentTest && w.transparent) {
-		renderPass.SetPipeline(p.blitPipeline)
-		renderPass.SetBindGroup(0, bindGroup, nil)                  // Texture + sampler (per-frame)
-		renderPass.SetBindGroup(1, p.blitUniformBindGroup, nil)    // Rotation uniform (cached)
-		renderPass.Draw(6, 1, 0, 0)
-	}
-	renderPass.End()
-	
-	// Render 3D cube when rotation is active OR during ease-out
-	shouldRenderCube := p.rotationEnabled.Load() && p.cubePipeline != nil
-	if !shouldRenderCube {
-		// Check if we're in ease-out phase
-		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
-		if timeSinceDeactivation < 0.5 {
-			shouldRenderCube = true
-		}
-	}
-	
-	if shouldRenderCube {
-		// Calculate rotation angle for cube
-		elapsed := time.Since(p.rotationStartTime).Seconds()
-		cubeAngle := float32(elapsed * 0.5) // Rotate faster than the background
-		
-		// Add floating motion (sine wave)
-		floatOffset := float32(math.Sin(elapsed * 1.5) * 0.15)
-		
-		// Calculate cube scale based on current state
-		var cubeScale float32
-		easeOutCubic := func(t float64) float64 {
-			t = math.Min(t, 1.0)
-			return 1.0 - math.Pow(1.0-t, 3.0)
-		}
-		
-		if p.rotationEnabled.Load() {
-			// Easing IN
-			timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
-			scaleProgress := timeSinceActivation / 0.5
-			scaleEased := easeOutCubic(scaleProgress)
-			cubeScale = float32(scaleEased * 1.5) // Ease from 0 to 1.5
-			
-			// Add slight scale pulsing after initial ease
-			if scaleProgress >= 1.0 {
-				pulse := float32(math.Sin(elapsed*2.0)*0.05 + 1.0)
-				cubeScale *= pulse
-			}
-		} else {
-			// Easing OUT
-			timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
-			scaleProgress := timeSinceDeactivation / 0.5
-			scaleEased := easeOutCubic(scaleProgress)
-			cubeScale = float32((1.0 - scaleEased) * 1.5) // Ease from 1.5 to 0
-		}
-		
-		// Create MVP matrix with eased scale and floating motion
-		aspectRatio := float32(wPx) / float32(hPx)
-		mvp := createMVPMatrix(aspectRatio, cubeAngle, cubeScale, floatOffset)
-		
-		// Update uniform buffer
-		mvpBytes := (*[64]byte)(unsafe.Pointer(&mvp[0]))[:]
-		p.gpuQueue.WriteBuffer(p.cubeUniformBuffer, 0, mvpBytes)
-		
-		// Create bind group for cube texture (using UI texture)
-		cubeBindGroup, err := p.gpuDevice.CreateBindGroup(&wgpu.BindGroupDescriptor{
-			Layout: p.cubeLayout,
-			Entries: []wgpu.BindGroupEntry{
-				{Binding: 0, TextureView: uiTextureView},
-				{Binding: 1, Sampler: p.blitSampler},
-			},
-		})
-		if err == nil {
-			defer cubeBindGroup.Release()
-			
-			// Render cube with back-face culling only (no depth buffer needed)
-			cubePass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
-				ColorAttachments: []wgpu.RenderPassColorAttachment{
-					{
-						View:       surfaceView,
-						LoadOp:     gputypes.LoadOpLoad, // Keep existing content
-						StoreOp:    gputypes.StoreOpStore,
-						ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 0.0},
-					},
-				},
-			})
-			
-			cubePass.SetPipeline(p.cubePipeline)
-			cubePass.SetBindGroup(0, cubeBindGroup, nil)
-			cubePass.SetBindGroup(1, p.cubeUniformBindGroup, nil)
-			cubePass.SetVertexBuffer(0, p.cubeVertexBuffer, 0)
-			cubePass.SetIndexBuffer(p.cubeIndexBuffer, gputypes.IndexFormatUint16, 0)
-			cubePass.DrawIndexed(36, 1, 0, 0, 0) // 36 indices for 12 triangles
-			cubePass.End()
-		}
-	}
-	
-	// Submit and present
-	cmdBuffer, _ := encoder.Finish()
-	_, err = p.gpuQueue.Submit(cmdBuffer)
-	if err != nil {
-		return
-	}
-	w.gpuSurface.Present(surfaceTexture)
 
 	// Enforce minimum frame time to prevent event starvation
 	// Target 60 FPS = 16.67ms per frame

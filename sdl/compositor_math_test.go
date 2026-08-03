@@ -265,3 +265,64 @@ func TestBGRAPixels(t *testing.T) {
 		t.Errorf("pixel (2,1) BGRA = %v, want [7 8 9 255]", data[j:j+4])
 	}
 }
+
+// A rounded window carries its shape in its own pixels: the corners are
+// cleared (premultiplied, so every channel goes to zero — an
+// alpha-only clear would leave an additive black fringe), the curve is
+// antialiased, and the interior is untouched.
+func TestPunchRoundedCorners(t *testing.T) {
+	const w, h, r = 40, 30, 8
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i+0], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = 200, 100, 50, 255
+	}
+
+	punchRoundedCorners(img, r)
+
+	at := func(x, y int) (uint8, uint8, uint8, uint8) {
+		o := img.PixOffset(x, y)
+		return img.Pix[o], img.Pix[o+1], img.Pix[o+2], img.Pix[o+3]
+	}
+
+	// Every extreme corner pixel is fully cleared, all channels.
+	for _, pt := range [][2]int{{0, 0}, {w - 1, 0}, {0, h - 1}, {w - 1, h - 1}} {
+		cr, cg, cb, ca := at(pt[0], pt[1])
+		if cr|cg|cb|ca != 0 {
+			t.Errorf("corner (%d,%d) = (%d,%d,%d,%d), want all zero", pt[0], pt[1], cr, cg, cb, ca)
+		}
+	}
+
+	// The interior is untouched.
+	if cr, cg, cb, ca := at(w/2, h/2); cr != 200 || cg != 100 || cb != 50 || ca != 255 {
+		t.Errorf("center = (%d,%d,%d,%d), want the original color", cr, cg, cb, ca)
+	}
+	// Well inside the corner's arc is also untouched.
+	if _, _, _, ca := at(r, r); ca != 255 {
+		t.Errorf("inside the arc alpha = %d, want 255", ca)
+	}
+
+	// The curve is antialiased: at least one partially covered pixel.
+	partial := false
+	for j := 0; j < r; j++ {
+		for i := 0; i < r; i++ {
+			if _, _, _, a := at(i, j); a > 0 && a < 255 {
+				partial = true
+			}
+		}
+	}
+	if !partial {
+		t.Error("no partially covered pixels: the corner curve is not antialiased")
+	}
+
+	// A zero radius is a no-op.
+	plain := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	for i := range plain.Pix {
+		plain.Pix[i] = 255
+	}
+	punchRoundedCorners(plain, 0)
+	for i, v := range plain.Pix {
+		if v != 255 {
+			t.Fatalf("zero radius modified pixel %d", i)
+		}
+	}
+}
