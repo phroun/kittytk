@@ -408,8 +408,12 @@ func (h *TearOffHost) SetClipboard(s string) {
 func (h *TearOffHost) RegisterPopup(request *core.PopupRequest) {
 	h.UnregisterPopup(request.ID)
 	h.popups = append(h.popups, &PopupOverlay{
-		ID:                 request.ID,
-		Bounds:             request.Bounds,
+		ID:     request.ID,
+		Bounds: request.Bounds,
+		// The opening control's rect travels with the popup so the two
+		// cast one drop shadow when composited (a combo box and its list
+		// read as one piece).
+		Anchor:             request.Anchor,
 		Paint:              request.Paint,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
@@ -544,6 +548,67 @@ func (h *TearOffHost) Frame(p *core.Painter) {
 		if popup.Paint != nil {
 			popup.Paint(p)
 		}
+	}
+}
+
+// FrameBase implements platform.BaseLayerPainter: the torn window and
+// its chrome, with the overlays GetChildWindows handed to the compositor
+// left out. The menu bar itself stays on this surface — only its open
+// dropdown lifts onto a layer, so it can carry a drop shadow.
+func (h *TearOffHost) FrameBase(p *core.Painter) {
+	if h.ghost {
+		return
+	}
+	h.win.SetMenuDropdownComposited(true)
+	defer h.win.SetMenuDropdownComposited(false)
+
+	p.ResetTextCaretRequest()
+	defer func() { platform.ApplyTextCaret(h.Surface(), p.TextCaretRequest()) }()
+	h.win.Paint(p)
+	if h.isModalBlocked() {
+		b := h.win.Bounds()
+		h.win.PaintModalDim(p, core.UnitRect{Width: b.Width, Height: b.Height})
+	}
+}
+
+// GetChildWindows implements platform.WindowProvider so a torn-off
+// window composites exactly as the desktop does: its own surface at the
+// bottom, then its open menu dropdown, then its popups — each over a
+// drop shadow of its own.
+//
+// It returns nil, keeping the plain single-surface present, whenever
+// there is nothing to lift onto a layer. A torn window with no menu open
+// and no popup gains nothing from the compositor, and the narrower the
+// path switches, the less there is to go wrong.
+func (h *TearOffHost) GetChildWindows() *platform.ChildWindowList {
+	if h.ghost {
+		return nil
+	}
+
+	popups := make([]interface{}, 0, len(h.popups))
+	for _, popup := range h.popups {
+		if popup.Paint != nil {
+			popups = append(popups, popup)
+		}
+	}
+
+	var menuDropdown interface{}
+	if bounds, anchor, paint, ok := h.win.MenuDropdownLayer(); ok {
+		menuDropdown = &struct {
+			Bounds core.UnitRect
+			Anchor core.UnitRect
+			Paint  func(*core.Painter)
+		}{Bounds: bounds, Anchor: anchor, Paint: paint}
+	}
+
+	if len(popups) == 0 && menuDropdown == nil {
+		return nil
+	}
+
+	// No ClientArea: the window IS the surface, so nothing clips it.
+	return &platform.ChildWindowList{
+		Popups:       popups,
+		MenuDropdown: menuDropdown,
 	}
 }
 

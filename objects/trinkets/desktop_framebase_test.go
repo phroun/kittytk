@@ -64,3 +64,41 @@ func TestDesktopFramePaintsWindowsFrameBaseDoesNot(t *testing.T) {
 		t.Fatalf("GetChildWindows = %+v, want exactly the one open window", list)
 	}
 }
+
+// A compositor layer paints itself, so a minimized window still listed
+// for the compositor keeps drawing — and casting a shadow — over the
+// desktop after it was sent to the dock. The software paint loop has
+// always applied this filter; the compositor list must apply it too.
+func TestDesktopCompositorSkipsMinimizedWindows(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 240)
+	d := NewDesktop()
+	d.SetBackend(px)
+	d.surface = &msSurface{size: core.UnitSize{Width: 800, Height: 240}}
+	h := &desktopSurfaceHandler{d: d}
+
+	d.WindowManager().SetScreenBounds(core.UnitRect{Width: 800, Height: 240})
+	open := window.NewWindow("Open")
+	hidden := window.NewWindow("Hidden")
+	minimized := window.NewWindow("Minimized")
+	for _, w := range []*window.Window{open, hidden, minimized} {
+		d.WindowManager().AddWindow(w)
+		w.SetBounds(core.UnitRect{Width: 400, Height: 200})
+		w.Layout()
+	}
+	hidden.SetVisible(false)
+	minimized.Minimize()
+
+	var provider platform.WindowProvider = h
+	list := provider.GetChildWindows()
+	if list == nil {
+		t.Fatal("GetChildWindows returned nil with a window manager present")
+	}
+	if len(list.Windows) != 1 {
+		t.Fatalf("compositor got %d windows, want only the one that is open and not minimized",
+			len(list.Windows))
+	}
+	if list.Windows[0] != open {
+		t.Errorf("compositor got %v, want the open window", list.Windows[0])
+	}
+}

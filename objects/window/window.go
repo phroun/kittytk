@@ -156,6 +156,11 @@ type Window struct {
 	// so the frame draws its black tear-off halo (see TearIndicatorActive).
 	tearHighlight bool
 
+	// menuDropdownComposited is set by a host that draws the menu bar's
+	// open dropdown as its own compositor layer; paintChrome then leaves
+	// it out of the window's surface. See MenuDropdownLayer.
+	menuDropdownComposited bool
+
 	// resizeHoverRects are window-local rectangles (one per hovered resize
 	// edge, two for a corner) that the frame highlights while the pointer
 	// is over a size-sensitive edge. Set by the window manager on hover.
@@ -1734,11 +1739,75 @@ func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
 	}
 }
 
+// SetMenuDropdownComposited tells the window that its host draws the
+// menu bar's open dropdown as a compositor layer of its own (so it can
+// carry a drop shadow). paintChrome then leaves the dropdown out of the
+// window's own surface instead of painting it twice.
+func (w *Window) SetMenuDropdownComposited(on bool) {
+	w.mu.Lock()
+	w.menuDropdownComposited = on
+	w.mu.Unlock()
+}
+
+// menuBarDropdown returns the menu bar together with the exchange from
+// its interior denomination to window-local units, or ok=false when
+// there is no bar or no open menu.
+type menuBarDropdown interface {
+	PaintDropdown(*core.Painter)
+	ActiveMenuBounds() core.UnitRect
+	ActiveMenuTitleBounds() core.UnitRect
+}
+
+// MenuDropdownLayer returns the open menu bar dropdown as a compositor
+// layer: its bounds and the bounds of the title it drops from, both in
+// WINDOW-local units, plus a paint function that draws it through a
+// painter at the window's origin. ok is false when nothing is open.
+//
+// A host that draws this layer itself must also call
+// SetMenuDropdownComposited, or the dropdown paints twice.
+func (w *Window) MenuDropdownLayer() (bounds, anchor core.UnitRect, paint func(*core.Painter), ok bool) {
+	w.mu.RLock()
+	mb := w.menuBar
+	w.mu.RUnlock()
+
+	dd, isDropdown := mb.(menuBarDropdown)
+	barRect := w.menuBarRect()
+	if !isDropdown || barRect.IsEmpty() {
+		return core.UnitRect{}, core.UnitRect{}, nil, false
+	}
+	menuBounds := dd.ActiveMenuBounds()
+	if menuBounds.IsEmpty() {
+		return core.UnitRect{}, core.UnitRect{}, nil, false
+	}
+
+	// The bar paints in the window's INTERIOR denomination, offset to the
+	// bar's row; the compositor works in window-local units, so exchange
+	// back out and translate.
+	outer, interior := w.denominations()
+	toLocal := func(r core.UnitRect) core.UnitRect {
+		if r.IsEmpty() {
+			return core.UnitRect{}
+		}
+		return core.UnitRect{
+			X:      barRect.X + core.ExchangeX(r.X, interior, outer),
+			Y:      barRect.Y + core.ExchangeY(r.Y, interior, outer),
+			Width:  core.ExchangeX(r.Width, interior, outer),
+			Height: core.ExchangeY(r.Height, interior, outer),
+		}
+	}
+
+	paint = func(p *core.Painter) {
+		dd.PaintDropdown(p.WithOffset(barRect.X, barRect.Y).WithDenomination(outer, interior))
+	}
+	return toLocal(menuBounds), toLocal(dd.ActiveMenuTitleBounds()), paint, true
+}
+
 // paintChrome paints the detached window's menu bar and status bar in
 // their reserved rows, and the menu bar's dropdown on top of content.
 func (w *Window) paintChrome(p *core.Painter, outer, interior core.CellMetrics) {
 	w.mu.RLock()
 	mb, sb := w.menuBar, w.statusBar
+	dropdownComposited := w.menuDropdownComposited
 	w.mu.RUnlock()
 
 	if r := w.menuBarRect(); mb != nil && !r.IsEmpty() {
@@ -1756,8 +1825,9 @@ func (w *Window) paintChrome(p *core.Painter, outer, interior core.CellMetrics) 
 		sb.Paint(sp)
 	}
 	// The menu bar's dropdown paints last, unclipped, so it overlays the
-	// window content below the bar.
-	if r := w.menuBarRect(); mb != nil && !r.IsEmpty() {
+	// window content below the bar — unless the host lifted it onto a
+	// compositor layer of its own (see MenuDropdownLayer).
+	if r := w.menuBarRect(); mb != nil && !r.IsEmpty() && !dropdownComposited {
 		if dp, ok := mb.(interface{ PaintDropdown(*core.Painter) }); ok {
 			dp.PaintDropdown(p.WithOffset(r.X, r.Y).WithDenomination(outer, interior))
 		}

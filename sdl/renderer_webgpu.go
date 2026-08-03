@@ -47,6 +47,13 @@ type WindowSurface struct {
 	uiWindow interface{}     // UI Window trinket (interface{} to avoid import cycle)
 	backend  *raster.Backend // Per-window raster backend for UI windows
 	zOrder   int             // Z-order for compositing (higher = on top)
+
+	// owner is the id of the OS window this child belongs to. One map
+	// holds every OS window's child surfaces, so eviction has to ask
+	// whose they are: a torn-off window compositing its own popups
+	// reports none of the desktop's children, and without this would
+	// evict all of them — every frame, recreating each texture the next.
+	owner uint32
 }
 
 // WebGPURenderer implements GPU-accelerated rendering with WebGPU.
@@ -984,13 +991,14 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	}
 
 	// Evict surfaces whose child window is gone, so closed windows release
-	// their textures and backends instead of accumulating forever.
+	// their textures and backends instead of accumulating forever. Only
+	// THIS OS window's children are in scope — see WindowSurface.owner.
 	liveWindows := make(map[uint32]bool, len(childWindowList.Windows))
 	for _, childIface := range childWindowList.Windows {
 		liveWindows[uint32(reflect.ValueOf(childIface).Pointer())] = true
 	}
 	for id, surf := range r.windowSurfaces {
-		if surf.uiWindow != nil && !liveWindows[id] {
+		if surf.uiWindow != nil && surf.owner == osWindow.id && !liveWindows[id] {
 			r.releaseWindowSurface(surf)
 			delete(r.windowSurfaces, id)
 		}
@@ -1101,6 +1109,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				width:            uint32(widthPx),
 				height:           uint32(heightPx),
 				uiWindow:         childIface,
+				owner:            osWindow.id,
 				backend:          backend,
 				dirty:            true,
 				scaleX:           1.0,

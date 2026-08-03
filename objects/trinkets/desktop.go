@@ -4136,10 +4136,17 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 	// are compositor layers of their own, and they need their shadows
 	// (and correct z-order) whether or not any window happens to be
 	// open. Only a desktop with no window manager at all opts out.
-	windows := d.windowManager.Windows()
-	result := make([]interface{}, len(windows))
-	for i, w := range windows {
-		result[i] = w
+	//
+	// Hidden and minimized windows are skipped, the same filter the
+	// software paint loop applies. A compositor layer paints itself, so
+	// a minimized window left in this list keeps drawing (and casting a
+	// shadow) over the desktop after it was sent to the dock.
+	var result []interface{}
+	for _, w := range d.windowManager.Windows() {
+		if !w.IsVisible() || w.IsMinimized() {
+			continue
+		}
+		result = append(result, w)
 	}
 
 	popups := d.windowManager.GetPopups()
