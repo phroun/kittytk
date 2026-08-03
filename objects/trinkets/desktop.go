@@ -223,11 +223,28 @@ type Desktop struct {
 	// repaint tick drives their animation alongside the desktop's.
 	tornHosts []*window.TearOffHost
 
+	// tearing marks windows whose createTornHost is in flight, so a
+	// re-entrant tear of the SAME window is a no-op. createTornHost only
+	// latches its "claimed" state (removed from the manager, SetDetached)
+	// AFTER platform.CreateSurface, and on the SDL backend creating that OS
+	// window fires a WindowResized event-watch that drains the post queue
+	// synchronously - re-running a deferred soloAdoptWindow for this very
+	// window while its guards still read "not yet torn". Without this the
+	// window would be hosted on two surfaces at once (a double/ghost dialog
+	// in solo mode). Guarded by d.mu.
+	tearing map[*window.Window]bool
+
 	// soloPrimaryHost is the tear-off host on the desktop's own OS
 	// surface in solo mode (the one window that can't just be closed,
 	// because that surface owns the event loop). When its window closes,
 	// a remaining window is promoted onto the primary surface.
 	soloPrimaryHost *window.TearOffHost
+
+	// aboutBox is the built-in About KittyTK dialog while it is open, so the
+	// R-key rotation easter egg can be gated to its focus (see
+	// aboutBoxFocused, wired onto the platform in RunOn). Cleared when the
+	// dialog closes. Guarded by d.mu.
+	aboutBox *window.Window
 
 	// soloHosting is true while a window is being lifted onto the primary
 	// surface. The lift removes the window from the manager, which fires
@@ -434,6 +451,30 @@ func (d *Desktop) showAboutDesktop() {
 		y = metrics.RoundDownToCellY(y)
 	}
 	mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
+
+	// Track it while open so the R-key rotation easter egg can be gated to its
+	// focus (aboutBoxFocused). Clear the reference when it closes.
+	d.mu.Lock()
+	d.aboutBox = &mb.Window
+	d.mu.Unlock()
+	mb.Window.AddOnClosed(func() {
+		d.mu.Lock()
+		if d.aboutBox == &mb.Window {
+			d.aboutBox = nil
+		}
+		d.mu.Unlock()
+	})
+}
+
+// aboutBoxFocused reports whether the built-in About KittyTK dialog is open and
+// is the active window. It is the gate for the R-key rotation easter egg (wired
+// onto the platform in RunOn), so the effect is reachable only from that dialog
+// and R stays an ordinary key everywhere else.
+func (d *Desktop) aboutBoxFocused() bool {
+	d.mu.RLock()
+	ab := d.aboutBox
+	d.mu.RUnlock()
+	return ab != nil && ab.IsActive()
 }
 
 // SetBackend sets the render backend and initializes related components.
@@ -3013,6 +3054,14 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 		d.mu.Unlock()
 		surface.SetHandler(&desktopSurfaceHandler{d: d})
 		d.setupTearOff(pf, surface)
+
+		// Offer the rotation easter egg's focus gate to any platform that has
+		// one (the SDL/WebGPU host). The anonymous interface keeps trinkets
+		// free of an sdl-specific dependency; a platform without rotation
+		// simply doesn't implement it.
+		if rg, ok := pf.(interface{ SetRotationTriggerGate(func() bool) }); ok {
+			rg.SetRotationTriggerGate(d.aboutBoxFocused)
+		}
 
 		size := surface.Size()
 		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
