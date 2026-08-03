@@ -91,6 +91,48 @@ blank-window software path.
   Platform keeps only its animation clock for mouse-coordinate rotation
   compensation.
 
+## Drop shadows on the GPU (solved, and why it was hard)
+
+Shadows are now **analytic**: the fragment stage evaluates the signed
+distance to the caster's rounded rect — unioned with its anchor, so a
+menu title and its dropdown cast one shape — and fades it across the
+blur. Nothing is rasterized on the CPU and nothing is cached, so a
+window that is moving or resizing costs exactly what a still one does,
+and the falloff is exact at any density instead of resampled from an
+image. The anchor's own rect is punched out of the result, because it
+lives on a layer BELOW the shadow and is never redrawn above it.
+
+They draw through the **same pipeline** as every other layer, switched
+by a `mode` field in the shared uniform block. That is the whole fix,
+and the reason is worth writing down because nothing reports it:
+
+- `msl.Compile` translates each shader module **in isolation**. It sorts
+  that module's own `@group/@binding` declarations and numbers them
+  sequentially **per resource type** — buffers, textures and samplers in
+  three separate counters.
+- The command encoder numbers the same resources from the **pipeline
+  layout**, cumulatively across all groups.
+- These agree only while no earlier group contributes a resource of the
+  same kind. The blit layout is group 0 = {texture, sampler}, group 1 =
+  {uniform}, so the uniform is buffer 0 under both rules.
+
+The first attempt gave shadows their own pipeline with group 0 =
+{shadow params}, group 1 = {shared position block}. The vertex module
+declares only the group 1 uniform, so it compiled to buffer **0** while
+the encoder bound it at buffer **1**: the vertex stage read the shadow
+parameters as its NDC position and threw every quad off screen. No
+error, no validation warning, correct geometry in every log — just no
+shadows, and not even red ones under `KITTYTK_SHADOW_DEBUG`.
+
+`sdl/shaders.go` is untagged on purpose: WGSL text and a memory layout
+are pure data, so `sdl/shaders_test.go` checks them with no SDL library
+and no GPU. It holds `blitBindGroups` (which the pipeline is built from,
+not merely compared against) and enforces that both stages declare the
+same 32-word uniform block, that every binding lands on the slot the
+encoder binds it to, and — running the two numbering rules against the
+retired shadow layout — that the checker can actually catch the bug it
+exists for.
+
 ## Known gaps (not regressions)
 - **Text caret in compositor mode**: windows paint on their own layers,
   so a focused terminal's caret request cannot reach the OS surface
@@ -152,7 +194,7 @@ go test -tags sdl ./...           # + event-translation and headless tests
 ```
 
 The host is on SDL3 via github.com/Zyko0/go-sdl3, bound through the
-adapter in `sdl/sdlcompat`. Two things about that binding are worth
+adapter in `sdl/sdl3`. Two things about that binding are worth
 knowing before touching it:
 
 - It is **purego**: nothing links at build time and no SDL headers are
