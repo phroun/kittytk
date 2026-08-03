@@ -650,20 +650,23 @@ func (t *Texture) Query() (uint32, int, int32, int32, error) {
 // MetalLayer returns the CAMetalLayer for a window, creating the
 // backing Metal view on first use (macOS/iOS only; nil elsewhere).
 func (w *Window) MetalLayer() unsafe.Pointer {
-	view := w.w.Metal_CreateView()
+	view := metalCreateView(uintptr(unsafe.Pointer(w.w)))
 	if view == 0 {
 		return nil
 	}
-	return metalGetLayer(uintptr(view))
+	return metalGetLayer(view)
 }
 
-// CocoaWindow returns the NSWindow* for a window, or nil off macOS.
-func (w *Window) CocoaWindow() unsafe.Pointer {
+// CocoaWindow returns the NSWindow handle for a window, or 0 off
+// macOS. It stays a uintptr: the value is an opaque Objective-C object
+// the Cocoa shim passes straight back to the runtime, and turning it
+// into an unsafe.Pointer here would claim it is Go-visible memory.
+func (w *Window) CocoaWindow() uintptr {
 	props, err := w.w.Properties()
 	if err != nil {
-		return nil
+		return 0
 	}
-	return unsafe.Pointer(props.PointerProperty("SDL.window.cocoa.window", nil))
+	return pointerProperty(uint32(props), "SDL.window.cocoa.window")
 }
 
 // X11Handles returns the X11 Display* and Window id, or (0,0) when the
@@ -673,7 +676,7 @@ func (w *Window) X11Handles() (uintptr, uintptr) {
 	if err != nil {
 		return 0, 0
 	}
-	display := uintptr(unsafe.Pointer(props.PointerProperty("SDL.window.x11.display", nil)))
+	display := pointerProperty(uint32(props), "SDL.window.x11.display")
 	window := uintptr(props.NumberProperty("SDL.window.x11.window", 0))
 	return display, window
 }
@@ -684,5 +687,5 @@ func (w *Window) Win32HWND() uintptr {
 	if err != nil {
 		return 0
 	}
-	return uintptr(unsafe.Pointer(props.PointerProperty("SDL.window.win32.hwnd", nil)))
+	return pointerProperty(uint32(props), "SDL.window.win32.hwnd")
 }

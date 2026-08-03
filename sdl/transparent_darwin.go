@@ -401,7 +401,7 @@ func makeWindowMiniaturizable(win *sdl2.Window) {
 // cocoaWindow returns the NSWindow behind an SDL window. SDL3 exposes
 // it as a window property rather than through SDL_GetWindowWMInfo.
 func cocoaWindow(win *sdl2.Window) unsafe.Pointer {
-	return win.CocoaWindow()
+	return unsafe.Pointer(win.CocoaWindow())
 }
 
 // getMetalLayer retrieves the CAMetalLayer from an SDL Metal window,
