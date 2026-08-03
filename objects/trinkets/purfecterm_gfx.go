@@ -59,12 +59,13 @@ type purfecTermGfx struct {
 	cursorBlinkOn bool
 	blinkTimer    *DesktopTimer
 
-	// hitKX/hitKY scale an incoming mouse UNIT coordinate into the
-	// terminal's own render-unit space, cached on each paint. The outer
-	// system converts a click at the snapped cell rate, but cells render at
-	// ppu; a click must be scaled by (widget snapped px-rate / ppu) before
-	// the cell lookup or hits drift the further in the pointer is. 0/1 =
-	// identity (integer pixels-per-unit, the default 12pt).
+	// ppu is the renderer's pixels-per-unit, cached on each paint for the
+	// input paths (scrollbar hit tests run in render pixels and have no
+	// painter in hand). 0 = not painted yet; treat as 1.
+	ppu float64
+	// vpWpx/vpHpx are the widget's DEVICE extent as the outer system snapped
+	// it, and hitKX/hitKY the scale from a unit coordinate onto it.
+	vpWpx, vpHpx float64
 	hitKX, hitKY float64
 
 	// Local selection drag.
@@ -81,16 +82,18 @@ type purfecTermGfx struct {
 	autoVert  int
 	autoHoriz int
 
-	// Scrollbar drag. The thumb follows the pointer smoothly (unit
-	// granularity) while the content offset snaps to whole lines and
-	// columns: grab offset is where the press landed within the
-	// thumb; thumb pos is the unsnapped thumb origin along the track.
+	// Scrollbar drag, all in RENDER PIXELS. The thumb follows the pointer
+	// at pixel granularity while the content offset snaps to whole lines
+	// and columns — quantizing the THUMB was what made a drag lurch in
+	// cell-sized steps while the wheel glided. Grab offset is where the
+	// press landed within the thumb; thumb pos is the unsnapped thumb
+	// origin along the track.
 	vDragging bool
 	hDragging bool
 	vHover    bool // pointer over the vertical thumb
 	hHover    bool // pointer over the horizontal thumb
-	vGrabOff  core.Unit
-	hGrabOff  core.Unit
+	vGrabOff  float64
+	hGrabOff  float64
 	vThumbPos float64
 	hThumbPos float64
 
@@ -174,15 +177,25 @@ func (t *PurfecTerm) gfxEngine() *text.Engine {
 
 // gfxFocused: the terminal shows its focused cursor form only when
 // it has focus within the ACTIVE window chain - in any background
-// window the inactive (hollow box) form paints instead.
+// window the inactive (hollow box) form paints instead. An embedded
+// terminal has no focus of its own to hold (see SetEmbeddedFocus): its
+// host declares it, and it is still subject to the window chain.
 func (t *PurfecTerm) gfxFocused() bool {
-	return t.HasFocus() && core.FocusChainActive(t.Self())
+	return t.focused() && core.FocusChainActive(t.Self())
 }
 
 // gfxInputActive reports whether input events take the graphical
 // handlers (the desktop paints graphical frames).
 func (t *PurfecTerm) gfxInputActive() bool {
 	return t.terminal != nil && core.FindGraphicalFrames(t)
+}
+
+// scrollLanesActive reports whether scrollbar lanes exist to interact
+// with. Both surfaces have them — the graphical one overlays pixel lanes,
+// the cell one reserves whole cells (see updateTerminalSize) — everywhere
+// but editor mode, which reclaims the lane for text.
+func (t *PurfecTerm) scrollLanesActive() bool {
+	return t.terminal != nil && !t.editorMode
 }
 
 // termColorScheme builds the terminal's color scheme from the app's
@@ -271,9 +284,17 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	vpFullWpx := p.UnitSpanPxX(0, bounds.Width)
 	vpFullHpx := p.UnitSpanPxY(0, bounds.Height)
 
-	// Mouse-hit scale: outer clicks arrive at the snapped rate, cells render
-	// at ppu, so scale a click by (snapped px-rate / ppu) into render-unit
-	// space or hits drift the deeper in the pointer is. 1 at integer ppu.
+	// Two rates meet here and BOTH matter. ppu is the renderer's font-aware
+	// pixels-per-unit, which the cell grid is laid out and painted with.
+	// vpFull*px is the widget's true device extent, which the outer system
+	// SNAPS — so it is not W*ppu, and the gap between them grows with the
+	// distance from the origin. Anything anchored to the widget's EDGE (the
+	// scrollbar lanes) must use the snapped extent, and any pointer must be
+	// scaled onto it, or the hit box drifts from the paint. hitK is that
+	// scale; it is 1 only when the two rates happen to coincide.
+	t.gfx.ppu = ppu
+	t.pushCellPixelSizeGfx() // assert the synthetic ?1016 cell size (CSI 16 t)
+	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 	if bounds.Width > 0 && ppu > 0 {
 		t.gfx.hitKX = float64(vpFullWpx) / (float64(bounds.Width) * ppu)
@@ -287,12 +308,20 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// space (updateTerminalSize's unit division undercounts at fractional
 	// ppu). The yellow scrollback line and text span this content width.
 	contentWpx := vpFullWpx
+	contentHpx := vpFullHpx
 	if t.gfxInputActive() && !t.editorMode {
 		contentWpx = p.UnitSpanPxX(0, bounds.Width-gfxScrollbarLane)
+		// The HORIZONTAL bar reserves its height too: unlike the vertical
+		// lane (a sliver off the right edge), it lies across the bottom
+		// text row and made it unreadable. One lane fewer of rows keeps the
+		// last line clear while the bar is present.
+		if t.hScrollActive() {
+			contentHpx -= int(math.Round(float64(gfxScrollbarLane) * ppu))
+		}
 	}
 	if baseCW > 0 && baseCH > 0 {
 		fitCols := int(float64(contentWpx) / (float64(baseCW) * ppu))
-		fitRows := int(float64(vpFullHpx) / (float64(baseCH) * ppu))
+		fitRows := int(float64(contentHpx) / (float64(baseCH) * ppu))
 		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
 			t.cols, t.rows = fitCols, fitRows
 			t.terminal.Resize(fitCols, fitRows)
@@ -444,7 +473,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 						// Shape a five-piece window (neighbours + tatweels +
 						// letter) as one run so the font's GSUB joins for real;
 						// the renderer cuts this cell's piece out of it.
-						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR)
+						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR, []rune(cell.Combining))
 					} else {
 						dc.Char = shaped
 					}
@@ -562,18 +591,54 @@ func (t *PurfecTerm) primaryTermFamily() string {
 //
 // mew never sends OSC 7005, so step 2 is inert there (GetScriptFont == "") and
 // scripts resolve through the engine's ui-term-<script> tree as before.
+//
+// The script is the CELL's, not the base rune's. A script-neutral base carrying
+// a combining mark of some script — a dotted circle anchoring an isolated
+// Hebrew point, most of all — belongs to the MARK's script, because the two have
+// to shape as one cluster to compose at all. Resolve the base to the primary
+// face and the mark to its script face and the run splits between them: the
+// shaper then positions the mark as its own isolated run, at the pen position
+// AFTER the base rather than on top of it, which for a one-cell mask means
+// clipped away entirely. That is the whole difference between the terminal
+// surface (where the host's own fallback composes them) and this one.
 func (t *PurfecTerm) cellFamily(buf *purfecterm.Buffer, cell *purfecterm.Cell) string {
 	if cell.Font != 0 {
 		if fam := buf.GetFontSlot(int(cell.Font)); fam != "" {
 			return fam
 		}
 	}
-	if cls := purfecterm.ScriptClass(cell.Char); cls != "" {
+	cls := purfecterm.ScriptClass(cell.Char)
+	if cls == "" {
+		cls = combiningScriptClass(cell.Combining)
+		if cls != "" {
+			// The base has no script of its own, so nothing competes: name the
+			// mark's script face outright rather than leaving the cluster to
+			// per-rune fallback, which is what splits the run.
+			if fam := buf.GetScriptFont(cls); fam != "" {
+				return fam
+			}
+			return "ui-term-" + cls
+		}
+	}
+	if cls != "" {
 		if fam := buf.GetScriptFont(cls); fam != "" {
 			return fam
 		}
 	}
 	return t.primaryTermFamily()
+}
+
+// combiningScriptClass returns the script class of the first combining mark in
+// a cell that has one, or "" when the marks are all script-neutral (or there are
+// none). Marks of several scripts on one base is ill-formed text; the first one
+// decides, since some face has to.
+func combiningScriptClass(combining string) string {
+	for _, r := range combining {
+		if cls := purfecterm.ScriptClass(r); cls != "" {
+			return cls
+		}
+	}
+	return ""
 }
 
 // cellTextImage rasterizes one cell's glyph into a color-independent COVERAGE
@@ -1637,7 +1702,7 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 					dc := cell
 					var actx *arabicCellShape
 					if purfecterm.ScriptClass(cell.Char) == "arabic" {
-						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR)
+						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR, []rune(cell.Combining))
 					} else {
 						dc.Char = shaped
 					}
@@ -1748,52 +1813,86 @@ func (t *PurfecTerm) rotateGfxCaches() {
 // Scrollbars (overlay lanes)
 // ---------------------------------------------------------------
 
-// vScrollGeometry mirrors gtk updateScrollbar: upper = maxOffset+rows,
-// page = rows, value = maxOffset-offset (top of track = oldest).
-func (t *PurfecTerm) vScrollGeometry(bounds core.UnitRect) (track, thumb core.UnitRect, upper, page, value int, ok bool) {
-	buf := t.terminal.Buffer()
-	maxOffset := buf.GetMaxScrollOffset()
-	if maxOffset <= 0 {
-		return
-	}
-	_, rows := buf.GetSize()
-	upper = maxOffset + rows
-	page = rows
-	value = maxOffset - buf.GetScrollOffset()
-	track = core.UnitRect{X: bounds.Width - gfxScrollbarLane, Y: 0, Width: gfxScrollbarLane, Height: bounds.Height}
-	thumbLen := core.Unit(int(track.Height) * page / upper)
-	if thumbLen < 8 {
-		thumbLen = 8
-	}
-	if thumbLen > track.Height {
-		thumbLen = track.Height
-	}
-	span := upper - page
-	thumbY := core.Unit(0)
-	if span > 0 {
-		thumbY = core.Unit(int(track.Height-thumbLen) * value / span)
-	}
-	if t.gfx.vDragging {
-		// Mid-drag the thumb tracks the pointer smoothly; only the
-		// content offset above snapped to whole lines.
-		pos := t.gfx.vThumbPos
-		if limit := float64(track.Height - thumbLen); pos > limit {
-			pos = limit
-		}
-		if pos < 0 {
-			pos = 0
-		}
-		thumbY = core.Unit(pos + 0.5)
-	}
-	thumb = core.UnitRect{X: track.X, Y: thumbY, Width: gfxScrollbarLane, Height: thumbLen}
-	ok = true
-	return
+// pxRect is a rectangle in RENDER PIXELS — the terminal's own device-pixel
+// space, ppu times its units, the same space its cells are laid out in. The
+// scrollbars live here so they can sit flush against the trinket's far
+// edges and move at pixel granularity: unit rectangles quantize to the
+// HOST's cell grid on the way to the screen, which is what marched a
+// dragged thumb in cell-sized lurches and, in a hosted terminal at some
+// zooms, snapped the vertical lane clean past the clip so no bar showed
+// at all.
+type pxRect struct{ X, Y, W, H float64 }
+
+func (r pxRect) contains(x, y float64) bool {
+	return x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H
 }
 
-// hScrollGeometry mirrors gtk updateHorizScrollbar.
-func (t *PurfecTerm) hScrollGeometry(bounds core.UnitRect) (track, thumb core.UnitRect, contentW, cols, value int, ok bool) {
+// gfxPixelFrame is the trinket's available space in render pixels — the
+// extent the terminal's own pitch reaches, which for a hosted surface is
+// exactly what the covering clip guarantees visible. The scrollbars anchor
+// to its far right and bottom, un-quantized, overlaying content.
+func (t *PurfecTerm) gfxPixelFrame() (wPx, hPx, ppu float64) {
+	ppu = t.gfx.ppu
+	if ppu <= 0 {
+		ppu = 1
+	}
+	if t.gfx.vpWpx > 0 && t.gfx.vpHpx > 0 {
+		// The widget's real device extent. A bar pinned to the right or bottom
+		// edge must be pinned to THIS, not to bounds*ppu — those differ by the
+		// outer system's snapping, and the pointer arrives in the snapped
+		// space.
+		return t.gfx.vpWpx, t.gfx.vpHpx, ppu
+	}
+	b := t.Bounds()
+	return math.Round(float64(b.Width) * ppu), math.Round(float64(b.Height) * ppu), ppu
+}
+
+// lanePx is the lane thickness per axis. On a graphical surface both axes
+// share one pixel width, so the corner where the bars meet is a square. On a
+// cell surface a lane cannot be thinner than a character, so it is one CELL
+// column wide and one CELL row tall — the ScrollArea idiom.
+func (t *PurfecTerm) lanePx(ppu float64) (laneX, laneY float64) {
+	if t.gfxInputActive() {
+		lane := float64(gfxScrollbarLane) * ppu
+		return lane, lane
+	}
+	m := t.EffectiveCellMetrics()
+	return float64(m.CellWidth), float64(m.CellHeight)
+}
+
+// gfxPointerPx converts an incoming pointer position (trinket units) into the
+// pixels the terminal PAINTS in. Everything inside this widget — cells, the
+// scrollbar lanes, the frame gfxPixelFrame reports — is placed by multiplying
+// units by ppu and rounding, so a pointer must make exactly that trip and no
+// other. Scaling it by anything else puts the hit test in a different
+// coordinate space than the paint, and the error grows with distance from the
+// origin: the vertical lane, furthest right, misses worst.
+func (t *PurfecTerm) gfxPointerPx(x, y core.Unit) (float64, float64) {
+	_, _, ppu := t.gfxPixelFrame()
+	kx, ky := t.gfx.hitKX, t.gfx.hitKY
+	if kx <= 0 {
+		kx = 1
+	}
+	if ky <= 0 {
+		ky = 1
+	}
+	return float64(x) * kx * ppu, float64(y) * ky * ppu
+}
+
+// cellBoundaryPx is where a cell edge lands, in painted pixels: fillPixels
+// rounds EVERY edge independently, so the boundary before cell N sits at
+// round(units * ppu) — not at N times some rounded advance, and not at N times
+// a fractional one.
+func cellBoundaryPx(units, ppu float64) float64 {
+	return math.Round(units * ppu)
+}
+
+// hScrollActive reports whether the horizontal bar has anything to show —
+// the presence test hScrollGeometry applies, shared so the vertical lane can
+// stop where the horizontal one begins.
+func (t *PurfecTerm) hScrollActive() bool {
 	buf := t.terminal.Buffer()
-	cols, _ = buf.GetSize()
+	cols, _ := buf.GetSize()
 	maxContentWidth := 0
 	if buf.GetScrollOffset() > 0 {
 		maxContentWidth = buf.GetLongestLineVisible()
@@ -1801,76 +1900,200 @@ func (t *PurfecTerm) hScrollGeometry(bounds core.UnitRect) (track, thumb core.Un
 	if w := buf.GetSplitContentWidth(); w > maxContentWidth {
 		maxContentWidth = w
 	}
-	if maxContentWidth <= cols {
+	// A bar whose reason has gone but whose OFFSET remains stays: without
+	// it the view is stuck scrolled right with no way back — scrolling down
+	// past the wide line removed the bar while the columns stayed shifted.
+	// It lives on until the offset is worked back to zero, and from zero it
+	// cannot be dragged right again (span collapses with the offset).
+	return maxContentWidth > cols || buf.GetHorizOffset() > 0
+}
+
+// vScrollGeometry mirrors gtk updateScrollbar: upper = maxOffset+rows,
+// page = rows, value = maxOffset-offset (top of track = oldest). All
+// rectangles in render pixels; both lanes share one pixel width, and when
+// both bars are present the vertical lane STOPS at the horizontal lane's
+// top edge — each bar ends where the other begins, and the corner square
+// between them is left to the backdrop rather than fought over.
+func (t *PurfecTerm) vScrollGeometry() (track, thumb pxRect, upper, page, value int, ok bool) {
+	buf := t.terminal.Buffer()
+	maxOffset := buf.GetMaxScrollOffset()
+	if maxOffset <= 0 {
 		return
 	}
-	contentW = maxContentWidth
-	value = buf.GetHorizOffset()
-	track = core.UnitRect{X: 0, Y: bounds.Height - gfxScrollbarLane, Width: bounds.Width - gfxScrollbarLane, Height: gfxScrollbarLane}
-	thumbLen := core.Unit(int(track.Width) * cols / contentW)
-	if thumbLen < 8 {
-		thumbLen = 8
+	wPx, hPx, ppu := t.gfxPixelFrame()
+	laneX, laneY := t.lanePx(ppu)
+	_, rows := buf.GetSize()
+	upper = maxOffset + rows
+	page = rows
+	value = maxOffset - buf.GetScrollOffset()
+	trackH := hPx
+	if t.hScrollActive() {
+		trackH = hPx - laneY
+	} else if !t.gfxInputActive() {
+		// CELL surface: give the bottom lane cell up as the corner even with
+		// no horizontal bar. The widget's bottom-right cell may be the host
+		// terminal's unwritable corner, and stopping one cell short matches
+		// the spacing the corner square leaves when both bars are present —
+		// the thumb bottoms out on the second-to-last row, never clipped.
+		trackH = hPx - laneY
 	}
-	if thumbLen > track.Width {
-		thumbLen = track.Width
+	track = pxRect{X: wPx - laneX, Y: 0, W: laneX, H: trackH}
+	thumbLen := track.H * float64(page) / float64(upper)
+	// Minimum grab target: 8 device px on a graphical surface, one whole
+	// cell on a cell surface (where 8*ppu would mean 8 rows).
+	min := 8 * ppu
+	if !t.gfxInputActive() {
+		min = laneY
 	}
-	span := contentW - cols
-	thumbX := core.Unit(0)
+	if thumbLen < min {
+		thumbLen = min
+	}
+	if thumbLen > track.H {
+		thumbLen = track.H
+	}
+	span := upper - page
+	thumbY := 0.0
 	if span > 0 {
-		thumbX = core.Unit(int(track.Width-thumbLen) * value / span)
+		thumbY = (track.H - thumbLen) * float64(value) / float64(span)
 	}
-	if t.gfx.hDragging {
-		// Mid-drag the thumb tracks the pointer smoothly; only the
-		// content offset above snapped to whole columns.
-		pos := t.gfx.hThumbPos
-		if limit := float64(track.Width - thumbLen); pos > limit {
+	if t.gfx.vDragging {
+		// Mid-drag the thumb tracks the pointer at pixel granularity; only
+		// the content offset snaps to whole lines.
+		pos := t.gfx.vThumbPos
+		if limit := track.H - thumbLen; pos > limit {
 			pos = limit
 		}
 		if pos < 0 {
 			pos = 0
 		}
-		thumbX = core.Unit(pos + 0.5)
+		thumbY = pos
 	}
-	thumb = core.UnitRect{X: thumbX, Y: track.Y, Width: thumbLen, Height: gfxScrollbarLane}
+	thumb = pxRect{X: track.X, Y: thumbY, W: laneX, H: thumbLen}
+	ok = true
+	return
+}
+
+// hScrollGeometry mirrors gtk updateHorizScrollbar. Render pixels; its lane
+// is the same pixel width as the vertical one and stops where that one
+// begins, leaving a square between them.
+func (t *PurfecTerm) hScrollGeometry() (track, thumb pxRect, contentW, cols, value int, ok bool) {
+	buf := t.terminal.Buffer()
+	cols, _ = buf.GetSize()
+	if !t.hScrollActive() {
+		return
+	}
+	maxContentWidth := 0
+	if buf.GetScrollOffset() > 0 {
+		maxContentWidth = buf.GetLongestLineVisible()
+	}
+	if w := buf.GetSplitContentWidth(); w > maxContentWidth {
+		maxContentWidth = w
+	}
+	wPx, hPx, ppu := t.gfxPixelFrame()
+	laneX, laneY := t.lanePx(ppu)
+	value = buf.GetHorizOffset()
+	contentW = maxContentWidth
+	if min := cols + value; contentW < min {
+		// The offset outlived the wide content (see hScrollActive): the
+		// track's world is exactly the columns still reachable, so dragging
+		// left drains the offset and the right edge is already the wall.
+		contentW = min
+	}
+	track = pxRect{X: 0, Y: hPx - laneY, W: wPx - laneX, H: laneY}
+	thumbLen := track.W * float64(cols) / float64(contentW)
+	// Same minimum rule as the vertical bar: 8 px graphical, one cell on
+	// a cell surface.
+	min := 8 * ppu
+	if !t.gfxInputActive() {
+		min = laneX
+	}
+	if thumbLen < min {
+		thumbLen = min
+	}
+	if thumbLen > track.W {
+		thumbLen = track.W
+	}
+	span := contentW - cols
+	thumbX := 0.0
+	if span > 0 {
+		thumbX = (track.W - thumbLen) * float64(value) / float64(span)
+	}
+	if t.gfx.hDragging {
+		// Mid-drag the thumb tracks the pointer at pixel granularity; only
+		// the content offset snaps to whole columns.
+		pos := t.gfx.hThumbPos
+		if limit := track.W - thumbLen; pos > limit {
+			pos = limit
+		}
+		if pos < 0 {
+			pos = 0
+		}
+		thumbX = pos
+	}
+	thumb = pxRect{X: thumbX, Y: track.Y, W: thumbLen, H: laneY}
 	ok = true
 	return
 }
 
 func (t *PurfecTerm) paintScrollbarsGfx(p *core.Painter, bounds core.UnitRect, buf *purfecterm.Buffer, chh float64) {
-	trackStyle := style.DefaultStyle().WithFg(style.RGB(128, 128, 128)).WithBg(style.ColorTransparent)
 	thumbStyle := style.DefaultStyle().WithBg(style.RGB(168, 168, 168))
 	// Hovered thumb uses the scheme hover colour (fill = its FG), matching
 	// the rest of the toolkit's scrollbars.
 	hs := t.GetScheme().GetHoveredScrollbarThumb()
 	hoverThumb := hs.WithBg(hs.Fg)
-	if track, thumb, _, _, _, ok := t.vScrollGeometry(bounds); ok {
-		p.FillRect(track, '░', trackStyle)
+	// Pixel fills, not unit fills: the geometry is in render pixels so the
+	// lanes sit flush at the far edges and the thumb moves at pointer
+	// granularity — and FillRectPixels rides the painter's pixel residual,
+	// so a hosted terminal's bars shift with its content. The old rune-
+	// shaded track ('░' at cell granularity) has no pixel-space equivalent;
+	// a translucent grey wash reads the same.
+	fillPx := func(r pxRect, s style.CellStyle) {
+		x0, y0 := int(math.Round(r.X)), int(math.Round(r.Y))
+		x1, y1 := int(math.Round(r.X+r.W)), int(math.Round(r.Y+r.H))
+		if x1 > x0 && y1 > y0 {
+			p.FillRectPixels(0, 0, x0, y0, x1-x0, y1-y0, s)
+		}
+	}
+	trackWash := func(r pxRect) {
+		x0, y0 := int(math.Round(r.X)), int(math.Round(r.Y))
+		x1, y1 := int(math.Round(r.X+r.W)), int(math.Round(r.Y+r.H))
+		if x1 > x0 && y1 > y0 {
+			if !p.FillRectPixelsAlpha(0, 0, x0, y0, x1-x0, y1-y0, 128, 128, 128, 0.30) {
+				p.FillRectPixels(0, 0, x0, y0, x1-x0, y1-y0, style.DefaultStyle().WithBg(style.RGB(128, 128, 128)))
+			}
+		}
+	}
+	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok {
+		trackWash(track)
 		ts := thumbStyle
 		if t.gfx.vHover {
 			ts = hoverThumb
 		}
-		p.FillRect(thumb, ' ', ts)
+		fillPx(thumb, ts)
 	}
-	if track, thumb, _, _, _, ok := t.hScrollGeometry(bounds); ok {
-		p.FillRect(track, '░', trackStyle)
+	if track, thumb, _, _, _, ok := t.hScrollGeometry(); ok {
+		trackWash(track)
 		ts := thumbStyle
 		if t.gfx.hHover {
 			ts = hoverThumb
 		}
-		p.FillRect(thumb, ' ', ts)
+		fillPx(thumb, ts)
 	}
 }
 
 // updateScrollbarHoverGfx tracks whether the pointer is over either
 // scrollbar thumb, repainting only on change.
 func (t *PurfecTerm) updateScrollbarHoverGfx(x, y core.Unit) {
-	bounds := t.Bounds()
-	vh, hh := false, false
-	if _, thumb, _, _, _, ok := t.vScrollGeometry(bounds); ok {
-		vh = x >= thumb.X && x < thumb.X+thumb.Width && y >= thumb.Y && y < thumb.Y+thumb.Height
+	if !t.scrollLanesActive() {
+		return
 	}
-	if _, thumb, _, _, _, ok := t.hScrollGeometry(bounds); ok {
-		hh = x >= thumb.X && x < thumb.X+thumb.Width && y >= thumb.Y && y < thumb.Y+thumb.Height
+	px, py := t.gfxPointerPx(x, y)
+	vh, hh := false, false
+	if _, thumb, _, _, _, ok := t.vScrollGeometry(); ok {
+		vh = thumb.contains(px, py)
+	}
+	if _, thumb, _, _, _, ok := t.hScrollGeometry(); ok {
+		hh = thumb.contains(px, py)
 	}
 	if vh != t.gfx.vHover || hh != t.gfx.hHover {
 		t.gfx.vHover = vh
@@ -1882,26 +2105,29 @@ func (t *PurfecTerm) updateScrollbarHoverGfx(x, y core.Unit) {
 // scrollbarPress starts a scrollbar drag if the press lands in a
 // lane. Returns true when consumed.
 func (t *PurfecTerm) scrollbarPress(event core.MousePressEvent) bool {
-	bounds := t.Bounds()
-	if track, thumb, _, _, _, ok := t.vScrollGeometry(bounds); ok &&
-		event.X >= track.X && event.Y >= track.Y && event.Y < track.Y+track.Height {
+	if !t.scrollLanesActive() {
+		return false // no lanes to press (editor mode reclaims them)
+	}
+	px, py := t.gfxPointerPx(event.X, event.Y)
+	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok &&
+		px >= track.X && py >= track.Y && py < track.Y+track.H {
 		// Anchor the drag to the grab point within the thumb; a
 		// press on the track jumps the thumb center to the pointer.
-		if event.Y >= thumb.Y && event.Y < thumb.Y+thumb.Height {
-			t.gfx.vGrabOff = event.Y - thumb.Y
+		if py >= thumb.Y && py < thumb.Y+thumb.H {
+			t.gfx.vGrabOff = py - thumb.Y
 		} else {
-			t.gfx.vGrabOff = thumb.Height / 2
+			t.gfx.vGrabOff = thumb.H / 2
 		}
 		t.gfx.vDragging = true
 		t.scrollbarDragTo(event.X, event.Y)
 		return true
 	}
-	if track, thumb, _, _, _, ok := t.hScrollGeometry(bounds); ok &&
-		event.Y >= track.Y && event.X >= track.X && event.X < track.X+track.Width {
-		if event.X >= thumb.X && event.X < thumb.X+thumb.Width {
-			t.gfx.hGrabOff = event.X - thumb.X
+	if track, thumb, _, _, _, ok := t.hScrollGeometry(); ok &&
+		py >= track.Y && px >= track.X && px < track.X+track.W {
+		if px >= thumb.X && px < thumb.X+thumb.W {
+			t.gfx.hGrabOff = px - thumb.X
 		} else {
-			t.gfx.hGrabOff = thumb.Width / 2
+			t.gfx.hGrabOff = thumb.W / 2
 		}
 		t.gfx.hDragging = true
 		t.scrollbarDragTo(event.X, event.Y)
@@ -1911,13 +2137,13 @@ func (t *PurfecTerm) scrollbarPress(event core.MousePressEvent) bool {
 }
 
 func (t *PurfecTerm) scrollbarDragTo(x, y core.Unit) {
-	bounds := t.Bounds()
+	px, py := t.gfxPointerPx(x, y)
 	buf := t.terminal.Buffer()
 	if t.gfx.vDragging {
-		if track, thumb, upper, page, _, ok := t.vScrollGeometry(bounds); ok {
-			span := float64(track.Height - thumb.Height)
+		if track, thumb, upper, page, _, ok := t.vScrollGeometry(); ok {
+			span := track.H - thumb.H
 			if span > 0 {
-				pos := float64(y - track.Y - t.gfx.vGrabOff)
+				pos := py - track.Y - t.gfx.vGrabOff
 				if pos < 0 {
 					pos = 0
 				}
@@ -1925,6 +2151,8 @@ func (t *PurfecTerm) scrollbarDragTo(x, y core.Unit) {
 					pos = span
 				}
 				t.gfx.vThumbPos = pos
+				// The THUMB is pixel-smooth; only the content offset
+				// quantizes, to the whole line nearest the thumb.
 				value := int(pos*float64(upper-page)/span + 0.5)
 				maxOffset := buf.GetMaxScrollOffset()
 				buf.SetScrollOffset(maxOffset - value)
@@ -1933,10 +2161,10 @@ func (t *PurfecTerm) scrollbarDragTo(x, y core.Unit) {
 		}
 	}
 	if t.gfx.hDragging {
-		if track, thumb, contentW, cols, _, ok := t.hScrollGeometry(bounds); ok {
-			span := float64(track.Width - thumb.Width)
+		if track, thumb, contentW, cols, _, ok := t.hScrollGeometry(); ok {
+			span := track.W - thumb.W
 			if span > 0 {
-				pos := float64(x - track.X - t.gfx.hGrabOff)
+				pos := px - track.X - t.gfx.hGrabOff
 				if pos < 0 {
 					pos = 0
 				}
@@ -1967,20 +2195,18 @@ func (t *PurfecTerm) screenToCellGfx(x, y core.Unit) (cellX, cellY int) {
 		return 0, 0
 	}
 
-	// Scale the incoming click from outer (snapped) units into the
-	// terminal's render-unit space so the cell lookup below - which walks
-	// unit cell widths - matches the ppu-rendered grid without drift.
-	kx, ky := t.gfx.hitKX, t.gfx.hitKY
-	if kx <= 0 {
-		kx = 1
+	// The pointer scales onto the snapped frame (hitK), then the walk compares
+	// against boundaries rounded exactly as fillPixels rounds them. Dividing
+	// by a fractional advance instead accumulates error across the row and
+	// lands on the wrong cell the further along the pointer goes — visible as
+	// a selection that grabs the wrong column.
+	fx, fy := t.gfxPointerPx(x, y)
+	ppu := t.gfx.ppu
+	if ppu <= 0 {
+		ppu = 1
 	}
-	if ky <= 0 {
-		ky = 1
-	}
-	fx := float64(x) * kx
-	fy := float64(y) * ky
 
-	cellY = int(fy / chh)
+	cellY = int(fy / (chh * ppu))
 	cols, rows := buf.GetSize()
 	if cellY < 0 {
 		cellY = 0
@@ -2004,11 +2230,10 @@ func (t *PurfecTerm) screenToCellGfx(x, y core.Unit) (cellX, cellY int) {
 		if cell.CellWidth > 0 { // CellWidth is authoritative (see patches/purfecterm/PROTOCOL.md)
 			w = cell.CellWidth
 		}
-		cellPixelWidth := w * cw * lineScale
-		if relativeX < accumulated+cellPixelWidth {
+		accumulated += w * cw * lineScale
+		if relativeX < cellBoundaryPx(accumulated, ppu) {
 			return col, cellY
 		}
-		accumulated += cellPixelWidth
 	}
 	cellX = cols + horizOffset - 1
 	if cellX < 0 {
@@ -2032,16 +2257,21 @@ func (t *PurfecTerm) screenToVisualCellGfx(x, y core.Unit) (col, row int) {
 	if cw <= 0 || chh <= 0 {
 		return 0, 0
 	}
-	kx, ky := t.gfx.hitKX, t.gfx.hitKY
-	if kx <= 0 {
-		kx = 1
+	ppu := t.gfx.ppu
+	if ppu <= 0 {
+		ppu = 1
 	}
-	if ky <= 0 {
-		ky = 1
-	}
-	col = int(float64(x) * kx / cw)
-	row = int(float64(y) * ky / chh)
+	// Snapped frame for the pointer, rounded boundaries for the cells.
+	px, py := t.gfxPointerPx(x, y)
 	cols, rows := buf.GetSize()
+	col = 0
+	for col+1 < cols && px >= cellBoundaryPx(float64(col+1)*cw, ppu) {
+		col++
+	}
+	row = 0
+	for row+1 < rows && py >= cellBoundaryPx(float64(row+1)*chh, ppu) {
+		row++
+	}
 	if col < 0 {
 		col = 0
 	}
@@ -2057,9 +2287,85 @@ func (t *PurfecTerm) screenToVisualCellGfx(x, y core.Unit) (col, row int) {
 	return col, row
 }
 
-// sendMouseEventGfx forwards an xterm-encoded mouse event to the PTY
-// when the application requested tracking.
-func (t *PurfecTerm) sendMouseEventGfx(button, cellX, cellY int, press bool) bool {
+// gfxCellSubUnits is the width AND height, in synthetic "pixels", of one cell
+// on the grid the hosted app reads under SGR-Pixels (?1016) — reported to it as
+// the cell size via CSI 16 t. Device pixels can't be used directly: a cell's
+// painted advance (baseCell*scale*ppu) is fractional, and its boundaries land
+// at round(col*advance) — a PER-cell rounding. Uniform division of a device
+// pixel by one integer cell size (col*round(advance)) diverges from that,
+// drifting up to a full cell by the far edge of a wide/tall screen. Instead the
+// report puts the exact cell index (from the same rounding walk the paint uses)
+// in the high digits and the sub-cell fraction in the low gfxCellSubUnits — so
+// the app's own uniform division recovers the cell with no drift and the
+// remainder is the sub-cell position.
+const gfxCellSubUnits = 1000
+
+// pushCellPixelSizeGfx tells the hosted app that a cell is gfxCellSubUnits
+// "pixels" square (CSI 16 t). It is a constant — the synthetic grid, unlike
+// device pixels, does not move with font zoom — but is (re)asserted each paint
+// so a buffer rebuild never leaves it unset.
+func (t *PurfecTerm) pushCellPixelSizeGfx() {
+	t.terminal.Buffer().SetCellPixelSize(gfxCellSubUnits, gfxCellSubUnits)
+}
+
+// screenToPixelReportGfx maps trinket-unit coordinates onto the synthetic pixel
+// grid the hosted app reads under ?1016. Each axis is located by the SAME
+// per-cell rounding walk the paint uses (cellBoundaryPx), so the integer cell
+// never drifts from the glyph; the pointer's fraction across that one cell rides
+// in the low gfxCellSubUnits digits. 0-based, matching screenToVisualCellGfx.
+func (t *PurfecTerm) screenToPixelReportGfx(x, y core.Unit) (px, py int) {
+	buf := t.terminal.Buffer()
+	baseCW, baseCH := t.cellDims()
+	cw := float64(baseCW) * buf.GetHorizontalScale()
+	chh := float64(baseCH) * buf.GetVerticalScale()
+	if cw <= 0 || chh <= 0 {
+		return 0, 0
+	}
+	ppu := t.gfx.ppu
+	if ppu <= 0 {
+		ppu = 1
+	}
+	ptx, pty := t.gfxPointerPx(x, y)
+	cols, rows := buf.GetSize()
+	return pixelReportAxis(ptx, cw, ppu, cols), pixelReportAxis(pty, chh, ppu, rows)
+}
+
+// pixelReportAxis places a device-pixel coordinate pt on one axis of the
+// synthetic ?1016 grid. It walks to the cell containing pt exactly as
+// screenToVisualCellGfx does (boundaries rounded PER cell, cellBoundaryPx), then
+// measures pt's fraction across that cell's painted span. The result is
+// cell*gfxCellSubUnits + fraction, so dividing by gfxCellSubUnits recovers the
+// SAME cell the paint drew — no cumulative drift from a fractional advance —
+// while the remainder carries the sub-cell position. adv is the cell's unit
+// advance, ppu the pixels-per-unit, n the cell count on this axis.
+func pixelReportAxis(pt, adv, ppu float64, n int) int {
+	col := 0
+	for col+1 < n && pt >= cellBoundaryPx(float64(col+1)*adv, ppu) {
+		col++
+	}
+	left := cellBoundaryPx(float64(col)*adv, ppu)
+	right := cellBoundaryPx(float64(col+1)*adv, ppu)
+	frac := 0.0
+	if right > left {
+		frac = (pt - left) / (right - left)
+	}
+	if frac < 0 {
+		frac = 0
+	}
+	if frac > 0.999999 {
+		frac = 0.999999
+	}
+	return col*gfxCellSubUnits + int(frac*gfxCellSubUnits)
+}
+
+// reportMouseGfx forwards a mouse event to the hosted app, choosing the
+// coordinate space by the app's encoding mode. SGR-Pixels (?1016) reports a
+// position on the synthetic pixel grid (screenToPixelReportGfx): the cell is
+// located drift-free by the paint's own rounding, and the sub-cell fraction
+// lets a hosted editor land its caret on the nearest cell edge. Every other
+// mode reports the visual cell. x,y are the event's trinket-unit coordinates;
+// both paths are 1-based (the report space CSI 16 t declares).
+func (t *PurfecTerm) reportMouseGfx(button int, x, y core.Unit, press bool) bool {
 	if t.gfx.reportingDisabled {
 		return false
 	}
@@ -2067,7 +2373,15 @@ func (t *PurfecTerm) sendMouseEventGfx(button, cellX, cellY int, press bool) boo
 	if buf.GetMouseTrackingMode() == 0 {
 		return false
 	}
-	data := purfecterm.EncodeMouseEvent(button, cellX+1, cellY+1, press, buf.GetMouseEncodingMode())
+	var repX, repY int
+	if buf.GetMouseEncodingMode() == 1016 {
+		px, py := t.screenToPixelReportGfx(x, y)
+		repX, repY = px+1, py+1
+	} else {
+		col, row := t.screenToVisualCellGfx(x, y)
+		repX, repY = col+1, row+1
+	}
+	data := purfecterm.EncodeMouseEvent(button, repX, repY, press, buf.GetMouseEncodingMode())
 	if data == nil {
 		return false
 	}
@@ -2105,8 +2419,7 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.RightButton {
 		if forwardToPTY {
 			t.gfx.mouseDown = true
-			repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
-			t.sendMouseEventGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), repX, repY, true)
+			t.reportMouseGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 			return true
 		}
 		t.showContextMenu(event)
@@ -2119,8 +2432,7 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 			btn = purfecterm.MouseButtonMiddle
 		}
 		t.gfx.mouseDown = true
-		repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
-		t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), repX, repY, true)
+		t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 		return true
 	}
 
@@ -2162,8 +2474,7 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
 			if t.gfx.mouseDown {
 				btn = purfecterm.MouseButtonLeft | purfecterm.MouseMotionFlag
 			}
-			repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
-			t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), repX, repY, true)
+			t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 		}
 		return true
 	}
@@ -2237,7 +2548,6 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
-		cellX, cellY := t.screenToVisualCellGfx(event.X, event.Y)
 		btn := purfecterm.MouseButtonLeft
 		switch event.Button {
 		case core.MiddleButton:
@@ -2246,7 +2556,7 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 			btn = purfecterm.MouseButtonRight
 		}
 		t.gfx.mouseDown = false
-		t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, false)
+		t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, false)
 		return true
 	}
 
@@ -2278,21 +2588,20 @@ func (t *PurfecTerm) gfxMouseWheel(event core.MouseWheelEvent) bool {
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
-		cellX, cellY := t.screenToVisualCellGfx(event.X, event.Y)
 		mods := gfxMouseModifiers(event.Modifiers)
 		if event.DeltaY < 0 {
-			t.sendMouseEventGfx(purfecterm.MouseScrollUp|mods, cellX, cellY, true)
+			t.reportMouseGfx(purfecterm.MouseScrollUp|mods, event.X, event.Y, true)
 		} else if event.DeltaY > 0 {
-			t.sendMouseEventGfx(purfecterm.MouseScrollDown|mods, cellX, cellY, true)
+			t.reportMouseGfx(purfecterm.MouseScrollDown|mods, event.X, event.Y, true)
 		}
 		// Horizontal wheel: SGR buttons 66/67 continue purfecterm's scroll
 		// series (Up=64, Down=65). DeltaX>0 = scroll right. (An app whose input
 		// layer decodes 66/67 as left/right acts on it; older decoders that only
 		// know 64/65 ignore the extra buttons rather than mis-scroll vertically.)
 		if event.DeltaX < 0 {
-			t.sendMouseEventGfx(mouseScrollLeftBtn|mods, cellX, cellY, true)
+			t.reportMouseGfx(mouseScrollLeftBtn|mods, event.X, event.Y, true)
 		} else if event.DeltaX > 0 {
-			t.sendMouseEventGfx(mouseScrollRightBtn|mods, cellX, cellY, true)
+			t.reportMouseGfx(mouseScrollRightBtn|mods, event.X, event.Y, true)
 		}
 		return true
 	}
@@ -2706,6 +3015,13 @@ func (t *PurfecTerm) cellToLocal(col, row int) core.UnitPoint {
 		cw *= buf.GetHorizontalScale()
 		chh *= buf.GetVerticalScale()
 	}
+	// The inverse of the hit path, and it must share its frame: cells are
+	// placed at rounded pixel boundaries, so a cell's origin in units is that
+	// boundary divided back by ppu.
+	ppu := t.gfx.ppu
+	if ppu <= 0 {
+		ppu = 1
+	}
 	kx, ky := t.gfx.hitKX, t.gfx.hitKY
 	if kx <= 0 {
 		kx = 1
@@ -2714,8 +3030,8 @@ func (t *PurfecTerm) cellToLocal(col, row int) core.UnitPoint {
 		ky = 1
 	}
 	return core.UnitPoint{
-		X: core.Unit(float64(col-1) * cw / kx),
-		Y: core.Unit(float64(row-1) * chh / ky),
+		X: core.Unit(cellBoundaryPx(float64(col-1)*cw, ppu) / (kx * ppu)),
+		Y: core.Unit(cellBoundaryPx(float64(row-1)*chh, ppu) / (ky * ppu)),
 	}
 }
 

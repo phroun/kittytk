@@ -2,7 +2,7 @@
 package trinkets
 
 import (
-	"fmt"
+	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
@@ -21,6 +21,12 @@ type PurfecTerm struct {
 
 	// Cached size in cells
 	cols, rows int
+
+	// embeddedFocus makes this terminal BEHAVE as the focused one without
+	// holding the toolkit's focus — a terminal hosted inside another focused
+	// trinket, which is painted by its host and never enters the focus chain.
+	// See SetEmbeddedFocus.
+	embeddedFocus atomic.Bool
 
 	// termFont sets the terminal's own font (graphical mode): the
 	// cell grid derives from ITS measured metrics (advance width and
@@ -116,7 +122,53 @@ func NewPurfecTerm() *PurfecTerm {
 		return true
 	})
 
+	// OSC 52: the one channel a program running INSIDE this terminal has to
+	// the system clipboard. vim's "+y, tmux's set-clipboard, neovim, emacs
+	// and a mew hosted in an exec session all emit it, and without this they
+	// believe they copied while nothing anywhere changed.
+	//
+	// Writes act; reads are the emulator's decision and it denies them by
+	// default, because a query lets anything that can print to the terminal
+	// read the user's clipboard. We do not override that here — a front end
+	// that wants it should ask the user first, and there is nowhere to ask
+	// from inside this constructor.
+	t.terminal.SetOnClipboard(func(ev purfecterm.ClipboardEvent, reply func([]byte)) {
+		d := t.findDesktop()
+		if d == nil {
+			return // orphaned: no desktop, no clipboard
+		}
+		if ev.Query {
+			if reply != nil {
+				d.ReadClipboardAsync(func(s string) { reply([]byte(s)) })
+			}
+			return
+		}
+		// A clear arrives as nil Data, and setting the clipboard to "" is
+		// how this desktop expresses that.
+		d.SetClipboard(string(ev.Data))
+	})
+
 	return t
+}
+
+// SetClipboardReadAllowed opts this terminal in to ANSWERING OSC 52 clipboard
+// queries from the program running inside it. Off by default, and the default
+// is the right one for most apps: a query lets anything that can print to the
+// terminal — a cat'ed file, a script's output — read the user's clipboard,
+// which is regularly a password.
+//
+// Turning it off costs little. Pasting INTO a terminal program normally goes
+// the other way: the user's Paste sends the clipboard as bracketed input, and
+// the guest sees typed text. Only a guest asking for the clipboard ITSELF
+// (mew's own os_paste under a TUI, vim's "+p) is affected, and it gets an
+// empty answer rather than hanging.
+func (t *PurfecTerm) SetClipboardReadAllowed(allow bool) {
+	if t.terminal == nil {
+		return
+	}
+	pol := purfecterm.DefaultClipboardPolicy()
+	pol.AllowRead = allow
+	t.terminal.SetClipboardPolicy(pol)
 }
 
 // SetInputSink installs the callback that receives bytes destined for the
@@ -141,6 +193,16 @@ func (t *PurfecTerm) SetResizeSink(fn func(cols, rows int)) {
 func (t *PurfecTerm) toChild(b []byte) {
 	if len(b) == 0 {
 		return
+	}
+	// Input is input, whoever originated it: a tinput, a paste, a click. The
+	// caret must not still be in its dark half when the user has just acted,
+	// so restart the phase the way a keystroke does.
+	//
+	// Except mouse MOTION. An editor surface encodes pointer movement and
+	// sends it on just as a terminal does, so a caret woken here would be
+	// re-woken by every pixel the mouse travels and would never blink at all.
+	if !isMouseMotionReport(b) {
+		t.resetCursorBlink()
 	}
 	if t.inputSink != nil {
 		t.inputSink(b)
@@ -199,6 +261,43 @@ func (t *PurfecTerm) emitResize(cols, rows int) {
 	}
 }
 
+// SetEmbeddedFocus tells a terminal to behave as THE FOCUSED terminal even
+// though it does not hold the toolkit's focus.
+//
+// For a terminal HOSTED inside another focused trinket, which never enters the
+// focus chain at all: it has no parent, receives no events, and is painted by
+// its host. mew's exec sessions are the case — mew keeps keyboard focus so its
+// own keymap still runs (^B N still switches buffers) while the child process
+// is the thing the user is actually typing at. Everything a terminal does
+// differently when focused has to follow the user's attention rather than the
+// toolkit's bookkeeping, or it reads as dead: the cursor paints its unfocused
+// hollow-box form, it does not blink, and the platform caret stays behind.
+//
+// So this is the whole notion of focus and not just the caret: it drives
+// gfxFocused (cursor form and blink), the platform caret request, and the
+// emulator's own focused flag — which is what a child process sees when it
+// asked for focus reporting. Exactly one child should hold it at a time.
+func (t *PurfecTerm) SetEmbeddedFocus(b bool) {
+	if t.embeddedFocus.Swap(b) == b {
+		return
+	}
+	// The emulator tracks focus too (focus reporting to the child, input
+	// gating); keep its answer the same as ours. A real focus change goes
+	// through HandleFocusIn/Out, which does the same thing.
+	if t.terminal != nil && !t.HasFocus() {
+		t.terminal.SetFocused(b)
+	}
+	t.Update()
+}
+
+// EmbeddedFocus reports whether this terminal was told to behave as focused
+// without holding focus. See SetEmbeddedFocus.
+func (t *PurfecTerm) EmbeddedFocus() bool { return t.embeddedFocus.Load() }
+
+// focused is the terminal's effective focus: the toolkit's, or a host's
+// declaration on its behalf. Every focus-dependent behaviour asks this.
+func (t *PurfecTerm) focused() bool { return t.HasFocus() || t.embeddedFocus.Load() }
+
 // CursorShape implements core.CursorProvider: the terminal shows the
 // text I-beam while hovered, like any text surface.
 func (t *PurfecTerm) CursorShape() core.CursorShape {
@@ -241,16 +340,16 @@ func (t *PurfecTerm) EditorMode() bool { return t.editorMode }
 // overScrollLane reports whether a local point falls in either scrollbar
 // track, mirroring scrollbarPress's hit tests.
 func (t *PurfecTerm) overScrollLane(x, y core.Unit) bool {
-	if t.editorMode {
-		return false // no scrollbar lanes in editor mode
+	if !t.scrollLanesActive() {
+		return false // lanes exist only where they are painted
 	}
-	bounds := t.Bounds()
-	if track, _, _, _, _, ok := t.vScrollGeometry(bounds); ok &&
-		x >= track.X && y >= track.Y && y < track.Y+track.Height {
+	px, py := t.gfxPointerPx(x, y)
+	if track, _, _, _, _, ok := t.vScrollGeometry(); ok &&
+		px >= track.X && py >= track.Y && py < track.Y+track.H {
 		return true
 	}
-	if track, _, _, _, _, ok := t.hScrollGeometry(bounds); ok &&
-		y >= track.Y && x >= track.X && x < track.X+track.Width {
+	if track, _, _, _, _, ok := t.hScrollGeometry(); ok &&
+		py >= track.Y && px >= track.X && px < track.X+track.W {
 		return true
 	}
 	return false
@@ -425,14 +524,21 @@ func (t *PurfecTerm) updateTerminalSize() {
 	cw, ch := t.cellDims()
 
 	width := bounds.Width
-	if t.gfxInputActive() && !t.editorMode {
-		// The vertical scrollbar lane is present on pixel surfaces
-		// (except in editor mode, where text owns the full width):
-		// reserve its width so it never covers text.
-		width -= gfxScrollbarLane
+	height := bounds.Height
+	if !t.editorMode {
+		// On a CELL surface the bars cannot overlay content — a character
+		// cell holds a bar OR a glyph — so an active bar RESERVES its whole
+		// column (vertical) or row (horizontal) and the grid shrinks around
+		// it. Overlay is a pixel-surface luxury.
+		if t.terminal != nil && t.terminal.Buffer().GetMaxScrollOffset() > 0 {
+			width -= cw
+		}
+		if t.terminal != nil && t.hScrollActive() {
+			height -= ch
+		}
 	}
 	newCols := int(width / cw)
-	newRows := int(bounds.Height / ch)
+	newRows := int(height / ch)
 
 	if newCols > 0 && newRows > 0 && (newCols != t.cols || newRows != t.rows) {
 		t.cols = newCols
@@ -460,6 +566,11 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 		t.paintGraphical(p, bounds)
 		return
 	}
+
+	// The scrollbar reservation depends on live buffer state (scrollback
+	// appears without any resize), so re-derive the grid before painting;
+	// updateTerminalSize no-ops when nothing changed.
+	t.updateTerminalSize()
 
 	// Get terminal cells
 	cells := t.terminal.GetCells()
@@ -505,6 +616,13 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 
 			// Convert purfecterm cell to KittyTK style
 			cellStyle := t.cellToStyle(cell)
+			// Local selection, same source of truth as the graphical path
+			// (buf.IsInSelection): the scheme's selection colour as the
+			// background. The cell loop never showed it before — selection
+			// WORKED on the cell surface and was simply invisible.
+			if buf.IsInSelection(col, row) {
+				cellStyle = cellStyle.WithBg(t.convertColor(t.gfxScheme().Selection))
+			}
 
 			// Get the character (use space if empty)
 			ch := cell.Char
@@ -528,6 +646,10 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 		}
 	}
 
+	if !t.editorMode {
+		t.paintScrollbarsCell(p, bounds)
+	}
+
 	// The cursor. A FOCUSED terminal asks the platform for its real caret, so
 	// the outer terminal draws the shape DECSCUSR selected and blinks it
 	// natively — a bar stays a bar, which no cell grid can represent. An
@@ -535,7 +657,12 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 	// its caret sits. Either way, a terminal that hid its own cursor (vim,
 	// emacs, mew between frames) gets neither.
 	if buf.IsCursorVisible() {
-		cursorCol, cursorRow := buf.GetCursor()
+		// The VISIBLE position, not the logical one: scrolled back, the
+		// cursor's row is off-screen and the visible position reports -1 —
+		// exactly what the graphical path consults. Using GetCursor here
+		// left the caret painted at its logical row while the view showed
+		// scrollback, tracking nothing.
+		cursorCol, cursorRow := buf.GetCursorVisiblePosition()
 		if cursorRow >= 0 && cursorRow < len(cells) && cursorCol >= 0 && cursorCol < t.cols {
 			// The logical cursor column maps to a visual column through the
 			// accumulated widths of the cells before it (doubled on a DEC
@@ -556,7 +683,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 			cursorX := metrics.CellToUnitsX(int(acc))
 			cursorY := metrics.CellToUnitsY(cursorRow)
 			if cursorX < bounds.Width && cursorY < bounds.Height {
-				if t.HasFocus() {
+				if t.focused() {
 					// Hand the platform the caret, in the shape the terminal
 					// asked for. Nothing is painted here: the real cursor is
 					// drawn by the surface underneath us. (Only ever a CELL
@@ -743,200 +870,82 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 	if t.terminal == nil {
 		return true
 	}
-	if t.gfxInputActive() {
-		// Graphical path: local selection, mouse reporting with the
-		// Shift bypass, scrollbars, and the right-click context menu.
-		return t.gfxMousePress(event)
-	}
-
-	// Track held button for drag events
-	t.heldButton = event.Button
-
-	// Convert unit coordinates to cell coordinates (terminal-font
-	// cells, which equal toolkit cells for the default font)
-	cw, chh := t.cellDims()
-	cellCol := int(event.X / cw)  // 0-based for internal use
-	cellRow := int(event.Y / chh) // 0-based for internal use
-
-	// Debug callback - extract cell info
+	// A click is user action: show the caret at once. This is its own call
+	// because a press need not reach the child — a local selection sends
+	// nothing — so toChild's reset would never fire for it.
+	t.resetCursorBlink()
+	// Debug callback - extract cell info for the clicked cell.
 	if t.onCellClicked != nil {
-		cells := t.terminal.GetCells()
-		if cellRow < len(cells) && cellCol < len(cells[cellRow]) {
-			cell := cells[cellRow][cellCol]
-			info := CellDebugInfo{
-				Col:       cellCol,
-				Row:       cellRow,
-				Char:      cell.Char,
-				Bold:      cell.Bold,
-				Underline: cell.Underline,
-				Reverse:   cell.Reverse,
-			}
-			// Extract foreground color info
-			switch cell.Fg.Type {
-			case purfecterm.ColorTypeTrueColor:
-				info.FgType = "RGB"
-				info.FgR, info.FgG, info.FgB = cell.Fg.R, cell.Fg.G, cell.Fg.B
-			case purfecterm.ColorTypePalette:
-				info.FgType = "256"
-				info.FgIndex = cell.Fg.Index
-			case purfecterm.ColorTypeStandard:
-				info.FgType = "Std"
-				info.FgIndex = cell.Fg.Index
-			default:
-				info.FgType = "Def"
-			}
-			// Extract background color info
-			switch cell.Bg.Type {
-			case purfecterm.ColorTypeTrueColor:
-				info.BgType = "RGB"
-				info.BgR, info.BgG, info.BgB = cell.Bg.R, cell.Bg.G, cell.Bg.B
-			case purfecterm.ColorTypePalette:
-				info.BgType = "256"
-				info.BgIndex = cell.Bg.Index
-			case purfecterm.ColorTypeStandard:
-				info.BgType = "Std"
-				info.BgIndex = cell.Bg.Index
-			default:
-				info.BgType = "Def"
-			}
-			t.onCellClicked(info)
-		}
+		t.reportCellDebug(event.X, event.Y)
 	}
-
-	// Convert to 1-based coordinates for CLI adapter
-	cellX := cellCol + 1
-	cellY := cellRow + 1
-
-	// App-owned mouse: relay the encoded press straight to the child.
-	if mode, enc := t.mouseTracking(); mode != 0 {
-		if btn, ok := purfMouseButton(event.Button); ok {
-			// Carry the modifier bits (shift/alt/ctrl) so the app can see a
-			// shift+click — an editor guest extends its selection on it.
-			t.sendMouseReport(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, true, enc)
-		}
-		t.Update()
-		return true
-	}
-
-	// Send position update first
-	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
-
-	// Send button press
-	var buttonStr string
-	switch event.Button {
-	case core.LeftButton:
-		buttonStr = "MouseLeftPress"
-	case core.MiddleButton:
-		buttonStr = "MouseMiddlePress"
-	case core.RightButton:
-		buttonStr = "MouseRightPress"
-	default:
-		return true
-	}
-	t.terminal.HandleKeyString(buttonStr)
-	t.Update()
-	return true
+	// ONE input path for both desktops. The full behavior set — local
+	// selection, mouse reporting with the Shift bypass, the right-click
+	// context menu — is buffer state and byte relay, none of it pixel-bound;
+	// only the scrollbar lanes are, and those gate themselves (they exist
+	// only where they are painted). The cell surface used to take a
+	// forward-to-child-only path here, which is why a hosted terminal on the
+	// TUI had no selection, no wheel scrollback and no context menu at all.
+	return t.gfxMousePress(event)
 }
 
-// HandleMouseRelease handles mouse button releases.
+// reportCellDebug extracts the clicked cell's contents for the debug hook.
+func (t *PurfecTerm) reportCellDebug(x, y core.Unit) {
+	cw, chh := t.cellDims()
+	cellCol := int(x / cw)
+	cellRow := int(y / chh)
+	cells := t.terminal.GetCells()
+	if cellRow >= len(cells) || cellCol >= len(cells[cellRow]) {
+		return
+	}
+	cell := cells[cellRow][cellCol]
+	info := CellDebugInfo{
+		Col:       cellCol,
+		Row:       cellRow,
+		Char:      cell.Char,
+		Bold:      cell.Bold,
+		Underline: cell.Underline,
+		Reverse:   cell.Reverse,
+	}
+	switch cell.Fg.Type {
+	case purfecterm.ColorTypeTrueColor:
+		info.FgType = "RGB"
+		info.FgR, info.FgG, info.FgB = cell.Fg.R, cell.Fg.G, cell.Fg.B
+	case purfecterm.ColorTypePalette:
+		info.FgType = "256"
+		info.FgIndex = cell.Fg.Index
+	case purfecterm.ColorTypeStandard:
+		info.FgType = "Std"
+		info.FgIndex = cell.Fg.Index
+	default:
+		info.FgType = "Def"
+	}
+	switch cell.Bg.Type {
+	case purfecterm.ColorTypeTrueColor:
+		info.BgType = "RGB"
+		info.BgR, info.BgG, info.BgB = cell.Bg.R, cell.Bg.G, cell.Bg.B
+	case purfecterm.ColorTypePalette:
+		info.BgType = "256"
+		info.BgIndex = cell.Bg.Index
+	case purfecterm.ColorTypeStandard:
+		info.BgType = "Std"
+		info.BgIndex = cell.Bg.Index
+	default:
+		info.BgType = "Def"
+	}
+	t.onCellClicked(info)
+}
 func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if t.terminal == nil {
 		return false
 	}
-	if t.gfxInputActive() {
-		return t.gfxMouseRelease(event)
-	}
-
-	// Containers broadcast releases to every child; only act on a
-	// release whose press we actually saw, so sibling trinkets are not
-	// starved and the terminal never receives a release for a press
-	// that landed elsewhere.
-	if t.heldButton != event.Button {
-		return false
-	}
-	t.heldButton = core.NoButton
-
-	// Convert unit coordinates to 1-based cell coordinates
-	cw, chh := t.cellDims()
-	cellX := int(event.X/cw) + 1
-	cellY := int(event.Y/chh) + 1
-
-	// App-owned mouse: relay the encoded release straight to the child.
-	if mode, enc := t.mouseTracking(); mode != 0 {
-		if btn, ok := purfMouseButton(event.Button); ok {
-			t.sendMouseReport(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, false, enc)
-		}
-		t.Update()
-		return true
-	}
-
-	// Send position update first
-	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
-
-	// Send button release
-	var buttonStr string
-	switch event.Button {
-	case core.LeftButton:
-		buttonStr = "MouseLeftRelease"
-	case core.MiddleButton:
-		buttonStr = "MouseMiddleRelease"
-	case core.RightButton:
-		buttonStr = "MouseRightRelease"
-	default:
-		return false
-	}
-	t.terminal.HandleKeyString(buttonStr)
-	t.Update()
-	return true
+	return t.gfxMouseRelease(event)
 }
-
-// HandleMouseMove handles mouse movement/drag events.
 func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if t.terminal == nil {
 		return false
 	}
-	if t.gfxInputActive() {
-		return t.gfxMouseMove(event)
-	}
-
-	// Convert unit coordinates to 1-based cell coordinates
-	cw, chh := t.cellDims()
-	cellX := int(event.X/cw) + 1
-	cellY := int(event.Y/chh) + 1
-
-	// App-owned mouse: relay motion per the tracking mode — drags from 1002
-	// up, plain motion only under all-motion (1003). Motion the mode does
-	// not report is swallowed (the app owns the mouse either way).
-	if mode, enc := t.mouseTracking(); mode != 0 {
-		mods := gfxMouseModifiers(event.Modifiers)
-		if btn, ok := purfMouseButton(t.heldButton); ok {
-			if mode >= 1002 {
-				t.sendMouseReport(btn|purfecterm.MouseMotionFlag|mods, cellX, cellY, true, enc)
-			}
-		} else if mode >= 1003 {
-			t.sendMouseReport(purfecterm.MouseButtonNone|purfecterm.MouseMotionFlag|mods, cellX, cellY, true, enc)
-		}
-		t.Update()
-		return true
-	}
-
-	// Use tracked button state for drag events (since event.Buttons may not be set)
-	switch t.heldButton {
-	case core.LeftButton:
-		t.terminal.HandleKeyString(fmt.Sprintf("MouseLeftDrag@%d,%d", cellX, cellY))
-	case core.MiddleButton:
-		t.terminal.HandleKeyString(fmt.Sprintf("MouseMiddleDrag@%d,%d", cellX, cellY))
-	case core.RightButton:
-		t.terminal.HandleKeyString(fmt.Sprintf("MouseRightDrag@%d,%d", cellX, cellY))
-	default:
-		// Plain movement (for mouse tracking modes)
-		t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
-	}
-	t.Update()
-	return true
+	return t.gfxMouseMove(event)
 }
-
-// HandleMouseWheel handles scroll wheel events.
 func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	if t.terminal == nil {
 		return false
@@ -944,50 +953,8 @@ func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	// Terminals consume every wheel over them; claim the gesture so
 	// pointer drift mid-scroll cannot re-target (core wheel latch).
 	core.ClaimWheelGesture(event, t.HandleMouseWheel)
-	if t.gfxInputActive() {
-		return t.gfxMouseWheel(event)
-	}
-
-	// Convert unit coordinates to 1-based cell coordinates
-	cw, chh := t.cellDims()
-	cellX := int(event.X/cw) + 1
-	cellY := int(event.Y/chh) + 1
-
-	// App-owned mouse: relay the wheel as scroll-button presses.
-	if mode, enc := t.mouseTracking(); mode != 0 {
-		if event.DeltaY < 0 {
-			t.sendMouseReport(purfecterm.MouseScrollUp, cellX, cellY, true, enc)
-		} else if event.DeltaY > 0 {
-			t.sendMouseReport(purfecterm.MouseScrollDown, cellX, cellY, true, enc)
-		}
-		if event.DeltaX < 0 {
-			t.sendMouseReport(mouseScrollLeftBtn, cellX, cellY, true, enc)
-		} else if event.DeltaX > 0 {
-			t.sendMouseReport(mouseScrollRightBtn, cellX, cellY, true, enc)
-		}
-		t.Update()
-		return true
-	}
-
-	// Send position update first
-	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
-
-	// Send scroll event based on direction
-	if event.DeltaY < 0 {
-		t.terminal.HandleKeyString("MouseScrollUp")
-	} else if event.DeltaY > 0 {
-		t.terminal.HandleKeyString("MouseScrollDown")
-	}
-	if event.DeltaX < 0 {
-		t.terminal.HandleKeyString("MouseScrollLeft")
-	} else if event.DeltaX > 0 {
-		t.terminal.HandleKeyString("MouseScrollRight")
-	}
-	t.Update()
-	return true
+	return t.gfxMouseWheel(event)
 }
-
-// HandleFocusIn is called when the trinket gains focus.
 func (t *PurfecTerm) HandleFocusIn() {
 	t.TrinketBase.HandleFocusIn()
 	if t.terminal != nil {
@@ -1023,6 +990,11 @@ func (t *PurfecTerm) Feed(data []byte) {
 		return
 	}
 	t.terminal.Feed(data)
+	// Deliberately NOT a blink reset. Fed bytes are not user action: a host
+	// re-renders for its own reasons — a mouse MOVE is enough — and waking
+	// the caret here held it permanently lit, which is the opposite of the
+	// bug. A hosted terminal is woken by its session's input instead; see
+	// blinkWakingSession.
 	t.Update()
 }
 
@@ -1064,4 +1036,46 @@ func (t *PurfecTerm) AccessibleInfo() core.AccessibleInfo {
 	info.Role = core.RoleTerminal
 	info.Name = "Terminal"
 	return info
+}
+
+// paintScrollbarsCell draws the scrollbars on a CELL surface, in the
+// ScrollArea idiom: a '░' track one cell wide (or tall), a '█' thumb, whole
+// cells only. The grid has already RESERVED this column/row (see
+// updateTerminalSize) — on a cell surface a bar cannot overlay content, a
+// cell holds a bar or a glyph.
+func (t *PurfecTerm) paintScrollbarsCell(p *core.Painter, bounds core.UnitRect) {
+	m := t.EffectiveCellMetrics()
+	cw, ch := m.CellWidth, m.CellHeight
+	if cw <= 0 || ch <= 0 {
+		return
+	}
+	// The same styles the ScrollBar trinket paints with (ScrollArea's
+	// bars), so terminal bars match the rest of the TUI. On a cell surface
+	// the hover state never paints (see ScrollBar.paintHorizontal).
+	scheme := t.GetScheme()
+	trackStyle := scheme.GetScrollbar()
+	thumbStyle := scheme.GetScrollbarThumbState(false)
+
+	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok {
+		// Geometry is in render px, which on a cell surface is units
+		// (ppu 1). Snap to whole cells.
+		x := core.Unit(track.X) / cw * cw
+		p.FillRect(core.UnitRect{X: x, Y: 0, Width: cw, Height: core.Unit(track.H)}, '░', trackStyle)
+		y0 := core.Unit(thumb.Y) / ch * ch
+		y1 := core.Unit(thumb.Y+thumb.H+float64(ch)-1) / ch * ch
+		if y1 <= y0 {
+			y1 = y0 + ch
+		}
+		p.FillRect(core.UnitRect{X: x, Y: y0, Width: cw, Height: y1 - y0}, '█', thumbStyle)
+	}
+	if track, thumb, _, _, _, ok := t.hScrollGeometry(); ok {
+		y := core.Unit(track.Y) / ch * ch
+		p.FillRect(core.UnitRect{X: 0, Y: y, Width: core.Unit(track.W), Height: ch}, '░', trackStyle)
+		x0 := core.Unit(thumb.X) / cw * cw
+		x1 := core.Unit(thumb.X+thumb.W+float64(cw)-1) / cw * cw
+		if x1 <= x0 {
+			x1 = x0 + cw
+		}
+		p.FillRect(core.UnitRect{X: x0, Y: y, Width: x1 - x0, Height: ch}, '█', thumbStyle)
+	}
 }

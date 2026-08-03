@@ -223,11 +223,28 @@ type Desktop struct {
 	// repaint tick drives their animation alongside the desktop's.
 	tornHosts []*window.TearOffHost
 
+	// tearing marks windows whose createTornHost is in flight, so a
+	// re-entrant tear of the SAME window is a no-op. createTornHost only
+	// latches its "claimed" state (removed from the manager, SetDetached)
+	// AFTER platform.CreateSurface, and on the SDL backend creating that OS
+	// window fires a WindowResized event-watch that drains the post queue
+	// synchronously - re-running a deferred soloAdoptWindow for this very
+	// window while its guards still read "not yet torn". Without this the
+	// window would be hosted on two surfaces at once (a double/ghost dialog
+	// in solo mode). Guarded by d.mu.
+	tearing map[*window.Window]bool
+
 	// soloPrimaryHost is the tear-off host on the desktop's own OS
 	// surface in solo mode (the one window that can't just be closed,
 	// because that surface owns the event loop). When its window closes,
 	// a remaining window is promoted onto the primary surface.
 	soloPrimaryHost *window.TearOffHost
+
+	// aboutBox is the built-in About KittyTK dialog while it is open, so the
+	// R-key rotation easter egg can be gated to its focus (see
+	// aboutBoxFocused, wired onto the platform in RunOn). Cleared when the
+	// dialog closes. Guarded by d.mu.
+	aboutBox *window.Window
 
 	// soloHosting is true while a window is being lifted onto the primary
 	// surface. The lift removes the window from the manager, which fires
@@ -434,6 +451,30 @@ func (d *Desktop) showAboutDesktop() {
 		y = metrics.RoundDownToCellY(y)
 	}
 	mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
+
+	// Track it while open so the R-key rotation easter egg can be gated to its
+	// focus (aboutBoxFocused). Clear the reference when it closes.
+	d.mu.Lock()
+	d.aboutBox = &mb.Window
+	d.mu.Unlock()
+	mb.Window.AddOnClosed(func() {
+		d.mu.Lock()
+		if d.aboutBox == &mb.Window {
+			d.aboutBox = nil
+		}
+		d.mu.Unlock()
+	})
+}
+
+// aboutBoxFocused reports whether the built-in About KittyTK dialog is open and
+// is the active window. It is the gate for the R-key rotation easter egg (wired
+// onto the platform in RunOn), so the effect is reachable only from that dialog
+// and R stays an ordinary key everywhere else.
+func (d *Desktop) aboutBoxFocused() bool {
+	d.mu.RLock()
+	ab := d.aboutBox
+	d.mu.RUnlock()
+	return ab != nil && ab.IsActive()
 }
 
 // SetBackend sets the render backend and initializes related components.
@@ -2010,14 +2051,24 @@ type menuBuckets struct {
 	custom []*Menu
 	window *Menu
 	help   *Menu
+	// anchored holds untagged menus that asked to sit after a particular
+	// well-known SLOT rather than in the trailing custom block, keyed by that
+	// slot and preserving declared order within it. The slot need not be
+	// filled: anchoring after "file" in an app with no file menu still lands
+	// ahead of edit, so placement does not shift when a neighbour is added or
+	// removed.
+	anchored map[string][]*Menu
 }
 
 // declaredAny reports whether the app contributed any menu at all.
 func (b menuBuckets) declaredAny() bool {
 	return b.app != nil || b.file != nil || b.edit != nil || b.sel != nil ||
 		b.format != nil || b.view != nil || b.window != nil || b.help != nil ||
-		len(b.custom) > 0
+		len(b.custom) > 0 || len(b.anchored) > 0
 }
+
+// after returns the menus anchored to a well-known slot, in declared order.
+func (b menuBuckets) after(slot string) []*Menu { return b.anchored[slot] }
 
 // bucketMenus sorts an app's declared menus into their well-known roles so
 // the system can lay them out in the canonical order (app, file, edit,
@@ -2068,6 +2119,15 @@ func bucketMenus(menus []*Menu) menuBuckets {
 				continue
 			}
 		}
+		// Untagged (or a duplicate role): an anchor places it after a
+		// well-known slot, otherwise it joins the trailing custom block.
+		if a := m.Anchor(); a != "" && m.WellKnownID() == "" {
+			if b.anchored == nil {
+				b.anchored = map[string][]*Menu{}
+			}
+			b.anchored[a] = append(b.anchored[a], m)
+			continue
+		}
 		b.custom = append(b.custom, m)
 	}
 	return b
@@ -2079,21 +2139,36 @@ func bucketMenus(menus []*Menu) menuBuckets {
 // leading app menu and the trailing Window/Help menus are placed by the
 // caller (they differ between the docked and detached bars).
 func (d *Desktop) appendAppBody(add func(*Menu), app ApplicationProvider, b menuBuckets) {
+	// Each well-known slot is followed by whatever anchored itself there,
+	// whether or not the slot's own menu exists — the anchor names the SLOT,
+	// so an app's layout does not shift when a neighbouring menu comes or
+	// goes. Unanchored customs keep the trailing block, after view.
+	addAnchored := func(slot string) {
+		for _, m := range b.after(slot) {
+			add(m)
+		}
+	}
+	addAnchored(MenuIDApp)
 	if b.file != nil {
 		add(b.file)
 	}
+	addAnchored(MenuIDFile)
 	if em := d.systemEditMenu(app, b.edit); em != nil {
 		add(em)
 	}
+	addAnchored(MenuIDEdit)
 	if b.sel != nil {
 		add(b.sel)
 	}
+	addAnchored(MenuIDSelect)
 	if b.format != nil {
 		add(b.format)
 	}
+	addAnchored(MenuIDFormat)
 	if b.view != nil {
 		add(b.view)
 	}
+	addAnchored(MenuIDView)
 	for _, m := range b.custom {
 		add(m)
 	}
@@ -2171,14 +2246,33 @@ func (d *Desktop) focusedEditActor() (editActor, bool) {
 // target reports CutEnabled()==false. Callers wire the closure to the menu's
 // OnAboutToShow so the state tracks focus (which rests on the previous active
 // window while the menu is open).
-func (d *Desktop) appendStandardEditItems(menu *Menu) func() {
+//
+// adopted holds items the app declared with a well-known ITEM role (ItemIDCut
+// and friends). Those are wired in place and NOT added here: the app has said
+// "this item of mine IS the Cut item", so it keeps the app's caption and the
+// app's position among its own items, and only the behaviour - handler, host
+// shortcut, enable/disable - comes from here. A role the app did not claim is
+// still synthesized and prepended as usual, so claiming some and not others
+// works.
+func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuItem) func() {
 	shortcut := func(it *MenuItem, action string) {
 		if keys := core.DefaultKeyBindings.Keys(action); len(keys) > 0 {
 			it.SetShortcut(core.NewShortcut(keys[0]))
 		}
 	}
+	// claim returns the app's item for a role, or a fresh one marked for
+	// prepending in the standard block.
+	var synthesized []*MenuItem // in canonical order, minus any adopted
+	claim := func(role, caption string) *MenuItem {
+		if it := adopted[role]; it != nil {
+			return it
+		}
+		it := NewMenuItem(caption)
+		synthesized = append(synthesized, it)
+		return it
+	}
 
-	cut := NewMenuItem("Cu&t")
+	cut := claim(ItemIDCut, "Cu&t")
 	shortcut(cut, core.ActionCut)
 	cut.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
@@ -2189,9 +2283,8 @@ func (d *Desktop) appendStandardEditItems(menu *Menu) func() {
 			}
 		}
 	})
-	menu.AddItem(cut)
 
-	copyIt := NewMenuItem("&Copy")
+	copyIt := claim(ItemIDCopy, "&Copy")
 	shortcut(copyIt, core.ActionCopy)
 	copyIt.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
@@ -2202,27 +2295,34 @@ func (d *Desktop) appendStandardEditItems(menu *Menu) func() {
 			}
 		}
 	})
-	menu.AddItem(copyIt)
 
-	pasteIt := NewMenuItem("&Paste")
+	pasteIt := claim(ItemIDPaste, "&Paste")
 	shortcut(pasteIt, core.ActionPaste)
 	pasteIt.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			ea.Paste()
 		}
 	})
-	menu.AddItem(pasteIt)
 
-	menu.AddSeparator()
+	// The separator sits between the clipboard trio and Select All, so it
+	// belongs to the synthesized block only - and only when that block still
+	// holds items on both sides of it.
+	trio := len(synthesized)
 
-	selectAll := NewMenuItem("Select &All")
+	selectAll := claim(ItemIDSelectAll, "Select &All")
 	shortcut(selectAll, core.ActionSelectAll)
 	selectAll.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			ea.SelectAll()
 		}
 	})
-	menu.AddItem(selectAll)
+
+	for i, it := range synthesized {
+		if i == trio && trio > 0 {
+			menu.AddSeparator()
+		}
+		menu.AddItem(it)
+	}
 
 	update := func() {
 		ea, editable := d.focusedEditActor()
@@ -2268,24 +2368,60 @@ func (d *Desktop) systemEditMenu(app ApplicationProvider, declared *Menu) *Menu 
 	menu := NewMenu(title)
 	menu.SetWellKnownID(MenuIDEdit)
 
+	// The app's own about-to-show hook comes across with its items. This menu
+	// is a NEW object holding the declared menu's items, so anything the app
+	// hung on the declared menu would otherwise be dropped on the floor - and
+	// that hook is where an app refreshes its items against live state (mew
+	// fills in each item's shortcut column from the running keymap there). Lose
+	// it and the app's items still show, just stripped of everything the hook
+	// maintained.
+	var declaredShow func()
+	if declared != nil {
+		declaredShow = declared.OnAboutToShow()
+	}
+
 	var custom []*MenuItem
 	if declared != nil {
 		custom = declared.Items()
 	}
 
 	if auto {
-		update := d.appendStandardEditItems(menu)
+		// Items the app tagged with a standard role are wired in place rather
+		// than duplicated: its caption and its position, the system's
+		// behaviour. First tag for a role wins, so a stray second one stays an
+		// ordinary item instead of silently stealing the binding.
+		adopted := map[string]*MenuItem{}
+		for _, it := range custom {
+			if role := it.WellKnownID(); standardEditItemRole(role) && adopted[role] == nil {
+				adopted[role] = it
+			}
+		}
+		update := d.appendStandardEditItems(menu, adopted)
 		if len(custom) > 0 {
-			menu.AddSeparator()
+			// No leading separator when the app claimed every role: there is
+			// no synthesized block above to separate from.
+			if len(menu.Items()) > 0 {
+				menu.AddSeparator()
+			}
 			for _, it := range custom {
 				menu.AddItem(it)
 			}
 		}
-		menu.SetOnAboutToShow(update)
+		// Both hooks run: the system's enable/disable pass over the standard
+		// items, then the app's refresh over its own. Order matters only for an
+		// ADOPTED item, which both touch - the app's runs second so its view of
+		// its own item wins.
+		menu.SetOnAboutToShow(func() {
+			update()
+			if declaredShow != nil {
+				declaredShow()
+			}
+		})
 	} else {
 		for _, it := range custom {
 			menu.AddItem(it)
 		}
+		menu.SetOnAboutToShow(declaredShow)
 	}
 	return menu
 }
@@ -2817,24 +2953,33 @@ func (d *Desktop) ActivatePassNextKeyToTrinket() {
 	if activeApp == nil {
 		return
 	}
-	// When the app's main window is detached, the key stream and the
-	// status bar both live on that window, not the desktop. Arm raw-key
-	// mode there so the next key reaches the detached window's focused
-	// trinket and the prompt shows on its own status bar.
-	if main := activeApp.MainWindow(); main != nil && main.IsDetached() {
-		d.activateRawKeyOnDetached(main)
-		return
+	// ARM BOTH DOORS. A key does not always reach the desktop: a window on
+	// its OWN OS surface is driven by window.SurfaceHost, whose Event hands
+	// straight to Window.HandleKeyPress and never passes the desktop at all
+	// (see dispatchEvent, where takePassNextKey lives). That door only exists
+	// on a multi-surface backend, which is why arming the app alone worked on
+	// the single-surface TUI and lost F10 to the menu bar under SDL.
+	//
+	// So arm the app AND the main window's own one-shot, and let whichever
+	// door the key arrives by spend it. Window.HandleKeyPress checks its
+	// one-shot before its menu bar; takePassNextKey checks the app flag
+	// before the desktop's. The window's done callback clears the app flag so
+	// the pair is spent together and the key AFTER the raw one is ordinary
+	// again however it travelled.
+	if main := activeApp.MainWindow(); main != nil {
+		d.armRawKeyOnWindow(activeApp, main)
 	}
 	activeApp.ActivatePassNextKeyToTrinket()
 }
 
-// activateRawKeyOnDetached shows the raw-key prompt on the detached main
-// window's own status bar and arms the window to pass its next key
-// straight to the focused trinket, restoring the status bar afterwards.
-func (d *Desktop) activateRawKeyOnDetached(main *window.Window) {
+// armRawKeyOnWindow arms a window's own raw-key one-shot, showing the prompt
+// on its status bar when it has one (a detached window carries its own; an
+// in-surface window's prompt is the desktop's), and clearing the app-level
+// flag when the key is spent so the two cannot come apart.
+func (d *Desktop) armRawKeyOnWindow(app ApplicationProvider, main *window.Window) {
 	sb, _ := main.WindowStatusBar().(*StatusBar)
 	var saved []StatusSection
-	if sb != nil {
+	if sb != nil && main.IsDetached() {
 		saved = sb.Sections()
 		sb.SetSections([]StatusSection{
 			{Text: "Raw Key Input: The next key pressed will be passed directly to the focused trinket."},
@@ -2842,7 +2987,8 @@ func (d *Desktop) activateRawKeyOnDetached(main *window.Window) {
 		main.Update()
 	}
 	main.BeginRawKeyInput(func() {
-		if sb != nil {
+		app.ClearPassNextKeyToTrinket()
+		if sb != nil && saved != nil {
 			sb.SetSections(saved)
 			main.Update()
 		}
@@ -2908,6 +3054,14 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 		d.mu.Unlock()
 		surface.SetHandler(&desktopSurfaceHandler{d: d})
 		d.setupTearOff(pf, surface)
+
+		// Offer the rotation easter egg's focus gate to any platform that has
+		// one (the SDL/WebGPU host). The anonymous interface keeps trinkets
+		// free of an sdl-specific dependency; a platform without rotation
+		// simply doesn't implement it.
+		if rg, ok := pf.(interface{ SetRotationTriggerGate(func() bool) }); ok {
+			rg.SetRotationTriggerGate(d.aboutBoxFocused)
+		}
 
 		size := surface.Size()
 		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
@@ -3167,18 +3321,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 	// Check pass-next-key-to-trinket mode FIRST, before any event filters.
 	// This ensures the key goes directly to the trinket without any interception.
 	if keyEvent, isKey := event.(core.KeyPressEvent); isKey {
-		d.mu.RLock()
-		activeApp := d.activeApp
-		d.mu.RUnlock()
-		if activeApp != nil && activeApp.PassNextKeyToTrinket() {
-			activeApp.ClearPassNextKeyToTrinket()
-			// Skip ALL shortcut handling - send key directly to the active window's
-			// focused trinket, bypassing WindowManager's menu accelerator interception
-			if wm != nil {
-				if activeWin := wm.ActiveWindow(); activeWin != nil {
-					activeWin.HandleKeyPress(keyEvent)
-				}
-			}
+		if d.takePassNextKey(keyEvent, wm) {
 			return true
 		}
 	}
@@ -4311,8 +4454,64 @@ func (d *Desktop) Paint(p *core.Painter) {
 	// The compositor handles menu dropdown and popup rendering separately.
 }
 
+// takePassNextKey consumes one keystroke for pass-next-key mode, handing it
+// straight to the active window's focused trinket. Reports whether it did.
+//
+// It is checked at EVERY door a key can arrive by, because "the next key
+// bypasses everything" is not true if one of the doors takes the key first.
+// F10 was such a door: the desktop claims it for the menu bar before any
+// shortcut handling, so arming raw key input and pressing F10 opened the menu
+// — which is precisely the key someone arms raw input to send onward.
+func (d *Desktop) takePassNextKey(event core.KeyPressEvent, wm *window.WindowManager) bool {
+	d.mu.RLock()
+	activeApp := d.activeApp
+	if wm == nil {
+		wm = d.windowManager
+	}
+	d.mu.RUnlock()
+	if activeApp == nil {
+		return false
+	}
+	// A DETACHED main window was armed on the window, not on the app:
+	// ActivatePassNextKeyToTrinket routes there because the key stream and
+	// the prompt both live on that window. So the window's one-shot is the
+	// flag that matters here, and the desktop must not claim F10 out from
+	// under it — the window manager sends F10 straight to the desktop for the
+	// menu bar, so the detached window never gets the chance to spend its own
+	// one-shot on it. Hand the key over and let the window's raw branch run,
+	// which also fires the done callback that restores its status bar.
+	if main := activeApp.MainWindow(); main != nil && main.IsDetached() && main.RawKeyInputPending() {
+		main.HandleKeyPress(event)
+		return true
+	}
+	if !activeApp.PassNextKeyToTrinket() {
+		return false
+	}
+	activeApp.ClearPassNextKeyToTrinket()
+	// Skip ALL shortcut handling — the desktop's above, and the WINDOW's too.
+	// Window.HandleKeyPress claims F10 for its menu bar and runs its own
+	// shortcut resolver before the focus manager sees anything, so handing the
+	// key to the window plainly loses exactly the keys this mode exists to
+	// deliver. The window already has a raw one-shot for its half of this
+	// (BeginRawKeyInput); arm it and the key drops straight to the focused
+	// trinket.
+	if wm != nil {
+		if activeWin := wm.ActiveWindow(); activeWin != nil {
+			activeWin.BeginRawKeyInput(nil)
+			activeWin.HandleKeyPress(event)
+		}
+	}
+	return true
+}
+
 // HandleKeyPress handles keyboard input.
 func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
+	// Before the menu bar gets a look at it: a key claimed by pass-next-key
+	// mode belongs to the trinket, F10 included.
+	if d.takePassNextKey(event, nil) {
+		return true
+	}
+
 	// Check if menu bar wants to handle keys
 	if d.menuBar != nil {
 		// F10 toggles menu bar focus
