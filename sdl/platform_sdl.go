@@ -350,6 +350,15 @@ const (
 	maxFontPt = 100
 )
 
+// alphaPresentTest (KITTYTK_ALPHA_TEST=1) is a diagnostic: transparent
+// (per-pixel alpha) windows present a bare alpha-0 clear with no
+// content. A torn-off window that still shows as a black rectangle
+// proves the compositing chain below the renderer (CAMetalLayer / SDL
+// content view / NSWindow) is discarding alpha; a window that vanishes
+// entirely proves the chain honors alpha and any remaining opacity
+// comes from painted content.
+var alphaPresentTest = os.Getenv("KITTYTK_ALPHA_TEST") != ""
+
 // clampFontPt bounds a point size to the dynamic zoom range.
 func clampFontPt(size int) int {
 	if size < minFontPt {
@@ -1060,10 +1069,15 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 	// generates a two-triangle quad, so this MUST draw all 6 vertices:
 	// drawing 3 paints exactly half the window and leaves the other half
 	// as the clear color — the diagonal "black triangle" resize artifact.
-	renderPass.SetPipeline(p.blitPipeline)
-	renderPass.SetBindGroup(0, bindGroup, nil)                  // Texture + sampler (per-frame)
-	renderPass.SetBindGroup(1, p.blitUniformBindGroup, nil)    // Rotation uniform (cached)
-	renderPass.Draw(6, 1, 0, 0)
+	// (Under KITTYTK_ALPHA_TEST a transparent window presents the bare
+	// alpha-0 clear instead, isolating the compositing chain from the
+	// painted content.)
+	if !(alphaPresentTest && w.transparent) {
+		renderPass.SetPipeline(p.blitPipeline)
+		renderPass.SetBindGroup(0, bindGroup, nil)                  // Texture + sampler (per-frame)
+		renderPass.SetBindGroup(1, p.blitUniformBindGroup, nil)    // Rotation uniform (cached)
+		renderPass.Draw(6, 1, 0, 0)
+	}
 	renderPass.End()
 	
 	// Render 3D cube when rotation is active OR during ease-out
