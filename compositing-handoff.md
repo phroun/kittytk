@@ -367,19 +367,44 @@ input method that ignores the area and a host that never sets one look
 identical on screen — both put the candidate window in a corner — so
 watching the calls is the only way to tell them apart.
 
-Still missing: **`SDL_EVENT_TEXT_EDITING`**. The adapter's `translate()`
-does not handle it, so preedit — the underlined in-progress characters
-before a CJK commit — is invisible. That needs an event through to the
-focused trinket and TextInput rendering it inline without treating it as
-committed content.
+### Preedit
+
+The other half: `SDL_EVENT_TEXT_EDITING` carries the characters an input
+method is still composing — typed, shown, but not yet the document's.
+`core.TextEditingEvent` delivers them and `core.PreeditFrom` normalizes
+them, which is the one place that interprets SDL's `Start`/`Length` (the
+selected clause) — units the SDL3 documentation leaves open, so they are
+read as rune offsets and clamped rather than trusted.
+
+Routing deliberately does **not** reuse the key path. A composition is
+not a key: it goes straight to the focused trinket, skipping the menu
+bar, the shortcut resolver, Alt+F4, the cycle keys and the window
+manager's desktop fallback, because none of them have anything to say
+about characters still being composed and a composition containing "m"
+is not Cmd+M. `HandleTextEditing` mirrors `HandleKeyPress` at each layer
+(FocusManager, Window, WindowManager, MDIPane) minus all of that policy,
+and has no Tab fallback — a composition never moves focus.
+
+TextInput keeps the preedit apart from `text` and splices it into the
+painted run at the caret, so it shapes with its neighbours exactly as it
+will once it commits. It is marked twice: underlined (the universal
+"provisional" convention) and drawn in the **caret's** color rather than
+the text color, since the input method is still holding it the way it is
+still holding the caret. A reported clause gets a second, thicker rule.
+Committing clears it — the commit arrives as ordinary typed characters,
+and clearing there rather than waiting for the empty `TEXT_EDITING` that
+usually follows means the two never briefly paint at once, whichever
+order the platform sends them in. Focus loss clears it too. Password
+fields mask the composition, since masking only what was already
+committed would show the next word in the clear for as long as it took
+to compose.
+
+While composing, `RequestTextInputArea` reports the **start** of the
+composition rather than the caret inside it, so the candidate list sits
+under the text it is offering candidates for instead of walking rightward
+with every keystroke.
 
 ## Known gaps (not regressions)
-- **Preedit is invisible.** `SDL_EVENT_TEXT_EDITING` is not translated,
-  so in-composition CJK text does not appear until it commits. The
-  candidate window is now placed correctly (see the caret section); this
-  is the other half. Needs an event through to the focused trinket and
-  TextInput rendering the preedit inline without treating it as
-  committed content.
 - **MDI children are not compositor layers.** They paint into their
   parent window's texture and shadow themselves there. Hoisting them
   would need each child's bounds and paint closure mapped up through the

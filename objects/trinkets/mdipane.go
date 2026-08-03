@@ -1378,6 +1378,21 @@ func (m *MDIPane) Paint(p *core.Painter) {
 // When an MDI child window is active, MDIPane forwards ALL keyboard events
 // to that window, including Tab and Shift+Tab. This ensures focus stays
 // within the active window until the user clicks elsewhere or closes it.
+// HandleTextEditing forwards an input method's composition to the active
+// child window. The pane is the focused trinket in ITS window's focus
+// manager, so without this the composition would stop here - the same
+// reason HandleKeyPress forwards.
+func (m *MDIPane) HandleTextEditing(event core.TextEditingEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() {
+		return false
+	}
+	return active.HandleTextEditing(event)
+}
+
 func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RLock()
 	active := m.activeWindow

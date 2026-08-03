@@ -693,6 +693,8 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		handled = h.win.HandleKeyPress(e)
 	case core.KeyReleaseEvent:
 		handled = h.win.HandleKeyRelease(e)
+	case core.TextEditingEvent:
+		handled = h.win.HandleTextEditing(e)
 	case core.MousePressEvent:
 		if !h.ghost && h.popupsHandleMouse(e) {
 			handled = true

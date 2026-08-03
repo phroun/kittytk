@@ -2697,6 +2697,22 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	return false
 }
 
+// HandleTextEditing hands an input method's composition to the active
+// window. None of HandleKeyPress's routing applies: a composition is not
+// a key, so there are no cycle keys to intercept, no accelerators to
+// offer the desktop first, and nothing to fall back to when the active
+// window cannot hold one.
+func (m *WindowManager) HandleTextEditing(event core.TextEditingEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() || m.isModalBlocked(active) {
+		return false
+	}
+	return active.HandleTextEditing(event)
+}
+
 // HandleKeyPress processes keyboard events.
 func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RLock()

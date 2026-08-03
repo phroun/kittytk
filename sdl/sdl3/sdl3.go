@@ -458,6 +458,22 @@ type TextInputEvent struct {
 
 func (e *TextInputEvent) GetText() string { return e.text }
 
+// TextEditingEvent is one update to an input method's in-flight
+// composition (SDL_EVENT_TEXT_EDITING): text that is being typed but has
+// not been committed. The whole composition arrives every time, never a
+// delta, and empty text ends it.
+//
+// Start/Length are the input method's selection within the text, or -1
+// when it reports none; core.PreeditFrom is where they are interpreted.
+type TextEditingEvent struct {
+	WindowID uint32
+	text     string
+	Start    int32
+	Length   int32
+}
+
+func (e *TextEditingEvent) GetText() string { return e.text }
+
 type MouseButtonEvent struct {
 	Type     uint32
 	WindowID uint32
@@ -483,6 +499,7 @@ func (*QuitEvent) isEvent()        {}
 func (*WindowEvent) isEvent()      {}
 func (*KeyboardEvent) isEvent()    {}
 func (*TextInputEvent) isEvent()   {}
+func (*TextEditingEvent) isEvent() {}
 func (*MouseButtonEvent) isEvent() {}
 func (*MouseMotionEvent) isEvent() {}
 func (*MouseWheelEvent) isEvent()  {}
@@ -540,6 +557,15 @@ func translate(ev *csdl.Event) Event {
 	case csdl.EVENT_TEXT_INPUT:
 		t := ev.TextInputEvent()
 		return &TextInputEvent{WindowID: uint32(t.WindowID), text: t.Text}
+
+	case csdl.EVENT_TEXT_EDITING:
+		t := ev.TextEditingEvent()
+		return &TextEditingEvent{
+			WindowID: uint32(t.WindowID),
+			text:     t.Text,
+			Start:    t.Start,
+			Length:   t.Length,
+		}
 
 	case csdl.EVENT_MOUSE_BUTTON_DOWN, csdl.EVENT_MOUSE_BUTTON_UP:
 		m := ev.MouseButtonEvent()

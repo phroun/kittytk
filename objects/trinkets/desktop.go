@@ -3207,6 +3207,19 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// Pass to window manager
 		return wm.HandleKeyPress(e)
 
+	case core.TextEditingEvent:
+		// An input method's composition goes to whatever is being typed
+		// into and nowhere else: no shortcuts, no menu bar, no window
+		// manager fallback. A composition nobody can hold is dropped
+		// rather than reinterpreted as something else.
+		if fm != nil && fm.HandleTextEditing(e) {
+			return true
+		}
+		if wm != nil {
+			return wm.HandleTextEditing(e)
+		}
+		return false
+
 	case core.KeyReleaseEvent:
 		// When every modifier has gone up, lock in an in-progress window-cycle
 		// run's MRU order (the Alt-Tab "commit on release"). Only the graphical

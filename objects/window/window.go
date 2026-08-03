@@ -3165,6 +3165,22 @@ func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
 }
 
 // HandleKeyPress handles keyboard input.
+// HandleTextEditing forwards an input method's composition straight to
+// the focused trinket. The window's own key policy - the menu bar, the
+// shortcut resolver, title-bar focus, Alt+F4 - is deliberately skipped:
+// none of it has anything to say about characters that are still being
+// composed, and a composition containing "m" is not Cmd+M.
+func (w *Window) HandleTextEditing(event core.TextEditingEvent) bool {
+	w.mu.RLock()
+	fm := w.focusManager
+	w.mu.RUnlock()
+
+	if fm == nil {
+		return false
+	}
+	return fm.HandleTextEditing(event)
+}
+
 func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	w.mu.RLock()
 	fm := w.focusManager

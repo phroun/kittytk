@@ -1199,6 +1199,21 @@ func (p *Platform) pumpEvents() bool {
 					Text: string(ch),
 				})
 			}
+		case *sdl3.TextEditingEvent:
+			// The input method's in-flight composition. It goes to the
+			// focused trinket UNTRANSLATED - no key names, no shortcut
+			// gauntlet: these characters are not keys, they are a
+			// picture of what the IME currently holds, replaced whole on
+			// every update and ended by an empty one.
+			s := p.surfaceFor(e.WindowID)
+			if s == nil || s.handler == nil {
+				continue
+			}
+			s.handler.Event(core.TextEditingEvent{
+				Text:   e.GetText(),
+				Start:  int(e.Start),
+				Length: int(e.Length),
+			})
 		case *sdl3.KeyboardEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
