@@ -4,6 +4,7 @@ package window
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
@@ -160,6 +161,15 @@ type Window struct {
 	// open dropdown as its own compositor layer; paintChrome then leaves
 	// it out of the window's surface. See MenuDropdownLayer.
 	menuDropdownComposited bool
+
+	// repaintRev counts repaint requests from anywhere in this window's
+	// subtree (see core.SubtreeRepaintTracker). The GPU compositor
+	// caches a texture per window and compares this against the value it
+	// last painted, so a window nobody has touched costs no repaint, no
+	// pixel conversion and no upload. Atomic, not under mu: Update()
+	// bumps it from whatever goroutine changed something, and it must
+	// never be in the way of a lock the caller already holds.
+	repaintRev atomic.Uint64
 
 	// resizeHoverRects are window-local rectangles (one per hovered resize
 	// edge, two for a corner) that the frame highlights while the pointer
@@ -547,6 +557,11 @@ func (w *Window) Restore() {
 	// return-to-maximized is resized to the client area by the manager.
 	if restoreTo == WindowStateNormal {
 		w.SetBounds(bounds)
+	} else {
+		// The return-to-maximized path sets no bounds, so nothing else
+		// here announces that the state (and with it the title buttons)
+		// changed.
+		w.Update()
 	}
 
 	if handler != nil {
@@ -1602,11 +1617,19 @@ const resizeHoverAlpha = 0.25
 // true when the set changed, so the caller can repaint only on change.
 func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if sameRects(w.resizeHoverRects, rects) {
+		w.mu.Unlock()
 		return false
 	}
 	w.resizeHoverRects = rects
+	w.mu.Unlock()
+
+	// This changes what the window paints, and unlike most such setters
+	// it reports the change to its caller instead of announcing it —
+	// callers pair it with the manager's RequestRepaint, which says "a
+	// frame is needed" without saying whose pixels went stale. The GPU
+	// compositor caches a texture per window and needs to be told.
+	w.NoteSubtreeRepaint()
 	return true
 }
 
@@ -1738,6 +1761,14 @@ func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
 			255, 255, 255, resizeHoverAlpha)
 	}
 }
+
+// NoteSubtreeRepaint implements core.SubtreeRepaintTracker: something
+// in this window (or the window itself) asked to be repainted.
+func (w *Window) NoteSubtreeRepaint() { w.repaintRev.Add(1) }
+
+// SubtreeRepaintRevision implements core.SubtreeRepaintTracker. Only
+// equality between two reads means anything; the value does not.
+func (w *Window) SubtreeRepaintRevision() uint64 { return w.repaintRev.Load() }
 
 // SetMenuDropdownComposited tells the window that its host draws the
 // menu bar's open dropdown as a compositor layer of its own (so it can

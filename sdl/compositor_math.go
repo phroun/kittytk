@@ -3,6 +3,7 @@ package sdl
 import (
 	"image"
 	"math"
+	"time"
 
 	"github.com/phroun/kittytk/core"
 )
@@ -220,6 +221,78 @@ func punchRoundedCorners(img *image.RGBA, radiusPx int) {
 			scale(w-1-i, h-1-j)
 		}
 	}
+}
+
+// paintSignature is everything about a child window that changes the
+// pixels the compositor has cached in its texture. Position is NOT in
+// it: a window's placement lives in its uniform buffer, which is
+// rewritten every frame, so dragging a window costs no repaint at all.
+type paintSignature struct {
+	// revision is the window's subtree repaint counter. hasRevision is
+	// false for a window that does not report one — an unknown window
+	// type, or one whose tree predates the tracker — and forces a
+	// repaint every frame, which is the old behaviour.
+	revision    uint64
+	hasRevision bool
+
+	fontSize int
+	metrics  core.CellMetrics
+	widthPx  int
+	heightPx int
+}
+
+// compositorHeartbeat is how long a cached window texture may go without
+// a repaint, and compositorHeartbeatSpread how far past that a given
+// window's turn may fall.
+//
+// The heartbeat exists because this cache changes a failure mode: before
+// it, code that altered a window's look without signalling was masked by
+// the desktop's own ~1s heartbeat repainting everything anyway, so the
+// bug showed as at most a moment's lag. Cached, the same miss would
+// freeze that window's pixels for good. Repainting on this interval puts
+// the old bound back, at one repaint per window per second instead of
+// twenty.
+const (
+	compositorHeartbeat       = time.Second
+	compositorHeartbeatSpread = 500 * time.Millisecond
+)
+
+// heartbeatInterval staggers the forced repaints. Every window is first
+// painted in the same frame, so a shared interval would keep the whole
+// desk in lockstep: one ordinary frame in twenty doing a full repaint,
+// conversion and upload for EVERY window at once — exactly the stutter
+// the cache exists to remove. Spreading the deadline over an extra half
+// second turns that spike into a trickle.
+//
+// The phase is derived from the window's id, which comes from a pointer,
+// so its low bits are mostly alignment zeros — hence the mix before
+// taking the high ones.
+func heartbeatInterval(windowID uint32) time.Duration {
+	const knuth = 2654435761
+	phase := time.Duration((windowID * knuth) >> 24) // 0..255
+	return compositorHeartbeat + compositorHeartbeatSpread*phase/256
+}
+
+// needsRepaint reports whether a cached window texture is stale. `last`
+// is the signature at the last paint; `now` the current one. forceDirty
+// covers what the signature cannot see — a freshly created or resized
+// surface, whose texture holds nothing yet. sinceLastPaint and heartbeat
+// drive the staggered forced repaint above.
+//
+// Anything unrecognized repaints: a false negative here shows stale
+// pixels on screen, while a false positive only costs the work we used
+// to do unconditionally.
+func needsRepaint(last, now paintSignature, sinceLastPaint, heartbeat time.Duration, forceDirty, forceAlways bool) bool {
+	if forceAlways || forceDirty {
+		return true
+	}
+	if !now.hasRevision || !last.hasRevision {
+		return true
+	}
+	if sinceLastPaint >= heartbeat {
+		return true
+	}
+	return now != last
 }
 
 // gpuRowAlignment is WebGPU's required bytes-per-row alignment for

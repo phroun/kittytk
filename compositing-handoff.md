@@ -156,6 +156,59 @@ encoder binds it to, and — running the two numbering rules against the
 retired shadow layout — that the checker can actually catch the bug it
 exists for.
 
+## Per-window damage (the compositor's texture cache)
+
+The compositor keeps a texture per child window and repaints one only
+when something about it changed. A window nobody touched costs nothing:
+no CPU paint, no BGRA conversion, no upload.
+
+What counts as "changed" is `paintSignature` (`sdl/compositor_math.go`):
+the window's subtree repaint revision, its pixel size, font size and cell
+metrics. **Position is deliberately absent** — a window's placement lives
+in its uniform buffer, which is rewritten every frame regardless, so
+dragging a window repaints nothing at all.
+
+The revision comes from `core.SubtreeRepaintTracker`, which `Window`
+implements. `Update()` walks from the changed trinket to the root and
+notifies **every** tracker on the way, not just the nearest: an MDI child
+paints into its ancestor's surface, so stopping early would leave the
+ancestor thinking it was clean.
+
+Two distinctions matter and are easy to get backwards:
+
+- **A move is not a content change.** A trinket paints in its own local
+  coordinates, so its pixels are identical at a new position. `SetPos`
+  and a position-only `SetBounds` notify the trinket's *ancestors* (their
+  pixels include it at its new place) but not the trinket itself.
+- **The flag is not the signal.** Every mutation that sets `needsRepaint`
+  must also call `notifyAncestorsOfRepaint`/`OfMove`. The flag records
+  local intent; the notification is what a container caching pixels can
+  actually see. `SetResizeHoverRects` was the one setter that reported
+  its change to the caller instead of announcing it.
+
+**Staleness is bounded, not prevented.** Before this cache, code that
+changed a window's look without signalling was masked by the desktop's
+own ~1s heartbeat repainting everything, so the bug showed as a moment's
+lag. Cached, the same miss would freeze that window's pixels for good.
+`compositorHeartbeat` restores the old bound by refreshing each texture
+about once a second — **staggered** by a hash of the window id, because
+every window is first painted in the same frame and a shared interval
+would put a full repaint of the whole desk into one frame every second.
+
+Diagnostics:
+
+```
+KITTYTK_COMPOSITOR_REPAINT=always   # restore the unconditional repaint
+KITTYTK_COMPOSITOR_STATS=1          # per-second painted/skipped tally
+```
+
+If a window ever shows stale content, one run with `=always` settles
+whether this cache is the cause; the fix is then to find the mutation
+that changes pixels without notifying.
+
+Still uncached: the desktop **base layer** repaints, re-uploads, and
+allocates a fresh texture every frame. Same treatment would apply.
+
 ## Known gaps (not regressions)
 - **Text caret in compositor mode**: windows paint on their own layers,
   so a focused terminal's caret request cannot reach the OS surface

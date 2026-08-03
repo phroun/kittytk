@@ -3,6 +3,7 @@ package sdl
 import (
 	"image"
 	"testing"
+	"time"
 
 	"github.com/phroun/kittytk/core"
 )
@@ -295,5 +296,120 @@ func TestShadowSpecsTrackCoreStyles(t *testing.T) {
 	if core.OverlayDropShadow.OffsetY >= core.WindowDropShadow.OffsetY {
 		t.Errorf("overlay cast %v is not closer than window cast %v",
 			core.OverlayDropShadow.OffsetY, core.WindowDropShadow.OffsetY)
+	}
+}
+
+// The per-window texture cache: a window nobody has touched keeps its
+// texture, and everything that changes its pixels forces a repaint.
+// A false negative here is stale content on screen; a false positive
+// only costs what the compositor used to spend unconditionally.
+func TestNeedsRepaint(t *testing.T) {
+	base := paintSignature{
+		revision: 7, hasRevision: true,
+		fontSize: 12, metrics: core.DefaultCellMetrics(),
+		widthPx: 400, heightPx: 300,
+	}
+	fresh := time.Duration(0)
+	hb := compositorHeartbeat
+
+	changed := func(mutate func(*paintSignature)) paintSignature {
+		s := base
+		mutate(&s)
+		return s
+	}
+
+	for _, tc := range []struct {
+		name string
+		now  paintSignature
+		want bool
+	}{
+		{"unchanged", base, false},
+		{"subtree repainted", changed(func(s *paintSignature) { s.revision++ }), true},
+		{"resized", changed(func(s *paintSignature) { s.widthPx = 401 }), true},
+		{"font zoom", changed(func(s *paintSignature) { s.fontSize = 14 }), true},
+		{"denomination change", changed(func(s *paintSignature) { s.metrics.CellWidth = 99 }), true},
+		{"reports no revision", changed(func(s *paintSignature) { s.hasRevision = false }), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := needsRepaint(base, tc.now, fresh, hb, false, false); got != tc.want {
+				t.Errorf("needsRepaint = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	// A never-painted surface has no signature to trust.
+	if !needsRepaint(paintSignature{}, base, fresh, hb, false, false) {
+		t.Error("a surface that has never been painted must repaint")
+	}
+	// A fresh or resized surface holds nothing usable yet.
+	if !needsRepaint(base, base, fresh, hb, true, false) {
+		t.Error("a dirty surface must repaint even with an identical signature")
+	}
+	// The escape hatch.
+	if !needsRepaint(base, base, fresh, hb, false, true) {
+		t.Error("KITTYTK_COMPOSITOR_REPAINT=always must force a repaint")
+	}
+}
+
+// Position is deliberately absent from the signature: a window's
+// placement lives in its uniform buffer, rewritten every frame, so
+// dragging a window across the desktop must not repaint its texture.
+func TestNeedsRepaintIgnoresPosition(t *testing.T) {
+	sig := paintSignature{
+		revision: 3, hasRevision: true,
+		fontSize: 12, metrics: core.DefaultCellMetrics(),
+		widthPx: 400, heightPx: 300,
+	}
+	// Same window, same size, same content — only the quad moved, which
+	// the signature cannot even express.
+	if needsRepaint(sig, sig, 0, compositorHeartbeat, false, false) {
+		t.Error("a window that only moved must not repaint its texture")
+	}
+}
+
+// A cached texture is refreshed on a heartbeat, so a change this cache
+// cannot see costs at most a moment's staleness rather than freezing the
+// window's pixels for good.
+func TestNeedsRepaintHeartbeat(t *testing.T) {
+	sig := paintSignature{revision: 1, hasRevision: true}
+
+	if needsRepaint(sig, sig, compositorHeartbeat-time.Millisecond, compositorHeartbeat, false, false) {
+		t.Error("repainted before the heartbeat was due")
+	}
+	if !needsRepaint(sig, sig, compositorHeartbeat, compositorHeartbeat, false, false) {
+		t.Error("heartbeat came due and the texture was not refreshed")
+	}
+}
+
+// The heartbeats stagger. Every window is first painted in the same
+// frame, so one shared interval would keep the whole desk in lockstep
+// and put a full repaint of EVERY window into the same frame once a
+// second — the stutter the cache exists to remove.
+func TestHeartbeatIntervalStaggers(t *testing.T) {
+	// Ids as they actually arrive: pointer values, 16-byte aligned, so
+	// their low bits carry no entropy at all.
+	var ids []uint32
+	for i := uint32(0); i < 16; i++ {
+		ids = append(ids, 0x0a000000+i*16)
+	}
+
+	seen := map[time.Duration]bool{}
+	for _, id := range ids {
+		d := heartbeatInterval(id)
+		if d < compositorHeartbeat || d > compositorHeartbeat+compositorHeartbeatSpread {
+			t.Errorf("interval for id %#x = %v, outside [%v, %v]",
+				id, d, compositorHeartbeat, compositorHeartbeat+compositorHeartbeatSpread)
+		}
+		seen[d] = true
+	}
+	if len(seen) < len(ids)/2 {
+		t.Errorf("%d distinct intervals across %d aligned window ids; "+
+			"the phase is not spreading them", len(seen), len(ids))
+	}
+
+	// And it is a pure function of the id: a window's turn must not
+	// wander from frame to frame.
+	if heartbeatInterval(ids[0]) != heartbeatInterval(ids[0]) {
+		t.Error("heartbeatInterval is not deterministic")
 	}
 }

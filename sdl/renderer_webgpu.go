@@ -41,7 +41,13 @@ type WindowSurface struct {
 	scaleY     float32
 	opacity    float32
 
-	dirty bool // needs re-render
+	dirty bool // texture holds nothing usable yet (fresh or just resized)
+
+	// painted is the signature of what this texture currently holds, so
+	// a frame can tell "nothing about this window changed" from "repaint
+	// it". Zero value means never painted, which reads as stale.
+	painted   paintSignature
+	paintedAt time.Time // drives the heartbeat repaint
 
 	// UI Window compositor support (for child windows within an OS window)
 	uiWindow interface{}     // UI Window trinket (interface{} to avoid import cycle)
@@ -87,6 +93,14 @@ type WebGPURenderer struct {
 	firstCompositorFrame bool                      // Track first compositor call
 
 	frameSeq uint64
+
+	// Repaint accounting for KITTYTK_COMPOSITOR_STATS.
+	framePainted  int
+	frameSkipped  int
+	statsFrames   int
+	statsPainted  int
+	statsSkipped  int
+	statsLastEmit time.Time
 
 	// 3D cube rendering
 	cubePipeline         *wgpu.RenderPipeline
@@ -1228,19 +1242,43 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		// whenever the desktop itself changed size.
 		r.writeCombinedUniforms(surf.uniformBuffer, bounds, osWindow.backend.Size(), frameAspect)
 
-		// Render window to its backend
-		surf.backend.BeginFrame()
-		painter := core.NewPainter(surf.backend)
-		win.Paint(painter)
-		surf.backend.EndFrame()
-
-		// Upload to GPU texture
-		if img := surf.backend.Image(); img != nil {
-			r.uploadPixels(surf.texture, img)
+		// Repaint only what changed. A window whose subtree nobody
+		// touched still has its pixels in its texture from last frame,
+		// and repainting it would cost a full CPU paint, a full BGRA
+		// conversion and a full texture upload to produce the same
+		// bytes. Position is deliberately not part of the signature —
+		// the uniforms above already moved the quad, so dragging a
+		// window repaints nothing.
+		sig := paintSignature{
+			fontSize: osWindow.backend.FontSize(),
+			metrics:  metrics,
+			widthPx:  widthPx,
+			heightPx: heightPx,
 		}
+		sig.revision, sig.hasRevision = subtreeRepaintRevision(childIface)
 
-		surf.dirty = false
+		now := time.Now()
+		if needsRepaint(surf.painted, sig, now.Sub(surf.paintedAt),
+			heartbeatInterval(windowID), surf.dirty, compositorAlwaysRepaint) {
+			surf.backend.BeginFrame()
+			painter := core.NewPainter(surf.backend)
+			win.Paint(painter)
+			surf.backend.EndFrame()
+
+			// Upload to GPU texture
+			if img := surf.backend.Image(); img != nil {
+				r.uploadPixels(surf.texture, img)
+			}
+
+			surf.painted = sig
+			surf.paintedAt = now
+			surf.dirty = false
+			r.framePainted++
+		} else {
+			r.frameSkipped++
+		}
 	}
+	r.reportCompositorStats(len(childWindowList.Windows))
 
 	// Step 2: Upload Desktop base layer
 	desktopTexture, desktopView, desktopBindGroup, err := r.uploadBackendToTexture(osWindow.backend)
@@ -1782,6 +1820,60 @@ func (r *WebGPURenderer) createShadowUniformBuffer(
 		return nil, nil, err
 	}
 	return buffer, bindGroup, nil
+}
+
+// subtreeRepaintRevision reads a child window's repaint counter. ok is
+// false for anything that does not report one, which makes the caller
+// repaint every frame — the behaviour before this cache existed.
+func subtreeRepaintRevision(child interface{}) (rev uint64, ok bool) {
+	tracker, isTracker := child.(core.SubtreeRepaintTracker)
+	if !isTracker {
+		return 0, false
+	}
+	return tracker.SubtreeRepaintRevision(), true
+}
+
+// compositorAlwaysRepaint restores the unconditional repaint under
+// KITTYTK_COMPOSITOR_REPAINT=always. A window showing stale content is
+// the failure mode this cache can have, and one run with this set says
+// in a second whether the cache is the cause.
+var compositorAlwaysRepaint = os.Getenv("KITTYTK_COMPOSITOR_REPAINT") == "always"
+
+// compositorStats prints how much of the per-window work each second of
+// frames actually did, under KITTYTK_COMPOSITOR_STATS.
+var compositorStats = os.Getenv("KITTYTK_COMPOSITOR_STATS") != ""
+
+// reportCompositorStats accumulates this frame's repaint tally and emits
+// a line about once a second.
+func (r *WebGPURenderer) reportCompositorStats(windows int) {
+	painted, skipped := r.framePainted, r.frameSkipped
+	r.framePainted, r.frameSkipped = 0, 0
+	if !compositorStats {
+		return
+	}
+
+	r.statsFrames++
+	r.statsPainted += painted
+	r.statsSkipped += skipped
+	if r.statsLastEmit.IsZero() {
+		r.statsLastEmit = time.Now()
+		return
+	}
+	elapsed := time.Since(r.statsLastEmit)
+	if elapsed < time.Second {
+		return
+	}
+
+	total := r.statsPainted + r.statsSkipped
+	pct := 0.0
+	if total > 0 {
+		pct = 100 * float64(r.statsSkipped) / float64(total)
+	}
+	fmt.Fprintf(os.Stderr,
+		"kittytk-compositor: %d frames in %v, %d windows: %d window-paints, %d skipped (%.0f%% cached)\n",
+		r.statsFrames, elapsed.Round(time.Millisecond), windows, r.statsPainted, r.statsSkipped, pct)
+	r.statsFrames, r.statsPainted, r.statsSkipped = 0, 0, 0
+	r.statsLastEmit = time.Now()
 }
 
 // shadowDebugFlag is 1 under KITTYTK_SHADOW_DEBUG, which paints every
