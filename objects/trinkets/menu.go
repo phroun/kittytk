@@ -297,6 +297,35 @@ const (
 	MenuIDHelp   = "help"   // Help (kept last, after the Window menu)
 )
 
+// Well-known ITEM roles, for the standard items the system would otherwise
+// synthesize into an edit menu. An app that wants those items under its own
+// captions, or in its own position among its own items, declares them itself
+// and tags each with its role: the system then wires the standard BEHAVIOUR
+// onto the app's item - the focused-trinket handler, the host shortcut, and
+// the enable/disable rules - instead of prepending a second set.
+//
+// This is the item-level half of the well-known contract: a menu's tag says
+// what a MENU is for, an item's tag says what an ITEM is for, and in both
+// cases the app keeps naming and placement while the system keeps behaviour.
+// A role the app does not claim is synthesized as before, so claiming some
+// and not others is fine.
+const (
+	ItemIDCut       = "cut"       // Cut to the system clipboard
+	ItemIDCopy      = "copy"      // Copy to the system clipboard
+	ItemIDPaste     = "paste"     // Paste from the system clipboard
+	ItemIDSelectAll = "selectall" // Select the focused trinket's whole content
+)
+
+// standardEditItemRole reports whether id is a well-known edit-item role the
+// system supplies behaviour for.
+func standardEditItemRole(id string) bool {
+	switch id {
+	case ItemIDCut, ItemIDCopy, ItemIDPaste, ItemIDSelectAll:
+		return true
+	}
+	return false
+}
+
 // Menu represents a dropdown menu.
 type Menu struct {
 	core.TrinketBase
@@ -310,6 +339,7 @@ type Menu struct {
 	currentIndex    int
 	visible         bool
 	wellKnownID     string // system-level role tag (see MenuID* constants), "" if none
+	anchor          string // untagged menus: the well-known slot to sit after
 
 	// Position when shown as popup
 	popupX, popupY core.Unit
@@ -501,6 +531,28 @@ func (m *Menu) SetWellKnownID(id string) *Menu {
 
 // WellKnownID returns the menu's system-level role tag, or "" if none.
 func (m *Menu) WellKnownID() string { return m.wellKnownID }
+
+// SetAnchor places an UNTAGGED menu immediately after a well-known slot
+// rather than in the trailing custom block — "after: file" puts it between
+// the file menu and the edit menu. Menus sharing an anchor keep their
+// declared order, and an anchor on a menu that already carries a well-known
+// tag is ignored (its role fixes its place).
+//
+// The anchor names a canonical SLOT, not a live menu, so placement is stable
+// whether or not the app declares the neighbour: anchoring after "file" in an
+// app with no file menu still lands ahead of edit rather than teleporting.
+//
+// This is how an app departs from the standard layout without leaving the
+// standard vocabulary — it can say "after the file menu", never "third" — so
+// the canonical roles stay the frame of reference even for a bar that is
+// deliberately ordered some other way.
+func (m *Menu) SetAnchor(id string) *Menu {
+	m.anchor = id
+	return m
+}
+
+// Anchor returns the well-known slot this menu is placed after, or "".
+func (m *Menu) Anchor() string { return m.anchor }
 
 // SetTitle sets the menu title.
 func (m *Menu) SetTitle(title string) {
@@ -713,6 +765,13 @@ func (m *Menu) Hide() {
 func (m *Menu) SetOnAboutToShow(handler func()) {
 	m.onAboutToShow = handler
 }
+
+// OnAboutToShow returns the about-to-show callback, or nil if none is set.
+// It exists so a menu REBUILT from a declared one (see systemEditMenu, which
+// moves an app's items into a menu of its own) can carry the app's callback
+// across instead of dropping it: the app uses that hook to refresh its items
+// against live state, and losing it silently blanks whatever it maintained.
+func (m *Menu) OnAboutToShow() func() { return m.onAboutToShow }
 
 // SetOnAboutToHide sets the about to hide callback.
 func (m *Menu) SetOnAboutToHide(handler func()) {

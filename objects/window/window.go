@@ -176,6 +176,16 @@ type Window struct {
 	// is over a size-sensitive edge. Set by the window manager on hover.
 	resizeHoverRects []core.UnitRect
 
+	// resizeHoverEdges is the same highlight expressed as the EDGE MASK
+	// instead, with the grip thickness that sizes it. Preferred, because the
+	// bands are derived from the window's bounds and those change under a
+	// live resize: computing rectangles up front bakes in whatever size the
+	// window had when the gesture began, and a window that then grows leaves
+	// its bands stranded mid-frame. The paint resolves the mask against the
+	// bounds it is actually painting, which cannot be stale.
+	resizeHoverEdges int
+	resizeHoverGrip  core.Unit
+
 	// Detached main-window chrome, set by the desktop when the window is
 	// torn off: a menu bar between the title bar and content, and a
 	// status bar along the bottom edge. Kept as generic core.Trinket so
@@ -938,6 +948,19 @@ func (w *Window) BeginRawKeyInput(onDone func()) {
 	w.mu.Unlock()
 }
 
+// RawKeyInputPending reports whether this window is armed to pass its next
+// key straight to the focused trinket.
+//
+// The desktop needs to ask. Some keys never reach a window at all — the
+// window manager sends F10 to the desktop for the menu bar before any window
+// sees it — so a door that claims a key has to check this one-shot on the way
+// past, or it takes the key the mode exists to deliver.
+func (w *Window) RawKeyInputPending() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.passNextKeyRaw
+}
+
 // SetWindowStatusBar installs (or clears) the window's own status bar,
 // shown along the bottom edge while the window is detached.
 func (w *Window) SetWindowStatusBar(sb core.Trinket) {
@@ -1615,6 +1638,9 @@ const resizeHoverAlpha = 0.25
 // SetResizeHoverRects sets the window-local rectangles highlighted while
 // the pointer hovers a resize edge (empty clears the highlight). Returns
 // true when the set changed, so the caller can repaint only on change.
+//
+// Prefer SetResizeHoverEdges: rectangles fixed here go stale the moment the
+// window resizes under the gesture that is drawing them.
 func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 	w.mu.Lock()
 	if sameRects(w.resizeHoverRects, rects) {
@@ -1630,6 +1656,24 @@ func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 	// frame is needed" without saying whose pixels went stale. The GPU
 	// compositor caches a texture per window and needs to be told.
 	w.NoteSubtreeRepaint()
+	return true
+}
+
+// SetResizeHoverEdges sets the highlight as an edge MASK plus the grip
+// thickness, to be resolved against the window's bounds at paint time. Zero
+// edges clears it. Returns true when the state changed.
+//
+// This is the form that survives a live resize: the OS reports a new size
+// back asynchronously, so any rectangle computed while the pointer moves is
+// built from the PREVIOUS bounds — which is how a growing window ends up with
+// its bands stranded in the middle of the frame.
+func (w *Window) SetResizeHoverEdges(edges int, grip core.Unit) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.resizeHoverEdges == edges && w.resizeHoverGrip == grip {
+		return false
+	}
+	w.resizeHoverEdges, w.resizeHoverGrip = edges, grip
 	return true
 }
 
@@ -1694,7 +1738,12 @@ func cursorShapeAtTrinket(trinket core.Trinket, pos core.UnitPoint) core.CursorS
 		// different cursor over its scrollbar) is safe to consult directly.
 		if cs, ok := cur.(core.CursorShaper); ok {
 			_, isContainer := cur.(core.Container)
-			if cur != trinket || !isContainer {
+			// A container that declares it answers for its whole subtree
+			// (core.CursorShapesSubtree) never re-enters this descent, so the
+			// entry-skip — which exists only to stop a delegating window
+			// recursing forever — must not silence it.
+			_, ownsSubtree := cur.(core.CursorShapesSubtree)
+			if cur != trinket || !isContainer || ownsSubtree {
 				return cs.CursorShapeAt(p.X, p.Y)
 			}
 		}
@@ -1743,9 +1792,7 @@ func (w *Window) PaintModalDim(p *core.Painter, localBounds core.UnitRect) {
 // band, clipped to the window's rounded corner radius. No-op on cell
 // surfaces (FillRectPixelsAlpha returns false there).
 func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
-	w.mu.RLock()
-	rects := w.resizeHoverRects
-	w.mu.RUnlock()
+	rects := w.resizeHoverBands(localBounds)
 	if len(rects) == 0 {
 		return
 	}
@@ -1831,6 +1878,23 @@ func (w *Window) MenuDropdownLayer() (bounds, anchor core.UnitRect, paint func(*
 		dd.PaintDropdown(p.WithOffset(barRect.X, barRect.Y).WithDenomination(outer, interior))
 	}
 	return toLocal(menuBounds), toLocal(dd.ActiveMenuTitleBounds()), paint, true
+}
+
+// resizeHoverBands is the highlight resolved for a given window-local
+// bounds. An edge MASK is resolved here, against the bounds the caller is
+// actually painting — that is the whole point of storing a mask: a rectangle
+// fixed earlier carries the size the window had when the gesture began, and a
+// live resize is precisely when that stops being true. Explicit rectangles
+// (the older setter) are returned as they were given.
+func (w *Window) resizeHoverBands(localBounds core.UnitRect) []core.UnitRect {
+	w.mu.RLock()
+	rects := w.resizeHoverRects
+	edges, grip := w.resizeHoverEdges, w.resizeHoverGrip
+	w.mu.RUnlock()
+	if edges != 0 {
+		return tornEdgeRects(localBounds, edges, grip)
+	}
+	return rects
 }
 
 // paintChrome paints the detached window's menu bar and status bar in
