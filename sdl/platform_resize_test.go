@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/platform"
@@ -39,6 +39,7 @@ func (h *fillHandler) Resized(sz core.UnitSize) {
 // format swaps channels across the whole UI (ARGB8888 turned every blue
 // into orange).
 func TestSoftwareTextureMatchesBackendByteOrder(t *testing.T) {
+	requireSDL(t)
 	os.Setenv("SDL_VIDEODRIVER", "dummy")
 
 	p := newTestPlatform(t)
@@ -91,6 +92,7 @@ func TestSoftwareTextureMatchesBackendByteOrder(t *testing.T) {
 // This is the headless regression for the "black triangle after resize"
 // bug (and for resize losing content in general).
 func TestSDLLiveResizeRepaintsFully(t *testing.T) {
+	requireSDL(t)
 	os.Setenv("SDL_VIDEODRIVER", "dummy")
 
 	p := newTestPlatform(t)

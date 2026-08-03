@@ -4,37 +4,13 @@ package sdl
 
 /*
 #cgo LDFLAGS: -framework Cocoa -framework QuartzCore -framework Metal
-#cgo darwin CFLAGS: -I/opt/homebrew/include -I/usr/local/include
-#cgo darwin LDFLAGS: -L/opt/homebrew/lib -L/usr/local/lib -lSDL2
 #include <stdio.h>
 #include <objc/runtime.h>
 #include <objc/message.h>
 #include <CoreGraphics/CoreGraphics.h>
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_syswm.h>
-
-// Forward declare SDL_Metal functions
-typedef void* SDL_MetalView;
-extern SDL_MetalView SDL_Metal_CreateView(SDL_Window* window);
-extern void SDL_Metal_DestroyView(SDL_MetalView view);
-extern void* SDL_Metal_GetLayer(SDL_MetalView view);
-
-// kittytk_create_metal_view creates an SDL Metal view and returns its layer
-static void* kittytk_create_metal_view(SDL_Window* window) {
-	if (!window) {
-		return NULL;
-	}
-	
-	SDL_MetalView view = SDL_Metal_CreateView(window);
-	if (!view) {
-		return NULL;
-	}
-	
-	void* layer = SDL_Metal_GetLayer(view);
-	// Note: We don't destroy the view here because it needs to stay alive
-	// The view will be destroyed when the window is destroyed
-	return layer;
-}
+// No SDL headers: with the purego SDL3 binding there is nothing to
+// link against, and window/Metal handles arrive from Go through the
+// adapter's window properties. This file is pure Cocoa.
 
 // kittytk_get_metal_layer retrieves the CAMetalLayer from an SDL Metal window.
 // SDL creates a Metal view with a Metal layer when SDL_WINDOW_METAL flag is used.
@@ -349,7 +325,7 @@ import (
 	"os"
 	"unsafe"
 
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
 )
 
 // platformPerPixelAlpha: macOS composites per-pixel window alpha via
@@ -422,23 +398,16 @@ func makeWindowMiniaturizable(win *sdl2.Window) {
 	}
 }
 
+// cocoaWindow returns the NSWindow behind an SDL window. SDL3 exposes
+// it as a window property rather than through SDL_GetWindowWMInfo.
 func cocoaWindow(win *sdl2.Window) unsafe.Pointer {
-	info, err := win.GetWMInfo()
-	if err != nil {
-		return nil
-	}
-	cocoa := info.GetCocoaInfo()
-	if cocoa == nil {
-		return nil
-	}
-	return cocoa.Window
+	return win.CocoaWindow()
 }
 
-// getMetalLayer retrieves the CAMetalLayer from an SDL Metal window
+// getMetalLayer retrieves the CAMetalLayer from an SDL Metal window,
+// creating the backing Metal view on first use.
 func getMetalLayer(win *sdl2.Window) unsafe.Pointer {
-	// First try using SDL's Metal functions directly
-	layer := C.kittytk_create_metal_view((*C.SDL_Window)(unsafe.Pointer(win)))
-	if layer != nil {
+	if layer := win.MetalLayer(); layer != nil {
 		return layer
 	}
 	

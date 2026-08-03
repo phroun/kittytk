@@ -12,7 +12,6 @@ require (
 	github.com/phroun/argwild v0.0.1
 	github.com/phroun/direct-key-handler v0.3.9
 	github.com/phroun/purfecterm v0.2.27
-	github.com/veandco/go-sdl2 v0.4.40
 	golang.org/x/image v0.44.0
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.40.0

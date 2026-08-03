@@ -19,6 +19,7 @@
 package sdlcompat
 
 import (
+	"fmt"
 	"unsafe"
 
 	sdl3 "github.com/Zyko0/go-sdl3/sdl"
@@ -32,7 +33,30 @@ const (
 	INIT_EVENTS = sdl3.INIT_EVENTS
 )
 
-func Init(flags sdl3.InitFlags) error { return sdl3.Init(flags) }
+// Init loads libSDL3 and initializes the requested subsystems. The
+// binding is purego-based: nothing is linked at build time, so the
+// library has to be opened before any SDL call — otherwise the first
+// one dereferences an unregistered function pointer. Doing it here
+// keeps that requirement from leaking into the platform layer.
+func Init(flags sdl3.InitFlags) error {
+	if err := loadLibrary(); err != nil {
+		return err
+	}
+	return sdl3.Init(flags)
+}
+
+var libLoaded bool
+
+func loadLibrary() error {
+	if libLoaded {
+		return nil
+	}
+	if err := sdl3.LoadLibrary(sdl3.Path()); err != nil {
+		return fmt.Errorf("sdl3: %w (is libSDL3 installed?)", err)
+	}
+	libLoaded = true
+	return nil
+}
 func Quit()                           { sdl3.Quit() }
 func Delay(ms uint32)                 { sdl3.Delay(ms) }
 
@@ -163,9 +187,13 @@ const (
 
 // CreateRGBSurfaceWithFormat keeps SDL2's name; SDL3 dropped the unused
 // flags and depth arguments.
-func CreateRGBSurfaceWithFormat(flags uint32, width, height, depth int32, format uint32) (*Surface, error) {
-	return sdl3.CreateSurface(int(width), int(height), sdl3.PixelFormat(format))
+func CreateRGBSurfaceWithFormat(flags uint32, width, height, depth int32, format sdl3.PixelFormat) (*Surface, error) {
+	return sdl3.CreateSurface(int(width), int(height), format)
 }
+
+// FreeSurface releases a surface. SDL3 renamed SDL_FreeSurface, so the
+// host calls this rather than a method that no longer exists.
+func FreeSurface(s *Surface) { s.Destroy() }
 
 // SetShape applies an alpha mask to a transparent window. SDL3 requires
 // the window to have been created with WINDOW_TRANSPARENT.
@@ -478,7 +506,7 @@ type Texture struct {
 	t *sdl3.Texture
 	w int32
 	h int32
-	f uint32
+	f sdl3.PixelFormat
 }
 
 // Renderer creation flags kept for call-site compatibility. SDL3 has no
@@ -513,8 +541,8 @@ func CreateRenderer(w *Window, index int, flags uint32) (*Renderer, error) {
 
 func (r *Renderer) Destroy() { r.r.Destroy() }
 
-func (r *Renderer) CreateTexture(format uint32, access sdl3.TextureAccess, w, h int32) (*Texture, error) {
-	t, err := r.r.CreateTexture(sdl3.PixelFormat(format), access, int(w), int(h))
+func (r *Renderer) CreateTexture(format sdl3.PixelFormat, access sdl3.TextureAccess, w, h int32) (*Texture, error) {
+	t, err := r.r.CreateTexture(format, access, int(w), int(h))
 	if err != nil {
 		return nil, err
 	}
@@ -546,7 +574,7 @@ func (t *Texture) Update(rect *Rect, pixels []byte, pitch int) error {
 // exposes size as floats and drops the combined query, so the values
 // are remembered at creation.
 func (t *Texture) Query() (uint32, int, int32, int32, error) {
-	return t.f, int(sdl3.TEXTUREACCESS_STREAMING), t.w, t.h, nil
+	return uint32(t.f), int(sdl3.TEXTUREACCESS_STREAMING), t.w, t.h, nil
 }
 
 // --- native handles ---

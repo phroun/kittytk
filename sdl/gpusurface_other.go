@@ -5,7 +5,7 @@ package sdl
 import (
 	"fmt"
 
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
 )
 
 // reassertWindowAlpha is the non-macOS stub: no per-pixel window alpha
@@ -17,23 +17,17 @@ func reassertWindowAlpha(*sdl2.Window) {}
 func roundWindowLayer(*sdl2.Window, int) bool { return false }
 
 // nativeSurfaceHandles resolves the platform handles WebGPU surface
-// creation needs for one SDL window. Off macOS the handles come from
-// SDL's window-manager info: X11 wants (Display*, Window) and Windows
-// wants (0, HWND). Wayland sessions reach here through XWayland; a
-// pure-Wayland SDL window is reported unsupported rather than guessed at.
+// creation needs for one SDL window. SDL3 replaced SDL_GetWindowWMInfo
+// with typed window properties: X11 wants (Display*, Window) and
+// Windows wants (0, HWND). A Wayland session reaches here through
+// XWayland; a pure-Wayland window reports unsupported rather than
+// being guessed at.
 func nativeSurfaceHandles(win *sdl2.Window) (display, window uintptr, err error) {
-	info, err := win.GetWMInfo()
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to get window manager info: %w", err)
+	if d, w := win.X11Handles(); w != 0 {
+		return d, w, nil
 	}
-	switch info.Subsystem {
-	case sdl2.SYSWM_X11:
-		x11 := info.GetX11Info()
-		return uintptr(x11.Display), uintptr(x11.Window), nil
-	case sdl2.SYSWM_WINDOWS:
-		w := info.GetWindowsInfo()
-		return 0, uintptr(w.Window), nil
-	default:
-		return 0, 0, fmt.Errorf("unsupported windowing subsystem %d for WebGPU surface", info.Subsystem)
+	if hwnd := win.Win32HWND(); hwnd != 0 {
+		return 0, hwnd, nil
 	}
+	return 0, 0, fmt.Errorf("no supported native window handle for WebGPU surface")
 }

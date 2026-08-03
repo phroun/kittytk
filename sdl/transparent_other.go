@@ -3,7 +3,7 @@
 package sdl
 
 import (
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
 )
 
 // platformPerPixelAlpha: no per-pixel window alpha off macOS; rounded

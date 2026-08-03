@@ -4,9 +4,8 @@ package sdl
 
 import (
 	"fmt"
-	"unsafe"
 	
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/platform"
@@ -121,7 +120,7 @@ func (r *SoftwareRenderer) Present(w *nativeWin, backend *raster.Backend) error 
 	img := backend.Image()
 
 	// Update texture with backend pixels
-	_ = w.texture.Update(nil, unsafe.Pointer(&img.Pix[0]), img.Stride)
+	_ = w.texture.Update(nil, img.Pix, img.Stride)
 
 	// Render to screen
 	if w.transparent {

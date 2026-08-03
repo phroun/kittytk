@@ -5,7 +5,7 @@ package sdl
 import (
 	"testing"
 
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
 )
 
 func guiKey(sym sdl2.Keycode, extraMod uint16) sdl2.Keysym {
@@ -21,6 +21,17 @@ func newTestPlatform(t *testing.T) *Platform {
 		t.Fatalf("New: %v", err)
 	}
 	return p
+}
+
+// requireSDL skips a test when libSDL3 is not installed. The binding
+// loads it at RUN time rather than link time, so its absence is an
+// environment fact (a headless CI box without SDL) rather than a
+// failure of the code under test.
+func requireSDL(t *testing.T) {
+	t.Helper()
+	if err := sdl2.Init(sdl2.INIT_VIDEO); err != nil {
+		t.Skipf("SDL3 unavailable: %v", err)
+	}
 }
 
 // The zoom chords: Command/Meta with "+"/"=" grows a point, "-" shrinks,

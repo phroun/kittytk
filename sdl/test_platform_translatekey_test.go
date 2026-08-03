@@ -5,7 +5,7 @@ package sdl
 import (
 	"testing"
 
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
 )
 
 // Control-punctuation combinations keep their terminal caret

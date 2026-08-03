@@ -4,6 +4,7 @@ package sdlcompat
 
 import (
 	"runtime"
+	"sync"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -17,8 +18,10 @@ import (
 // the dependency stock.
 
 var sdlMetalGetLayer func(view uintptr) unsafe.Pointer
+var gapfillOnce sync.Once
 
-func init() {
+// bindGaps runs after Init has opened libSDL3.
+func bindGaps() {
 	name := "libSDL3.so.0"
 	switch runtime.GOOS {
 	case "darwin":
@@ -40,6 +43,7 @@ func init() {
 // metalGetLayer returns the CAMetalLayer behind an SDL Metal view, or
 // nil when this build has no Metal support.
 func metalGetLayer(view uintptr) unsafe.Pointer {
+	gapfillOnce.Do(bindGaps)
 	if sdlMetalGetLayer == nil || view == 0 {
 		return nil
 	}

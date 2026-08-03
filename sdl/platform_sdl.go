@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
 	wgpu "github.com/gogpu/wgpu" // Native, zero-cgo WebGPU dependency
 	gputypes "github.com/gogpu/gputypes"
     _ "github.com/gogpu/wgpu/hal/allbackends"
@@ -429,6 +429,7 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	}
 
 	if err := sdl2.Init(sdl2.INIT_VIDEO | sdl2.INIT_EVENTS); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: SDL init failed: %v\n", err)
 		return 1
 	}
 	defer sdl2.Quit()
@@ -466,7 +467,7 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		installAboutMenuHandler()
 	}
 
-	sdl2.StartTextInput()
+	_ = sdl2.StartTextInput(win.window)
 
 	// Event watch hooks handle continuous redraw requests during active modal resize loops
 	sdl2.AddEventWatchFunc(func(ev sdl2.Event, _ interface{}) bool {
@@ -542,16 +543,17 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 }
 
 // createWindow builds one OS window with its presentation chain.
-func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags uint32, shapeRadiusPx int) (*nativeWin, error) {
+func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sdl2.WindowFlags, shapeRadiusPx int) (*nativeWin, error) {
 	w := &nativeWin{shapeRadiusPx: shapeRadiusPx}
 	var err error
 
 	if shapeRadiusPx > 0 && (!platformPerPixelAlpha || p.roundedCornerMechanism() == "shape") {
 		// SDL's own shaped window: created shaped, masked in applyShape.
-		w.window, err = sdl2.CreateShapedWindow(title, 0, 0, uint32(wPx), uint32(hPx), flags)
-		if err == nil {
-			w.window.SetPosition(x, y)
-		} else {
+		// SDL3: a window whose framebuffer alpha composites. This is
+		// what SDL2's shaped windows were standing in for, and unlike
+		// them it must be requested at creation.
+		w.window, err = sdl2.CreateTransparentWindow(title, x, y, wPx, hPx, flags)
+		if err != nil {
 			w.shapeRadiusPx = 0
 		}
 	}
@@ -559,10 +561,14 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 	if w.window == nil {
 		winFlags := flags
 		if p.gpuDevice != nil && runtime.GOOS == "darwin" {
-			// 0x00020000 is the hardcoded bitmask for SDL_WINDOW_METAL across all SDL2 distributions
-			winFlags |= 0x00020000
+			winFlags |= sdl2.WINDOW_METAL
 		}
-		w.window, err = sdl2.CreateWindow(title, x, y, int32(wPx), int32(hPx), winFlags)
+		// A rounded window needs its alpha to composite even when it is
+		// not created through the transparent path above.
+		if shapeRadiusPx > 0 {
+			winFlags |= sdl2.WINDOW_TRANSPARENT
+		}
+		w.window, err = sdl2.CreateWindow(title, x, y, wPx, hPx, winFlags)
 	}
 
 	if err != nil {
@@ -1267,7 +1273,7 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			var held core.MouseButton
-			if e.State&sdl2.ButtonLMask() != 0 {
+			if e.State&sdl2.ButtonLMask != 0 {
 				held = core.LeftButton
 			}
 			x, y := p.toUnits(e.X, e.Y, e.WindowID)
@@ -1732,7 +1738,7 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 	if opts.XPx == 0 && opts.YPx == 0 {
 		x, y = sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED
 	}
-	flags := uint32(sdl2.WINDOW_SHOWN)
+	flags := sdl2.WINDOW_SHOWN
 	if opts.Borderless {
 		flags |= sdl2.WINDOW_BORDERLESS
 	} else {
@@ -1764,7 +1770,7 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 // mid-gesture, after which it CLAMPS motion coordinates to the window
 // rect - the tear-off drag would fence itself in.
 func reassertCapture() {
-	if _, _, state := sdl2.GetGlobalMouseState(); state&sdl2.ButtonLMask() != 0 {
+	if _, _, state := sdl2.GetGlobalMouseState(); state&sdl2.ButtonLMask != 0 {
 		_ = sdl2.CaptureMouse(true)
 	}
 }
@@ -1790,13 +1796,15 @@ func (p *Platform) SetCursor(shape core.CursorShape) {
 	}
 	cur, ok := p.cursors[shape]
 	if !ok {
-		cur = sdl2.CreateSystemCursor(systemCursorID(shape))
+		// SDL3 reports creation failure; a nil cursor is cached so the
+		// lookup is not retried every frame.
+		cur, _ = sdl2.CreateSystemCursor(systemCursorID(shape))
 		p.cursors[shape] = cur
 	}
 	if cur == nil {
 		return
 	}
-	sdl2.SetCursor(cur)
+	_ = sdl2.SetCursor(cur)
 	p.cursorSet = true
 }
 
@@ -1974,11 +1982,11 @@ func (w *nativeWin) applyShape() {
 	if wPx <= 0 || hPx <= 0 {
 		return
 	}
-	mask, err := sdl2.CreateRGBSurfaceWithFormat(0, wPx, hPx, 32, uint32(sdl2.PIXELFORMAT_ARGB8888))
+	mask, err := sdl2.CreateRGBSurfaceWithFormat(0, wPx, hPx, 32, sdl2.PIXELFORMAT_ARGB8888)
 	if err != nil {
 		return
 	}
-	defer mask.Free()
+	defer sdl2.FreeSurface(mask)
 	_ = mask.FillRect(nil, 0xffffffff)
 	pix := mask.Pixels()
 	pitch := int(mask.Pitch)
@@ -2009,8 +2017,8 @@ func (w *nativeWin) applyShape() {
 	// between them).
 	// A non-zero result is one of SDL's shape errors (most likely
 	// NONSHAPEABLE_WINDOW: the window was not created shaped).
-	if rc := w.window.SetShape(mask, sdl2.ShapeModeBinarizeAlpha{Cutoff: 1 << 6}); rc != 0 {
-		fmt.Fprintf(os.Stderr, "WARNING: SetShape failed (rc=%d, window not shapeable?)\n", rc)
+	if err := w.window.SetShape(mask); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: SetShape failed (window not transparent?): %v\n", err)
 	}
 }
 

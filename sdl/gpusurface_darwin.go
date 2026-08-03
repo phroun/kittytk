@@ -5,7 +5,7 @@ package sdl
 import (
 	"fmt"
 
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
 )
 
 // nativeSurfaceHandles resolves the platform handles WebGPU surface
