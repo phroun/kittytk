@@ -221,6 +221,17 @@ type WindowProvider interface {
 	GetChildWindows() *ChildWindowList
 }
 
+// BaseLayerPainter is an optional SurfaceHandler refinement for GPU
+// compositing. FrameBase paints only the surface's base layer (desktop
+// chrome: background, menu bar, dock, status bar) and leaves child
+// windows, menus, and popups to the compositor's separate texture
+// layers. Frame keeps its v1 contract — paint EVERYTHING — so a
+// non-compositing present (software renderer, or a GPU present outside
+// the compositor) always produces a complete picture.
+type BaseLayerPainter interface {
+	FrameBase(p *core.Painter)
+}
+
 // PixelAnchoredOnFontZoom is an optional SurfaceHandler refinement consulted
 // by a live host font zoom. A graphical platform re-applies its font size to
 // every open window: the main window keeps its PIXEL size (the unit grid

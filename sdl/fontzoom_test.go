@@ -12,6 +12,17 @@ func guiKey(sym sdl2.Keycode, extraMod uint16) sdl2.Keysym {
 	return sdl2.Keysym{Sym: sym, Mod: sdl2.KMOD_LGUI | extraMod}
 }
 
+// newTestPlatform builds a Platform on the software renderer, which needs
+// no display or GPU, for tests that never open a window.
+func newTestPlatform(t *testing.T) *Platform {
+	t.Helper()
+	p, err := New("t", 100, 100, "software")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return p
+}
+
 // The zoom chords: Command/Meta with "+"/"=" grows a point, "-" shrinks,
 // "0" returns to the configured default; keypad variants count; Shift rides
 // along ("+" IS Shift+"=" on common layouts); Ctrl or Alt in the chord makes
@@ -63,7 +74,7 @@ func TestZoomTargetCaps(t *testing.T) {
 // and bounds configured values to the zoom range; zero keeps its "unset, use
 // the raster base" meaning.
 func TestSetFontSizeRecordsDefault(t *testing.T) {
-	p := New("t", 100, 100)
+	p := newTestPlatform(t)
 	p.SetFontSize(24)
 	if p.fontSize != 24 || p.defaultFontSize != 24 {
 		t.Fatalf("fontSize=%d default=%d, want 24/24", p.fontSize, p.defaultFontSize)
@@ -86,7 +97,7 @@ func TestSetFontSizeRecordsDefault(t *testing.T) {
 // the chords and walks the live size, and Cmd/Meta+0 returns to the
 // configured default rather than merely stepping toward it.
 func TestFontZoomKeyWalksAndResets(t *testing.T) {
-	p := New("t", 100, 100)
+	p := newTestPlatform(t)
 	p.SetFontSize(24)
 
 	if !p.fontZoomKey(guiKey(sdl2.K_EQUALS, 0)) || p.fontSize != 25 {
@@ -106,7 +117,7 @@ func TestFontZoomKeyWalksAndResets(t *testing.T) {
 	}
 
 	// An unconfigured platform zooms from the 12pt raster base.
-	q := New("t", 100, 100)
+	q := newTestPlatform(t)
 	if !q.fontZoomKey(guiKey(sdl2.K_MINUS, 0)) || q.fontSize != 11 {
 		t.Fatalf("unconfigured zoom out: want 11, got %d", q.fontSize)
 	}

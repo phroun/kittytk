@@ -230,6 +230,11 @@ func (b *Backend) SetFontSize(size int) {
 	b.fontSize = size
 }
 
+// FontSize reports the UI point size (see SetFontSize). A compositor
+// creating per-window backends copies it from the parent backend so
+// child content maps units to pixels at the same density.
+func (b *Backend) FontSize() int { return b.fontSize }
+
 // Image exposes the framebuffer (substrates blit it; tests read it).
 func (b *Backend) Image() *image.RGBA { return b.img }
 

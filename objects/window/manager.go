@@ -2,7 +2,6 @@
 package window
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -1736,8 +1735,6 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 		OnDismiss:          request.OnDismiss,
 	}
 	m.popups = append(m.popups, overlay)
-	fmt.Printf("📌 RegisterPopup: ID=%s, Bounds=(%d,%d) %dx%d, Total popups=%d\n",
-		request.ID, request.Bounds.X, request.Bounds.Y, request.Bounds.Width, request.Bounds.Height, len(m.popups))
 }
 
 // UnregisterPopup removes a popup overlay by ID.
@@ -3007,9 +3004,6 @@ func (m *WindowManager) PaintPopups(p *core.Painter) {
 	m.mu.RLock()
 	popups := m.popups
 	m.mu.RUnlock()
-	if len(popups) > 0 {
-		fmt.Printf("🎯 PaintPopups: Painting %d popups\n", len(popups))
-	}
 	for _, popup := range popups {
 		if popup.Paint != nil {
 			popup.Paint(p)

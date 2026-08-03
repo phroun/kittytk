@@ -2881,26 +2881,33 @@ func (h *desktopSurfaceHandler) Frame(painter *core.Painter) {
 	size := s.Size()
 	painter.Clear(core.UnitRect{Width: size.Width, Height: size.Height}, theme.Normal)
 	painter.ResetTextCaretRequest()
-	
-	// When the GPU compositor is active (has child windows), it will render
-	// windows separately to individual textures. We only paint the Desktop
-	// chrome here (background, menu, status, dock). The compositor detects
-	// this by checking if GetChildWindows() returns windows.
-	if wm != nil {
-		windows := wm.Windows()
-		if len(windows) == 0 {
-			// No windows, paint normally
-			wm.Paint(painter)
-		} else {
-			// Compositor will handle windows - only paint Desktop chrome
-			d.Paint(painter)
-		}
-	}
-	
+	wm.Paint(painter)
 	// The desktop composites every window into ONE surface, so it is the frame
 	// owner here and applies the caret request itself — the same job SurfaceHost
 	// does in native one-window-per-surface mode. Without this a focused
 	// terminal would ask for the platform caret and nothing would place it.
+	platform.ApplyTextCaret(s, painter.TextCaretRequest())
+}
+
+// FrameBase implements platform.BaseLayerPainter: it paints ONLY the
+// desktop chrome (background, menu bar, dock, status bar). The GPU
+// compositor calls this for the base layer and renders windows, menu
+// dropdowns, and popups to their own textures on top. Frame keeps
+// painting the complete scene for every non-compositing present.
+func (h *desktopSurfaceHandler) FrameBase(painter *core.Painter) {
+	d := h.d
+	d.mu.RLock()
+	theme := d.theme
+	s := d.surface
+	d.mu.RUnlock()
+
+	size := s.Size()
+	painter.Clear(core.UnitRect{Width: size.Width, Height: size.Height}, theme.Normal)
+	painter.ResetTextCaretRequest()
+	d.Paint(painter)
+	// Child windows paint on compositor layers, so no caret request can
+	// arrive through this painter; this keeps the caret state coherent
+	// for chrome-only frames.
 	platform.ApplyTextCaret(s, painter.TextCaretRequest())
 }
 
@@ -4126,28 +4133,21 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 		return nil
 	}
 	windows := d.windowManager.Windows()
-	fmt.Printf("🪟 GetChildWindows: windowManager.Windows() returned %d windows\n", len(windows))
 	if len(windows) == 0 {
 		return nil
 	}
-	// Convert to platform.ChildWindowList
 	result := make([]interface{}, len(windows))
 	for i, w := range windows {
 		result[i] = w
-		bounds := w.Bounds()
-		fmt.Printf("  [%d] Window at (%d,%d) %dx%d\n", i, bounds.X, bounds.Y, bounds.Width, bounds.Height)
 	}
-	
-	// Get popups from window manager
+
 	popups := d.windowManager.GetPopups()
-	fmt.Printf("🪟 GetChildWindows: windowManager.GetPopups() returned %d popups\n", len(popups))
-	
-	// Check if menu bar has an active dropdown
-	var menuDropdown interface{} = nil
+
+	// An open menu bar dropdown becomes its own compositor layer.
+	var menuDropdown interface{}
 	if d.menuBar != nil && d.menuBar.ActiveMenu() != nil {
 		menuBounds := d.menuBar.ActiveMenuBounds()
 		if !menuBounds.IsEmpty() {
-			// Create a struct that provides bounds and paint function
 			menuDropdown = &struct {
 				Bounds core.UnitRect
 				Paint  func(*core.Painter)
@@ -4157,13 +4157,9 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 					d.menuBar.PaintDropdown(p)
 				},
 			}
-			fmt.Printf("🪟 GetChildWindows: menuBar has active dropdown at (%d,%d) %dx%d\n",
-				menuBounds.X, menuBounds.Y, menuBounds.Width, menuBounds.Height)
 		}
 	}
-	
-	fmt.Printf("🪟 GetChildWindows returning %d windows, %d popups, menuDropdown=%v\n", 
-		len(result), len(popups), menuDropdown != nil)
+
 	return &platform.ChildWindowList{
 		Windows:      result,
 		Popups:       popups,

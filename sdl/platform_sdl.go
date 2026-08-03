@@ -29,8 +29,8 @@ const blitVertexShader = `
 struct CombinedUniforms {
     angle: f32,      // rotation (from effects)
     enabled: f32,    // effects enabled
-    scale: f32,      // effects scale  
-    padding1: f32,   // padding to 16 bytes
+    scale: f32,      // effects scale (2.0 = scene at 50%)
+    aspect: f32,     // surface width/height, for undistorted rotation
     pos_x: f32,      // window x in NDC
     pos_y: f32,      // window y in NDC
     size_w: f32,     // window width in NDC
@@ -55,7 +55,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
         vec2<f32>(1.0, 1.0),  //            top-right
         vec2<f32>(0.0, 1.0)   //            top-left
     );
-    
+
     var texCoords = array<vec2<f32>, 6>(
         vec2<f32>(0.0, 1.0),  // Flipped Y for texture
         vec2<f32>(1.0, 1.0),
@@ -64,11 +64,27 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
         vec2<f32>(1.0, 0.0),
         vec2<f32>(0.0, 0.0)
     );
-    
+
     // Apply position and size from uniforms
     let scaled_pos = pos[vertex_index] * vec2<f32>(uniforms.size_w, uniforms.size_h);
-    let final_pos = vec2<f32>(uniforms.pos_x, uniforms.pos_y) + scaled_pos;
-    
+    var final_pos = vec2<f32>(uniforms.pos_x, uniforms.pos_y) + scaled_pos;
+
+    // Rotation demo: rigidly rotate and shrink the whole scene around the
+    // surface center. Every layer (desktop base, windows, menus, popups)
+    // carries the same effect values, so the composited scene turns as
+    // one. Rotation happens in aspect-corrected space so circles stay
+    // circles on non-square surfaces.
+    if (uniforms.enabled > 0.5) {
+        let inv = 1.0 / max(uniforms.scale, 0.001);
+        let aspect = max(uniforms.aspect, 0.001);
+        var q = vec2<f32>(final_pos.x * aspect, final_pos.y) * inv;
+        let ang = -uniforms.angle;
+        let c = cos(ang);
+        let s = sin(ang);
+        q = vec2<f32>(q.x * c - q.y * s, q.x * s + q.y * c);
+        final_pos = vec2<f32>(q.x / aspect, q.y);
+    }
+
     var output: VertexOutput;
     output.position = vec4<f32>(final_pos, 0.0, 1.0);
     output.texCoord = texCoords[vertex_index];
@@ -81,7 +97,7 @@ struct CombinedUniforms {
     angle: f32,
     enabled: f32,
     scale: f32,
-    padding1: f32,
+    aspect: f32,
     pos_x: f32,
     pos_y: f32,
     size_w: f32,
@@ -328,363 +344,21 @@ func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 	return p.backend, nil
 }
 
-// Helper to keep clamp bounds if present in your environment
+// The dynamic size is bounded to 4..100pt.
+const (
+	minFontPt = 4
+	maxFontPt = 100
+)
+
+// clampFontPt bounds a point size to the dynamic zoom range.
 func clampFontPt(size int) int {
-	if size < 6 {
-		return 6
+	if size < minFontPt {
+		return minFontPt
 	}
-	if size > 72 {
-		return 72
+	if size > maxFontPt {
+		return maxFontPt
 	}
 	return size
-}
-
-// createBlitPipeline creates the render pipeline for blitting UI textures to the screen
-func (p *Platform) createBlitPipeline() error {
-	// Create shader modules
-	vertexShader, err := p.gpuDevice.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
-		Label: "Blit Vertex Shader",
-		WGSL:  blitVertexShader,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create vertex shader: %w", err)
-	}
-	defer vertexShader.Release()
-
-	fragmentShader, err := p.gpuDevice.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
-		Label: "Blit Fragment Shader",
-		WGSL:  blitFragmentShader,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create fragment shader: %w", err)
-	}
-	defer fragmentShader.Release()
-
-	// Create sampler for texture sampling  
-	// Address mode 2 = Clamp, Filter mode 1 = Linear
-	p.blitSampler, err = p.gpuDevice.CreateSampler(&wgpu.SamplerDescriptor{
-		AddressModeU: 2, // ClampToEdge
-		AddressModeV: 2,
-		MagFilter:    1, // Linear
-		MinFilter:    1,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create sampler: %w", err)
-	}
-
-	// Create uniform buffer for rotation angle + enabled flag + scale (12 bytes for 3 x f32)
-	p.blitUniformBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
-		Size:  12,
-		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create uniform buffer: %w", err)
-	}
-
-	// Create uniform bind group layout
-	p.blitUniformLayout, err = p.gpuDevice.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Entries: []gputypes.BindGroupLayoutEntry{
-			{
-				Binding:    0,
-				Visibility: wgpu.ShaderStageFragment,
-				Buffer: &gputypes.BufferBindingLayout{
-					Type:             0, // Uniform
-					MinBindingSize:   12,
-					HasDynamicOffset: false,
-				},
-			},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create uniform bind group layout: %w", err)
-	}
-
-	// Create bind group layout for texture + sampler
-	p.blitLayout, err = p.gpuDevice.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Entries: []gputypes.BindGroupLayoutEntry{
-			{
-				Binding:    0,
-				Visibility: wgpu.ShaderStageFragment,
-				Texture: &gputypes.TextureBindingLayout{
-					SampleType:    1, // Float
-					ViewDimension: 2, // 2D
-				},
-			},
-			{
-				Binding:    1,
-				Visibility: wgpu.ShaderStageFragment,
-				Sampler: &gputypes.SamplerBindingLayout{
-					Type: 1, // Filtering
-				},
-			},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create bind group layout: %w", err)
-	}
-
-	// Create pipeline layout with both bind groups
-	pipelineLayout, err := p.gpuDevice.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
-		BindGroupLayouts: []*wgpu.BindGroupLayout{p.blitLayout, p.blitUniformLayout},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create pipeline layout: %w", err)
-	}
-	defer pipelineLayout.Release()
-
-	// Create render pipeline
-	p.blitPipeline, err = p.gpuDevice.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
-		Layout: pipelineLayout,
-		Vertex: wgpu.VertexState{
-			Module:     vertexShader,
-			EntryPoint: "vs_main",
-		},
-		Fragment: &wgpu.FragmentState{
-			Module:     fragmentShader,
-			EntryPoint: "fs_main",
-			Targets: []wgpu.ColorTargetState{
-				{
-					Format:    wgpu.TextureFormatBGRA8Unorm,
-					WriteMask: 0xF, // All color channels
-					Blend: &gputypes.BlendState{
-						Color: gputypes.BlendComponent{
-							SrcFactor: gputypes.BlendFactorSrcAlpha,
-							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
-							Operation: gputypes.BlendOperationAdd,
-						},
-						Alpha: gputypes.BlendComponent{
-							SrcFactor: gputypes.BlendFactorOne,
-							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
-							Operation: gputypes.BlendOperationAdd,
-						},
-					},
-				},
-			},
-		},
-		Primitive: wgpu.PrimitiveState{
-			Topology: 3, // TriangleList
-		},
-		Multisample: wgpu.MultisampleState{
-			Count: 1,
-			Mask:  0xFFFFFFFF,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create render pipeline: %w", err)
-	}
-
-	// Create the uniform bind group once and cache it (we'll just update buffer contents each frame)
-	p.blitUniformBindGroup, err = p.gpuDevice.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Layout: p.blitUniformLayout,
-		Entries: []wgpu.BindGroupEntry{
-			{Binding: 0, Buffer: p.blitUniformBuffer, Size: 12},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create uniform bind group: %w", err)
-	}
-
-	return nil
-}
-
-// createCubePipeline creates the 3D cube rendering pipeline
-func (p *Platform) createCubePipeline() error {
-	// Cube geometry: 8 vertices, 36 indices (12 triangles, 2 per face)
-	// Vertex format: [x, y, z, u, v]
-	cubeVertices := []float32{
-		// Front face
-		-0.2, -0.2,  0.2,  0.0, 1.0,
-		 0.2, -0.2,  0.2,  1.0, 1.0,
-		 0.2,  0.2,  0.2,  1.0, 0.0,
-		-0.2,  0.2,  0.2,  0.0, 0.0,
-		// Back face
-		-0.2, -0.2, -0.2,  1.0, 1.0,
-		-0.2,  0.2, -0.2,  1.0, 0.0,
-		 0.2,  0.2, -0.2,  0.0, 0.0,
-		 0.2, -0.2, -0.2,  0.0, 1.0,
-		// Top face
-		-0.2,  0.2, -0.2,  0.0, 1.0,
-		-0.2,  0.2,  0.2,  0.0, 0.0,
-		 0.2,  0.2,  0.2,  1.0, 0.0,
-		 0.2,  0.2, -0.2,  1.0, 1.0,
-		// Bottom face
-		-0.2, -0.2, -0.2,  1.0, 1.0,
-		 0.2, -0.2, -0.2,  0.0, 1.0,
-		 0.2, -0.2,  0.2,  0.0, 0.0,
-		-0.2, -0.2,  0.2,  1.0, 0.0,
-		// Right face
-		 0.2, -0.2, -0.2,  1.0, 1.0,
-		 0.2,  0.2, -0.2,  1.0, 0.0,
-		 0.2,  0.2,  0.2,  0.0, 0.0,
-		 0.2, -0.2,  0.2,  0.0, 1.0,
-		// Left face
-		-0.2, -0.2, -0.2,  0.0, 1.0,
-		-0.2, -0.2,  0.2,  1.0, 1.0,
-		-0.2,  0.2,  0.2,  1.0, 0.0,
-		-0.2,  0.2, -0.2,  0.0, 0.0,
-	}
-	
-	cubeIndices := []uint16{
-		0, 1, 2,  0, 2, 3,    // Front
-		4, 5, 6,  4, 6, 7,    // Back
-		8, 9, 10, 8, 10, 11,  // Top
-		12, 13, 14, 12, 14, 15, // Bottom
-		16, 17, 18, 16, 18, 19, // Right
-		20, 21, 22, 20, 22, 23, // Left
-	}
-	
-	// Create vertex buffer
-	vertexData := make([]byte, len(cubeVertices)*4)
-	for i, v := range cubeVertices {
-		binary.LittleEndian.PutUint32(vertexData[i*4:], math.Float32bits(v))
-	}
-	var err error
-	p.cubeVertexBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
-		Size:  uint64(len(vertexData)),
-		Usage: wgpu.BufferUsageVertex | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create cube vertex buffer: %w", err)
-	}
-	p.gpuQueue.WriteBuffer(p.cubeVertexBuffer, 0, vertexData)
-	
-	// Create index buffer
-	indexData := make([]byte, len(cubeIndices)*2)
-	for i, idx := range cubeIndices {
-		binary.LittleEndian.PutUint16(indexData[i*2:], idx)
-	}
-	p.cubeIndexBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
-		Size:  uint64(len(indexData)),
-		Usage: wgpu.BufferUsageIndex | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create cube index buffer: %w", err)
-	}
-	p.gpuQueue.WriteBuffer(p.cubeIndexBuffer, 0, indexData)
-	
-	// Create uniform buffer for MVP matrix (64 bytes for mat4x4)
-	p.cubeUniformBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
-		Size:  64,
-		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create cube uniform buffer: %w", err)
-	}
-	
-	// Create cube uniform bind group layout
-	p.cubeUniformLayout, err = p.gpuDevice.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Entries: []gputypes.BindGroupLayoutEntry{
-			{
-				Binding:    0,
-				Visibility: wgpu.ShaderStageVertex,
-				Buffer: &gputypes.BufferBindingLayout{
-					Type:             0, // Uniform
-					MinBindingSize:   64,
-					HasDynamicOffset: false,
-				},
-			},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create cube uniform layout: %w", err)
-	}
-	
-	// Create cube texture bind group layout (reuse blit layout for texture+sampler)
-	p.cubeLayout = p.blitLayout
-	
-	// Create shaders
-	vertexShader, err := p.gpuDevice.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
-		Label: "Cube Vertex Shader",
-		WGSL:  cubeVertexShader,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create cube vertex shader: %w", err)
-	}
-	defer vertexShader.Release()
-	
-	fragmentShader, err := p.gpuDevice.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
-		Label: "Cube Fragment Shader",
-		WGSL:  cubeFragmentShader,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create cube fragment shader: %w", err)
-	}
-	defer fragmentShader.Release()
-	
-	// Create pipeline layout
-	pipelineLayout, err := p.gpuDevice.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
-		BindGroupLayouts: []*wgpu.BindGroupLayout{p.cubeLayout, p.cubeUniformLayout},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create cube pipeline layout: %w", err)
-	}
-	defer pipelineLayout.Release()
-	
-	// Create render pipeline
-	p.cubePipeline, err = p.gpuDevice.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
-		Layout: pipelineLayout,
-		Vertex: wgpu.VertexState{
-			Module:     vertexShader,
-			EntryPoint: "vs_main",
-			Buffers: []gputypes.VertexBufferLayout{
-				{
-					ArrayStride: 20, // 5 floats * 4 bytes
-					StepMode:    gputypes.VertexStepModeVertex,
-					Attributes: []gputypes.VertexAttribute{
-						{Format: gputypes.VertexFormatFloat32x3, Offset: 0, ShaderLocation: 0},  // position
-						{Format: gputypes.VertexFormatFloat32x2, Offset: 12, ShaderLocation: 1}, // texCoord
-					},
-				},
-			},
-		},
-		Fragment: &wgpu.FragmentState{
-			Module:     fragmentShader,
-			EntryPoint: "fs_main",
-			Targets: []wgpu.ColorTargetState{
-				{
-					Format:    wgpu.TextureFormatBGRA8Unorm,
-					WriteMask: 0xF,
-					Blend: &gputypes.BlendState{
-						Color: gputypes.BlendComponent{
-							SrcFactor: gputypes.BlendFactorSrcAlpha,
-							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
-							Operation: gputypes.BlendOperationAdd,
-						},
-						Alpha: gputypes.BlendComponent{
-							SrcFactor: gputypes.BlendFactorOne,
-							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
-							Operation: gputypes.BlendOperationAdd,
-						},
-					},
-				},
-			},
-		},
-		Primitive: wgpu.PrimitiveState{
-			Topology:  3, // TriangleList
-			CullMode:  gputypes.CullModeBack, // Keep back-face culling for clean look
-			FrontFace: gputypes.FrontFaceCCW,
-		},
-		Multisample: wgpu.MultisampleState{
-			Count: 1,
-			Mask:  0xFFFFFFFF,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create cube render pipeline: %w", err)
-	}
-	
-	// Create uniform bind group
-	p.cubeUniformBindGroup, err = p.gpuDevice.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Layout: p.cubeUniformLayout,
-		Entries: []wgpu.BindGroupEntry{
-			{Binding: 0, Buffer: p.cubeUniformBuffer, Size: 64},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create cube uniform bind group: %w", err)
-	}
-	
-	return nil
 }
 
 // Run implements platform.Platform.
@@ -714,13 +388,6 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	// TODO: Remove this once full extraction is complete
 	p.exposeWebGPUObjects()
 	
-	// Create cube pipeline if using WebGPU
-	if p.gpuDevice != nil {
-		if err := p.createCubePipeline(); err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: Failed to create cube pipeline: %v\n", err)
-			// Non-fatal, continue without 3D cube
-		}
-	}
 
 	// 2. Create Master System UI Window Viewport Surface
 	win, err := p.createWindow(p.title, sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED,
@@ -747,11 +414,12 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	sdl2.AddEventWatchFunc(func(ev sdl2.Event, _ interface{}) bool {
 		if e, ok := ev.(*sdl2.WindowEvent); ok && e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
 			p.drainPosts()
-			p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
-            if w, ok := p.wins[e.WindowID]; ok && w.window != nil {
-                // Find your custom metadata wrapper by tracking your platform registry map
-                // We will directly query the local tracking variable we find below
-            				p.paintAndPresent(w, true)
+			if !p.liveResize(e.WindowID, int(e.Data1), int(e.Data2)) {
+				// Same-size event: liveResize didn't present, so keep the
+				// modal loop fed with a fresh frame ourselves.
+				if w, ok := p.wins[e.WindowID]; ok && w.window != nil {
+					p.presentWindow(w, true)
+				}
 			}
 		}
 		return true
@@ -785,79 +453,7 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 			}
 		}
 
-		// If using compositor (WebGPU renderer with RenderFrame), check for UI child windows
-		if anyDirty && p.renderer.SupportsFeature(FeatureCompositing) {
-			// Render each OS window
-			for _, w := range p.wins {
-				s := w.surface
-				if s == nil {
-					continue
-				}
-				dirty := s.dirty.Swap(false)
-				if !dirty {
-					continue
-				}
-				
-				// Check if this window's handler has UI child windows
-				if provider, ok := s.handler.(platform.WindowProvider); ok {
-					if childWindowList := provider.GetChildWindows(); childWindowList != nil && len(childWindowList.Windows) > 0 {
-						// Use child window compositor
-						// Pass a render function that renders the Desktop base layer
-						err := p.renderer.RenderFrameWithChildWindows(w, childWindowList, p.scale, func(win *nativeWin) {
-							// Render this window's content to its backend
-							s := win.surface
-							if s == nil || s.handler == nil {
-								return
-							}
-							
-							full, dmg := s.takeDamage()
-							if !full && (dmg.Width <= 0 || dmg.Height <= 0) {
-								full = true
-							}
-							
-							win.backend.BeginFrame()
-							if full {
-								s.handler.Frame(core.NewPainter(win.backend))
-							} else {
-								s.handler.Frame(core.NewPainter(win.backend).WithClip(dmg))
-							}
-							win.backend.EndFrame()
-						})
-						if err != nil {
-							fmt.Fprintf(os.Stderr, "Child window compositor error on window %d: %v\n", w.id, err)
-						}
-						continue
-					}
-				}
-				
-				// No child windows, use regular single-window rendering
-				err := p.renderer.RenderFrame(w, []*nativeWin{w}, func(win *nativeWin) {
-					// Render this window's content to its backend
-					s := win.surface
-					if s == nil || s.handler == nil {
-						return
-					}
-					
-					full, dmg := s.takeDamage()
-					if !full && (dmg.Width <= 0 || dmg.Height <= 0) {
-						full = true
-					}
-					
-					win.backend.BeginFrame()
-					if full {
-						s.handler.Frame(core.NewPainter(win.backend))
-					} else {
-						s.handler.Frame(core.NewPainter(win.backend).WithClip(dmg))
-					}
-					win.backend.EndFrame()
-				})
-				
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Compositor error on window %d: %v\n", w.id, err)
-				}
-			}
-		} else if anyDirty {
-			// Fallback: render each window individually (software renderer)
+		if anyDirty {
 			for _, w := range p.wins {
 				s := w.surface
 				if s == nil {
@@ -866,7 +462,7 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 				dirty := s.dirty.Swap(false)
 				burn := p.showFPS && w == p.main
 				if dirty || burn {
-					p.paintAndPresent(w, burn)
+					p.presentWindow(w, burn)
 				}
 			}
 		}
@@ -902,82 +498,91 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 	}
 
 	if w.window == nil {
-		// 0x00020000 is the hardcoded bitmask for SDL_WINDOW_METAL across all SDL2 distributions
-		w.window, err = sdl2.CreateWindow(title, x, y, int32(wPx), int32(hPx), flags|0x00020000)
+		winFlags := flags
+		if p.gpuDevice != nil && runtime.GOOS == "darwin" {
+			// 0x00020000 is the hardcoded bitmask for SDL_WINDOW_METAL across all SDL2 distributions
+			winFlags |= 0x00020000
+		}
+		w.window, err = sdl2.CreateWindow(title, x, y, int32(wPx), int32(hPx), winFlags)
 	}
 
 	if err != nil {
 		return nil, err
 	}
 
-	// 1. Native Surface Integration: Map the raw SDL window handle directly to WebGPU
-	// On macOS, we need to get the CAMetalLayer, not the NSWindow
-	metalLayer := getMetalLayer(w.window)
-	if metalLayer == nil {
-		w.window.Destroy()
-		return nil, fmt.Errorf("failed to get Metal layer from window")
-	}
-	
-	// GoGPU Instance surface allocator returns (Surface, error)
-	// On macOS: displayHandle=0, windowHandle=CAMetalLayer*
-	w.gpuSurface, err = p.gpuInstance.CreateSurface(0, uintptr(metalLayer))
-	if err != nil || w.gpuSurface == nil {
-		w.window.Destroy()
-		return nil, fmt.Errorf("failed to bind WebGPU hardware surface to window context: %w", err)
-	}
+	// The WebGPU presentation chain binds directly to the native window.
+	// The software renderer presents through SDL textures instead
+	// (Renderer.CreateWindowRenderer below) and skips all of this.
+	if p.gpuDevice != nil {
+		// 1. Native Surface Integration: Map the raw SDL window handle directly to WebGPU
+		// macOS hands over the CAMetalLayer; X11/Windows hand over display/window handles.
+		displayHandle, windowHandle, err := nativeSurfaceHandles(w.window)
+		if err != nil {
+			w.window.Destroy()
+			return nil, err
+		}
 
-	// Fall back to the absolute standard format supported natively by both macOS Metal and Windows 11
-	// Fall back to standard textures supported natively by macOS Metal and Windows 11
-	surfaceFormat := wgpu.TextureFormatBGRA8Unorm
+		w.gpuSurface, err = p.gpuInstance.CreateSurface(displayHandle, windowHandle)
+		if err != nil || w.gpuSurface == nil {
+			w.window.Destroy()
+			return nil, fmt.Errorf("failed to bind WebGPU hardware surface to window context: %w", err)
+		}
 
-	presentMode := wgpu.PresentModeFifo
-	if !p.vsync {
-		presentMode = wgpu.PresentModeImmediate
+		// The standard format supported natively by both macOS Metal and Windows 11
+		surfaceFormat := wgpu.TextureFormatBGRA8Unorm
+
+		presentMode := wgpu.PresentModeFifo
+		if !p.vsync {
+			presentMode = wgpu.PresentModeImmediate
+		}
+
+		w.config = &wgpu.SurfaceConfiguration{
+			Format:      surfaceFormat,
+			Usage:       wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageCopyDst,
+			AlphaMode:   gputypes.CompositeAlphaModeOpaque,
+			Width:       uint32(wPx),
+			Height:      uint32(hPx),
+			PresentMode: presentMode,
+		}
+
+		err = w.gpuSurface.Configure(p.gpuDevice, w.config)
+		if err != nil {
+			w.gpuSurface.Release()
+			w.window.Destroy()
+			return nil, fmt.Errorf("failed to configure surface: %w", err)
+		}
+
+		// 2. Initialize offscreen VRAM texture buffers for software framebuffer blitting
+		// Use BGRA format to match the surface format for direct copying
+		w.uiTexture, err = p.gpuDevice.CreateTexture(&wgpu.TextureDescriptor{
+			Size:          wgpu.Extent3D{Width: uint32(wPx), Height: uint32(hPx), DepthOrArrayLayers: 1},
+			MipLevelCount: 1,
+			SampleCount:   1,
+			Dimension:     wgpu.TextureDimension2D,
+			Format:        wgpu.TextureFormatBGRA8Unorm,
+			Usage:         wgpu.TextureUsageCopySrc | wgpu.TextureUsageCopyDst | wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
+		})
+		if err != nil {
+			w.gpuSurface.Release()
+			w.window.Destroy()
+			return nil, err
+		}
+
+		// Size staging buffers to transfer raw pixel arrays from the raster framework to VRAM
+		paddedBytesPerRow := (wPx * 4) // RGBA format pixel scaling
+		w.uiBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
+			Size:  uint64(paddedBytesPerRow * hPx),
+			Usage: wgpu.BufferUsageCopySrc | wgpu.BufferUsageMapWrite,
+		})
 	}
-
-	w.config = &wgpu.SurfaceConfiguration{
-		Format:      surfaceFormat,
-		Usage:       wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageCopyDst,
-		AlphaMode:   gputypes.CompositeAlphaModeOpaque,
-		Width:       uint32(wPx),
-		Height:      uint32(hPx),
-		PresentMode: presentMode,
-	}
-
-	// Execute the configuration pass securely
-	err = w.gpuSurface.Configure(p.gpuDevice, w.config)
-	if err != nil {
-		w.gpuSurface.Release()
-		w.window.Destroy()
-		return nil, fmt.Errorf("failed to configure surface: %w", err)
-	}
-
-	// 2. Initialize offscreen VRAM texture buffers for software framebuffer blitting
-	// Use BGRA format to match the surface format for direct copying
-	w.uiTexture, err = p.gpuDevice.CreateTexture(&wgpu.TextureDescriptor{
-		Size:          wgpu.Extent3D{Width: uint32(wPx), Height: uint32(hPx), DepthOrArrayLayers: 1},
-		MipLevelCount: 1,
-		SampleCount:   1,
-		Dimension:     wgpu.TextureDimension2D,
-		Format:        wgpu.TextureFormatBGRA8Unorm,
-		Usage:         wgpu.TextureUsageCopySrc | wgpu.TextureUsageCopyDst | wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
-	})
-	if err != nil {
-		w.gpuSurface.Release()
-		w.window.Destroy()
-		return nil, err
-	}
-
-	// Size staging buffers to transfer raw pixel arrays from the raster framework to VRAM
-	paddedBytesPerRow := (wPx * 4) // RGBA format pixel scaling
-	w.uiBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
-		Size:  uint64(paddedBytesPerRow * hPx),
-		Usage: wgpu.BufferUsageCopySrc | wgpu.BufferUsageMapWrite,
-	})
 
 	if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
-		w.uiTexture.Release()
-		w.gpuSurface.Release()
+		if w.uiTexture != nil {
+			w.uiTexture.Release()
+		}
+		if w.gpuSurface != nil {
+			w.gpuSurface.Release()
+		}
 		w.window.Destroy()
 		return nil, err
 	}
@@ -1003,7 +608,15 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 func (w *nativeWin) destroy() {
 	// Note: We can't call p.renderer.DestroyWindowRenderer here because we don't have access to Platform
 	// The renderer cleanup will happen when Platform shuts down
-	
+
+	if w.texture != nil {
+		w.texture.Destroy()
+		w.texture = nil
+	}
+	if w.renderer != nil {
+		w.renderer.Destroy()
+		w.renderer = nil
+	}
 	if w.uiTexture != nil {
 		w.uiTexture.Release()
 		w.uiTexture = nil
@@ -1035,13 +648,17 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 		p.wPx, p.hPx = wPx, hPx
 	}
 	
-	// CRITICAL: Invalidate the surface so handler knows to repaint everything
-	// The backend is new and empty - we need a full repaint
+	// The fresh backend starts zero-filled, so the surface's damage
+	// tracking must be reset: without this the handler repaints only what
+	// it thinks changed, and the untouched area presents as black.
 	if w.surface != nil {
-		fmt.Printf("🔄 Invalidating surface after backend resize %dx%d\n", wPx, hPx)
 		w.surface.Invalidate(core.UnitRect{}) // Empty rect = invalidate all
-	} else {
-		fmt.Printf("⚠️  No surface to invalidate after resize!\n")
+	}
+
+	if w.gpuSurface == nil {
+		// Software renderer: re-size the SDL streaming texture instead of
+		// the WebGPU chain.
+		return p.renderer.ResizeWindowRenderer(w, wPx, hPx)
 	}
 
 	// Clean up old WebGPU texture if this is a resize event
@@ -1072,7 +689,7 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// 3. Create depth texture for 3D rendering
 	w.depthTexture, err = p.gpuDevice.CreateTexture(&wgpu.TextureDescriptor{
 		Size:          wgpu.Extent3D{Width: uint32(wPx), Height: uint32(hPx), DepthOrArrayLayers: 1},
@@ -1085,7 +702,7 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 	if err != nil {
 		return err
 	}
-	
+
 	w.depthView, err = p.gpuDevice.CreateTextureView(w.depthTexture, nil)
 	if err != nil {
 		return err
@@ -1120,16 +737,17 @@ func createMVPMatrix(aspectRatio float32, rotationAngle float32, scale float32, 
 	}
 }
 
-// paintAndPresent runs the handler frame into the window's raster backend and blits it via WebGPU commands.
-func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
-	frameStart := time.Now()
-	
+// paintBackend runs the handler frame into the window's raster backend,
+// honoring the surface's damage region unless forceFull demands a
+// complete repaint. baseOnly selects the handler's chrome-only base
+// layer (BaseLayerPainter) when the compositor renders child windows,
+// menus, and popups on their own layers.
+func (p *Platform) paintBackend(w *nativeWin, forceFull, baseOnly bool) {
 	s := w.surface
-	if s == nil || s.handler == nil || w.uiTexture == nil {
+	if s == nil || s.handler == nil || w.backend == nil {
 		return
 	}
 
-	// Get damage region for partial updates
 	full, dmg := s.takeDamage()
 	if forceFull {
 		full = true
@@ -1139,22 +757,95 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 		full = true
 	}
 
-	// 1. Render UI content to the raster backend
+	frame := s.handler.Frame
+	if baseOnly {
+		if base, ok := s.handler.(platform.BaseLayerPainter); ok {
+			frame = base.FrameBase
+		}
+	}
+
 	w.backend.BeginFrame()
 	if full {
-		s.handler.Frame(core.NewPainter(w.backend))
+		frame(core.NewPainter(w.backend))
 	} else {
 		// Clip the whole tree to the damaged region
-		s.handler.Frame(core.NewPainter(w.backend).WithClip(dmg))
+		frame(core.NewPainter(w.backend).WithClip(dmg))
 	}
 	w.backend.EndFrame()
+}
 
-	// 2. Get the rendered pixel data from the backend
+// presentWindow is the ONE way a window reaches the screen: it paints the
+// backend and presents through the active renderer, compositing child
+// windows when the renderer and the surface handler both support it.
+// Every present path — main loop, live resize, font zoom — funnels here so
+// resize frames cannot diverge from steady-state frames.
+func (p *Platform) presentWindow(w *nativeWin, forceFull bool) {
+	s := w.surface
+	if s == nil || s.handler == nil {
+		return
+	}
+
+	if p.renderer.SupportsFeature(FeatureCompositing) {
+		if provider, ok := s.handler.(platform.WindowProvider); ok {
+			if childWindowList := provider.GetChildWindows(); childWindowList != nil && len(childWindowList.Windows) > 0 {
+				err := p.renderer.RenderFrameWithChildWindows(w, childWindowList, p.scale, func(win *nativeWin) {
+					p.paintBackend(win, forceFull, true)
+				})
+				if err == nil {
+					p.scheduleAnimationFrame(s)
+					return
+				}
+				fmt.Fprintf(os.Stderr, "Child window compositor error on window %d: %v\n", w.id, err)
+				// Fall through to the plain present so the frame still lands.
+			}
+		}
+	}
+
+	p.paintAndPresent(w, forceFull)
+}
+
+// scheduleAnimationFrame keeps frames coming while the rotation demo is
+// running (or easing out) — the animation must not stall waiting for
+// input events.
+func (p *Platform) scheduleAnimationFrame(s *sdlSurface) {
+	if s == nil {
+		return
+	}
+	animating := p.rotationEnabled.Load()
+	if !animating {
+		animating = time.Since(p.rotationDeactivationTime).Seconds() < 0.5
+	}
+	if animating {
+		s.Invalidate(core.UnitRect{})
+	}
+}
+
+// paintAndPresent runs the handler frame into the window's raster backend and
+// presents it as a single surface (no child window compositing).
+func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
+	frameStart := time.Now()
+
+	s := w.surface
+	if s == nil || s.handler == nil || w.backend == nil {
+		return
+	}
+
+	p.paintBackend(w, forceFull, false)
+
+	// Without a GPU presentation chain (software renderer), the renderer
+	// blits the backend through SDL textures instead.
+	if p.gpuDevice == nil || w.uiTexture == nil {
+		if err := p.renderer.Present(w, w.backend); err != nil {
+			fmt.Fprintf(os.Stderr, "Present error on window %d: %v\n", w.id, err)
+		}
+		return
+	}
+
 	img := w.backend.Image()
 	if img == nil {
 		return
 	}
-	
+
 	// 3. Upload pixels to intermediate texture, then render it to surface
 	bounds := img.Bounds()
 	wPx := uint32(bounds.Dx())
@@ -1298,11 +989,23 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 		}
 	}
 	
-	// Update uniform buffer with angle, enabled flag, and scale
-	uniformData := make([]byte, 12)
+	// Update the full 32-byte CombinedUniforms block the blit shader reads:
+	// effects (angle, enabled, scale, padding) plus a fullscreen quad
+	// position. Writing only the effects half would leave the position half
+	// at whatever a previous frame put there.
+	aspect := float32(1)
+	if hPx > 0 {
+		aspect = float32(wPx) / float32(hPx)
+	}
+	uniformData := make([]byte, 32)
 	binary.LittleEndian.PutUint32(uniformData[0:4], math.Float32bits(angle))
 	binary.LittleEndian.PutUint32(uniformData[4:8], math.Float32bits(enabled))
 	binary.LittleEndian.PutUint32(uniformData[8:12], math.Float32bits(scale))
+	binary.LittleEndian.PutUint32(uniformData[12:16], math.Float32bits(aspect))
+	binary.LittleEndian.PutUint32(uniformData[16:20], math.Float32bits(-1.0)) // pos_x
+	binary.LittleEndian.PutUint32(uniformData[20:24], math.Float32bits(-1.0)) // pos_y
+	binary.LittleEndian.PutUint32(uniformData[24:28], math.Float32bits(2.0))  // size_w
+	binary.LittleEndian.PutUint32(uniformData[28:32], math.Float32bits(2.0))  // size_h
 	p.gpuQueue.WriteBuffer(p.blitUniformBuffer, 0, uniformData)
 	
 	// Use cached uniform bind group (no need to recreate)
@@ -1339,15 +1042,18 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 		},
 	})
 	
-	// Set pipeline and bind groups, then draw
+	// Set pipeline and bind groups, then draw. The blit vertex shader
+	// generates a two-triangle quad, so this MUST draw all 6 vertices:
+	// drawing 3 paints exactly half the window and leaves the other half
+	// as the clear color — the diagonal "black triangle" resize artifact.
 	renderPass.SetPipeline(p.blitPipeline)
 	renderPass.SetBindGroup(0, bindGroup, nil)                  // Texture + sampler (per-frame)
 	renderPass.SetBindGroup(1, p.blitUniformBindGroup, nil)    // Rotation uniform (cached)
-	renderPass.Draw(3, 1, 0, 0) // Draw fullscreen triangle
+	renderPass.Draw(6, 1, 0, 0)
 	renderPass.End()
 	
 	// Render 3D cube when rotation is active OR during ease-out
-	shouldRenderCube := p.rotationEnabled.Load()
+	shouldRenderCube := p.rotationEnabled.Load() && p.cubePipeline != nil
 	if !shouldRenderCube {
 		// Check if we're in ease-out phase
 		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
@@ -1449,23 +1155,11 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 	}
 	
 	if frameDuration > 30*time.Millisecond {
-		fmt.Printf("SLOW FRAME: %v (%.1f FPS)\n", frameDuration, 1000.0/frameDuration.Milliseconds())
+		fmt.Printf("SLOW FRAME: %v (%.1f FPS)\n", frameDuration, 1000.0/float64(frameDuration.Milliseconds()))
 	}
 
 	// Continuous rotation requires continuous repaints
-	// Keep repainting if rotation is enabled OR if we're still easing out
-	needsContinuousRepaint := p.rotationEnabled.Load()
-	if !needsContinuousRepaint {
-		// Check if we're in ease-out phase
-		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
-		if timeSinceDeactivation < 0.5 {
-			needsContinuousRepaint = true
-		}
-	}
-	
-	if needsContinuousRepaint && s != nil {
-		s.Invalidate(core.UnitRect{}) // Mark as needing repaint
-	}
+	p.scheduleAnimationFrame(s)
 
 	if p.showFPS && w == p.main {
 		p.fpsFrames++
@@ -1499,25 +1193,30 @@ func (p *Platform) updateFPSTitle() {
 	p.fpsSince = now
 }
 
-// liveResize re-sizes one window's framebuffer, re-lays out its handler, and presents immediately.
-func (p *Platform) liveResize(id uint32, wPx, hPx int) {
+// liveResize re-sizes one window's framebuffer, re-lays out its handler, and
+// presents immediately. It reports whether it presented a frame, so the
+// caller knows if a same-size event still needs a present of its own.
+func (p *Platform) liveResize(id uint32, wPx, hPx int) bool {
 	w, ok := p.wins[id]
 	if !ok || wPx <= 0 || hPx <= 0 {
-		return
+		return false
 	}
 	if img := w.backend.Image(); img != nil &&
 		img.Bounds().Dx() == wPx && img.Bounds().Dy() == hPx {
-		return
+		return false
 	}
 	if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
-		return
+		return false
 	}
 	w.applyShape()
-	if s := w.surface; s != nil && s.handler != nil {
-		s.handler.Resized(w.backend.Size())
-		p.paintAndPresent(w, true)
-		s.dirty.Store(false)
+	s := w.surface
+	if s == nil || s.handler == nil {
+		return false
 	}
+	s.handler.Resized(w.backend.Size())
+	p.presentWindow(w, true)
+	s.dirty.Store(false)
+	return true
 }
 
 // zoomTarget resolves a Command/Meta zoom chord to the font size it asks
@@ -1588,7 +1287,7 @@ func (p *Platform) applyFontSize(size int) {
 			w.backend.SetFontSize(size)
 			if s := w.surface; s != nil && s.handler != nil {
 				s.handler.Resized(w.backend.Size())
-				p.paintAndPresent(w, true)
+				p.presentWindow(w, true)
 				s.dirty.Store(false)
 			}
 			continue
@@ -1606,7 +1305,7 @@ func (p *Platform) applyFontSize(size int) {
 		w.applyShape()
 		if s := w.surface; s != nil && s.handler != nil {
 			s.handler.Resized(w.backend.Size())
-			p.paintAndPresent(w, true)
+			p.presentWindow(w, true)
 			s.dirty.Store(false)
 		}
 	}
@@ -1687,41 +1386,38 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			if e.Type == sdl2.KEYDOWN {
-				// Check for rotation trigger (R key) - toggles on/off
-				// Only supported by renderers with rotation capability (WebGPU)
-				// Note: Rotation not yet implemented in compositor mode
+				// Check for rotation trigger (R key) - toggles on/off.
+				// Only supported by renderers with rotation capability
+				// (WebGPU); works in plain-present AND compositor modes.
 				if e.Keysym.Sym == sdl2.K_r && p.renderer.SupportsFeature(FeatureRotation) {
-					if p.renderer.SupportsFeature(FeatureCompositing) {
-						fmt.Println("⚠️  Rotation effect not yet implemented for compositor mode")
-						fmt.Println("    Compositor enables per-window transforms - rotation coming soon!")
+					enabled := !p.rotationEnabled.Load()
+					p.rotationEnabled.Store(enabled)
+
+					// The Platform keeps its own copy of the animation clock
+					// for mouse-coordinate rotation compensation.
+					if enabled {
+						p.rotationActivationTime = time.Now()
+						p.rotationStartTime = time.Now()
 					} else {
-						enabled := !p.rotationEnabled.Load()
-						p.rotationEnabled.Store(enabled)
-						
-						// Initialize timing for Platform's animation state
-						if enabled {
-							p.rotationActivationTime = time.Now()
-							fmt.Println("🔄 Rotation effect activated!")
-						} else {
-							// Store current angle for smooth ease-out
-							elapsed := time.Since(p.rotationStartTime).Seconds()
-							timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
-							if timeSinceActivation > 1.0 { // After ease-in completes
-								easeOutCubic := func(t float64) float64 {
-									t = math.Min(t, 1.0)
-									return 1.0 - math.Pow(1.0-t, 3.0)
-								}
-								rotationProgress := timeSinceActivation / 1.0
-								rotationEased := easeOutCubic(rotationProgress)
-								p.rotationAngleAtDeactivation = elapsed * 0.1 * rotationEased
+						// Store current angle for smooth ease-out
+						elapsed := time.Since(p.rotationStartTime).Seconds()
+						timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
+						if timeSinceActivation > 1.0 { // After ease-in completes
+							easeOutCubic := func(t float64) float64 {
+								t = math.Min(t, 1.0)
+								return 1.0 - math.Pow(1.0-t, 3.0)
 							}
-							p.rotationDeactivationTime = time.Now()
-							fmt.Println("⏸️  Rotation effect deactivating...")
+							rotationProgress := timeSinceActivation / 1.0
+							rotationEased := easeOutCubic(rotationProgress)
+							p.rotationAngleAtDeactivation = elapsed * 0.1 * rotationEased
 						}
-						
-						// Also notify renderer
-						p.renderer.SetRotationEnabled(enabled)
+						p.rotationDeactivationTime = time.Now()
 					}
+
+					p.renderer.SetRotationEnabled(enabled)
+
+					// The animation needs frames even while input is idle.
+					s.Invalidate(core.UnitRect{})
 				}
 				
 				if p.fontZoomKey(e.Keysym) {

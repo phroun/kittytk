@@ -26,7 +26,7 @@ func (h *recordingHandler) Resized(core.UnitSize) { h.resizes++ }
 func TestSDLPlatformHeadless(t *testing.T) {
 	os.Setenv("SDL_VIDEODRIVER", "dummy")
 
-	p := New("test", 320, 200)
+	p := newTestPlatform(t)
 	handler := &recordingHandler{}
 	posts := 0
 

@@ -79,6 +79,12 @@ func (r *SoftwareRenderer) DestroyWindowRenderer(w *nativeWin) {
 
 // ResizeWindowRenderer recreates texture at new size
 func (r *SoftwareRenderer) ResizeWindowRenderer(w *nativeWin, pxW, pxH int) error {
+	if w.renderer == nil {
+		// Window creation sizes the framebuffer before CreateWindowRenderer
+		// has built the SDL renderer; that first texture is created at the
+		// right size already.
+		return nil
+	}
 	if w.texture != nil {
 		w.texture.Destroy()
 	}

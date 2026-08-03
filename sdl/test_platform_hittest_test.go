@@ -21,7 +21,7 @@ func snapForward(u, denom, cellPx int) int {
 func TestToUnitsInvertsBackendMapping(t *testing.T) {
 	for _, fs := range []int{6, 12, 18, 24} {
 		for _, scale := range []int{1, 2} {
-			p := New("t", 100, 100)
+			p := newTestPlatform(t)
 			p.SetScale(scale)
 			p.SetFontSize(fs)
 			denomW, denomH := p.rootDenomination()
@@ -47,7 +47,7 @@ func TestToUnitsInvertsBackendMapping(t *testing.T) {
 // At the 12pt base with device zoom 1, hit-testing is the historical
 // one-unit-per-pixel identity.
 func TestToUnitsIdentityAtBase(t *testing.T) {
-	p := New("t", 100, 100)
+	p := newTestPlatform(t)
 	p.SetScale(1)
 	p.SetFontSize(12)
 	for _, v := range []int32{0, 1, 7, 8, 16, 100} {

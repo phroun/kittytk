@@ -3,7 +3,11 @@
 package sdl
 
 import (
+	"encoding/binary"
 	"fmt"
+	"image"
+	"math"
+	"os"
 	"reflect"
 	"time"
 	"unsafe"
@@ -38,12 +42,11 @@ type WindowSurface struct {
 	opacity     float32
 	
 	dirty       bool // needs re-render
-	
+
 	// UI Window compositor support (for child windows within an OS window)
 	uiWindow    interface{}      // UI Window trinket (interface{} to avoid import cycle)
 	backend     *raster.Backend  // Per-window raster backend for UI windows
 	zOrder      int              // Z-order for compositing (higher = on top)
-	lastBounds  core.UnitRect    // Last known position/size for change detection
 }
 
 // WebGPURenderer implements GPU-accelerated rendering with WebGPU.
@@ -145,6 +148,12 @@ func (r *WebGPURenderer) Initialize() error {
 
 // Shutdown cleans up WebGPU resources
 func (r *WebGPURenderer) Shutdown() {
+	// Clean up per-window compositor surfaces
+	for id, surf := range r.windowSurfaces {
+		r.releaseWindowSurface(surf)
+		delete(r.windowSurfaces, id)
+	}
+
 	// Clean up cube resources
 	if r.cubeUniformBindGroup != nil {
 		r.cubeUniformBindGroup.Release()
@@ -259,18 +268,7 @@ func (r *WebGPURenderer) DestroyWindowRenderer(w *nativeWin) {
 	if !ok {
 		return
 	}
-
-	// Release GPU resources
-	if surf.bindGroup != nil {
-		surf.bindGroup.Release()
-	}
-	if surf.textureView != nil {
-		surf.textureView.Release()
-	}
-	if surf.texture != nil {
-		surf.texture.Release()
-	}
-
+	r.releaseWindowSurface(surf)
 	delete(r.windowSurfaces, w.id)
 }
 
@@ -296,15 +294,16 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 		return err
 	}
 	// NOTE: Don't defer release - must stay alive until after GPU Submit()
-	
-	// Write combined uniforms: effects (angle=0, enabled=0, scale=1, padding=0) + position (fullscreen: -1,-1,2,2)
-	combinedUniforms := []float32{
-		0.0, 0.0, 1.0, 0.0,  // angle, enabled, scale, padding
-		-1.0, -1.0, 2.0, 2.0,  // pos_x, pos_y, size_w, size_h (fullscreen)
+
+	// Fullscreen quad carrying the current rotation-demo effect state.
+	aspect := float32(1)
+	if b := img.Bounds(); b.Dy() > 0 {
+		aspect = float32(b.Dx()) / float32(b.Dy())
 	}
-	uniformBytes := (*[32]byte)(unsafe.Pointer(&combinedUniforms[0]))[:]
-	r.queue.WriteBuffer(r.blitUniformBuffer, 0, uniformBytes)
-	
+	size := backend.Size()
+	r.writeCombinedUniforms(r.blitUniformBuffer,
+		core.UnitRect{Width: size.Width, Height: size.Height}, size, aspect)
+
 	// Get surface texture
 	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
 	if err != nil {
@@ -344,28 +343,39 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 		},
 	})
 	
-	// Draw fullscreen triangle with backend texture
+	// Draw fullscreen quad with backend texture
 	renderPass.SetPipeline(r.blitPipeline)
 	renderPass.SetBindGroup(0, bindGroup, nil)
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
 	renderPass.Draw(6, 1, 0, 0) // Draw quad (6 vertices)
 	renderPass.End()
-	
+
+	// Rotation demo: spin the cube over the scene while the effect runs.
+	var cubeCleanup func()
+	if _, _, _, active := r.effectParams(); active {
+		if cleanup, cubeErr := r.recordCubePass(encoder, surfaceView, textureView, aspect); cubeErr == nil {
+			cubeCleanup = cleanup
+		}
+	}
+
 	// Submit and present
 	cmdBuffer, _ := encoder.Finish()
 	_, err = r.queue.Submit(cmdBuffer)
-	
+
 	// NOW we can release resources after GPU has the commands
+	if cubeCleanup != nil {
+		cubeCleanup()
+	}
 	surfaceView.Release()
 	bindGroup.Release()
 	textureView.Release()
 	texture.Release()
-	
+
 	if err != nil {
 		return err
 	}
 	w.gpuSurface.Present(surfaceTexture)
-	
+
 	return nil
 }
 
@@ -487,9 +497,8 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 		return fmt.Errorf("failed to create position uniform layout: %w", err)
 	}
 	if r.blitPosLayout == nil {
-		return fmt.Errorf("blitPosLayout is nil after creation!")
+		return fmt.Errorf("blitPosLayout is nil after creation")
 	}
-	fmt.Printf("✅ Created blitPosLayout: %p\n", r.blitPosLayout)
 
 	// Create pipeline layout with 2 bind groups: texture, combined uniforms
 	pipelineLayout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
@@ -555,12 +564,326 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	return nil
 }
 
-// initCubePipeline creates the 3D cube rendering pipeline
+// initCubePipeline creates the 3D cube rendering pipeline for the
+// rotation demo. The cube textures its faces with the UI content and
+// draws with back-face culling over the presented scene (no depth
+// buffer needed). Both present paths share these resources — the
+// Platform borrows them through exposeWebGPUObjects.
 func (r *WebGPURenderer) initCubePipeline() error {
-	// TODO: Implement cube pipeline initialization
-	// For now, return nil to allow WebGPU renderer to initialize
-	// Cube rendering can be added back later
+	// Cube geometry: 24 vertices (4 per face), 36 indices (12 triangles)
+	// Vertex format: [x, y, z, u, v]
+	cubeVertices := []float32{
+		// Front face
+		-0.2, -0.2, 0.2, 0.0, 1.0,
+		0.2, -0.2, 0.2, 1.0, 1.0,
+		0.2, 0.2, 0.2, 1.0, 0.0,
+		-0.2, 0.2, 0.2, 0.0, 0.0,
+		// Back face
+		-0.2, -0.2, -0.2, 1.0, 1.0,
+		-0.2, 0.2, -0.2, 1.0, 0.0,
+		0.2, 0.2, -0.2, 0.0, 0.0,
+		0.2, -0.2, -0.2, 0.0, 1.0,
+		// Top face
+		-0.2, 0.2, -0.2, 0.0, 1.0,
+		-0.2, 0.2, 0.2, 0.0, 0.0,
+		0.2, 0.2, 0.2, 1.0, 0.0,
+		0.2, 0.2, -0.2, 1.0, 1.0,
+		// Bottom face
+		-0.2, -0.2, -0.2, 1.0, 1.0,
+		0.2, -0.2, -0.2, 0.0, 1.0,
+		0.2, -0.2, 0.2, 0.0, 0.0,
+		-0.2, -0.2, 0.2, 1.0, 0.0,
+		// Right face
+		0.2, -0.2, -0.2, 1.0, 1.0,
+		0.2, 0.2, -0.2, 1.0, 0.0,
+		0.2, 0.2, 0.2, 0.0, 0.0,
+		0.2, -0.2, 0.2, 0.0, 1.0,
+		// Left face
+		-0.2, -0.2, -0.2, 0.0, 1.0,
+		-0.2, -0.2, 0.2, 1.0, 1.0,
+		-0.2, 0.2, 0.2, 1.0, 0.0,
+		-0.2, 0.2, -0.2, 0.0, 0.0,
+	}
+
+	cubeIndices := []uint16{
+		0, 1, 2, 0, 2, 3, // Front
+		4, 5, 6, 4, 6, 7, // Back
+		8, 9, 10, 8, 10, 11, // Top
+		12, 13, 14, 12, 14, 15, // Bottom
+		16, 17, 18, 16, 18, 19, // Right
+		20, 21, 22, 20, 22, 23, // Left
+	}
+
+	vertexData := make([]byte, len(cubeVertices)*4)
+	for i, v := range cubeVertices {
+		binary.LittleEndian.PutUint32(vertexData[i*4:], math.Float32bits(v))
+	}
+	var err error
+	r.cubeVertexBuffer, err = r.device.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  uint64(len(vertexData)),
+		Usage: wgpu.BufferUsageVertex | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube vertex buffer: %w", err)
+	}
+	r.queue.WriteBuffer(r.cubeVertexBuffer, 0, vertexData)
+
+	indexData := make([]byte, len(cubeIndices)*2)
+	for i, idx := range cubeIndices {
+		binary.LittleEndian.PutUint16(indexData[i*2:], idx)
+	}
+	r.cubeIndexBuffer, err = r.device.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  uint64(len(indexData)),
+		Usage: wgpu.BufferUsageIndex | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube index buffer: %w", err)
+	}
+	r.queue.WriteBuffer(r.cubeIndexBuffer, 0, indexData)
+
+	// Uniform buffer for the MVP matrix (64 bytes for mat4x4)
+	r.cubeUniformBuffer, err = r.device.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  64,
+		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube uniform buffer: %w", err)
+	}
+
+	r.cubeUniformLayout, err = r.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Entries: []gputypes.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: wgpu.ShaderStageVertex,
+				Buffer: &gputypes.BufferBindingLayout{
+					Type:             0, // Uniform
+					MinBindingSize:   64,
+					HasDynamicOffset: false,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube uniform layout: %w", err)
+	}
+
+	vertexShader, err := r.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+		Label: "Cube Vertex Shader",
+		WGSL:  cubeVertexShader,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube vertex shader: %w", err)
+	}
+	defer vertexShader.Release()
+
+	fragmentShader, err := r.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+		Label: "Cube Fragment Shader",
+		WGSL:  cubeFragmentShader,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube fragment shader: %w", err)
+	}
+	defer fragmentShader.Release()
+
+	// Texture+sampler bind group reuses the blit layout at group 0.
+	pipelineLayout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+		BindGroupLayouts: []*wgpu.BindGroupLayout{r.blitLayout, r.cubeUniformLayout},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube pipeline layout: %w", err)
+	}
+	defer pipelineLayout.Release()
+
+	r.cubePipeline, err = r.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+		Layout: pipelineLayout,
+		Vertex: wgpu.VertexState{
+			Module:     vertexShader,
+			EntryPoint: "vs_main",
+			Buffers: []gputypes.VertexBufferLayout{
+				{
+					ArrayStride: 20, // 5 floats * 4 bytes
+					StepMode:    gputypes.VertexStepModeVertex,
+					Attributes: []gputypes.VertexAttribute{
+						{Format: gputypes.VertexFormatFloat32x3, Offset: 0, ShaderLocation: 0},  // position
+						{Format: gputypes.VertexFormatFloat32x2, Offset: 12, ShaderLocation: 1}, // texCoord
+					},
+				},
+			},
+		},
+		Fragment: &wgpu.FragmentState{
+			Module:     fragmentShader,
+			EntryPoint: "fs_main",
+			Targets: []wgpu.ColorTargetState{
+				{
+					Format:    wgpu.TextureFormatBGRA8Unorm,
+					WriteMask: 0xF,
+					Blend: &gputypes.BlendState{
+						Color: gputypes.BlendComponent{
+							SrcFactor: gputypes.BlendFactorSrcAlpha,
+							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+							Operation: gputypes.BlendOperationAdd,
+						},
+						Alpha: gputypes.BlendComponent{
+							SrcFactor: gputypes.BlendFactorOne,
+							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+							Operation: gputypes.BlendOperationAdd,
+						},
+					},
+				},
+			},
+		},
+		Primitive: wgpu.PrimitiveState{
+			Topology:  3,                     // TriangleList
+			CullMode:  gputypes.CullModeBack, // Keep back-face culling for clean look
+			FrontFace: gputypes.FrontFaceCCW,
+		},
+		Multisample: wgpu.MultisampleState{
+			Count: 1,
+			Mask:  0xFFFFFFFF,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube render pipeline: %w", err)
+	}
+
+	r.cubeUniformBindGroup, err = r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: r.cubeUniformLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: r.cubeUniformBuffer, Size: 64},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cube uniform bind group: %w", err)
+	}
+
 	return nil
+}
+
+// effectParams reports the rotation demo's eased state at this instant:
+// the scene angle/scale for the blit shader (enabledF 1.0 while active)
+// and whether the effect still needs frames (active covers the ease-out
+// tail after deactivation).
+func (r *WebGPURenderer) effectParams() (angle, enabledF, scale float32, active bool) {
+	scale = 1.0
+	easeOutCubic := func(t float64) float64 {
+		t = math.Min(t, 1.0)
+		return 1.0 - math.Pow(1.0-t, 3.0)
+	}
+
+	if r.rotationEnabled {
+		timeSinceActivation := time.Since(r.rotationActivationTime).Seconds()
+
+		// Scale eases in over 0.5 seconds from 1.0 to 2.0
+		scale = float32(1.0 + easeOutCubic(timeSinceActivation/0.5))
+
+		// Rotation eases in over 1.0 seconds up to full speed
+		rotationEased := easeOutCubic(timeSinceActivation / 1.0)
+		elapsedRotation := time.Since(r.rotationStartTime).Seconds()
+		angle = float32(elapsedRotation * 0.1 * rotationEased)
+
+		return angle, 1.0, scale, true
+	}
+
+	timeSinceDeactivation := time.Since(r.rotationDeactivationTime).Seconds()
+	if timeSinceDeactivation >= 0.5 {
+		return 0, 0, 1.0, false
+	}
+
+	// Easing OUT: scale returns to 1.0 while the angle accelerates
+	// forward to the next full turn, so the scene lands upright.
+	scale = float32(2.0 - easeOutCubic(timeSinceDeactivation/0.5))
+
+	currentAngle := r.rotationAngleAtDeactivation
+	twoPi := 2.0 * math.Pi
+	normalizedAngle := math.Mod(currentAngle, twoPi)
+	if normalizedAngle < 0 {
+		normalizedAngle += twoPi
+	}
+	angleRemaining := twoPi - normalizedAngle
+
+	normalRotation := timeSinceDeactivation * 0.1
+	easeInOutCubic := func(t float64) float64 {
+		if t < 0.5 {
+			return 4.0 * t * t * t
+		}
+		return 1.0 - math.Pow(-2.0*t+2.0, 3.0)/2.0
+	}
+	catchUp := angleRemaining * easeInOutCubic(math.Min(timeSinceDeactivation/0.5, 1.0))
+
+	targetAngle := currentAngle + angleRemaining
+	current := currentAngle + normalRotation + catchUp
+	if current > targetAngle {
+		current = targetAngle
+	}
+	return float32(current), 1.0, scale, true
+}
+
+// recordCubePass draws the rotation demo's spinning cube over the
+// already-rendered scene: its own render pass loading the existing
+// surface content, with the cube's faces textured by contentView. The
+// returned cleanup must run after Submit; recording is skipped (nil
+// cleanup, nil error) when the cube pipeline is unavailable.
+func (r *WebGPURenderer) recordCubePass(encoder *wgpu.CommandEncoder, surfaceView, contentView *wgpu.TextureView, aspect float32) (func(), error) {
+	if r.cubePipeline == nil {
+		return nil, nil
+	}
+
+	elapsed := time.Since(r.rotationStartTime).Seconds()
+	cubeAngle := float32(elapsed * 0.5) // Rotate faster than the background
+	floatOffset := float32(math.Sin(elapsed*1.5) * 0.15)
+
+	easeOutCubic := func(t float64) float64 {
+		t = math.Min(t, 1.0)
+		return 1.0 - math.Pow(1.0-t, 3.0)
+	}
+	var cubeScale float32
+	if r.rotationEnabled {
+		timeSinceActivation := time.Since(r.rotationActivationTime).Seconds()
+		scaleProgress := timeSinceActivation / 0.5
+		cubeScale = float32(easeOutCubic(scaleProgress) * 1.5) // Ease from 0 to 1.5
+		if scaleProgress >= 1.0 {
+			// Slight pulsing after the initial ease
+			cubeScale *= float32(math.Sin(elapsed*2.0)*0.05 + 1.0)
+		}
+	} else {
+		timeSinceDeactivation := time.Since(r.rotationDeactivationTime).Seconds()
+		cubeScale = float32((1.0 - easeOutCubic(timeSinceDeactivation/0.5)) * 1.5) // Ease to 0
+	}
+
+	mvp := createMVPMatrix(aspect, cubeAngle, cubeScale, floatOffset)
+	mvpBytes := (*[64]byte)(unsafe.Pointer(&mvp[0]))[:]
+	r.queue.WriteBuffer(r.cubeUniformBuffer, 0, mvpBytes)
+
+	cubeBindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: r.blitLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, TextureView: contentView},
+			{Binding: 1, Sampler: r.blitSampler},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	cubePass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
+		ColorAttachments: []wgpu.RenderPassColorAttachment{
+			{
+				View:       surfaceView,
+				LoadOp:     gputypes.LoadOpLoad, // Keep existing content
+				StoreOp:    gputypes.StoreOpStore,
+				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 0.0},
+			},
+		},
+	})
+	cubePass.SetPipeline(r.cubePipeline)
+	cubePass.SetBindGroup(0, cubeBindGroup, nil)
+	cubePass.SetBindGroup(1, r.cubeUniformBindGroup, nil)
+	cubePass.SetVertexBuffer(0, r.cubeVertexBuffer, 0)
+	cubePass.SetIndexBuffer(r.cubeIndexBuffer, gputypes.IndexFormatUint16, 0)
+	cubePass.DrawIndexed(36, 1, 0, 0, 0)
+	cubePass.End()
+
+	return func() { cubeBindGroup.Release() }, nil
 }
 
 // SetRotationEnabled toggles the 2D rotation effect
@@ -572,6 +895,7 @@ func (r *WebGPURenderer) SetRotationEnabled(enabled bool) {
 	now := time.Now()
 	if enabled {
 		r.rotationActivationTime = now
+		r.rotationStartTime = now
 	} else {
 		// Store angle at deactivation for smooth ease-out
 		elapsed := now.Sub(r.rotationActivationTime).Seconds()
@@ -627,27 +951,46 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 ) error {
 	if r.firstCompositorFrame {
 		if childWindowList != nil {
-			fmt.Printf("🎨 GPU Compositor Active - compositing %d UI child windows\n", len(childWindowList.Windows))
+			fmt.Printf("GPU compositor active: compositing %d UI child windows\n", len(childWindowList.Windows))
 		}
 		r.firstCompositorFrame = false
 	}
-	
+
 	if childWindowList == nil || len(childWindowList.Windows) == 0 {
 		// No child windows, just render normally
 		renderWindow(osWindow)
 		return r.Present(osWindow, osWindow.backend)
 	}
-	
+
 	// Step 0: Render Desktop base layer (background, menu, status, dock - NOT windows)
-	// The desktopSurfaceHandler.Frame() will call Desktop.Paint() when windows exist
 	renderWindow(osWindow)
-	
+
+	// One aspect ratio (surface width/height) for every layer this frame,
+	// so the rotation demo turns the scene rigidly without distortion.
+	frameAspect := float32(1)
+	if img := osWindow.backend.Image(); img != nil && img.Bounds().Dy() > 0 {
+		frameAspect = float32(img.Bounds().Dx()) / float32(img.Bounds().Dy())
+	}
+
+	// Evict surfaces whose child window is gone, so closed windows release
+	// their textures and backends instead of accumulating forever.
+	liveWindows := make(map[uint32]bool, len(childWindowList.Windows))
+	for _, childIface := range childWindowList.Windows {
+		liveWindows[uint32(reflect.ValueOf(childIface).Pointer())] = true
+	}
+	for id, surf := range r.windowSurfaces {
+		if surf.uiWindow != nil && !liveWindows[id] {
+			r.releaseWindowSurface(surf)
+			delete(r.windowSurfaces, id)
+		}
+	}
+
 	// Step 1: Render each child window to its own texture
 	type WindowLike interface {
 		Bounds() core.UnitRect
 		Paint(*core.Painter)
 	}
-	
+
 	for _, childIface := range childWindowList.Windows {
 		win, ok := childIface.(WindowLike)
 		if !ok {
@@ -690,7 +1033,8 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				continue
 			}
 			backend.SetCellMetrics(metrics)
-			
+			backend.SetFontSize(osWindow.backend.FontSize())
+
 			// Create GPU texture
 			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
 				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
@@ -707,13 +1051,13 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			if err != nil {
 				continue
 			}
-			
+
 			textureView, err := r.device.CreateTextureView(texture, nil)
 			if err != nil {
 				texture.Release()
 				continue
 			}
-			
+
 			bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 				Layout: r.blitLayout,
 				Entries: []wgpu.BindGroupEntry{
@@ -726,20 +1070,17 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				texture.Release()
 				continue
 			}
-			
+
 			// Create per-window uniform buffer with position
 			surfaceSize := osWindow.backend.Size()
-			uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(bounds, surfaceSize)
+			uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(bounds, surfaceSize, frameAspect)
 			if err != nil {
 				bindGroup.Release()
 				textureView.Release()
 				texture.Release()
 				continue
 			}
-			
-			fmt.Printf("✨ Created WindowSurface for window at (%d,%d) %dx%d\n", 
-				bounds.X, bounds.Y, bounds.Width, bounds.Height)
-			
+
 			surf = &WindowSurface{
 				texture:          texture,
 				textureView:      textureView,
@@ -754,51 +1095,40 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				scaleX:           1.0,
 				scaleY:           1.0,
 				opacity:          1.0,
-				lastBounds:       bounds, // Store initial position
 			}
 			r.windowSurfaces[windowID] = surf
 		}
-		
-		// Check if window was resized or moved
+
+		// A moved window only needs its uniforms rewritten (done every frame
+		// below); texture and backend recreation is for size changes alone.
 		needsUpdate := int(surf.width) != widthPx || int(surf.height) != heightPx
-		if !needsUpdate {
-			// Check if position changed by comparing to last known bounds
-			needsUpdate = surf.lastBounds.X != bounds.X || surf.lastBounds.Y != bounds.Y
-		}
-		
-		fmt.Printf("🔍 Window size check: surf(%dx%d) vs new(%dx%d), needsUpdate=%v\n",
-			surf.width, surf.height, widthPx, heightPx, needsUpdate)
-		
+
 		if needsUpdate {
-			// CRITICAL: Invalidate the window BEFORE we recreate the backend
-			// This ensures the window knows it needs a full repaint
-			fmt.Printf("🔧 Window needs update (resize/move detected)\n")
+			// Invalidate the window BEFORE we recreate the backend so any
+			// content-level caching repaints in full.
 			type Invalidator interface {
 				Invalidate()
 			}
 			if invalidatable, ok := win.(Invalidator); ok {
-				fmt.Printf("✅ Calling window.Invalidate() before resize\n")
 				invalidatable.Invalidate()
-			} else {
-				fmt.Printf("❌ Window doesn't implement Invalidate() interface!\n")
 			}
-			
+
 			newBackend, err := raster.NewScaled(widthPx, heightPx, scale)
 			if err != nil {
-				fmt.Printf("❌ Failed to create backend for window resize: %v\n", err)
 				continue // Skip this window this frame
 			}
-			
+
 			// Store old resources for cleanup AFTER GPU finishes with them
 			oldTexture := surf.texture
 			oldTextureView := surf.textureView
 			oldBindGroup := surf.bindGroup
 			oldUniformBuffer := surf.uniformBuffer
 			oldUniformBindGroup := surf.uniformBindGroup
-			
+
 			surf.backend = newBackend
 			surf.backend.SetCellMetrics(metrics)
-			
+			surf.backend.SetFontSize(osWindow.backend.FontSize())
+
 			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
 				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
 				Dimension: wgpu.TextureDimension2D,
@@ -814,7 +1144,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			if err != nil {
 				continue
 			}
-			
+
 			textureView, err := r.device.CreateTextureView(texture, nil)
 			if err != nil {
 				texture.Release()
@@ -836,7 +1166,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			
 			// Recreate uniform buffer with new position
 			surfaceSize := osWindow.backend.Size()
-			uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(bounds, surfaceSize)
+			uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(bounds, surfaceSize, frameAspect)
 			if err != nil {
 				bindGroup.Release()
 				textureView.Release()
@@ -851,11 +1181,8 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			surf.uniformBindGroup = uniformBindGroup
 			surf.width = uint32(widthPx)
 			surf.height = uint32(heightPx)
-			surf.lastBounds = bounds  // Update stored position
 			surf.dirty = true
-			fmt.Printf("🔄 Updated WindowSurface position to (%d,%d) %dx%d\n",
-				bounds.X, bounds.Y, bounds.Width, bounds.Height)
-			
+
 			// Clean up old resources NOW (new resources are already assigned)
 			if oldUniformBindGroup != nil {
 				oldUniformBindGroup.Release()
@@ -874,68 +1201,24 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			}
 		}
 		
+		// Refresh this window's position uniforms EVERY frame. Bounds and the
+		// OS surface size both feed the NDC transform, so a window drag AND
+		// a desktop resize are covered without recreating any GPU resources;
+		// baking them only at (re)creation left stale transforms behind
+		// whenever the desktop itself changed size.
+		r.writeCombinedUniforms(surf.uniformBuffer, bounds, osWindow.backend.Size(), frameAspect)
+
 		// Render window to its backend
 		surf.backend.BeginFrame()
 		painter := core.NewPainter(surf.backend)
 		win.Paint(painter)
 		surf.backend.EndFrame()
-		
+
 		// Upload to GPU texture
-		img := surf.backend.Image()
-		if img != nil {
-			bounds := img.Bounds()
-			imgWidth := uint32(bounds.Dx())
-			imgHeight := uint32(bounds.Dy())
-			
-			// Verify texture size matches backend size
-			if imgWidth != surf.width || imgHeight != surf.height {
-				fmt.Printf("⚠️  Size mismatch! Texture: %dx%d, Backend: %dx%d\n",
-					surf.width, surf.height, imgWidth, imgHeight)
-			}
-			
-			bytesPerPixel := uint32(4)
-			bytesPerRow := imgWidth * bytesPerPixel
-			alignment := uint32(256)
-			alignedBytesPerRow := ((bytesPerRow + alignment - 1) / alignment) * alignment
-			
-			pixelData := make([]byte, alignedBytesPerRow*imgHeight)
-			
-			for y := uint32(0); y < imgHeight; y++ {
-				srcOffset := y * uint32(img.Stride)
-				dstOffset := y * alignedBytesPerRow
-				
-				for x := uint32(0); x < imgWidth; x++ {
-					srcIdx := srcOffset + x*4
-					dstIdx := dstOffset + x*4
-					
-					pixelData[dstIdx+0] = img.Pix[srcIdx+2] // B
-					pixelData[dstIdx+1] = img.Pix[srcIdx+1] // G
-					pixelData[dstIdx+2] = img.Pix[srcIdx+0] // R
-					pixelData[dstIdx+3] = img.Pix[srcIdx+3] // A
-				}
-			}
-			
-			r.queue.WriteTexture(
-				&wgpu.ImageCopyTexture{
-					Texture:  surf.texture,
-					MipLevel: 0,
-					Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
-					Aspect:   0,
-				},
-				pixelData,
-				&wgpu.ImageDataLayout{
-					Offset:       0,
-					BytesPerRow:  alignedBytesPerRow,
-					RowsPerImage: imgHeight,
-				},
-				&wgpu.Extent3D{
-					Width:              imgWidth,
-					Height:             imgHeight,
-					DepthOrArrayLayers: 1,
-				},
-			)
+		if img := surf.backend.Image(); img != nil {
+			r.uploadPixels(surf.texture, img)
 		}
-		
+
 		surf.dirty = false
 	}
 	
@@ -978,491 +1261,134 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	})
 	
 	renderPass.SetPipeline(r.blitPipeline)
-	
-	// Draw Desktop base first (fullscreen)
-	// Write combined uniforms for fullscreen
-	desktopUniforms := []float32{
-		0.0, 0.0, 1.0, 0.0,   // angle, enabled, scale, padding
-		-1.0, -1.0, 2.0, 2.0,  // pos_x, pos_y, size_w, size_h (fullscreen)
-	}
-	desktopUniformBytes := (*[32]byte)(unsafe.Pointer(&desktopUniforms[0]))[:]
-	r.queue.WriteBuffer(r.blitUniformBuffer, 0, desktopUniformBytes)
-	
+
+	// Draw Desktop base first: a fullscreen quad carrying the current
+	// effect state like every other layer.
+	surfaceSize := osWindow.backend.Size()
+	r.writeCombinedUniforms(r.blitUniformBuffer,
+		core.UnitRect{Width: surfaceSize.Width, Height: surfaceSize.Height},
+		surfaceSize, frameAspect)
+
 	renderPass.SetBindGroup(0, desktopBindGroup, nil)
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
 	renderPass.Draw(6, 1, 0, 0) // Draw quad
 	
-	// Draw each child window at its position
 	// Draw each child window with its pre-baked uniforms
-	windowCount := 0
-	fmt.Printf("🔍 childWindowList has %d windows, windowSurfaces has %d\n", 
-		len(childWindowList.Windows), len(r.windowSurfaces))
-	
 	for _, childIface := range childWindowList.Windows {
 		winValue := reflect.ValueOf(childIface)
 		windowID := uint32(winValue.Pointer())
 		surf, ok := r.windowSurfaces[windowID]
 		if !ok {
-			fmt.Printf("⚠️  Window ID %d in childWindowList but not in windowSurfaces!\n", windowID)
 			continue
 		}
-		
-		// Bind texture and per-window uniforms, then draw
+
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
-		renderPass.SetBindGroup(1, surf.uniformBindGroup, nil)  // Per-window uniforms!
+		renderPass.SetBindGroup(1, surf.uniformBindGroup, nil)
 		renderPass.Draw(6, 1, 0, 0) // Draw quad at window position
-		windowCount++
 	}
-	fmt.Printf("🎨 Compositor drew %d windows (total surfaces: %d)\n", windowCount, len(r.windowSurfaces))
-	
-	// Step 4: Render popups (currently renders before menus - TODO: swap with Step 5)
-	if childWindowList.Popups != nil && len(childWindowList.Popups) > 0 {
-		fmt.Printf("🎯 Rendering %d popups\n", len(childWindowList.Popups))
-		
-		for popupIdx, popupIface := range childWindowList.Popups {
-			fmt.Printf("  [%d] Processing popup...\n", popupIdx)
-			
-			// Use reflection to access PopupOverlay fields (can't import window package - circular dep)
-			popupValue := reflect.ValueOf(popupIface)
-			if popupValue.Kind() == reflect.Ptr {
-				popupValue = popupValue.Elem()
-			}
-			
-			// Get ID for debugging
-			idField := popupValue.FieldByName("ID")
-			popupID := "unknown"
-			if idField.IsValid() {
-				if id, ok := idField.Interface().(string); ok {
-					popupID = id
-				}
-			}
-			fmt.Printf("  [%d] Popup ID: %s\n", popupIdx, popupID)
-			
-			fmt.Printf("  [%d] Popup type: %v, kind: %v\n", popupIdx, popupValue.Type(), popupValue.Kind())
-			
-			boundsField := popupValue.FieldByName("Bounds")
-			paintField := popupValue.FieldByName("Paint")
-			
-			if !boundsField.IsValid() || !paintField.IsValid() {
-				fmt.Printf("⚠️  [%d] Popup missing Bounds or Paint field (boundsValid=%v, paintValid=%v)\n", 
-					popupIdx, boundsField.IsValid(), paintField.IsValid())
-				continue
-			}
-			
-			bounds, ok := boundsField.Interface().(core.UnitRect)
-			if !ok {
-				fmt.Printf("⚠️  [%d] Bounds field is not UnitRect\n", popupIdx)
-				continue
-			}
-			
-			fmt.Printf("  [%d] Popup bounds: (%d,%d) %dx%d\n", popupIdx, bounds.X, bounds.Y, bounds.Width, bounds.Height)
-			
-			if bounds.Width <= 0 || bounds.Height <= 0 {
-				fmt.Printf("⚠️  [%d] Invalid bounds size\n", popupIdx)
-				continue
-			}
-			
-			paintFunc, ok := paintField.Interface().(func(*core.Painter))
-			if !ok || paintFunc == nil {
-				fmt.Printf("⚠️  [%d] Paint field is not valid function\n", popupIdx)
-				continue
-			}
-			
-			// Calculate pixel dimensions
-			// Add padding for outer stroke (user requested 2px for thicker lines)
-			strokePadding := 4 // 2px on each side
-			
-			backendImg := osWindow.backend.Image()
-			if backendImg == nil {
-				continue
-			}
-			backendSize := osWindow.backend.Size()
-			metrics := osWindow.backend.Metrics()
-			
-			backendBounds := backendImg.Bounds()
-			pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
-			pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
-			
-			widthPx := int(float64(bounds.Width) * pixelsPerUnitW) + strokePadding
-			heightPx := int(float64(bounds.Height) * pixelsPerUnitH) + strokePadding
-			
-			fmt.Printf("  [%d] Popup pixel size: %dx%d (with %dpx padding)\n", popupIdx, widthPx, heightPx, strokePadding)
-			
-			if widthPx <= 0 || heightPx <= 0 {
-				fmt.Printf("⚠️  [%d] Invalid pixel size\n", popupIdx)
-				continue
-			}
-			
-			// Create temporary backend for popup
-			fmt.Printf("  [%d] Creating backend...\n", popupIdx)
-			popupBackend, err := raster.NewScaled(widthPx, heightPx, scale)
-			if err != nil {
-				fmt.Printf("❌ [%d] Failed to create backend: %v\n", popupIdx, err)
-				continue
-			}
-			popupBackend.SetCellMetrics(metrics)
-			
-			// Render popup to backend
-			fmt.Printf("  [%d] Calling Paint function...\n", popupIdx)
-			popupBackend.BeginFrame()
-			
-			// CRITICAL: The popup's Paint function expects a painter at screen origin (0,0)
-			// and will call WithOffset(popupBounds.X, popupBounds.Y) to position itself.
-			// Our backend is SIZED to the popup PLUS padding for the outer stroke.
-			// The stroke is drawn outside bounds, so we offset by -(bounds - padding)
-			painter := core.NewPainter(popupBackend)
-			strokeOffset := core.Unit(2) // 2 device pixels in units (user requested)
-			offsetPainter := painter.WithOffset(-bounds.X+strokeOffset, -bounds.Y+strokeOffset)
-			
-			paintFunc(offsetPainter)
-			popupBackend.EndFrame()
-			fmt.Printf("  [%d] Paint complete\n", popupIdx)
-			
-			// Upload popup to temporary texture
-			popupImg := popupBackend.Image()
-			if popupImg == nil {
-				fmt.Printf("❌ [%d] Backend returned nil image\n", popupIdx)
-				continue
-			}
-			
-			imgBounds := popupImg.Bounds()
-			imgWidth := uint32(imgBounds.Dx())
-			imgHeight := uint32(imgBounds.Dy())
-			
-			// Check if popup has any visible pixels (non-transparent)
-			visiblePixels := 0
-			for i := 3; i < len(popupImg.Pix); i += 4 {
-				if popupImg.Pix[i] > 0 { // Check alpha channel
-					visiblePixels++
-				}
-			}
-			fmt.Printf("  [%d] Popup image: %dx%d, %d/%d visible pixels\n", 
-				popupIdx, imgWidth, imgHeight, visiblePixels, imgWidth*imgHeight)
-			
-			popupTexture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
-				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
-				Dimension: wgpu.TextureDimension2D,
-				Size: wgpu.Extent3D{
-					Width:              imgWidth,
-					Height:             imgHeight,
-					DepthOrArrayLayers: 1,
-				},
-				Format:        wgpu.TextureFormatBGRA8Unorm,
-				MipLevelCount: 1,
-				SampleCount:   1,
-			})
-			if err != nil {
-				continue
-			}
-			
-			popupTextureView, err := r.device.CreateTextureView(popupTexture, nil)
-			if err != nil {
-				popupTexture.Release()
-				continue
-			}
-			
-			popupBindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-				Layout: r.blitLayout,
-				Entries: []wgpu.BindGroupEntry{
-					{Binding: 0, TextureView: popupTextureView},
-					{Binding: 1, Sampler: r.blitSampler},
-				},
-			})
-			if err != nil {
-				popupTextureView.Release()
-				popupTexture.Release()
-				continue
-			}
-			
-			// Upload BGRA pixels to texture
-			bytesPerPixel := uint32(4)
-			bytesPerRow := imgWidth * bytesPerPixel
-			alignment := uint32(256)
-			alignedBytesPerRow := ((bytesPerRow + alignment - 1) / alignment) * alignment
-			
-			pixelData := make([]byte, alignedBytesPerRow*imgHeight)
-			
-			for y := uint32(0); y < imgHeight; y++ {
-				srcOffset := y * uint32(popupImg.Stride)
-				dstOffset := y * alignedBytesPerRow
-				
-				for x := uint32(0); x < imgWidth; x++ {
-					srcIdx := srcOffset + x*4
-					dstIdx := dstOffset + x*4
-					
-					pixelData[dstIdx+0] = popupImg.Pix[srcIdx+2] // B
-					pixelData[dstIdx+1] = popupImg.Pix[srcIdx+1] // G
-					pixelData[dstIdx+2] = popupImg.Pix[srcIdx+0] // R
-					pixelData[dstIdx+3] = popupImg.Pix[srcIdx+3] // A
-				}
-			}
-			
-			r.queue.WriteTexture(
-				&wgpu.ImageCopyTexture{
-					Texture:  popupTexture,
-					MipLevel: 0,
-					Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
-					Aspect:   0,
-				},
-				pixelData,
-				&wgpu.ImageDataLayout{
-					Offset:       0,
-					BytesPerRow:  alignedBytesPerRow,
-					RowsPerImage: imgHeight,
-				},
-				&wgpu.Extent3D{
-					Width:              imgWidth,
-					Height:             imgHeight,
-					DepthOrArrayLayers: 1,
-				},
-			)
-			
-			// Create uniform buffer with popup position
-			// Adjust position by stroke offset since texture is larger
-			adjustedBounds := core.UnitRect{
-				X:      bounds.X - strokeOffset,
-				Y:      bounds.Y - strokeOffset,
-				Width:  bounds.Width + strokeOffset*2,
-				Height: bounds.Height + strokeOffset*2,
-			}
-			popupUniformBuffer, popupUniformBindGroup, err := r.createWindowUniformBuffer(adjustedBounds, backendSize)
-			if err != nil {
-				fmt.Printf("❌ [%d] Failed to create uniform buffer: %v\n", popupIdx, err)
-				popupBindGroup.Release()
-				popupTextureView.Release()
-				popupTexture.Release()
-				continue
-			}
-			
-			// Debug: Show what NDC coordinates we calculated
-			ndcX := (float32(bounds.X) / float32(backendSize.Width)) * 2.0 - 1.0
-			ndcY := 1.0 - (float32(bounds.Y) / float32(backendSize.Height)) * 2.0
-			ndcWidth := (float32(bounds.Width) / float32(backendSize.Width)) * 2.0
-			ndcHeight := (float32(bounds.Height) / float32(backendSize.Height)) * 2.0
-			fmt.Printf("  [%d] NDC coords: x=%f, y=%f, w=%f, h=%f (backendSize=%dx%d)\n", 
-				popupIdx, ndcX, ndcY-ndcHeight, ndcWidth, ndcHeight, backendSize.Width, backendSize.Height)
-			
-			// Draw popup
-			renderPass.SetBindGroup(0, popupBindGroup, nil)
-			renderPass.SetBindGroup(1, popupUniformBindGroup, nil)
-			renderPass.Draw(6, 1, 0, 0)
-			
-			fmt.Printf("✅ Drew popup at (%d,%d) %dx%d\n", bounds.X, bounds.Y, bounds.Width, bounds.Height)
-			
-			// DON'T release yet - must stay alive until after Submit()
-			// Store for cleanup after GPU submission
-			defer func() {
-				popupUniformBindGroup.Release()
-				popupUniformBuffer.Release()
-				popupBindGroup.Release()
-				popupTextureView.Release()
-				popupTexture.Release()
-			}()
+
+	// Overlay layers, bottom to top: the menu bar's open dropdown first,
+	// then popups (combo box lists, context menus). A popup opened FROM a
+	// menu must paint above the menu that spawned it, so popups come last.
+	var overlayCleanups []func()
+	defer func() {
+		// Overlay GPU resources must outlive Submit below; the deferred
+		// cleanups run when this function returns, after Present.
+		for _, cleanup := range overlayCleanups {
+			cleanup()
 		}
-	}
-	
-	// Step 5: Render menu dropdown (currently renders after popups - TODO: should be before)
+	}()
+
+	// Step 4: The active menu bar dropdown.
 	if childWindowList.MenuDropdown != nil {
-		fmt.Printf("🍔 Rendering menu dropdown\n")
-		
-		// Menu dropdown structure from Desktop.GetChildWindows
-		type MenuDropdownInfo struct {
-			Bounds core.UnitRect
-			Paint  func(*core.Painter)
-		}
-		
-		menuValue := reflect.ValueOf(childWindowList.MenuDropdown)
-		if menuValue.Kind() == reflect.Ptr {
-			menuValue = menuValue.Elem()
-		}
-		
-		boundsField := menuValue.FieldByName("Bounds")
-		paintField := menuValue.FieldByName("Paint")
-		
-		if !boundsField.IsValid() || !paintField.IsValid() {
-			fmt.Printf("⚠️  Menu dropdown missing Bounds or Paint field\n")
-		} else {
-			bounds, ok := boundsField.Interface().(core.UnitRect)
-			if !ok || bounds.Width <= 0 || bounds.Height <= 0 {
-				fmt.Printf("⚠️  Menu dropdown has invalid bounds\n")
+		if bounds, paint, ok := overlayBoundsAndPaint(childWindowList.MenuDropdown); ok {
+			if cleanup, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
+				overlayCleanups = append(overlayCleanups, cleanup)
 			} else {
-				paintFunc, ok := paintField.Interface().(func(*core.Painter))
-				if !ok || paintFunc == nil {
-					fmt.Printf("⚠️  Menu dropdown Paint function invalid\n")
-				} else {
-					fmt.Printf("🍔 Menu bounds: (%d,%d) %dx%d\n", bounds.X, bounds.Y, bounds.Width, bounds.Height)
-					
-					// Calculate pixel dimensions
-					backendImg := osWindow.backend.Image()
-					if backendImg != nil {
-						backendSize := osWindow.backend.Size()
-						metrics := osWindow.backend.Metrics()
-						
-						// Add padding for outer stroke
-						strokePadding := 4 // 2px on each side
-						strokeOffset := core.Unit(2)
-						
-						backendBounds := backendImg.Bounds()
-						pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
-						pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
-						
-						widthPx := int(float64(bounds.Width) * pixelsPerUnitW) + strokePadding
-						heightPx := int(float64(bounds.Height) * pixelsPerUnitH) + strokePadding
-						
-						if widthPx > 0 && heightPx > 0 {
-							// Create backend for menu
-							menuBackend, err := raster.NewScaled(widthPx, heightPx, scale)
-							if err == nil {
-								menuBackend.SetCellMetrics(metrics)
-								
-								// Render menu with negative offset adjusted for padding
-								menuBackend.BeginFrame()
-								painter := core.NewPainter(menuBackend)
-								offsetPainter := painter.WithOffset(-bounds.X+strokeOffset, -bounds.Y+strokeOffset)
-								paintFunc(offsetPainter)
-								menuBackend.EndFrame()
-								
-								// Upload to texture
-								menuImg := menuBackend.Image()
-								if menuImg != nil {
-									imgBounds := menuImg.Bounds()
-									imgWidth := uint32(imgBounds.Dx())
-									imgHeight := uint32(imgBounds.Dy())
-									
-									menuTexture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
-										Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
-										Dimension: wgpu.TextureDimension2D,
-										Size: wgpu.Extent3D{
-											Width:              imgWidth,
-											Height:             imgHeight,
-											DepthOrArrayLayers: 1,
-										},
-										Format:        wgpu.TextureFormatBGRA8Unorm,
-										MipLevelCount: 1,
-										SampleCount:   1,
-									})
-									if err == nil {
-										menuTextureView, err := r.device.CreateTextureView(menuTexture, nil)
-										if err == nil {
-											menuBindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-												Layout: r.blitLayout,
-												Entries: []wgpu.BindGroupEntry{
-													{Binding: 0, TextureView: menuTextureView},
-													{Binding: 1, Sampler: r.blitSampler},
-												},
-											})
-											if err == nil {
-												// Upload pixels
-												bytesPerPixel := uint32(4)
-												bytesPerRow := imgWidth * bytesPerPixel
-												alignment := uint32(256)
-												alignedBytesPerRow := ((bytesPerRow + alignment - 1) / alignment) * alignment
-												
-												pixelData := make([]byte, alignedBytesPerRow*imgHeight)
-												
-												for y := uint32(0); y < imgHeight; y++ {
-													srcOffset := y * uint32(menuImg.Stride)
-													dstOffset := y * alignedBytesPerRow
-													
-													for x := uint32(0); x < imgWidth; x++ {
-														srcIdx := srcOffset + x*4
-														dstIdx := dstOffset + x*4
-														
-														pixelData[dstIdx+0] = menuImg.Pix[srcIdx+2] // B
-														pixelData[dstIdx+1] = menuImg.Pix[srcIdx+1] // G
-														pixelData[dstIdx+2] = menuImg.Pix[srcIdx+0] // R
-														pixelData[dstIdx+3] = menuImg.Pix[srcIdx+3] // A
-													}
-												}
-												
-												r.queue.WriteTexture(
-													&wgpu.ImageCopyTexture{
-														Texture:  menuTexture,
-														MipLevel: 0,
-														Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
-														Aspect:   0,
-													},
-													pixelData,
-													&wgpu.ImageDataLayout{
-														Offset:       0,
-														BytesPerRow:  alignedBytesPerRow,
-														RowsPerImage: imgHeight,
-													},
-													&wgpu.Extent3D{
-														Width:              imgWidth,
-														Height:             imgHeight,
-														DepthOrArrayLayers: 1,
-													},
-												)
-												
-												// Create uniforms with adjusted bounds for padding
-												adjustedBounds := core.UnitRect{
-													X:      bounds.X - strokeOffset,
-													Y:      bounds.Y - strokeOffset,
-													Width:  bounds.Width + strokeOffset*2,
-													Height: bounds.Height + strokeOffset*2,
-												}
-												menuUniformBuffer, menuUniformBindGroup, err := r.createWindowUniformBuffer(adjustedBounds, backendSize)
-												if err == nil {
-													// Draw menu
-													renderPass.SetBindGroup(0, menuBindGroup, nil)
-													renderPass.SetBindGroup(1, menuUniformBindGroup, nil)
-													renderPass.Draw(6, 1, 0, 0)
-													
-													fmt.Printf("✅ Drew menu dropdown at (%d,%d) %dx%d\n", bounds.X, bounds.Y, bounds.Width, bounds.Height)
-													
-													// Defer cleanup
-													defer func() {
-														menuUniformBindGroup.Release()
-														menuUniformBuffer.Release()
-														menuBindGroup.Release()
-														menuTextureView.Release()
-														menuTexture.Release()
-													}()
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
+				fmt.Fprintf(os.Stderr, "compositor: menu dropdown layer failed: %v\n", err)
 			}
 		}
 	}
-	
+
+	// Step 5: Popups — the topmost layer.
+	for _, popupIface := range childWindowList.Popups {
+		bounds, paint, ok := overlayBoundsAndPaint(popupIface)
+		if !ok {
+			continue
+		}
+		if cleanup, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
+			overlayCleanups = append(overlayCleanups, cleanup)
+		} else {
+			fmt.Fprintf(os.Stderr, "compositor: popup layer failed: %v\n", err)
+		}
+	}
 	renderPass.End()
-	
+
+	// Rotation demo: while the effect runs, spin the cube (textured with
+	// the desktop content) over the composited scene.
+	if _, _, _, active := r.effectParams(); active {
+		if cleanup, err := r.recordCubePass(encoder, surfaceView, desktopView, frameAspect); err == nil && cleanup != nil {
+			overlayCleanups = append(overlayCleanups, cleanup)
+		}
+	}
+
 	cmdBuffer, _ := encoder.Finish()
 	_, err = r.queue.Submit(cmdBuffer)
-	
+
 	// Release temporary resources after GPU has the commands
 	surfaceView.Release()
 	desktopBindGroup.Release()
 	desktopView.Release()
 	desktopTexture.Release()
-	
+
 	if err != nil {
 		return err
 	}
 	osWindow.gpuSurface.Present(surfaceTexture)
-	
+
 	return nil
 }
 
 
 // uploadBackendToTexture creates a GPU texture from a raster backend.
-func (r *WebGPURenderer) uploadBackendToTexture(backend *raster.Backend) (*wgpu.Texture, *wgpu.TextureView, *wgpu.BindGroup, error) {
-	img := backend.Image()
-	if img == nil {
-		return nil, nil, nil, fmt.Errorf("backend has no image")
-	}
-	
+// uploadPixels converts a backend's RGBA image to BGRA and writes it
+// into an existing GPU texture sized to match.
+func (r *WebGPURenderer) uploadPixels(texture *wgpu.Texture, img *image.RGBA) {
 	bounds := img.Bounds()
 	width := uint32(bounds.Dx())
 	height := uint32(bounds.Dy())
-	
+
+	pixelData, bytesPerRow := bgraPixels(img)
+
+	r.queue.WriteTexture(
+		&wgpu.ImageCopyTexture{
+			Texture:  texture,
+			MipLevel: 0,
+			Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
+			Aspect:   0,
+		},
+		pixelData,
+		&wgpu.ImageDataLayout{
+			Offset:       0,
+			BytesPerRow:  bytesPerRow,
+			RowsPerImage: height,
+		},
+		&wgpu.Extent3D{
+			Width:              width,
+			Height:             height,
+			DepthOrArrayLayers: 1,
+		},
+	)
+}
+
+// createBoundTexture creates a texture sized for the image, uploads the
+// image into it, and builds the sampler bind group the blit pipeline
+// binds at group 0.
+func (r *WebGPURenderer) createBoundTexture(img *image.RGBA) (*wgpu.Texture, *wgpu.TextureView, *wgpu.BindGroup, error) {
+	bounds := img.Bounds()
+	width := uint32(bounds.Dx())
+	height := uint32(bounds.Dy())
+
 	texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
 		Size: wgpu.Extent3D{
 			Width:              width,
@@ -1478,55 +1404,15 @@ func (r *WebGPURenderer) uploadBackendToTexture(backend *raster.Backend) (*wgpu.
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	
-	bytesPerPixel := uint32(4)
-	bytesPerRow := width * bytesPerPixel
-	alignment := uint32(256)
-	alignedBytesPerRow := ((bytesPerRow + alignment - 1) / alignment) * alignment
-	
-	pixelData := make([]byte, alignedBytesPerRow*height)
-	
-	for y := uint32(0); y < height; y++ {
-		srcOffset := y * uint32(img.Stride)
-		dstOffset := y * alignedBytesPerRow
-		
-		for x := uint32(0); x < width; x++ {
-			srcIdx := srcOffset + x*4
-			dstIdx := dstOffset + x*4
-			
-			pixelData[dstIdx+0] = img.Pix[srcIdx+2] // B
-			pixelData[dstIdx+1] = img.Pix[srcIdx+1] // G
-			pixelData[dstIdx+2] = img.Pix[srcIdx+0] // R
-			pixelData[dstIdx+3] = img.Pix[srcIdx+3] // A
-		}
-	}
-	
-	r.queue.WriteTexture(
-		&wgpu.ImageCopyTexture{
-			Texture:  texture,
-			MipLevel: 0,
-			Origin:   wgpu.Origin3D{X: 0, Y: 0, Z: 0},
-			Aspect:   0,
-		},
-		pixelData,
-		&wgpu.ImageDataLayout{
-			Offset:       0,
-			BytesPerRow:  alignedBytesPerRow,
-			RowsPerImage: height,
-		},
-		&wgpu.Extent3D{
-			Width:              width,
-			Height:             height,
-			DepthOrArrayLayers: 1,
-		},
-	)
-	
+
+	r.uploadPixels(texture, img)
+
 	textureView, err := r.device.CreateTextureView(texture, nil)
 	if err != nil {
 		texture.Release()
 		return nil, nil, nil, err
 	}
-	
+
 	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Layout: r.blitLayout,
 		Entries: []wgpu.BindGroupEntry{
@@ -1539,26 +1425,37 @@ func (r *WebGPURenderer) uploadBackendToTexture(backend *raster.Backend) (*wgpu.
 		texture.Release()
 		return nil, nil, nil, err
 	}
-	
+
 	return texture, textureView, bindGroup, nil
 }
 
+// uploadBackendToTexture creates a GPU texture from a raster backend.
+func (r *WebGPURenderer) uploadBackendToTexture(backend *raster.Backend) (*wgpu.Texture, *wgpu.TextureView, *wgpu.BindGroup, error) {
+	img := backend.Image()
+	if img == nil {
+		return nil, nil, nil, fmt.Errorf("backend has no image")
+	}
+	return r.createBoundTexture(img)
+}
 
+// writeCombinedUniforms writes the 32-byte CombinedUniforms block the
+// blit shader reads into an existing uniform buffer: the rotation demo's
+// current effect state plus the quad position from windowNDC. Every
+// layer gets the same effect values, which is what makes the whole
+// composited scene rotate rigidly.
+func (r *WebGPURenderer) writeCombinedUniforms(buffer *wgpu.Buffer, bounds core.UnitRect, surfaceSize core.UnitSize, aspect float32) {
+	angle, enabledF, scale, _ := r.effectParams()
+	x, y, w, h := windowNDC(bounds, surfaceSize)
+	uniformData := []float32{
+		angle, enabledF, scale, aspect,
+		x, y, w, h, // pos_x, pos_y, size_w, size_h
+	}
+	uniformBytes := (*[32]byte)(unsafe.Pointer(&uniformData[0]))[:]
+	r.queue.WriteBuffer(buffer, 0, uniformBytes)
+}
 
 // createWindowUniformBuffer creates a uniform buffer for a window with position baked in.
-func (r *WebGPURenderer) createWindowUniformBuffer(bounds core.UnitRect, surfaceSize core.UnitSize) (*wgpu.Buffer, *wgpu.BindGroup, error) {
-	// Calculate NDC position
-	ndcX := (float32(bounds.X) / float32(surfaceSize.Width)) * 2.0 - 1.0
-	ndcY := 1.0 - (float32(bounds.Y) / float32(surfaceSize.Height)) * 2.0
-	ndcWidth := (float32(bounds.Width) / float32(surfaceSize.Width)) * 2.0
-	ndcHeight := (float32(bounds.Height) / float32(surfaceSize.Height)) * 2.0
-	
-	// Combined uniforms: effects + position
-	uniformData := []float32{
-		0.0, 0.0, 1.0, 0.0,                       // angle, enabled, scale, padding
-		ndcX, ndcY - ndcHeight, ndcWidth, ndcHeight,  // pos_x, pos_y, size_w, size_h
-	}
-	
+func (r *WebGPURenderer) createWindowUniformBuffer(bounds core.UnitRect, surfaceSize core.UnitSize, aspect float32) (*wgpu.Buffer, *wgpu.BindGroup, error) {
 	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
 		Size:  32,
 		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
@@ -1566,10 +1463,9 @@ func (r *WebGPURenderer) createWindowUniformBuffer(bounds core.UnitRect, surface
 	if err != nil {
 		return nil, nil, err
 	}
-	
-	uniformBytes := (*[32]byte)(unsafe.Pointer(&uniformData[0]))[:]
-	r.queue.WriteBuffer(buffer, 0, uniformBytes)
-	
+
+	r.writeCombinedUniforms(buffer, bounds, surfaceSize, aspect)
+
 	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Layout: r.blitUniformLayout,
 		Entries: []wgpu.BindGroupEntry{
@@ -1580,6 +1476,152 @@ func (r *WebGPURenderer) createWindowUniformBuffer(bounds core.UnitRect, surface
 		buffer.Release()
 		return nil, nil, err
 	}
-	
+
 	return buffer, bindGroup, nil
+}
+
+// releaseWindowSurface frees every GPU resource a WindowSurface owns.
+func (r *WebGPURenderer) releaseWindowSurface(surf *WindowSurface) {
+	if surf.uniformBindGroup != nil {
+		surf.uniformBindGroup.Release()
+		surf.uniformBindGroup = nil
+	}
+	if surf.uniformBuffer != nil {
+		surf.uniformBuffer.Release()
+		surf.uniformBuffer = nil
+	}
+	if surf.bindGroup != nil {
+		surf.bindGroup.Release()
+		surf.bindGroup = nil
+	}
+	if surf.textureView != nil {
+		surf.textureView.Release()
+		surf.textureView = nil
+	}
+	if surf.texture != nil {
+		surf.texture.Release()
+		surf.texture = nil
+	}
+	surf.backend = nil
+}
+
+// overlayStrokeOffset is the padding around overlay layers (popups, menu
+// dropdowns) so outer strokes drawn just outside their nominal bounds
+// still land on the texture: 2 device pixels per side.
+const overlayStrokeOffset = core.Unit(2)
+
+// overlayBoundsAndPaint extracts the Bounds rect and Paint function from
+// an overlay value (window.PopupOverlay, or the anonymous menu dropdown
+// struct) by field name — reflection sidesteps the import cycle between
+// the sdl and window packages.
+func overlayBoundsAndPaint(overlay interface{}) (core.UnitRect, func(*core.Painter), bool) {
+	v := reflect.ValueOf(overlay)
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return core.UnitRect{}, nil, false
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return core.UnitRect{}, nil, false
+	}
+
+	boundsField := v.FieldByName("Bounds")
+	paintField := v.FieldByName("Paint")
+	if !boundsField.IsValid() || !paintField.IsValid() {
+		return core.UnitRect{}, nil, false
+	}
+
+	bounds, ok := boundsField.Interface().(core.UnitRect)
+	if !ok || bounds.Width <= 0 || bounds.Height <= 0 {
+		return core.UnitRect{}, nil, false
+	}
+	paint, ok := paintField.Interface().(func(*core.Painter))
+	if !ok || paint == nil {
+		return core.UnitRect{}, nil, false
+	}
+	return bounds, paint, true
+}
+
+// drawOverlay renders one overlay layer (popup or menu dropdown) into a
+// transient texture and records its quad into the render pass. The
+// returned cleanup releases the layer's GPU resources and MUST run only
+// after the pass's commands are submitted.
+func (r *WebGPURenderer) drawOverlay(
+	renderPass *wgpu.RenderPassEncoder,
+	osWindow *nativeWin,
+	bounds core.UnitRect,
+	paint func(*core.Painter),
+	scale int,
+) (func(), error) {
+	backendImg := osWindow.backend.Image()
+	if backendImg == nil {
+		return nil, fmt.Errorf("OS window backend has no image")
+	}
+	backendSize := osWindow.backend.Size()
+	metrics := osWindow.backend.Metrics()
+
+	backendBounds := backendImg.Bounds()
+	pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
+	pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
+
+	// Pad the texture so outer strokes survive (2px per side).
+	strokePadding := int(overlayStrokeOffset) * 2
+	widthPx := int(float64(bounds.Width)*pixelsPerUnitW) + strokePadding
+	heightPx := int(float64(bounds.Height)*pixelsPerUnitH) + strokePadding
+	if widthPx <= 0 || heightPx <= 0 {
+		return nil, fmt.Errorf("overlay pixel size %dx%d invalid", widthPx, heightPx)
+	}
+
+	overlayBackend, err := raster.NewScaled(widthPx, heightPx, scale)
+	if err != nil {
+		return nil, err
+	}
+	overlayBackend.SetCellMetrics(metrics)
+	overlayBackend.SetFontSize(osWindow.backend.FontSize())
+
+	// The overlay's Paint expects a painter at screen origin and offsets
+	// itself to its bounds; our backend covers only the overlay (plus
+	// stroke padding), so a negative offset cancels that placement.
+	overlayBackend.BeginFrame()
+	painter := core.NewPainter(overlayBackend)
+	paint(painter.WithOffset(-bounds.X+overlayStrokeOffset, -bounds.Y+overlayStrokeOffset))
+	overlayBackend.EndFrame()
+
+	img := overlayBackend.Image()
+	if img == nil {
+		return nil, fmt.Errorf("overlay backend returned no image")
+	}
+
+	texture, textureView, bindGroup, err := r.createBoundTexture(img)
+	if err != nil {
+		return nil, err
+	}
+
+	// The on-screen quad grows by the same padding the texture gained.
+	aspect := float32(1)
+	if backendBounds.Dy() > 0 {
+		aspect = float32(backendBounds.Dx()) / float32(backendBounds.Dy())
+	}
+	uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(
+		outsetBounds(bounds, overlayStrokeOffset), backendSize, aspect)
+	if err != nil {
+		bindGroup.Release()
+		textureView.Release()
+		texture.Release()
+		return nil, err
+	}
+
+	renderPass.SetBindGroup(0, bindGroup, nil)
+	renderPass.SetBindGroup(1, uniformBindGroup, nil)
+	renderPass.Draw(6, 1, 0, 0)
+
+	cleanup := func() {
+		uniformBindGroup.Release()
+		uniformBuffer.Release()
+		bindGroup.Release()
+		textureView.Release()
+		texture.Release()
+	}
+	return cleanup, nil
 }
