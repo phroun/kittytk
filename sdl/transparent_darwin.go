@@ -244,6 +244,7 @@ static void kittytk_enable_miniaturize(void *nswindow) {
 import "C"
 
 import (
+	"os"
 	"unsafe"
 
 	sdl2 "github.com/veandco/go-sdl2/sdl"
