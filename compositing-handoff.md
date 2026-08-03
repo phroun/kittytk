@@ -338,9 +338,19 @@ focused trinket and TextInput rendering it inline without treating it as
 committed content.
 
 ## Known gaps (not regressions)
-- **Compositor repaints every window every frame** — per-window damage
-  is tracked (`surf.dirty`) but not yet honored. Optimization, not
-  correctness.
+- **Preedit is invisible.** `SDL_EVENT_TEXT_EDITING` is not translated,
+  so in-composition CJK text does not appear until it commits. The
+  candidate window is now placed correctly (see the caret section); this
+  is the other half. Needs an event through to the focused trinket and
+  TextInput rendering the preedit inline without treating it as
+  committed content.
+- **MDI children are not compositor layers.** They paint into their
+  parent window's texture and shadow themselves there. Hoisting them
+  would need each child's bounds and paint closure mapped up through the
+  trinket tree — `MapTrinketToScreen` already does that arithmetic — and
+  a resolution for the one thing that genuinely paints above a pane:
+  `PaintModalDim`. The window's own menu dropdown is NOT a conflict, as
+  it already has a compositor layer of its own.
 - **`windowSurfaces` keys** truncate the child-window pointer to
   uint32; collision is unlikely but a stable window ID would be nicer.
 - **Linux `-tags "sdl webgpu"` final link** currently fails in goffi
