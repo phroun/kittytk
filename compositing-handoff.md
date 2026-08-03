@@ -124,6 +124,29 @@ parameters as its NDC position and threw every quad off screen. No
 error, no validation warning, correct geometry in every log — just no
 shadows, and not even red ones under `KITTYTK_SHADOW_DEBUG`.
 
+### Where each shadow comes from
+
+A shadow needs something below it to fall on, so which mechanism draws it
+follows from what the caster IS:
+
+| Caster | Mechanism |
+| --- | --- |
+| Desktop window, menu dropdown, popup | compositor layer → analytic SDF in the blit shader |
+| Torn-off window's dropdown and popups | same, on that window's own surface (`TearOffHost` is a compositor host) |
+| MDI child | painted into its parent window's surface by `core.Painter.DropShadow` |
+
+An MDI child has no layer of its own — it lives inside the texture its
+parent window occupies — so nothing the compositor draws could get
+underneath it. `MDIPane.Paint` lays its shadow immediately before the
+child, interleaved in z-order, which is also what makes a stack of
+children shade each other correctly: each shadow lands on everything
+below it and is covered by everything above.
+
+Both read `core.WindowDropShadow` / `core.OverlayDropShadow`, so the two
+paths cannot drift apart in look (`TestShadowSpecsTrackCoreStyles`), and
+the raster implementation evaluates the same rounded-rect distance field
+the shader does.
+
 `sdl/shaders.go` is untagged on purpose: WGSL text and a memory layout
 are pure data, so `sdl/shaders_test.go` checks them with no SDL library
 and no GPU. It holds `blitBindGroups` (which the pipeline is built from,

@@ -253,3 +253,47 @@ func TestPunchRoundedCorners(t *testing.T) {
 		}
 	}
 }
+
+// The compositor's shadow specs are core's styles, narrowed to the
+// float32 the shader's uniform block carries. Shadows reach the screen
+// two ways — composited here, and painted into a surface by
+// core.Painter.DropShadow for anything nested inside a layer (an MDI
+// child in its parent window's texture) — and a window's shadow must
+// look the same either way.
+func TestShadowSpecsTrackCoreStyles(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		spec shadowSpec
+		want core.DropShadowStyle
+	}{
+		{"window", windowShadowSpec, core.WindowDropShadow},
+		{"overlay", overlayShadowSpec, core.OverlayDropShadow},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.spec.offsetX != tc.want.OffsetX || tc.spec.offsetY != tc.want.OffsetY {
+				t.Errorf("offset = (%v,%v), want (%v,%v)",
+					tc.spec.offsetX, tc.spec.offsetY, tc.want.OffsetX, tc.want.OffsetY)
+			}
+			if tc.spec.blur != tc.want.Blur {
+				t.Errorf("blur = %v, want %v", tc.spec.blur, tc.want.Blur)
+			}
+			if tc.spec.radius != tc.want.Radius {
+				t.Errorf("radius = %v, want %v", tc.spec.radius, tc.want.Radius)
+			}
+			if tc.spec.alpha != float32(tc.want.Alpha) {
+				t.Errorf("alpha = %v, want %v", tc.spec.alpha, tc.want.Alpha)
+			}
+		})
+	}
+
+	// The overlay style is the tighter of the two: closer to what it
+	// covers, and less blurred.
+	if core.OverlayDropShadow.Blur >= core.WindowDropShadow.Blur {
+		t.Errorf("overlay blur %v is not tighter than window blur %v",
+			core.OverlayDropShadow.Blur, core.WindowDropShadow.Blur)
+	}
+	if core.OverlayDropShadow.OffsetY >= core.WindowDropShadow.OffsetY {
+		t.Errorf("overlay cast %v is not closer than window cast %v",
+			core.OverlayDropShadow.OffsetY, core.WindowDropShadow.OffsetY)
+	}
+}

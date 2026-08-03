@@ -82,8 +82,9 @@ func scissorPx(area core.UnitRect, ppuW, ppuH float64, maxW, maxH int) (x, y, w,
 	return x0, y0, x1 - x0, y1 - y0, true
 }
 
-// shadowSpec describes one drop-shadow style, all lengths in surface
-// units (so shadows scale with density like everything else).
+// shadowSpec is one drop-shadow style in the form the compositor works
+// in: the same lengths as core.DropShadowStyle, with alpha narrowed to
+// the float32 the shader's uniform block carries.
 type shadowSpec struct {
 	offsetX core.Unit // cast down-right
 	offsetY core.Unit
@@ -92,12 +93,27 @@ type shadowSpec struct {
 	alpha   float32   // peak opacity
 }
 
+// The styles themselves live in core, because shadows reach the screen
+// two ways: composited here for the layers the compositor owns, and
+// painted into a surface (core.Painter.DropShadow) for anything nested
+// inside one, such as an MDI child in its parent window's texture. One
+// definition, so the two cannot drift apart in look.
+func toShadowSpec(s core.DropShadowStyle) shadowSpec {
+	return shadowSpec{
+		offsetX: s.OffsetX,
+		offsetY: s.OffsetY,
+		blur:    s.Blur,
+		radius:  s.Radius,
+		alpha:   float32(s.Alpha),
+	}
+}
+
 // windowShadowSpec is the soft, larger shadow under desktop windows;
 // overlayShadowSpec the tighter one under menus, popups, and combo
 // lists.
 var (
-	windowShadowSpec  = shadowSpec{offsetX: 2, offsetY: 3, blur: 8, radius: 4, alpha: 0.35}
-	overlayShadowSpec = shadowSpec{offsetX: 1, offsetY: 2, blur: 4, radius: 2, alpha: 0.40}
+	windowShadowSpec  = toShadowSpec(core.WindowDropShadow)
+	overlayShadowSpec = toShadowSpec(core.OverlayDropShadow)
 )
 
 // unionRect returns the smallest rect containing both. An empty rect is

@@ -1354,6 +1354,19 @@ func (m *MDIPane) Paint(p *core.Painter) {
 				Height: visibleBounds.Height,
 			}
 
+			// Drop shadow first, then the window over it. An MDI child
+			// paints into its ancestor surface — inside the compositor
+			// layer its parent window occupies — so it has no layer of
+			// its own for the compositor to shadow. Painting it here,
+			// interleaved in z-order, is also what makes a stack of
+			// children shade each other correctly: each shadow lands on
+			// everything below it and is covered by everything above.
+			//
+			// Clipped to the pane, like the window itself: a shadow may
+			// spill past a child at the pane's edge, never past the pane.
+			shadowPainter := ip.WithClip(clientArea)
+			shadowPainter.DropShadow(winBounds, core.WindowDropShadow)
+
 			windowPainter := ip.WithOffset(winBounds.X, winBounds.Y).
 				WithClip(localClip)
 			win.Paint(windowPainter)

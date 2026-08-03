@@ -1570,6 +1570,102 @@ func (b *Backend) FillRectPxAlpha(xPx, yPx, wPx, hPx int, r, g, bl uint8, alpha 
 	b.blendRectPx(xPx, yPx, xPx+wPx, yPx+hPx, color.RGBA{R: r, G: g, B: bl, A: 255}, alpha)
 }
 
+// DrawDropShadowPx lays a soft drop shadow for a rounded rectangle,
+// implementing core.DropShadowDrawer. The rect is the caster already
+// shifted by the cast offset; alpha falls off across blurPx on the
+// signed distance to the rounded rect, which is the same field the GPU
+// compositor's shader evaluates for the layers IT shadows — so a shadow
+// painted into a surface and one composited over it look alike.
+//
+// Only the band the falloff can reach is visited, and rows are clipped
+// to the surface, so the cost tracks the shadow's own perimeter.
+func (b *Backend) DrawDropShadowPx(xPx, yPx, wPx, hPx int, radiusPx, blurPx, alpha float64) {
+	if wPx <= 0 || hPx <= 0 || alpha <= 0 {
+		return
+	}
+	if blurPx < 0 {
+		blurPx = 0
+	}
+	if radiusPx < 0 {
+		radiusPx = 0
+	}
+
+	// Half-extents of the rounded rect's straight core, and its center:
+	// the standard rounded-box distance field.
+	cx := float64(xPx) + float64(wPx)/2
+	cy := float64(yPx) + float64(hPx)/2
+	hx := math.Max(float64(wPx)/2-radiusPx, 0)
+	hy := math.Max(float64(hPx)/2-radiusPx, 0)
+
+	pad := int(math.Ceil(blurPx)) + 1
+	x0, y0 := xPx-pad, yPx-pad
+	x1, y1 := xPx+wPx+pad, yPx+hPx+pad
+
+	if b.hasClip {
+		cx0, cy0 := b.pxX(b.clip.X), b.pxY(b.clip.Y)
+		cx1, cy1 := b.pxX(b.clip.X+b.clip.Width), b.pxY(b.clip.Y+b.clip.Height)
+		x0, y0 = max(x0, cx0), max(y0, cy0)
+		x1, y1 = min(x1, cx1), min(y1, cy1)
+	}
+	x0, y0 = max(x0, 0), max(y0, 0)
+	x1, y1 = min(x1, b.w), min(y1, b.h)
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
+
+	pix := b.img.Pix
+	for y := y0; y < y1; y++ {
+		dy := math.Abs(float64(y)+0.5-cy) - hy
+		o := b.img.PixOffset(x0, y)
+		for x := x0; x < x1; x++ {
+			if b.hasRoundClip && !b.pointVisible(x, y) {
+				o += 4
+				continue
+			}
+			dx := math.Abs(float64(x)+0.5-cx) - hx
+			// Distance to the rounded rect: outside the core, the length
+			// of the positive part; inside, the larger (negative) axis.
+			d := math.Hypot(math.Max(dx, 0), math.Max(dy, 0)) +
+				math.Min(math.Max(dx, dy), 0) - radiusPx
+
+			cov := 1.0
+			if blurPx > 0 {
+				t := (d + blurPx) / (2 * blurPx)
+				switch {
+				case t <= 0:
+					cov = 1
+				case t >= 1:
+					o += 4
+					continue
+				default:
+					cov = 1 - t*t*(3-2*t) // smoothstep, as in the shader
+				}
+			} else if d > 0 {
+				o += 4
+				continue
+			}
+
+			a := uint32(alpha*cov*256 + 0.5)
+			if a == 0 {
+				o += 4
+				continue
+			}
+			if a > 256 {
+				a = 256
+			}
+			inv := 256 - a
+			// Shadow colour is black, so only the destination survives in
+			// RGB; alpha still climbs toward opaque, which is what keeps a
+			// shadow visible over a transparent (torn-window) surface.
+			pix[o] = uint8((uint32(pix[o]) * inv) >> 8)
+			pix[o+1] = uint8((uint32(pix[o+1]) * inv) >> 8)
+			pix[o+2] = uint8((uint32(pix[o+2]) * inv) >> 8)
+			pix[o+3] = uint8((255*a + uint32(pix[o+3])*inv) >> 8)
+			o += 4
+		}
+	}
+}
+
 func (b *Backend) PollEvent() core.Event                  { return nil }
 func (b *Backend) WaitEvent() core.Event                  { return nil }
 func (b *Backend) SetCursorVisible(bool)                  {}
