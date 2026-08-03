@@ -12,6 +12,7 @@ import (
 
 	"github.com/phroun/direct-key-handler/keyboard"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/hebrew"
 	"github.com/phroun/kittytk/style"
 	"github.com/phroun/purfecterm"
 	"golang.org/x/term"
@@ -49,8 +50,14 @@ var invalidCell = Cell{Char: utf8.MaxRune + 1}
 // cellRuneWidth returns the terminal columns a base rune occupies (1 or 2),
 // from purfecterm's East Asian Width table — the same width authority the
 // PurfecTerm trinket's grid uses, so layout and emission agree end to end.
-// Ambiguous-width runes count as narrow (purfecterm's default); combining
-// marks are zero-width (they belong in Cell.Combining, not their own cell).
+// Ambiguous-width runes count as narrow (purfecterm's default).
+//
+// Non-spacing marks are zero-width: they belong in Cell.Combining, not in a
+// cell of their own. Spacing marks (category Mc — the visible Devanagari
+// matras and kin) do take a cell, and purfecterm's predicate distinguishes
+// the two as of v0.2.29. Before that it was wrong in both directions, and
+// KittyTK carried its own category test to compensate; see
+// docs/upstream/purfecterm-combining-marks.md.
 func cellRuneWidth(r rune) int {
 	if r == 0 {
 		return 1
@@ -69,10 +76,9 @@ type TUIBackend struct {
 	mu sync.Mutex
 
 	// Terminal state
-	fd       int
-	oldState *term.State
-	cols     int
-	rows     int
+	fd   int
+	cols int
+	rows int
 
 	// Cell metrics for unit conversion
 	metrics core.CellMetrics
@@ -115,6 +121,19 @@ type TUIBackend struct {
 
 	// Output writer
 	output io.Writer
+
+	// ttyOut, when set, receives the terminal MODE escapes instead of a freshly
+	// opened /dev/tty (see writeTTY). Tests set it so their result does not
+	// depend on whether the runner happens to have a controlling terminal.
+	ttyOut io.Writer
+
+	// restored guards the terminal-mode restore so it runs exactly once no
+	// matter how many paths reach it - Shutdown, RestoreTerminal, an embedder's
+	// emergency handler, or all three.
+	restored sync.Once
+	// shutdown guards the rest of Shutdown. Without it a second call closes
+	// stopChan twice and panics, which is a poor way to end an emergency.
+	shutdownOnce sync.Once
 
 	// Capabilities
 	colorDepth int
@@ -246,31 +265,23 @@ func (t *TUIBackend) Init() error {
 	// Allocate buffers
 	t.allocateBuffers()
 
-	// Open /dev/tty directly to ensure escape sequences reach the terminal
-	// This bypasses any stdout redirection
-	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
-	if err != nil {
-		tty = os.Stdout
-	}
-
 	// Enable Kitty keyboard protocol for better key detection
-	fmt.Fprint(tty, "\033[>1u")
+	t.writeTTY("\033[>1u")
 
 	// Enable mouse if requested
 	if t.hasMouse {
-		fmt.Fprint(tty, "\033[?1000h\033[?1002h\033[?1006h")
+		t.writeTTY("\033[?1000h\033[?1002h\033[?1006h")
 	}
 
 	// Enter alternate screen
-	fmt.Fprint(tty, "\033[?1049h")
+	t.writeTTY("\033[?1049h")
 
 	// Hide cursor initially
-	fmt.Fprint(tty, "\033[?25l")
+	t.writeTTY("\033[?25l")
 
-	// Close tty if we opened it separately
-	if tty != os.Stdout {
-		tty.Close()
-	}
+	// The terminal is now ours. Join the set RestoreAll walks, so an exit path
+	// that never reaches Shutdown can still hand it back.
+	registerLive(t)
 
 	// Set up keyboard handler AFTER terminal modes are configured
 	kbOpts := keyboard.Options{
@@ -298,36 +309,69 @@ func (t *TUIBackend) Init() error {
 	return nil
 }
 
-// Shutdown cleans up the terminal backend.
+// Shutdown cleans up the terminal backend. Safe to call more than once.
 func (t *TUIBackend) Shutdown() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.shutdownOnce.Do(func() {
+		t.mu.Lock()
+		close(t.stopChan)
+		kb := t.keyboard
+		t.mu.Unlock()
 
-	// Signal stop
-	close(t.stopChan)
+		// Outside the lock: Stop restores raw mode and joins the reader
+		// goroutine, and nothing it touches needs t.mu.
+		if kb != nil {
+			kb.Stop()
+		}
+	})
+	t.RestoreTerminal()
+}
 
-	// Stop keyboard handler
-	if t.keyboard != nil {
-		t.keyboard.Stop()
-	}
+// RestoreTerminal puts the terminal back the way it was found - mouse off,
+// cursor shown, alternate screen left, Kitty keyboard protocol popped, colours
+// reset - and does so at most once however many paths reach it.
+//
+// It is separate from Shutdown, and exported, because the terminal is PROCESS
+// state, not backend state: whoever ends the process is responsible for it,
+// and that is not always the code holding this backend. An embedder whose
+// fatal-signal path bypasses the normal teardown (mew dumps unsaved buffers
+// and calls os.Exit) must be able to hand the terminal back without owning a
+// reference here - see RestoreAll.
+//
+// Safe from any goroutine, including a signal handler: it takes no lock the
+// event loop holds and does nothing but write escapes.
+func (t *TUIBackend) RestoreTerminal() {
+	t.restored.Do(func() {
+		// Disable mouse
+		if t.hasMouse {
+			t.writeTTY("\033[?1006l\033[?1002l\033[?1000l")
+		}
 
-	// Disable Kitty keyboard protocol
-	t.write("\033[<u")
+		// Show cursor
+		t.writeTTY("\033[?25h")
+		t.cursorShown = true
 
-	// Disable mouse
-	if t.hasMouse {
-		t.write("\033[?1006l\033[?1002l\033[?1000l")
-	}
+		// Leave alternate screen
+		t.writeTTY("\033[?1049l")
 
-	// Show cursor
-	t.write("\033[?25h")
-	t.cursorShown = true
+		// Pop the Kitty keyboard protocol - AFTER leaving the alternate screen,
+		// because the flag stack is per-screen. Init pushes (\033[>1u) while
+		// still on the MAIN screen and only then switches to the alternate one,
+		// so a pop issued before switching back applies to the alternate
+		// screen's stack and leaves the main screen's push live. The shell
+		// inherits it and the first Ctrl+C prints an escape ("...9;5u")
+		// instead of interrupting.
+		//
+		// Popping an empty stack is a no-op, so this stays safe on a terminal
+		// that ignored the push. The explicit reset after it covers a terminal
+		// that honours the flags but not the stack.
+		t.writeTTY("\033[<u")
+		t.writeTTY("\033[=0;1u")
 
-	// Leave alternate screen
-	t.write("\033[?1049l")
+		// Reset colors
+		t.writeTTY("\033[0m")
 
-	// Reset colors
-	t.write("\033[0m")
+		unregisterLive(t)
+	})
 }
 
 // allocateBuffers creates the screen buffers.
@@ -462,8 +506,9 @@ func (t *TUIBackend) EndFrame() {
 						sb.WriteString(code)
 						penStyle = code
 					}
-					sb.WriteRune(c.Char)
-					sb.WriteString(c.Combining)
+					base, comb := t.driftEmit(y, x, c)
+					sb.WriteRune(base)
+					sb.WriteString(comb)
 				}
 				t.frontLineAttr[y] = mode
 				termX, termY = -1, -1 // cursor position on a DEC line: treat as unknown
@@ -510,6 +555,14 @@ func (t *TUIBackend) EndFrame() {
 					break
 				}
 			}
+
+			// The base and marks emitted here are driftEmit's — the cell's own
+			// under normal mode; under drift, the base with its points folded in
+			// and the RIGHT neighbour's drifting marks appended. Fold them into
+			// the cell we diff and store, so the comparison reflects exactly what
+			// renders: a neighbour whose marks change makes THIS cell differ and
+			// re-emit on its own, with no cascade.
+			effectiveCell.Char, effectiveCell.Combining = t.driftEmit(y, x, effectiveCell)
 
 			if !lineCleared && effectiveCell == t.frontBuffer[y][x] {
 				x++
@@ -709,6 +762,78 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	}
 
 	return t.metrics.TextWidth(col - startCol)
+}
+
+// driftEmit returns the base rune and the combining marks to emit for the cell
+// at (x, y) — normally the cell's own char and marks unchanged.
+//
+// Under rtlMarkMode "drift" (experimental) an RTL cell's DRIFTING marks are
+// carried by the cell to its LEFT: it keeps its own non-drifting marks and, from
+// the cell to its RIGHT, steals that cell's drifting marks, all emitted after
+// its own base. A few terminals (current Ghostty and Alacritty among them) place
+// an RTL combining sequence this way; drift reproduces it for them.
+//
+// The cell's own non-drifting POINTS (shin dot, sin dot, dagesh/mappiq, rafe,
+// holam-haser) are folded into the base's Alphabetic-Presentation-Form glyph
+// rather than emitted free-standing: a drift terminal misplaces a free-standing
+// point exactly as it does a vowel, and the presence of a drifting vowel drags
+// the point off with it. Baking the point into the base leaves nothing loose for
+// the terminal to move. Only RTL vowels/accents drift then; an LTR mark of some
+// other script rides its own base as usual. The transform is emit-only, so the
+// stored cell is unchanged.
+func (t *TUIBackend) driftEmit(y, x int, cell Cell) (rune, string) {
+	if core.RtlMarkMode() != "drift" || !isRTLBase(cell.Char) {
+		return cell.Char, cell.Combining // normal: the cell's own char and marks
+	}
+	// This base keeps every mark that does not drift (its point, any LTR mark);
+	// fold the points into a presentation form so none is left free-standing.
+	own := []rune{cell.Char}
+	for _, r := range cell.Combining {
+		if !driftsLeft(r) {
+			own = append(own, r)
+		}
+	}
+	base := cell.Char
+	var b strings.Builder
+	if folded, ok := hebrew.PrecomposeCluster(own); ok {
+		base = folded[0]
+		b.WriteString(string(folded[1:])) // non-folding non-drifting marks (LTR)
+	} else {
+		b.WriteString(string(own[1:])) // nothing folds: keep the marks as-is
+	}
+	// …then steal the drifting marks of the cell to its right.
+	if x+1 < t.cols {
+		if right := t.backBuffer[y][x+1]; isRTLBase(right.Char) {
+			for _, r := range right.Combining {
+				if driftsLeft(r) {
+					b.WriteRune(r)
+				}
+			}
+		}
+	}
+	return base, b.String()
+}
+
+// driftsLeft reports whether a combining mark moves one cell left under drift:
+// an RTL-script mark that is NOT one of the marks already placed correctly by
+// the base model — the shin dot, the sin dot, and the dagesh/mappiq, which stay
+// on their own column.
+func driftsLeft(r rune) bool {
+	switch r {
+	case 0x05C1, 0x05C2, 0x05BC: // shin dot, sin dot, dagesh/mappiq
+		return false
+	}
+	return isRTLBase(r) // RTL-script marks drift; LTR/other-script marks stay
+}
+
+// isRTLBase reports whether r belongs to a right-to-left script (Hebrew or
+// Arabic) — used both for the cell's base letter and for classing its marks.
+func isRTLBase(r rune) bool {
+	switch purfecterm.ScriptClass(r) {
+	case "hebrew", "arabic":
+		return true
+	}
+	return false
 }
 
 // appendCombining attaches a zero-width mark to the base cell at (x, row),
@@ -1295,6 +1420,30 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	default:
 		// Queue full, drop event
 	}
+}
+
+// writeTTY sends a TERMINAL MODE escape - one that changes the terminal's state
+// rather than painting content - straight to /dev/tty, falling back to the
+// configured output when that cannot be opened.
+//
+// Mode changes have to reach somewhere they take effect, and they have to be
+// UNDONE through the same channel. Under `app > file` the enable would
+// otherwise reach the terminal (via /dev/tty) while the disable went into the
+// file, leaving raw/alt-screen/kitty-keys state set with nothing still running
+// to clear it. Content writes keep using write() and the configured output,
+// which is what redirection is for.
+func (t *TUIBackend) writeTTY(s string) {
+	if t.ttyOut != nil {
+		io.WriteString(t.ttyOut, s)
+		return
+	}
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		t.write(s)
+		return
+	}
+	defer tty.Close()
+	io.WriteString(tty, s)
 }
 
 // write outputs a string to the terminal.
