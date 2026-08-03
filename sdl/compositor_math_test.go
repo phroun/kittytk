@@ -1,0 +1,96 @@
+package sdl
+
+import (
+	"image"
+	"testing"
+
+	"github.com/phroun/kittytk/core"
+)
+
+func almostEqual(a, b float32) bool {
+	d := a - b
+	return d < 1e-5 && d > -1e-5
+}
+
+// windowNDC places a child window's unit bounds on the surface's NDC
+// quad. The full surface maps to the (-1,-1) 2x2 quad; sub-rects scale
+// and translate, with the unit y axis (down) flipped to NDC (up).
+func TestWindowNDC(t *testing.T) {
+	full := core.UnitSize{Width: 800, Height: 600}
+
+	x, y, w, h := windowNDC(core.UnitRect{X: 0, Y: 0, Width: 800, Height: 600}, full)
+	if !almostEqual(x, -1) || !almostEqual(y, -1) || !almostEqual(w, 2) || !almostEqual(h, 2) {
+		t.Errorf("fullscreen = (%v,%v,%v,%v), want (-1,-1,2,2)", x, y, w, h)
+	}
+
+	// Top-left quadrant: upper half of NDC, left half of x.
+	x, y, w, h = windowNDC(core.UnitRect{X: 0, Y: 0, Width: 400, Height: 300}, full)
+	if !almostEqual(x, -1) || !almostEqual(y, 0) || !almostEqual(w, 1) || !almostEqual(h, 1) {
+		t.Errorf("top-left quadrant = (%v,%v,%v,%v), want (-1,0,1,1)", x, y, w, h)
+	}
+
+	// Bottom-right quadrant.
+	x, y, w, h = windowNDC(core.UnitRect{X: 400, Y: 300, Width: 400, Height: 300}, full)
+	if !almostEqual(x, 0) || !almostEqual(y, -1) || !almostEqual(w, 1) || !almostEqual(h, 1) {
+		t.Errorf("bottom-right quadrant = (%v,%v,%v,%v), want (0,-1,1,1)", x, y, w, h)
+	}
+
+	// A degenerate surface produces a degenerate quad, not NaN/Inf.
+	x, y, w, h = windowNDC(core.UnitRect{X: 10, Y: 10, Width: 100, Height: 100}, core.UnitSize{})
+	if x != 0 || y != 0 || w != 0 || h != 0 {
+		t.Errorf("degenerate surface = (%v,%v,%v,%v), want zeros", x, y, w, h)
+	}
+}
+
+// The same window bounds against a RESIZED surface must produce different
+// NDC — this is the transform the compositor now refreshes every frame.
+// Regression coverage for windows keeping stale scale/position after the
+// desktop window was resized.
+func TestWindowNDCTracksSurfaceResize(t *testing.T) {
+	bounds := core.UnitRect{X: 100, Y: 100, Width: 200, Height: 150}
+
+	x1, y1, w1, h1 := windowNDC(bounds, core.UnitSize{Width: 800, Height: 600})
+	x2, y2, w2, h2 := windowNDC(bounds, core.UnitSize{Width: 1600, Height: 1200})
+
+	if almostEqual(x1, x2) && almostEqual(y1, y2) && almostEqual(w1, w2) && almostEqual(h1, h2) {
+		t.Error("NDC must change when the surface size changes; a stale uniform means a mis-scaled window")
+	}
+	// Doubling the surface halves the window's NDC extent.
+	if !almostEqual(w2, w1/2) || !almostEqual(h2, h1/2) {
+		t.Errorf("doubled surface: extent (%v,%v), want (%v,%v)", w2, h2, w1/2, h1/2)
+	}
+}
+
+func TestOutsetBounds(t *testing.T) {
+	got := outsetBounds(core.UnitRect{X: 10, Y: 20, Width: 30, Height: 40}, 2)
+	want := core.UnitRect{X: 8, Y: 18, Width: 34, Height: 44}
+	if got != want {
+		t.Errorf("outsetBounds = %+v, want %+v", got, want)
+	}
+}
+
+// bgraPixels swaps R<->B, keeps G/A, and pads rows to the GPU's 256-byte
+// upload alignment.
+func TestBGRAPixels(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 3, 2))
+	// Pixel (0,0): R=1 G=2 B=3 A=4; pixel (2,1): R=9 G=8 B=7 A=255.
+	copy(img.Pix[0:4], []byte{1, 2, 3, 4})
+	i := img.PixOffset(2, 1)
+	copy(img.Pix[i:i+4], []byte{9, 8, 7, 255})
+
+	data, bytesPerRow := bgraPixels(img)
+
+	if bytesPerRow != 256 {
+		t.Errorf("bytesPerRow = %d, want 256 (3px rows round up to one alignment block)", bytesPerRow)
+	}
+	if len(data) != int(bytesPerRow)*2 {
+		t.Errorf("len(data) = %d, want %d", len(data), int(bytesPerRow)*2)
+	}
+	if data[0] != 3 || data[1] != 2 || data[2] != 1 || data[3] != 4 {
+		t.Errorf("pixel (0,0) BGRA = %v, want [3 2 1 4]", data[0:4])
+	}
+	j := bytesPerRow + 2*4
+	if data[j] != 7 || data[j+1] != 8 || data[j+2] != 9 || data[j+3] != 255 {
+		t.Errorf("pixel (2,1) BGRA = %v, want [7 8 9 255]", data[j:j+4])
+	}
+}
