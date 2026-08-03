@@ -1525,7 +1525,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		// Paint order IS z-order, and the last request of a frame wins
 		// (see core/textcaret.go), so a window higher in the stack takes
 		// the caret from one below.
-		if surf.caret.Visible {
+		if surf.caret.Requested() {
 			frameCaret = surf.caret
 		}
 
@@ -1552,7 +1552,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			}
 			if cleanup, caret, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
 				overlayCleanups = append(overlayCleanups, cleanup)
-				if caret.Visible {
+				if caret.Requested() {
 					frameCaret = caret
 				}
 			} else {
@@ -1574,7 +1574,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		}
 		if cleanup, caret, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
 			overlayCleanups = append(overlayCleanups, cleanup)
-			if caret.Visible {
+			if caret.Requested() {
 				frameCaret = caret
 			}
 		} else {

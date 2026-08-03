@@ -427,11 +427,18 @@ func TestCaretInSurface(t *testing.T) {
 		t.Errorf("caretInSurface = %+v, want %+v", got, want)
 	}
 
-	// No request stays no request, and carries no stale position: an
-	// invisible caret with coordinates would place an input method's
+	// An insertion point with no drawn caret shifts the same way: a text
+	// field paints its own caret and reports only where typing goes.
+	area := caretInSurface(core.TextCaret{InputArea: true, X: 16, Y: 32}, layer)
+	if want := (core.TextCaret{InputArea: true, X: 136, Y: 96}); area != want {
+		t.Errorf("caretInSurface of an input-area request = %+v, want %+v", area, want)
+	}
+
+	// No request stays no request, and carries no stale position: a
+	// position with nothing asking for it would anchor an input method's
 	// candidate window at a caret that is not there.
 	if got := caretInSurface(core.TextCaret{X: 16, Y: 32}, layer); got != (core.TextCaret{}) {
-		t.Errorf("caretInSurface of an invisible request = %+v, want the zero value", got)
+		t.Errorf("caretInSurface of an empty request = %+v, want the zero value", got)
 	}
 
 	// A layer at the origin is the identity.

@@ -169,6 +169,18 @@ type Surface interface {
 	SetCursorStyle(style int)
 }
 
+// TextInputAreaSetter is an optional Surface capability: report where
+// text is being typed, so an input method can place its candidate window
+// there. Distinct from the caret methods, which are about a caret the
+// PLATFORM draws — a graphical surface draws none (trinkets paint their
+// own) yet still has an input method to inform.
+//
+// visible false forgets the position, so the OS falls back to its own
+// placement rather than anchoring on a stale one.
+type TextInputAreaSetter interface {
+	SetTextInputArea(x, y core.Unit, visible bool)
+}
+
 // ApplyTextCaret pushes a frame's platform text-caret request to a surface
 // (see core.TextCaret). The shape goes first, so a caret about to be shown
 // appears already wearing it; no request hides the caret, which is what leaves
@@ -180,6 +192,12 @@ type Surface interface {
 func ApplyTextCaret(s Surface, caret core.TextCaret) {
 	if s == nil {
 		return
+	}
+	// The insertion point goes first and separately: a trinket that
+	// paints its own caret reports one without asking for a drawn caret
+	// at all, so this must not hang off Visible.
+	if setter, ok := s.(TextInputAreaSetter); ok {
+		setter.SetTextInputArea(caret.X, caret.Y, caret.Requested())
 	}
 	if !caret.Visible {
 		s.SetCursorVisible(false)

@@ -309,9 +309,11 @@ func needsRepaint(last, now paintSignature, sinceLastPaint, heartbeat time.Durat
 // texture's origin, so a trinket deep inside it asks for the caret in
 // the layer's local space; the OS needs it relative to the window.
 //
-// An invisible request stays invisible and keeps no position.
+// A frame that asked for nothing keeps no position: a stale one would
+// anchor an input method's candidate window at a caret that is not
+// there.
 func caretInSurface(caret core.TextCaret, layer core.UnitRect) core.TextCaret {
-	if !caret.Visible {
+	if !caret.Requested() {
 		return core.TextCaret{}
 	}
 	caret.X += layer.X

@@ -133,3 +133,85 @@ func TestNoteSubtreeRepaintStopsOnCycle(t *testing.T) {
 		t.Fatal("noteSubtreeRepaint did not terminate on a parent cycle")
 	}
 }
+
+// A drawn caret is also the insertion point — a terminal's cursor is
+// where typing goes — so RequestTextCaret answers both questions and an
+// input method can anchor on it.
+func TestRequestTextCaretIsAlsoAnInputArea(t *testing.T) {
+	p := NewPainter(&caretTestBackend{})
+	p.ResetTextCaretRequest()
+	p.RequestTextCaret(10, 20, 5)
+
+	got := p.TextCaretRequest()
+	if !got.Visible {
+		t.Error("RequestTextCaret did not ask for a drawn caret")
+	}
+	if !got.InputArea {
+		t.Error("RequestTextCaret did not mark an insertion point; an input method " +
+			"would place its candidate window in a corner")
+	}
+	if !got.Requested() {
+		t.Error("Requested() = false for a caret request")
+	}
+}
+
+// A trinket that paints its OWN caret reports only the insertion point.
+// Asking for the platform caret too would paint a second one — on a cell
+// surface the terminal cursor plus the trinket's reverse-video block.
+func TestRequestTextInputAreaDoesNotDrawACaret(t *testing.T) {
+	p := NewPainter(&caretTestBackend{})
+	p.ResetTextCaretRequest()
+	p.RequestTextInputArea(10, 20)
+
+	got := p.TextCaretRequest()
+	if got.Visible {
+		t.Error("RequestTextInputArea asked for a drawn caret; the trinket paints its own")
+	}
+	if !got.InputArea {
+		t.Error("RequestTextInputArea did not mark an insertion point")
+	}
+	if !got.Requested() {
+		t.Error("Requested() = false for an input-area request")
+	}
+}
+
+// Nothing asked: neither a caret to draw nor a place to anchor.
+func TestEmptyCaretRequestsNothing(t *testing.T) {
+	if (TextCaret{}).Requested() {
+		t.Error("the zero TextCaret reports a request")
+	}
+}
+
+// caretTestBackend is the smallest RenderBackend a Painter needs: these
+// tests only exercise the caret request slot, which touches no drawing.
+type caretTestBackend struct{}
+
+func (caretTestBackend) Init() error                                                   { return nil }
+func (caretTestBackend) Shutdown()                                                     {}
+func (caretTestBackend) Size() UnitSize                                                { return UnitSize{Width: 800, Height: 600} }
+func (caretTestBackend) Metrics() CellMetrics                                          { return DefaultCellMetrics() }
+func (caretTestBackend) BeginFrame()                                                   {}
+func (caretTestBackend) EndFrame()                                                     {}
+func (caretTestBackend) Clear(style.CellStyle)                                         {}
+func (caretTestBackend) SetClip(UnitRect)                                              {}
+func (caretTestBackend) DrawCell(Unit, Unit, rune, style.CellStyle)                    {}
+func (caretTestBackend) DrawText(x, y Unit, _ string, _ style.CellStyle, _ *Font) Unit { return 0 }
+func (caretTestBackend) DrawTextAligned(UnitRect, string, Alignment, Alignment, style.CellStyle, *Font) {
+}
+func (caretTestBackend) FillRect(UnitRect, rune, style.CellStyle)                     {}
+func (caretTestBackend) DrawRect(UnitRect, style.BorderStyle, style.CellStyle)        {}
+func (caretTestBackend) DrawHLine(Unit, Unit, Unit, rune, style.CellStyle)            {}
+func (caretTestBackend) DrawVLine(Unit, Unit, Unit, rune, style.CellStyle)            {}
+func (caretTestBackend) DrawBox(UnitRect, style.BorderStyle, string, style.CellStyle) {}
+func (caretTestBackend) PollEvent() Event                                             { return nil }
+func (caretTestBackend) WaitEvent() Event                                             { return nil }
+func (caretTestBackend) SetCursorVisible(bool)                                        {}
+func (caretTestBackend) SetCursorPosition(Unit, Unit)                                 {}
+func (caretTestBackend) SetCursorStyle(int)                                           {}
+func (caretTestBackend) SupportsColor() bool                                          { return true }
+func (caretTestBackend) SupportsMouse() bool                                          { return true }
+func (caretTestBackend) SupportsUnicode() bool                                        { return true }
+func (caretTestBackend) ColorDepth() int                                              { return 1 << 24 }
+func (caretTestBackend) GetClipboard() string                                         { return "" }
+func (caretTestBackend) SetClipboard(string)                                          {}
+func (caretTestBackend) Beep()                                                        {}

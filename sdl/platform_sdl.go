@@ -1891,71 +1891,64 @@ func unionUnitRect(a, b core.UnitRect) core.UnitRect {
 	return core.UnitRect{X: x0, Y: y0, Width: x1 - x0, Height: y1 - y0}
 }
 
-// SetCursorVisible tracks whether any trinket wants the platform caret.
-// Nothing is drawn either way — a graphical surface has no OS caret, and
-// trinkets paint their own — but with no caret there is no sensible
-// place for an input method's candidate window, so the area is cleared
-// and the OS falls back to its own placement.
-func (s *sdlSurface) SetCursorVisible(visible bool) {
-	if s.closed || s.win == nil || s.win.window == nil || s.caretVisible == visible {
-		return
-	}
-	s.caretVisible = visible
-	if !visible {
-		_ = sdl3.ClearTextInputArea(s.win.window)
-		return
-	}
-	s.applyTextInputArea()
-}
+// The caret methods are no-ops: a graphical surface has no OS-drawn
+// caret to show, move or shape — trinkets paint their own. Where text is
+// being typed is a different question, answered by SetTextInputArea.
+func (s *sdlSurface) SetCursorVisible(bool)            {}
+func (s *sdlSurface) SetCursorPosition(x, y core.Unit) {}
+func (s *sdlSurface) SetCursorStyle(int)               {}
 
-// SetCursorPosition reports the caret to the OS as the text input area,
-// which is what anchors an input method's candidate window under the
-// text being typed: the CJK candidate list, macOS's press-and-hold
-// accent picker, the emoji picker. Without it they appear at whatever
-// corner the OS last used.
+// SetTextInputArea implements platform.TextInputAreaSetter: it tells the
+// OS where text is being typed, which is what anchors an input method's
+// candidate window — the CJK candidate list, macOS's press-and-hold
+// accent picker, the emoji picker. With no area set they appear at
+// whatever corner the OS last used.
 //
-// The toolkit already computes this every frame — a focused trinket
-// calls Painter.RequestTextCaret and the surface host applies the
-// winning request (see core/textcaret.go) — so this only has to convert
-// and forward it. On the TUI surface the same call moves the real
-// terminal cursor; here there is no cursor to move, only an input method
-// to inform.
-func (s *sdlSurface) SetCursorPosition(x, y core.Unit) {
+// visible false forgets the position, so the OS falls back to its own
+// placement rather than anchoring on a stale rectangle.
+func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 	if s.closed || s.win == nil || s.win.window == nil {
 		return
 	}
-	if s.caretVisible && s.caretX == x && s.caretY == y {
+	if s.caretVisible == visible && (!visible || (s.caretX == x && s.caretY == y)) {
 		return // unchanged: no need to tell the OS again
 	}
-	s.caretX, s.caretY = x, y
-	if s.caretVisible {
-		s.applyTextInputArea()
-	}
-}
+	s.caretVisible, s.caretX, s.caretY = visible, x, y
 
-// applyTextInputArea pushes the recorded caret to SDL in window pixels,
-// as a one-cell box with the cursor at its left edge.
-func (s *sdlSurface) applyTextInputArea() {
+	if !visible {
+		if err := sdl3.ClearTextInputArea(s.win.window); err != nil && imeDebug {
+			fmt.Fprintf(os.Stderr, "kittytk-ime: clear failed: %v\n", err)
+		}
+		return
+	}
+
 	b := s.win.backend
 	if b == nil {
 		return
 	}
 	m := b.Metrics()
-	x0, y0 := b.UnitToPxX(s.caretX), b.UnitToPxY(s.caretY)
-	wPx := b.UnitToPxX(s.caretX+m.CellWidth) - x0
-	hPx := b.UnitToPxY(s.caretY+m.CellHeight) - y0
+	x0, y0 := b.UnitToPxX(x), b.UnitToPxY(y)
+	wPx := b.UnitToPxX(x+m.CellWidth) - x0
+	hPx := b.UnitToPxY(y+m.CellHeight) - y0
 	if wPx <= 0 {
 		wPx = 1
 	}
 	if hPx <= 0 {
 		hPx = 1
 	}
-	_ = sdl3.SetTextInputArea(s.win.window, x0, y0, wPx, hPx, 0)
+	err := sdl3.SetTextInputArea(s.win.window, x0, y0, wPx, hPx, 0)
+	if imeDebug {
+		fmt.Fprintf(os.Stderr,
+			"kittytk-ime: window %d area unit=(%v,%v) px=(%d,%d %dx%d) active=%v err=%v\n",
+			s.win.id, x, y, x0, y0, wPx, hPx, sdl3.TextInputActive(s.win.window), err)
+	}
 }
 
-// SetCursorStyle is a no-op: the DECSCUSR shapes describe a terminal's
-// own caret, and a graphical surface has none to shape.
-func (s *sdlSurface) SetCursorStyle(int) {}
+// imeDebug reports every text-input-area update under KITTYTK_IME_DEBUG.
+// An input method that ignores the area and a host that never sets one
+// look identical on screen — both put the candidate window in a corner —
+// so the only way to tell them apart is to watch the calls.
+var imeDebug = os.Getenv("KITTYTK_IME_DEBUG") != ""
 
 // ScreenPositionPx implements platform.NativeSurface.
 func (s *sdlSurface) ScreenPositionPx() (int, int) {

@@ -632,6 +632,14 @@ func (t *TextInput) Paint(p *core.Painter) {
 			if p.Graphical() {
 				t.ensureCaretTimer()
 			}
+			// Tell the platform where the insertion point is, without
+			// asking it to DRAW a caret — this trinket paints its own
+			// just below, and a platform caret on top would be a second
+			// one. What the OS does with it is place an input method's
+			// candidate window: the CJK candidate list, macOS's
+			// press-and-hold accent picker, the emoji picker. Reported
+			// every frame while focused, so the blink never withdraws it.
+			p.RequestTextInputArea(caretX, 0)
 			if !p.Graphical() || t.caretVisible() {
 				drawn := false
 				if usePx {

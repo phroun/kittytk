@@ -289,13 +289,27 @@ winner to the surface. A window whose paint is skipped by the texture
 cache keeps the caret it last asked for, cached alongside its texture.
 
 On a graphical surface there is **no OS-drawn caret** — trinkets paint
-their own. The position exists only to tell an input method where the
-text is: `SDL_SetTextInputArea` anchors the CJK candidate list, macOS's
-press-and-hold accent picker and the emoji picker under the caret
-instead of at a default corner. `SetCursorStyle` stays a no-op (DECSCUSR
-shapes describe a terminal's caret) and `SetCursorVisible` only clears
-the area, so an input method falls back to its own placement rather than
-a stale rectangle.
+their own — so all three caret methods are no-ops there. Where text is
+being typed is a *different question*, answered by the separate
+`platform.TextInputAreaSetter`: `SDL_SetTextInputArea` anchors the CJK
+candidate list, macOS's press-and-hold accent picker and the emoji
+picker under the insertion point instead of at a default corner.
+
+Keeping them separate is the point. `RequestTextCaret` means "draw the
+platform's caret here" and only the terminal wants it — a terminal's
+cursor IS the platform's. A text field paints its own caret (a blinking
+bar, or a reverse-video block on a cell surface) and asking for the
+platform's too would paint two. It calls `RequestTextInputArea`
+instead, which reports the insertion point and nothing else. A caret
+request implies an input area as well, since a drawn caret is also where
+typing goes; `TextCaret.Requested()` is the "asked for anything" test the
+compositor folds on.
+
+`KITTYTK_IME_DEBUG=1` logs every area update with the rect in units and
+pixels, whether text input is active on that window, and any error. An
+input method that ignores the area and a host that never sets one look
+identical on screen — both put the candidate window in a corner — so
+watching the calls is the only way to tell them apart.
 
 Still missing: **`SDL_EVENT_TEXT_EDITING`**. The adapter's `translate()`
 does not handle it, so preedit — the underlined in-progress characters
