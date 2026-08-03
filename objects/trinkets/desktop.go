@@ -123,6 +123,11 @@ type Desktop struct {
 	patternTile    *image.RGBA
 	patternTileRev uint64
 
+	// wallpaperLayout is how the tile covers the desktop: sized by its
+	// mode and scale, anchored by its alignment, repeated along the axes
+	// it tiles. See core.WallpaperLayout.
+	wallpaperLayout core.WallpaperLayout
+
 	// wallpaperComposited is set while the host paints the wallpaper
 	// itself, as a repeat-sampled layer under this one. Paint then leaves
 	// the background alone instead of filling every pixel.
@@ -325,6 +330,7 @@ func NewDesktop() *Desktop {
 		// Classic MacOS-style wallpaper: 50% checkerboard dither,
 		// each pattern bit 2x2 device pixels.
 		wallpaperPattern: [8]uint8{0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55},
+		wallpaperLayout:  core.DefaultWallpaperLayout,
 		wallpaperChunkPx: 2,
 	}
 	d.TrinketBase = *core.NewTrinketBase()
@@ -638,6 +644,25 @@ func (d *Desktop) SetWallpaperFile(path string) error {
 
 	d.SetWallpaperImage(tile)
 	return nil
+}
+
+// SetWallpaperLayout sets how the tile covers the desktop — its mode,
+// scale, alignment, tiling axes and filter. See core.WallpaperLayout.
+func (d *Desktop) SetWallpaperLayout(l core.WallpaperLayout) {
+	if l.Scale <= 0 {
+		l.Scale = 1
+	}
+	d.mu.Lock()
+	d.wallpaperLayout = l
+	d.mu.Unlock()
+	d.RequestUpdate()
+}
+
+// WallpaperLayout returns the current layout.
+func (d *Desktop) WallpaperLayout() core.WallpaperLayout {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.wallpaperLayout
 }
 
 // WallpaperTile returns the tile the desktop is currently papered with,
@@ -4208,7 +4233,7 @@ func (d *Desktop) Paint(p *core.Painter) {
 	full := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 	if !composited {
 		tile, _ := d.WallpaperTile()
-		if !p.TileImage(full, tile) &&
+		if !p.TileImage(full, tile, d.WallpaperLayout()) &&
 			!p.FillPattern(full, d.wallpaperPattern, d.wallpaperChunkPx, bgStyle) {
 			for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
 				for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
@@ -4394,7 +4419,11 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 	// costs a quad rather than a fill over every pixel of the desktop.
 	var wallpaper *platform.WallpaperLayer
 	if tile, rev := d.WallpaperTile(); tile != nil {
-		wallpaper = &platform.WallpaperLayer{Tile: tile, Revision: rev}
+		wallpaper = &platform.WallpaperLayer{
+			Tile:     tile,
+			Revision: rev,
+			Layout:   d.WallpaperLayout(),
+		}
 	}
 
 	return &platform.ChildWindowList{

@@ -72,6 +72,7 @@
 package hostcfg
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -79,6 +80,7 @@ import (
 	"strings"
 
 	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/core"
 )
 
 // IniName is the configuration file basename both hosts look for.
@@ -103,6 +105,17 @@ type Config struct {
 	// the surface origin, not stretched, so its size is free to be
 	// anything.
 	Wallpaper string
+
+	// WallpaperMode / Tiling / Align / Filter are the layout names as
+	// configured; Scale multiplies the size the mode arrives at. Empty
+	// strings and a zero scale mean "leave the default alone", so a
+	// partially-configured [window] section does not have to restate
+	// everything.
+	WallpaperMode   string
+	WallpaperTiling string
+	WallpaperAlign  string
+	WallpaperFilter string
+	WallpaperScale  float64
 
 	Endpoint string // service endpoint ("" = the conventional default)
 	Token    string // optional shared secret
@@ -362,6 +375,22 @@ func apply(data []byte, cfg *Config) {
 			}
 		case "wallpaper":
 			cfg.Wallpaper = val
+		case "wallpaper_mode":
+			cfg.WallpaperMode = val
+		case "wallpaper_tile":
+			cfg.WallpaperTiling = val
+		case "wallpaper_align":
+			cfg.WallpaperAlign = val
+		case "wallpaper_filter", "wallpaper_scaling":
+			// wallpaper_scaling is accepted because it is the obvious
+			// name, but wallpaper_filter is the documented one: it
+			// cannot be misread as a typo for wallpaper_scale, which is
+			// a NUMBER and means something entirely different.
+			cfg.WallpaperFilter = val
+		case "wallpaper_scale":
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.WallpaperScale = f
+			}
 		case "endpoint":
 			cfg.Endpoint = val
 		case "token":
@@ -428,6 +457,49 @@ func stripInlineComment(v string) string {
 // configured wallpaper. It is the quickest way to try one: no ini edit,
 // no rebuild, just a path on the command line.
 const WallpaperEnv = "KITTYTK_WALLPAPER"
+
+// ResolveWallpaperLayout folds the configured names into a layout,
+// starting from the default so an unset key keeps it. Names that do not
+// parse are reported rather than silently ignored: a misspelt mode
+// papering the desktop the old way with no explanation is the worst of
+// both.
+func (c Config) ResolveWallpaperLayout() (core.WallpaperLayout, []error) {
+	l := core.DefaultWallpaperLayout
+	var errs []error
+
+	if c.WallpaperMode != "" {
+		if m, ok := core.ParseWallpaperMode(strings.ToLower(c.WallpaperMode)); ok {
+			l.Mode = m
+		} else {
+			errs = append(errs, fmt.Errorf("unknown wallpaper_mode %q", c.WallpaperMode))
+		}
+	}
+	if c.WallpaperTiling != "" {
+		if tl, ok := core.ParseWallpaperTiling(strings.ToLower(c.WallpaperTiling)); ok {
+			l.Tiling = tl
+		} else {
+			errs = append(errs, fmt.Errorf("unknown wallpaper_tile %q", c.WallpaperTiling))
+		}
+	}
+	if c.WallpaperAlign != "" {
+		if a, ok := core.ParseWallpaperAlignment(c.WallpaperAlign); ok {
+			l.Align = a
+		} else {
+			errs = append(errs, fmt.Errorf("unknown wallpaper_align %q", c.WallpaperAlign))
+		}
+	}
+	if c.WallpaperFilter != "" {
+		if smooth, ok := core.ParseWallpaperScaling(strings.ToLower(c.WallpaperFilter)); ok {
+			l.Smooth = smooth
+		} else {
+			errs = append(errs, fmt.Errorf("unknown wallpaper_filter %q", c.WallpaperFilter))
+		}
+	}
+	if c.WallpaperScale > 0 {
+		l.Scale = c.WallpaperScale
+	}
+	return l, errs
+}
 
 // ResolveWallpaper returns the wallpaper image path to use: $KITTYTK_WALLPAPER
 // if set (env wins, as everywhere else here), else the ini's wallpaper,

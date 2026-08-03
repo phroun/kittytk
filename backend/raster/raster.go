@@ -77,6 +77,15 @@ type Backend struct {
 	// other substrates may sync it with the system clipboard.
 	clipboard string
 
+	// Scaled wallpaper cache. Resampling is the expensive part of laying
+	// a wallpaper, and it only changes when the image, the drawn size or
+	// the filter does — not once per frame.
+	wpCache  *image.RGBA
+	wpSrc    *image.RGBA
+	wpW      int
+	wpH      int
+	wpSmooth bool
+
 	// sysClipGet/sysClipSet bridge to the host's system clipboard when the
 	// substrate provides one (the SDL platform wires these to SDL2's
 	// SDL_GetClipboardText/SDL_SetClipboardText, which cover macOS, Windows
@@ -1564,19 +1573,32 @@ func (b *Backend) ClearTransparent() {
 	}
 }
 
-// TileImagePx implements core.ImageTiler: repeat tile across r, anchored
-// at the SURFACE origin rather than the rect's, so the pattern does not
-// jump when the rect moves — the same anchoring FillPattern uses and the
-// same the compositor's repeat sampler produces.
-func (b *Backend) TileImagePx(r core.UnitRect, tile *image.RGBA) {
+// TileImagePx implements core.ImageTiler: one copy of the tile sized
+// and anchored by the layout, repeated along the axes it tiles.
+//
+// The image is resampled ONCE into a cached scaled copy, then laid down
+// with row-length memmoves. Doing it the other way — sampling per
+// destination pixel — would resample the whole desktop every frame
+// instead of only when the size or the image changes.
+func (b *Backend) TileImagePx(r core.UnitRect, tile *image.RGBA, layout core.WallpaperLayout) {
 	tb := tile.Bounds()
-	tw, th := tb.Dx(), tb.Dy()
-	if tw <= 0 || th <= 0 {
+	if tb.Dx() <= 0 || tb.Dy() <= 0 {
 		return
 	}
 
 	x0, y0 := b.pxX(r.X), b.pxY(r.Y)
 	x1, y1 := b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height)
+	spanW, spanH := x1-x0, y1-y0
+	if spanW <= 0 || spanH <= 0 {
+		return
+	}
+
+	drawW, drawH, offX, offY := layout.Resolve(tb.Dx(), tb.Dy(), spanW, spanH)
+	if drawW <= 0 || drawH <= 0 {
+		return
+	}
+	src := b.scaledWallpaper(tile, drawW, drawH, layout.Smooth)
+
 	if b.hasClip {
 		x0, y0 = max(x0, b.clipPxX0), max(y0, b.clipPxY0)
 		x1, y1 = min(x1, b.clipPxX1), min(y1, b.clipPxY1)
@@ -1587,19 +1609,109 @@ func (b *Backend) TileImagePx(r core.UnitRect, tile *image.RGBA) {
 		return
 	}
 
-	// One row of the destination is built by copying runs out of the
-	// tile, so the inner loop is a memmove per run rather than per pixel.
+	tileX, tileY := layout.Tiling.Axes()
+	// Origin of the reference copy in surface pixels.
+	baseX, baseY := b.pxX(r.X)+offX, b.pxY(r.Y)+offY
+
 	for y := y0; y < y1; y++ {
-		src := tile.Pix[(mod(y, th))*tile.Stride:]
+		sy := y - baseY
+		if tileY {
+			sy = mod(sy, drawH)
+		} else if sy < 0 || sy >= drawH {
+			continue // outside the single copy: leave what is there
+		}
+		srcRow := src.Pix[sy*src.Stride:]
 		dstRow := b.img.Pix[b.img.PixOffset(x0, y):]
+
 		for x, done := x0, 0; x < x1; {
-			sx := mod(x, tw)
-			run := min(tw-sx, x1-x)
-			copy(dstRow[done*4:(done+run)*4], src[sx*4:(sx+run)*4])
+			sx := x - baseX
+			if tileX {
+				sx = mod(sx, drawW)
+			} else if sx < 0 {
+				// Skip the gap before the copy in one step.
+				step := min(-sx, x1-x)
+				x += step
+				done += step
+				continue
+			} else if sx >= drawW {
+				break // past the copy: nothing further on this row
+			}
+			run := min(drawW-sx, x1-x)
+			copy(dstRow[done*4:(done+run)*4], srcRow[sx*4:(sx+run)*4])
 			x += run
 			done += run
 		}
 	}
+}
+
+// scaledWallpaper returns the tile resampled to drawW x drawH, cached
+// until the request changes. At natural size the original is handed back
+// untouched, so the common case allocates nothing.
+func (b *Backend) scaledWallpaper(tile *image.RGBA, drawW, drawH int, smooth bool) *image.RGBA {
+	tb := tile.Bounds()
+	if drawW == tb.Dx() && drawH == tb.Dy() {
+		return tile
+	}
+	if b.wpCache != nil && b.wpSrc == tile && b.wpW == drawW && b.wpH == drawH && b.wpSmooth == smooth {
+		return b.wpCache
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, drawW, drawH))
+	sw, sh := tb.Dx(), tb.Dy()
+	for y := 0; y < drawH; y++ {
+		// Sample at pixel CENTRES, so the scaled copy is symmetric
+		// rather than biased toward the top-left by half a texel.
+		fy := (float64(y) + 0.5) * float64(sh) / float64(drawH)
+		for x := 0; x < drawW; x++ {
+			fx := (float64(x) + 0.5) * float64(sw) / float64(drawW)
+			o := dst.PixOffset(x, y)
+			if smooth {
+				r, g, bl, a := bilinearSample(tile, fx-0.5, fy-0.5)
+				dst.Pix[o+0], dst.Pix[o+1], dst.Pix[o+2], dst.Pix[o+3] = r, g, bl, a
+				continue
+			}
+			sx := min(max(int(fx), 0), sw-1)
+			sy := min(max(int(fy), 0), sh-1)
+			so := tile.PixOffset(tb.Min.X+sx, tb.Min.Y+sy)
+			copy(dst.Pix[o:o+4], tile.Pix[so:so+4])
+		}
+	}
+
+	b.wpCache, b.wpSrc, b.wpW, b.wpH, b.wpSmooth = dst, tile, drawW, drawH, smooth
+	return dst
+}
+
+// bilinearSample reads tile at a fractional position, clamping at the
+// edges. Coordinates are in source pixels with (0,0) the first pixel's
+// centre.
+func bilinearSample(tile *image.RGBA, fx, fy float64) (r, g, bl, a uint8) {
+	tb := tile.Bounds()
+	sw, sh := tb.Dx(), tb.Dy()
+	x0 := int(math.Floor(fx))
+	y0 := int(math.Floor(fy))
+	tx := fx - float64(x0)
+	ty := fy - float64(y0)
+
+	at := func(x, y int) (float64, float64, float64, float64) {
+		x = min(max(x, 0), sw-1)
+		y = min(max(y, 0), sh-1)
+		o := tile.PixOffset(tb.Min.X+x, tb.Min.Y+y)
+		return float64(tile.Pix[o]), float64(tile.Pix[o+1]),
+			float64(tile.Pix[o+2]), float64(tile.Pix[o+3])
+	}
+	r00, g00, b00, a00 := at(x0, y0)
+	r10, g10, b10, a10 := at(x0+1, y0)
+	r01, g01, b01, a01 := at(x0, y0+1)
+	r11, g11, b11, a11 := at(x0+1, y0+1)
+
+	lerp := func(p, q float64) float64 { return p + (q-p)*tx }
+	mix := func(top, bottom float64) uint8 {
+		return uint8(top + (bottom-top)*ty + 0.5)
+	}
+	return mix(lerp(r00, r10), lerp(r01, r11)),
+		mix(lerp(g00, g10), lerp(g01, g11)),
+		mix(lerp(b00, b10), lerp(b01, b11)),
+		mix(lerp(a00, a10), lerp(a01, a11))
 }
 
 func mod(a, m int) int {

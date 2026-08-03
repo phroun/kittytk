@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/core"
 )
 
 // apply parses recognized keys onto a Config, tolerates section headers
@@ -440,5 +441,88 @@ func TestParseWallpaperKey(t *testing.T) {
 	apply([]byte("[window]\nwallpaper = /pictures/weave.png\n"), &cfg)
 	if cfg.Wallpaper != "/pictures/weave.png" {
 		t.Errorf("Wallpaper = %q, want the parsed path", cfg.Wallpaper)
+	}
+}
+
+// The wallpaper layout keys fold into a core.WallpaperLayout, and an
+// unset key keeps the default rather than zeroing it — a [window]
+// section that names only the mode must not silently un-tile the
+// wallpaper or scale it to nothing.
+func TestResolveWallpaperLayout(t *testing.T) {
+	var cfg Config
+	apply([]byte(`
+[window]
+wallpaper_mode = cover
+wallpaper_scale = 0.5
+wallpaper_tile = horizontal
+wallpaper_align = top left
+wallpaper_filter = smooth
+`), &cfg)
+
+	l, errs := cfg.ResolveWallpaperLayout()
+	if len(errs) != 0 {
+		t.Fatalf("errors on a valid section: %v", errs)
+	}
+	if l.Mode != core.WallpaperCover {
+		t.Errorf("mode = %v, want cover", l.Mode)
+	}
+	if l.Scale != 0.5 {
+		t.Errorf("scale = %v, want 0.5", l.Scale)
+	}
+	if x, y := l.Tiling.Axes(); !x || y {
+		t.Errorf("tiling axes = (%v,%v), want horizontal only", x, y)
+	}
+	if l.Align != (core.WallpaperAlignment{X: 0, Y: 0}) {
+		t.Errorf("align = %+v, want top left", l.Align)
+	}
+	if !l.Smooth {
+		t.Error("filter = crisp, want smooth")
+	}
+
+	// Naming only the mode leaves everything else at the default.
+	var partial Config
+	apply([]byte("[window]\nwallpaper_mode = stretch\n"), &partial)
+	p, _ := partial.ResolveWallpaperLayout()
+	if p.Mode != core.WallpaperStretch {
+		t.Errorf("mode = %v, want stretch", p.Mode)
+	}
+	if p.Scale != core.DefaultWallpaperLayout.Scale {
+		t.Errorf("scale = %v, want the default %v", p.Scale, core.DefaultWallpaperLayout.Scale)
+	}
+	if p.Tiling != core.DefaultWallpaperLayout.Tiling {
+		t.Errorf("tiling = %v, want the default", p.Tiling)
+	}
+}
+
+// wallpaper_scaling is accepted as an alias, because it is the obvious
+// name — but wallpaper_filter is documented, since wallpaper_scale is a
+// NUMBER and the two would otherwise read as typos for each other.
+func TestWallpaperScalingAliasesFilter(t *testing.T) {
+	var cfg Config
+	apply([]byte("[window]\nwallpaper_scaling = smooth\n"), &cfg)
+	if l, _ := cfg.ResolveWallpaperLayout(); !l.Smooth {
+		t.Error("wallpaper_scaling = smooth did not take effect")
+	}
+}
+
+// A name that does not parse is REPORTED. Keeping the default silently
+// would leave no way to tell a typo from a setting that does not do what
+// it sounds like.
+func TestResolveWallpaperLayoutReportsBadNames(t *testing.T) {
+	var cfg Config
+	apply([]byte(`
+[window]
+wallpaper_mode = squish
+wallpaper_tile = diagonal
+wallpaper_align = sideways
+wallpaper_filter = blurry
+`), &cfg)
+
+	l, errs := cfg.ResolveWallpaperLayout()
+	if len(errs) != 4 {
+		t.Errorf("got %d errors (%v), want one per unparseable name", len(errs), errs)
+	}
+	if l.Mode != core.DefaultWallpaperLayout.Mode || l.Tiling != core.DefaultWallpaperLayout.Tiling {
+		t.Error("a bad name changed the layout instead of leaving the default")
 	}
 }

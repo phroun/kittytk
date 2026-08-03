@@ -292,6 +292,42 @@ desktop.SetWallpaperFile(path)                   # or SetWallpaperImage(*image.R
 PNG, JPEG and GIF decode; a bad path is reported and the current
 wallpaper is left alone, so a typo cannot blank the desktop.
 
+### How it covers the desktop
+
+`core.WallpaperLayout` answers four separate questions, and keeping them
+separate is what makes them compose:
+
+| Key | Values |
+| --- | --- |
+| `wallpaper_mode` | `natural` (default), `fit_both`, `fit_width`, `fit_height`, `cover`, `stretch` |
+| `wallpaper_scale` | a multiplier on whatever size the mode arrived at |
+| `wallpaper_tile` | `both` (default), `none`, `horizontal`, `vertical` |
+| `wallpaper_align` | `center` (default), `top left`, `bottom`, … or fractions `0.25 0.75` |
+| `wallpaper_filter` | `crisp` (default) or `smooth` |
+
+Notes worth having in one place:
+
+- **Sizing and repetition are orthogonal.** "Tile at natural size" is
+  `natural` + `both`; "one copy stretched to fill" is `stretch` + `none`.
+  There is deliberately no mode called `tile`.
+- **Alignment is a fraction per axis**, 0 left/top through 1
+  right/bottom, so the in-between values come free. On an axis that
+  TILES it sets the repetition's PHASE rather than confining it — one
+  rule either way, instead of a special case that surfaces only when
+  someone turns tiling off.
+- **`wallpaper_filter`, not `wallpaper_scaling`.** The alias is accepted
+  because it is the obvious name, but `wallpaper_scale` is a number and
+  the two would read as typos for each other.
+- A name that does not parse is **reported**, and the default kept.
+  Silently papering the old way leaves no way to tell a typo from a
+  setting that does not do what it sounds like.
+
+The GPU scales in the sampler, so the texture is always the image's own
+size — a 4K photograph set to `stretch` uploads once, at 4K. The software
+renderer resamples once into a cached scaled copy (keyed on image, size
+and filter) and then lays it down with row-length memmoves, rather than
+sampling per destination pixel every frame.
+
 ## The platform caret, and the IME
 
 A trinket asks for the platform caret while it holds focus

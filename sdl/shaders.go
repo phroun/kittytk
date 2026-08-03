@@ -39,15 +39,20 @@ struct CombinedUniforms {
     punch_max: vec2<f32>,
     debug: f32,
 
-    // Texture repeats across the quad. (1,1) for an ordinary layer, which
-    // samples its texture once; the wallpaper sets surface/tile so the
-    // sampler repeats a small tile over the whole desktop instead of the
-    // CPU filling every pixel. Needs a REPEAT-addressed sampler to mean
-    // anything — see wallpaperSampler.
+    // How the layer's texture maps across its quad. An ordinary layer
+    // samples once: tile (1,1), offset (0,0), repeat (1,1).
+    //
+    // The wallpaper sets tile = surface/drawn so the sampler repeats a
+    // small image over the whole desktop, offset to the anchored copy's
+    // origin, and repeat 0 on an axis that must NOT tile — there the
+    // fragment stage draws nothing outside a single copy rather than
+    // letting the sampler wrap it.
     tile: vec2<f32>,
+    tile_offset: vec2<f32>,
+    tile_repeat: vec2<f32>,
 
-    // Trailing padding. WGSL sizes the fields above at 120 bytes; padding
-    // to 128 keeps the Go side a round [32]float32 and the binding size a
+    // Trailing padding. WGSL sizes the fields above at 136 bytes; padding
+    // to 144 keeps the Go side a round [36]float32 and the binding size a
     // multiple of 16, which every backend's uniform rules are happy with.
     pad0: f32,
     pad1: f32,
@@ -136,15 +141,20 @@ struct CombinedUniforms {
     punch_max: vec2<f32>,
     debug: f32,
 
-    // Texture repeats across the quad. (1,1) for an ordinary layer, which
-    // samples its texture once; the wallpaper sets surface/tile so the
-    // sampler repeats a small tile over the whole desktop instead of the
-    // CPU filling every pixel. Needs a REPEAT-addressed sampler to mean
-    // anything — see wallpaperSampler.
+    // How the layer's texture maps across its quad. An ordinary layer
+    // samples once: tile (1,1), offset (0,0), repeat (1,1).
+    //
+    // The wallpaper sets tile = surface/drawn so the sampler repeats a
+    // small image over the whole desktop, offset to the anchored copy's
+    // origin, and repeat 0 on an axis that must NOT tile — there the
+    // fragment stage draws nothing outside a single copy rather than
+    // letting the sampler wrap it.
     tile: vec2<f32>,
+    tile_offset: vec2<f32>,
+    tile_repeat: vec2<f32>,
 
-    // Trailing padding. WGSL sizes the fields above at 120 bytes; padding
-    // to 128 keeps the Go side a round [32]float32 and the binding size a
+    // Trailing padding. WGSL sizes the fields above at 136 bytes; padding
+    // to 144 keeps the Go side a round [36]float32 and the binding size a
     // multiple of 16, which every backend's uniform rules are happy with.
     pad0: f32,
     pad1: f32,
@@ -171,8 +181,18 @@ fn fs_main(@builtin(position) fragPos: vec4<f32>, @location(0) texCoord: vec2<f3
     // which want uniform control flow. mode is uniform so a branch would
     // be legal, but sampling first sidesteps the question entirely and
     // costs one fetch on the handful of shadow quads per frame.
-    let tex = textureSample(ui_texture, ui_sampler, texCoord * uniforms.tile);
+    let uv = texCoord * uniforms.tile - uniforms.tile_offset;
+    let tex = textureSample(ui_texture, ui_sampler, uv);
     if (uniforms.mode < 0.5) {
+        // An axis that does not repeat shows ONE copy and nothing
+        // beyond it. The sampler wraps whatever it is handed, so the
+        // rejection has to happen here.
+        if (uniforms.tile_repeat.x < 0.5 && (uv.x < 0.0 || uv.x > 1.0)) {
+            return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        }
+        if (uniforms.tile_repeat.y < 0.5 && (uv.y < 0.0 || uv.y > 1.0)) {
+            return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        }
         return tex;
     }
 
@@ -255,25 +275,37 @@ fn fs_main(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
 // 112 bytes; the block pads to 128 so the Go side stays a round
 // [32]float32 and the binding size a multiple of 16.
 const (
-	combinedUniformFloats = 32
+	combinedUniformFloats = 36
 	combinedUniformSize   = combinedUniformFloats * 4
 )
 
-// combinedUniformTileWord is where the block's `tile` vec2 starts. A
-// vec2 needs 8-byte alignment, so WGSL slips an unnamed pad word in
-// after `debug` — hence 28 rather than 27. Every layer MUST write (1,1)
-// here: the fragment stage multiplies its texture coordinates by it, so
-// a zeroed tile collapses the whole layer onto a single texel.
+// combinedUniformTileWord is where the block's `tile` vec2 starts, with
+// tile_offset and tile_repeat following. A vec2 needs 8-byte alignment,
+// so WGSL slips an unnamed pad word in after `debug` — hence 28 rather
+// than 27.
+//
+// Every layer MUST set these: the fragment stage multiplies its texture
+// coordinates by tile, so a zeroed block collapses the layer onto one
+// texel and then rejects it for lying outside a copy.
 const combinedUniformTileWord = 28
 
 type combinedUniformData [combinedUniformFloats]float32
 
-// setTile writes the texture-repeat factor. Ordinary layers pass (1,1);
-// the wallpaper passes surface/tile so the sampler repeats.
-func (d *combinedUniformData) setTile(x, y float32) {
-	d[combinedUniformTileWord] = x
-	d[combinedUniformTileWord+1] = y
+// setTiling writes the whole texture mapping: how many copies span the
+// quad, where the reference copy starts (in copies), and whether each
+// axis repeats.
+func (d *combinedUniformData) setTiling(tileX, tileY, offX, offY, repeatX, repeatY float32) {
+	d[combinedUniformTileWord+0] = tileX
+	d[combinedUniformTileWord+1] = tileY
+	d[combinedUniformTileWord+2] = offX
+	d[combinedUniformTileWord+3] = offY
+	d[combinedUniformTileWord+4] = repeatX
+	d[combinedUniformTileWord+5] = repeatY
 }
+
+// setNoTiling is the ordinary layer's mapping: sample the texture once
+// across the quad, with no rejection.
+func (d *combinedUniformData) setNoTiling() { d.setTiling(1, 1, 0, 0, 1, 1) }
 
 // combinedUniformBytes views the block as raw bytes for WriteBuffer.
 func combinedUniformBytes(d *combinedUniformData) []byte {

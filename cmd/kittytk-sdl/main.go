@@ -172,6 +172,17 @@ func main() {
 		}
 	}
 
+	// How that image (or the built-in pattern) covers the desktop:
+	// wallpaper_mode, _scale, _align, _tile and _filter. A name that
+	// does not parse is reported and the default kept — silently
+	// papering the desktop the old way would leave no way to tell a
+	// typo from a setting that does not do what it sounds like.
+	layout, layoutErrs := cfg.ResolveWallpaperLayout()
+	for _, err := range layoutErrs {
+		fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
+	}
+	desktop.SetWallpaperLayout(layout)
+
 	// The desktop's own (windowless) application owns the base menu bar
 	// until a client dials in. It is context-only: the host has no editing
 	// surface of its own, so no automatic Edit menu is added for it.

@@ -262,8 +262,14 @@ type WallpaperLayer struct {
 	Tile *image.RGBA
 
 	// Revision changes whenever Tile's pixels would. A host holding an
-	// uploaded copy re-uploads only when it moves.
+	// uploaded copy re-uploads only when it moves. It does NOT cover
+	// Layout — that changes where the same pixels land, not what they
+	// are, so a host re-lays the tile without re-uploading it.
 	Revision uint64
+
+	// Layout is how the tile covers the surface: sized by its mode and
+	// scale, anchored by its alignment, repeated along the axes it tiles.
+	Layout core.WallpaperLayout
 }
 
 // WindowProvider is an optional Surface Handler interface that allows

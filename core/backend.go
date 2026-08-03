@@ -266,13 +266,14 @@ type SurfaceClearer interface {
 	ClearTransparent()
 }
 
-// ImageTiler is an optional RenderBackend capability: repeat an image
-// across a rect, anchored at the surface origin, in DEVICE pixels. It is
-// the CPU counterpart of the compositor's repeat-sampled wallpaper quad,
-// for the software renderer and for any host that does not take the
-// wallpaper as a layer of its own.
+// ImageTiler is an optional RenderBackend capability: lay an image
+// across a rect as a WallpaperLayout describes — sized by its mode and
+// scale, anchored by its alignment, repeated along the axes it tiles.
+// It is the CPU counterpart of the compositor's repeat-sampled wallpaper
+// quad, for the software renderer and for any host that does not take
+// the wallpaper as a layer of its own.
 type ImageTiler interface {
-	TileImagePx(r UnitRect, tile *image.RGBA)
+	TileImagePx(r UnitRect, tile *image.RGBA, layout WallpaperLayout)
 }
 
 // PatternFiller is an optional RenderBackend capability: tile an 8x8
@@ -980,16 +981,16 @@ func (p *Painter) ClearTransparent() bool {
 	return true
 }
 
-// TileImage repeats tile across r, anchored at the surface origin (see
-// ImageTiler). Returns false on backends that cannot draw images, where
-// the caller falls back to a pattern or cell fill.
-func (p *Painter) TileImage(r UnitRect, tile *image.RGBA) bool {
+// TileImage lays tile across r as the layout describes (see ImageTiler).
+// Returns false on backends that cannot draw images, where the caller
+// falls back to a pattern or cell fill.
+func (p *Painter) TileImage(r UnitRect, tile *image.RGBA, layout WallpaperLayout) bool {
 	it, ok := p.backend.(ImageTiler)
 	if !ok || tile == nil || tile.Bounds().Empty() {
 		return false
 	}
 	p.applyClip()
-	it.TileImagePx(p.transform.ApplyRect(r), tile)
+	it.TileImagePx(p.transform.ApplyRect(r), tile, layout)
 	return true
 }
 

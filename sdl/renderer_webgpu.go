@@ -142,9 +142,11 @@ type WebGPURenderer struct {
 	firstCompositorFrame bool                      // Track first compositor call
 
 	// The desktop's tiled wallpaper (one small texture, repeat-sampled)
-	// and the sampler that repeats it.
-	wallpaper        wallpaperCache
-	wallpaperSampler *wgpu.Sampler
+	// and the two samplers that repeat it: crisp keeps hard pixel edges,
+	// smooth interpolates when the drawn size is not the image's own.
+	wallpaper              wallpaperCache
+	wallpaperSampler       *wgpu.Sampler
+	wallpaperSmoothSampler *wgpu.Sampler
 
 	// Cached base layers (desktop chrome), one per OS window. Held
 	// across frames: the base is the largest texture on screen, and it
@@ -241,6 +243,9 @@ func (r *WebGPURenderer) Shutdown() {
 	r.wallpaper.release()
 	if r.wallpaperSampler != nil {
 		r.wallpaperSampler.Release()
+	}
+	if r.wallpaperSmoothSampler != nil {
+		r.wallpaperSmoothSampler.Release()
 	}
 
 	// Clean up cube resources
@@ -581,6 +586,19 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create wallpaper sampler: %w", err)
+	}
+
+	// The smooth counterpart, for a wallpaper scaled away from its own
+	// resolution — a photograph stretched to cover, where nearest
+	// neighbour would alias badly.
+	r.wallpaperSmoothSampler, err = r.device.CreateSampler(&wgpu.SamplerDescriptor{
+		AddressModeU: gputypes.AddressModeRepeat,
+		AddressModeV: gputypes.AddressModeRepeat,
+		MagFilter:    gputypes.FilterModeLinear,
+		MinFilter:    gputypes.FilterModeLinear,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create smooth wallpaper sampler: %w", err)
 	}
 
 	// Create uniform buffer for combined uniforms (effects + position +
@@ -1713,7 +1731,7 @@ func (r *WebGPURenderer) writeCombinedUniforms(buffer *wgpu.Buffer, bounds core.
 		// mode 0 and the shadow fields unused; the rest of the block
 		// stays zeroed.
 	}
-	data.setTile(1, 1) // sample the texture once across the quad
+	data.setNoTiling()
 	r.queue.WriteBuffer(buffer, 0, combinedUniformBytes(&data))
 }
 
@@ -1933,7 +1951,7 @@ func (r *WebGPURenderer) createShadowUniformBuffer(
 		s.punch[0], s.punch[1], s.punch[2], s.punch[3],
 		shadowDebugFlag,
 	}
-	data.setTile(1, 1) // unused by the shadow branch, but never zero
+	data.setNoTiling() // unused by the shadow branch, but never zero
 	r.queue.WriteBuffer(buffer, 0, combinedUniformBytes(&data))
 
 	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
@@ -1964,7 +1982,16 @@ type wallpaperCache struct {
 	widthPx     uint32
 	heightPx    uint32
 	revision    uint64
+	smooth      bool
 	valid       bool
+}
+
+// boolToFloat is the shader's idea of a flag.
+func boolToFloat(b bool) float32 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func (w *wallpaperCache) release() {
@@ -2005,8 +2032,23 @@ func (r *WebGPURenderer) drawWallpaper(
 		return nil, nil
 	}
 
+	// Where one copy lands, in surface pixels. The GPU does the scaling,
+	// so the texture stays the image's own size whatever the mode — a
+	// stretched 4K photograph uploads exactly once, at 4K, and the
+	// sampler handles the rest.
+	drawW, drawH, offX, offY := layer.Layout.Resolve(tileW, tileH, surfacePxW, surfacePxH)
+	if drawW <= 0 || drawH <= 0 {
+		return nil, nil
+	}
+
+	sampler := r.wallpaperSampler
+	if layer.Layout.Smooth {
+		sampler = r.wallpaperSmoothSampler
+	}
+
 	if !r.wallpaper.valid || r.wallpaper.revision != layer.Revision ||
-		r.wallpaper.widthPx != uint32(tileW) || r.wallpaper.heightPx != uint32(tileH) {
+		r.wallpaper.widthPx != uint32(tileW) || r.wallpaper.heightPx != uint32(tileH) ||
+		r.wallpaper.smooth != layer.Layout.Smooth {
 		r.wallpaper.release()
 
 		texture, textureView, _, err := r.createBoundTexture(layer.Tile)
@@ -2020,7 +2062,7 @@ func (r *WebGPURenderer) drawWallpaper(
 			Layout: r.blitLayout,
 			Entries: []wgpu.BindGroupEntry{
 				{Binding: 0, TextureView: textureView},
-				{Binding: 1, Sampler: r.wallpaperSampler},
+				{Binding: 1, Sampler: sampler},
 			},
 		})
 		if err != nil {
@@ -2035,14 +2077,15 @@ func (r *WebGPURenderer) drawWallpaper(
 			widthPx:     uint32(tileW),
 			heightPx:    uint32(tileH),
 			revision:    layer.Revision,
+			smooth:      layer.Layout.Smooth,
 			valid:       true,
 		}
 	}
 
-	// Uniforms for a fullscreen quad, with the texture repeated exactly
-	// as many times as the tile fits across the surface. A fractional
-	// remainder is what the last partial row and column should show, so
-	// no rounding here.
+	// Uniforms for a fullscreen quad. The texture spans surface/drawn
+	// copies, shifted so the anchored copy starts where the layout put
+	// it. A fractional remainder is what the last partial row and column
+	// should show, so no rounding here.
 	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
 		Size:  combinedUniformSize,
 		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
@@ -2054,7 +2097,11 @@ func (r *WebGPURenderer) drawWallpaper(
 	x, y, w, h := windowNDC(
 		core.UnitRect{Width: surfaceSize.Width, Height: surfaceSize.Height}, surfaceSize)
 	data := combinedUniformData{angle, enabledF, scale, aspect, x, y, w, h}
-	data.setTile(float32(surfacePxW)/float32(tileW), float32(surfacePxH)/float32(tileH))
+	tileX, tileY := layer.Layout.Tiling.Axes()
+	data.setTiling(
+		float32(surfacePxW)/float32(drawW), float32(surfacePxH)/float32(drawH),
+		float32(offX)/float32(drawW), float32(offY)/float32(drawH),
+		boolToFloat(tileX), boolToFloat(tileY))
 	r.queue.WriteBuffer(buffer, 0, combinedUniformBytes(&data))
 
 	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
