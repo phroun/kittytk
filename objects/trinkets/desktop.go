@@ -212,6 +212,13 @@ type Desktop struct {
 	// Running state
 	running atomic.Bool
 
+	// subtreeRev counts repaint requests from anywhere below the desktop
+	// (see core.SubtreeRepaintTracker). Windows are the desktop's own
+	// trinket children, so this counts THEIR changes too — see
+	// GetChildWindows, which subtracts them back out to get a revision
+	// that tracks the base layer alone.
+	subtreeRev atomic.Uint64
+
 	// needsFrame is set by the core repaint hook (Update()) between ticks; the
 	// periodic tick only invalidates the surface when it is set, so an idle
 	// desktop stops repainting. idleTicks counts ticks since the last real
@@ -3243,6 +3250,12 @@ func (d *Desktop) Post(fn func()) {
 // RequestUpdate requests a screen update (damage-driven: invalidates
 // the surface; the platform schedules the frame).
 func (d *Desktop) RequestUpdate() {
+	// The desktop's own "something about me changed" signal, and it
+	// bypasses the trinket Update() path entirely — the wallpaper and
+	// theme setters call it directly. Bump the subtree counter here or a
+	// compositor caching the base layer's texture never learns of them.
+	d.NoteSubtreeRepaint()
+
 	d.mu.RLock()
 	s := d.surface
 	d.mu.RUnlock()
@@ -4148,6 +4161,25 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 		}
 		result = append(result, w)
 	}
+	// The base layer's revision: everything below the desktop, minus the
+	// windows the compositor is about to draw on layers of their own.
+	//
+	// Windows are the desktop's trinket children, so a keystroke in a
+	// window walks up and bumps BOTH that window and the desktop by one.
+	// Subtracting the windows' revisions cancels exactly those, leaving a
+	// number that moves only for what FrameBase actually paints — the
+	// wallpaper, menu bar, status bar, dock and desktop content. Without
+	// the subtraction the base layer would repaint on every keystroke in
+	// any window, which is the whole cost this is meant to avoid.
+	//
+	// It works for nesting too: a change in an MDI child bumps the child,
+	// its parent window and the desktop, and the parent's term cancels
+	// the desktop's. Unsigned wraparound is fine — only equality between
+	// two readings ever matters.
+	baseRevision := d.subtreeRev.Load()
+	for _, w := range result {
+		baseRevision -= w.(*window.Window).SubtreeRepaintRevision()
+	}
 
 	popups := d.windowManager.GetPopups()
 
@@ -4172,12 +4204,22 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 	}
 
 	return &platform.ChildWindowList{
-		Windows:      result,
-		Popups:       popups,
-		MenuDropdown: menuDropdown,
-		ClientArea:   d.windowManager.ClientArea(),
+		Windows:         result,
+		Popups:          popups,
+		MenuDropdown:    menuDropdown,
+		ClientArea:      d.windowManager.ClientArea(),
+		BaseRevision:    baseRevision,
+		HasBaseRevision: true,
 	}
 }
+
+// NoteSubtreeRepaint implements core.SubtreeRepaintTracker.
+func (d *Desktop) NoteSubtreeRepaint() { d.subtreeRev.Add(1) }
+
+// SubtreeRepaintRevision implements core.SubtreeRepaintTracker. Callers
+// wanting the BASE layer's revision want ChildWindowList.BaseRevision,
+// which nets out the windows composited on their own layers.
+func (d *Desktop) SubtreeRepaintRevision() uint64 { return d.subtreeRev.Load() }
 
 // HandleMousePress handles mouse clicks.
 func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {

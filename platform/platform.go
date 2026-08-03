@@ -216,6 +216,15 @@ type ChildWindowList struct {
 	// windows exactly as the software path's client-area clip does.
 	// A zero rect means no clipping.
 	ClientArea core.UnitRect
+
+	// BaseRevision changes whenever anything the BASE layer paints
+	// changes — wallpaper, menu bar, status bar, dock, desktop content —
+	// and holds still while only the windows above it move or redraw. A
+	// compositor caching the base layer's texture repaints it only when
+	// this moves. HasBaseRevision is false for a provider that does not
+	// report one, which makes the base repaint every frame as before.
+	BaseRevision    uint64
+	HasBaseRevision bool
 }
 
 // WindowProvider is an optional Surface Handler interface that allows

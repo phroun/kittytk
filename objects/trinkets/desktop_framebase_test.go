@@ -102,3 +102,53 @@ func TestDesktopCompositorSkipsMinimizedWindows(t *testing.T) {
 		t.Errorf("compositor got %v, want the open window", list.Windows[0])
 	}
 }
+
+// The base layer's revision must hold still while only the windows above
+// it change. Windows are the desktop's own trinket children, so a
+// keystroke inside one bumps the desktop's subtree counter too — and a
+// base-layer cache keyed on that raw counter would repaint the whole
+// full-surface texture on every keystroke, which is exactly the cost it
+// exists to avoid.
+func TestDesktopBaseRevisionIgnoresWindowActivity(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 240)
+	d := NewDesktop()
+	d.SetBackend(px)
+	d.surface = &msSurface{size: core.UnitSize{Width: 800, Height: 240}}
+	h := &desktopSurfaceHandler{d: d}
+	var provider platform.WindowProvider = h
+
+	d.WindowManager().SetScreenBounds(core.UnitRect{Width: 800, Height: 240})
+	win := window.NewWindow("W")
+	content := core.NewTrinketBase()
+	content.Init(content)
+	win.SetContent(content)
+	d.WindowManager().AddWindow(win)
+	win.SetBounds(core.UnitRect{Width: 400, Height: 200})
+	win.Layout()
+
+	baseRev := func() uint64 {
+		list := provider.GetChildWindows()
+		if list == nil || !list.HasBaseRevision {
+			t.Fatal("desktop did not report a base revision")
+		}
+		return list.BaseRevision
+	}
+
+	before := baseRev()
+
+	// Anything inside the window: its own layer, not the base's.
+	content.Update()
+	content.SetVisible(false)
+	win.SetActive(true)
+	if got := baseRev(); got != before {
+		t.Errorf("base revision moved from %d to %d for window-only activity; "+
+			"the base layer would repaint on every keystroke in any window", before, got)
+	}
+
+	// Chrome IS the base layer, so it must move the revision.
+	d.SetWallpaperChunk(4)
+	if got := baseRev(); got == before {
+		t.Error("base revision did not move when the wallpaper changed")
+	}
+}

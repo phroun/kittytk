@@ -21,6 +21,49 @@ import (
 	"github.com/phroun/kittytk/platform"
 )
 
+// baseLayer holds an OS window's cached desktop-chrome texture: the
+// wallpaper, menu bar, status bar, dock and desktop content, everything
+// the compositor draws underneath the window layers.
+//
+// It is kept across frames for the same reason a window's texture is,
+// only more so. This is the full-surface texture, so repainting it costs
+// the wallpaper fill over every pixel, a full BGRA conversion and a
+// full-surface upload — and it used to also allocate and free the
+// texture itself every single frame.
+type baseLayer struct {
+	texture     *wgpu.Texture
+	textureView *wgpu.TextureView
+	bindGroup   *wgpu.BindGroup
+	widthPx     uint32
+	heightPx    uint32
+
+	painted   paintSignature
+	paintedAt time.Time
+
+	// paintedBackend is the raster backend the cached pixels came from.
+	// A resize or font zoom REPLACES the OS window's backend with a
+	// fresh zero-filled one without going through the renderer, so a
+	// cache that only compared sizes could serve a black surface when
+	// the new backend happens to match the old one's dimensions. Identity
+	// makes that impossible instead of unlikely.
+	paintedBackend *raster.Backend
+}
+
+func (b *baseLayer) release() {
+	if b.bindGroup != nil {
+		b.bindGroup.Release()
+		b.bindGroup = nil
+	}
+	if b.textureView != nil {
+		b.textureView.Release()
+		b.textureView = nil
+	}
+	if b.texture != nil {
+		b.texture.Release()
+		b.texture = nil
+	}
+}
+
 // WindowSurface holds GPU resources for a single window's off-screen rendering
 type WindowSurface struct {
 	texture     *wgpu.Texture
@@ -91,6 +134,12 @@ type WebGPURenderer struct {
 	// Per-window surfaces for compositing
 	windowSurfaces       map[uint32]*WindowSurface // windowID -> surface
 	firstCompositorFrame bool                      // Track first compositor call
+
+	// Cached base layers (desktop chrome), one per OS window. Held
+	// across frames: the base is the largest texture on screen, and it
+	// used to be allocated, painted, converted and uploaded in full
+	// every frame.
+	baseLayers map[uint32]*baseLayer
 
 	frameSeq uint64
 
@@ -170,10 +219,13 @@ func (r *WebGPURenderer) Initialize() error {
 
 // Shutdown cleans up WebGPU resources
 func (r *WebGPURenderer) Shutdown() {
-	// Clean up per-window compositor surfaces
+	// Clean up per-window compositor surfaces and cached base layers
 	for id, surf := range r.windowSurfaces {
 		r.releaseWindowSurface(surf)
 		delete(r.windowSurfaces, id)
+	}
+	for id := range r.baseLayers {
+		r.releaseBaseLayer(id)
 	}
 
 	// Clean up cube resources
@@ -286,6 +338,8 @@ func (r *WebGPURenderer) CreateWindowRenderer(w *nativeWin, pxW, pxH int) error 
 
 // DestroyWindowRenderer cleans up WebGPU resources for a window
 func (r *WebGPURenderer) DestroyWindowRenderer(w *nativeWin) {
+	r.releaseBaseLayer(w.id)
+
 	surf, ok := r.windowSurfaces[w.id]
 	if !ok {
 		return
@@ -984,8 +1038,13 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		return r.Present(osWindow, osWindow.backend)
 	}
 
-	// Step 0: Render Desktop base layer (background, menu, status, dock - NOT windows)
-	renderWindow(osWindow)
+	// Step 0: the Desktop base layer (background, menu, status, dock —
+	// NOT windows), repainted only when something it draws changed. Its
+	// texture is cached; see refreshBaseLayer.
+	base, err := r.refreshBaseLayer(osWindow, childWindowList, renderWindow)
+	if err != nil {
+		return err
+	}
 
 	// Frame-level pixel metrics: the surface's pixel size, its
 	// pixels-per-unit, and one aspect ratio (width/height) shared by
@@ -1280,12 +1339,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	}
 	r.reportCompositorStats(len(childWindowList.Windows))
 
-	// Step 2: Upload Desktop base layer
-	desktopTexture, desktopView, desktopBindGroup, err := r.uploadBackendToTexture(osWindow.backend)
-	if err != nil {
-		return fmt.Errorf("failed to upload Desktop base: %w", err)
-	}
-	// DON'T defer - must stay alive until after Submit
+	// Step 2 is gone: the base layer's texture, view and bind group live
+	// in the cache across frames rather than being rebuilt here.
+	desktopView, desktopBindGroup := base.textureView, base.bindGroup
 
 	// Step 3: Composite all textures
 	if osWindow.transparent {
@@ -1301,9 +1357,6 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 
 	surfaceView, err := surfaceTexture.CreateView(nil)
 	if err != nil {
-		desktopBindGroup.Release()
-		desktopView.Release()
-		desktopTexture.Release()
 		return err
 	}
 	// DON'T defer - release after Submit
@@ -1472,11 +1525,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	cmdBuffer, _ := encoder.Finish()
 	_, err = r.queue.Submit(cmdBuffer)
 
-	// Release temporary resources after GPU has the commands
+	// Release temporary resources after GPU has the commands. The base
+	// layer's texture is NOT among them — it is cached across frames.
 	surfaceView.Release()
-	desktopBindGroup.Release()
-	desktopView.Release()
-	desktopTexture.Release()
 
 	if err != nil {
 		return err
@@ -1822,6 +1873,99 @@ func (r *WebGPURenderer) createShadowUniformBuffer(
 	return buffer, bindGroup, nil
 }
 
+// refreshBaseLayer returns the OS window's cached base-layer texture,
+// repainting and re-uploading it only when the desktop chrome changed.
+//
+// The saving is the largest one the compositor has: the base is the
+// full-surface texture, so a repaint means tiling the wallpaper across
+// every pixel, converting every pixel to BGRA and uploading the lot —
+// and before this it also allocated and freed the texture each frame.
+// A desktop whose chrome is sitting still now costs one quad.
+func (r *WebGPURenderer) refreshBaseLayer(
+	osWindow *nativeWin,
+	list *platform.ChildWindowList,
+	renderWindow func(*nativeWin),
+) (*baseLayer, error) {
+	if r.baseLayers == nil {
+		r.baseLayers = make(map[uint32]*baseLayer)
+	}
+	base := r.baseLayers[osWindow.id]
+
+	sig := paintSignature{
+		revision:    list.BaseRevision,
+		hasRevision: list.HasBaseRevision,
+		fontSize:    osWindow.backend.FontSize(),
+		metrics:     osWindow.backend.Metrics(),
+	}
+	if img := osWindow.backend.Image(); img != nil {
+		sig.widthPx, sig.heightPx = img.Bounds().Dx(), img.Bounds().Dy()
+	}
+
+	now := time.Now()
+	stale := base == nil || base.texture == nil ||
+		base.paintedBackend != osWindow.backend ||
+		needsRepaint(base.painted, sig, now.Sub(base.paintedAt),
+			heartbeatInterval(osWindow.id), false, compositorAlwaysRepaint)
+	if !stale {
+		r.frameSkipped++
+		return base, nil
+	}
+
+	// Paint the chrome into the OS window's backend. This is the callback
+	// that reaches SurfaceHandler.FrameBase.
+	renderWindow(osWindow)
+
+	img := osWindow.backend.Image()
+	if img == nil {
+		return nil, fmt.Errorf("OS window backend has no image for the base layer")
+	}
+	// The backend can have been resized by the paint above, so take the
+	// size that was actually produced.
+	sig.widthPx, sig.heightPx = img.Bounds().Dx(), img.Bounds().Dy()
+	w, h := uint32(sig.widthPx), uint32(sig.heightPx)
+	if w == 0 || h == 0 {
+		return nil, fmt.Errorf("base layer is %dx%d", w, h)
+	}
+
+	// Rebuild the GPU objects only when the surface changed size;
+	// otherwise the existing texture is written in place.
+	if base == nil || base.texture == nil || base.widthPx != w || base.heightPx != h {
+		if base != nil {
+			base.release()
+		}
+		texture, textureView, bindGroup, err := r.createBoundTexture(img)
+		if err != nil {
+			delete(r.baseLayers, osWindow.id)
+			return nil, fmt.Errorf("failed to create the base layer texture: %w", err)
+		}
+		base = &baseLayer{
+			texture:     texture,
+			textureView: textureView,
+			bindGroup:   bindGroup,
+			widthPx:     w,
+			heightPx:    h,
+		}
+		r.baseLayers[osWindow.id] = base
+	} else {
+		r.uploadPixels(base.texture, img)
+	}
+
+	base.painted = sig
+	base.paintedAt = now
+	base.paintedBackend = osWindow.backend
+	r.framePainted++
+	return base, nil
+}
+
+// releaseBaseLayer drops an OS window's cached base layer (window
+// closed, or the renderer shutting down).
+func (r *WebGPURenderer) releaseBaseLayer(id uint32) {
+	if base, ok := r.baseLayers[id]; ok {
+		base.release()
+		delete(r.baseLayers, id)
+	}
+}
+
 // subtreeRepaintRevision reads a child window's repaint counter. ok is
 // false for anything that does not report one, which makes the caller
 // repaint every frame — the behaviour before this cache existed.
@@ -1844,7 +1988,8 @@ var compositorAlwaysRepaint = os.Getenv("KITTYTK_COMPOSITOR_REPAINT") == "always
 var compositorStats = os.Getenv("KITTYTK_COMPOSITOR_STATS") != ""
 
 // reportCompositorStats accumulates this frame's repaint tally and emits
-// a line about once a second.
+// a line about once a second. The tally counts the base layer alongside
+// the windows — it is one more cached texture, and the biggest.
 func (r *WebGPURenderer) reportCompositorStats(windows int) {
 	painted, skipped := r.framePainted, r.frameSkipped
 	r.framePainted, r.frameSkipped = 0, 0
@@ -1870,7 +2015,7 @@ func (r *WebGPURenderer) reportCompositorStats(windows int) {
 		pct = 100 * float64(r.statsSkipped) / float64(total)
 	}
 	fmt.Fprintf(os.Stderr,
-		"kittytk-compositor: %d frames in %v, %d windows: %d window-paints, %d skipped (%.0f%% cached)\n",
+		"kittytk-compositor: %d frames in %v, %d windows: %d layer-paints, %d skipped (%.0f%% cached)\n",
 		r.statsFrames, elapsed.Round(time.Millisecond), windows, r.statsPainted, r.statsSkipped, pct)
 	r.statsFrames, r.statsPainted, r.statsSkipped = 0, 0, 0
 	r.statsLastEmit = time.Now()
