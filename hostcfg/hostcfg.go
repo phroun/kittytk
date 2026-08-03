@@ -381,11 +381,10 @@ func apply(data []byte, cfg *Config) {
 			cfg.WallpaperTiling = val
 		case "wallpaper_align":
 			cfg.WallpaperAlign = val
-		case "wallpaper_filter", "wallpaper_scaling":
-			// wallpaper_scaling is accepted because it is the obvious
-			// name, but wallpaper_filter is the documented one: it
-			// cannot be misread as a typo for wallpaper_scale, which is
-			// a NUMBER and means something entirely different.
+		case "wallpaper_filter":
+			// Named "filter" rather than "scaling" so it cannot be
+			// misread as a typo for wallpaper_scale, which is a NUMBER
+			// and means something entirely different.
 			cfg.WallpaperFilter = val
 		case "wallpaper_scale":
 			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
@@ -489,7 +488,7 @@ func (c Config) ResolveWallpaperLayout() (core.WallpaperLayout, []error) {
 		}
 	}
 	if c.WallpaperFilter != "" {
-		if smooth, ok := core.ParseWallpaperScaling(strings.ToLower(c.WallpaperFilter)); ok {
+		if smooth, ok := core.ParseWallpaperFilter(strings.ToLower(c.WallpaperFilter)); ok {
 			l.Smooth = smooth
 		} else {
 			errs = append(errs, fmt.Errorf("unknown wallpaper_filter %q", c.WallpaperFilter))

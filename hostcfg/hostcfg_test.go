@@ -494,14 +494,15 @@ wallpaper_filter = smooth
 	}
 }
 
-// wallpaper_scaling is accepted as an alias, because it is the obvious
-// name — but wallpaper_filter is documented, since wallpaper_scale is a
-// NUMBER and the two would otherwise read as typos for each other.
-func TestWallpaperScalingAliasesFilter(t *testing.T) {
+// The filter has exactly ONE key. wallpaper_scaling reads like the
+// obvious name and was briefly an alias for it, but this is a new
+// setting with no installed base to be kind to, and two spellings of one
+// knob is a cost paid forever by everyone reading the file.
+func TestWallpaperFilterHasNoAlias(t *testing.T) {
 	var cfg Config
 	apply([]byte("[window]\nwallpaper_scaling = smooth\n"), &cfg)
-	if l, _ := cfg.ResolveWallpaperLayout(); !l.Smooth {
-		t.Error("wallpaper_scaling = smooth did not take effect")
+	if l, _ := cfg.ResolveWallpaperLayout(); l.Smooth {
+		t.Error("wallpaper_scaling was honoured; wallpaper_filter is the only name")
 	}
 }
 

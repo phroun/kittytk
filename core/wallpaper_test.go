@@ -184,13 +184,13 @@ func TestParseWallpaperTilingAndFilter(t *testing.T) {
 
 	// Crisp is the default: the built-in wallpaper is an 8x8 bitmap at
 	// 1:1, which interpolation only blurs.
-	if smooth, ok := ParseWallpaperScaling(""); !ok || smooth {
+	if smooth, ok := ParseWallpaperFilter(""); !ok || smooth {
 		t.Errorf("default filter = smooth %v ok %v, want crisp", smooth, ok)
 	}
-	if smooth, ok := ParseWallpaperScaling("smooth"); !ok || !smooth {
+	if smooth, ok := ParseWallpaperFilter("smooth"); !ok || !smooth {
 		t.Errorf("smooth filter = %v ok %v", smooth, ok)
 	}
-	if _, ok := ParseWallpaperScaling("blurry"); ok {
+	if _, ok := ParseWallpaperFilter("blurry"); ok {
 		t.Error("an unknown filter was accepted")
 	}
 }

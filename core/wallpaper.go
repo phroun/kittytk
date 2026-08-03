@@ -111,13 +111,13 @@ func (t WallpaperTiling) Axes() (x, y bool) {
 	return true, true
 }
 
-// ParseWallpaperScaling reads the filter name. "crisp" keeps hard pixel
+// ParseWallpaperFilter reads the filter name. "crisp" keeps hard pixel
 // edges (nearest neighbour), "smooth" interpolates (bilinear). smooth is
 // what the return value reports.
 //
 // Crisp is the default because the built-in wallpaper is an 8x8 bitmap
 // pattern drawn at 1:1, where interpolation only blurs it.
-func ParseWallpaperScaling(s string) (smooth bool, ok bool) {
+func ParseWallpaperFilter(s string) (smooth bool, ok bool) {
 	switch s {
 	case "", "crisp", "nearest", "pixel", "sharp":
 		return false, true
@@ -212,7 +212,7 @@ type WallpaperLayout struct {
 	Align WallpaperAlignment
 
 	// Smooth interpolates when the drawn size differs from the image's
-	// (see ParseWallpaperScaling).
+	// (see ParseWallpaperFilter).
 	Smooth bool
 }
 
