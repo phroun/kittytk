@@ -901,6 +901,12 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 		return
 	}
 	
+	// Surface configuration can reset the Metal layer's opacity state,
+	// and an opaque layer discards alpha whatever we clear to.
+	if w.transparent {
+		reassertWindowAlpha(w.window)
+	}
+
 	// Get surface texture
 	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
 	if err != nil {

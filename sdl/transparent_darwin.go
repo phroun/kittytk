@@ -226,6 +226,28 @@ static void kittytk_make_window_transparent(void *nswindow) {
 	}
 }
 
+// kittytk_reassert_layer_alpha re-applies non-opacity to a CAMetalLayer
+// (and its window/view chain) directly. Configuring a surface calls
+// setDrawableSize:, which "resets internal CAMetalLayer state on some
+// macOS versions" (wgpu's own Metal HAL says so and re-applies its
+// settings for the same reason) — and an opaque layer discards the
+// alpha channel no matter what the renderer clears to. Cheap enough to
+// run per present.
+static void kittytk_reassert_layer_alpha(void *metalLayer, void *nswindow) {
+	if (metalLayer) {
+		id layer = (id)metalLayer;
+		((void (*)(id, SEL, signed char))objc_msgSend)(
+			layer, sel_registerName("setOpaque:"), 0);
+		((void (*)(id, SEL, void*))objc_msgSend)(
+			layer, sel_registerName("setBackgroundColor:"), NULL);
+	}
+	if (nswindow) {
+		id win = (id)nswindow;
+		((void (*)(id, SEL, signed char))objc_msgSend)(
+			win, sel_registerName("setOpaque:"), 0);
+	}
+}
+
 // kittytk_enable_miniaturize adds NSWindowStyleMaskMiniaturizable
 // (1 << 2) to a borderless window's style mask: without it Cocoa
 // silently refuses to miniaturize borderless windows, so torn-off
@@ -273,6 +295,25 @@ func makeWindowTransparent(win *sdl2.Window) bool {
 		C.kittytk_debug_window_alpha(cocoa, 1)
 	}
 	return true
+}
+
+// reassertWindowAlpha re-applies non-opacity to a transparent window's
+// Metal layer and NSWindow. Surface configuration (window creation,
+// every resize) can reset CAMetalLayer state, and an opaque layer
+// discards alpha regardless of what the renderer clears to — so the
+// present path calls this each frame for transparent windows.
+func reassertWindowAlpha(win *sdl2.Window) {
+	if win == nil {
+		return
+	}
+	cocoa := cocoaWindow(win)
+	if cocoa == nil {
+		return
+	}
+	// The non-creating lookup: find the existing Metal layer under the
+	// window's content view (kittytk_create_metal_view would make a new
+	// view every frame).
+	C.kittytk_reassert_layer_alpha(C.kittytk_get_metal_layer(cocoa), cocoa)
 }
 
 // makeWindowMiniaturizable lets a borderless window go to the Dock.

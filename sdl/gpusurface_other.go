@@ -8,6 +8,10 @@ import (
 	sdl2 "github.com/veandco/go-sdl2/sdl"
 )
 
+// reassertWindowAlpha is the non-macOS stub: no per-pixel window alpha
+// arrangement to maintain (see the darwin build for what this does).
+func reassertWindowAlpha(*sdl2.Window) {}
+
 // nativeSurfaceHandles resolves the platform handles WebGPU surface
 // creation needs for one SDL window. Off macOS the handles come from
 // SDL's window-manager info: X11 wants (Display*, Window) and Windows

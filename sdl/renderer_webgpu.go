@@ -21,48 +21,6 @@ import (
 	"github.com/phroun/kittytk/platform"
 )
 
-// shadowFragmentShader draws an analytic drop shadow: a signed-distance
-// field of the caster's rounded rect (unioned with an optional anchor
-// rect — the control a popup opened from) with a smooth falloff over the
-// blur radius. No blur passes, no textures: one quad, one fragment
-// evaluation. The vertex stage is the shared blit vertex shader, so
-// shadows also ride the rotation demo with their layers.
-const shadowFragmentShader = `
-struct ShadowParams {
-    quad_px:   vec2<f32>, // quad size in pixels
-    blur_px:   f32,       // falloff distance
-    alpha:     f32,       // peak opacity
-    rect1_min: vec2<f32>, // caster rect in quad pixels
-    rect1_max: vec2<f32>,
-    rect2_min: vec2<f32>, // anchor rect (empty when max <= min)
-    rect2_max: vec2<f32>,
-    radius_px: f32,       // caster corner rounding
-    pad0: f32,
-    pad1: f32,
-    pad2: f32,
-}
-
-@group(0) @binding(0) var<uniform> shadow: ShadowParams;
-
-fn sd_round_rect(p: vec2<f32>, mn: vec2<f32>, mx: vec2<f32>, r: f32) -> f32 {
-    let c = (mn + mx) * 0.5;
-    let h = max((mx - mn) * 0.5 - vec2<f32>(r, r), vec2<f32>(0.0, 0.0));
-    let q = abs(p - c) - h;
-    return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
-}
-
-@fragment
-fn fs_main(@builtin(position) fragPos: vec4<f32>, @location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
-    let p = texCoord * shadow.quad_px;
-    var d = sd_round_rect(p, shadow.rect1_min, shadow.rect1_max, shadow.radius_px);
-    if (shadow.rect2_max.x > shadow.rect2_min.x && shadow.rect2_max.y > shadow.rect2_min.y) {
-        d = min(d, sd_round_rect(p, shadow.rect2_min, shadow.rect2_max, shadow.radius_px));
-    }
-    let a = shadow.alpha * (1.0 - smoothstep(-shadow.blur_px, shadow.blur_px, d));
-    return vec4<f32>(0.0, 0.0, 0.0, a);
-}
-`
-
 // WindowSurface holds GPU resources for a single window's off-screen rendering
 type WindowSurface struct {
 	texture     *wgpu.Texture
@@ -111,9 +69,6 @@ type WebGPURenderer struct {
 	blitUniformBindGroup *wgpu.BindGroup
 	blitPosLayout        *wgpu.BindGroupLayout // Per-window position uniforms
 
-	// Drop shadow pipeline (SDF rounded-rect shadows under layers)
-	shadowPipeline     *wgpu.RenderPipeline
-	shadowParamsLayout *wgpu.BindGroupLayout
 
 	// Rotation/scale effect state
 	rotationStartTime           time.Time
@@ -125,6 +80,12 @@ type WebGPURenderer struct {
 	// Per-window surfaces for compositing
 	windowSurfaces        map[uint32]*WindowSurface // windowID -> surface
 	firstCompositorFrame  bool                       // Track first compositor call
+
+	// Cached drop-shadow textures. Rasterizing a blurred shadow costs
+	// real CPU, and a shadow only changes when its geometry does, so
+	// each is kept until a frame goes by without using it.
+	shadowCache map[shadowKey]*shadowEntry
+	frameSeq    uint64
 
 	// 3D cube rendering
 	cubePipeline         *wgpu.RenderPipeline
@@ -140,9 +101,49 @@ func NewWebGPURenderer(vsync bool) (Renderer, error) {
 	r := &WebGPURenderer{
 		vsync:                vsync,
 		windowSurfaces:       make(map[uint32]*WindowSurface),
+		shadowCache:          make(map[shadowKey]*shadowEntry),
 		firstCompositorFrame: true,
 	}
 	return r, nil
+}
+
+// shadowKey identifies a cached shadow by everything that changes its
+// pixels: the two rects, the style, and the pixel density.
+type shadowKey struct {
+	caster, anchor core.UnitRect
+	spec           shadowSpec
+	ppuW, ppuH     float64
+}
+
+// shadowEntry is one cached shadow texture plus the frame it was last
+// drawn on (for eviction).
+type shadowEntry struct {
+	texture     *wgpu.Texture
+	textureView *wgpu.TextureView
+	bindGroup   *wgpu.BindGroup
+	lastUsed    uint64
+}
+
+func (e *shadowEntry) release() {
+	if e.bindGroup != nil {
+		e.bindGroup.Release()
+	}
+	if e.textureView != nil {
+		e.textureView.Release()
+	}
+	if e.texture != nil {
+		e.texture.Release()
+	}
+}
+
+// evictStaleShadows drops cached shadows not drawn on the current frame.
+func (r *WebGPURenderer) evictStaleShadows() {
+	for key, entry := range r.shadowCache {
+		if entry.lastUsed != r.frameSeq {
+			entry.release()
+			delete(r.shadowCache, key)
+		}
+	}
 }
 
 // Initialize sets up WebGPU context
@@ -188,12 +189,6 @@ func (r *WebGPURenderer) Initialize() error {
 		return fmt.Errorf("failed to initialize cube pipeline: %w", err)
 	}
 
-	// Initialize the drop-shadow pipeline
-	if err := r.initShadowPipeline(); err != nil {
-		r.Shutdown()
-		return fmt.Errorf("failed to initialize shadow pipeline: %w", err)
-	}
-
 	r.rotationStartTime = time.Now()
 	return nil
 }
@@ -206,12 +201,10 @@ func (r *WebGPURenderer) Shutdown() {
 		delete(r.windowSurfaces, id)
 	}
 
-	// Clean up shadow resources
-	if r.shadowPipeline != nil {
-		r.shadowPipeline.Release()
-	}
-	if r.shadowParamsLayout != nil {
-		r.shadowParamsLayout.Release()
+	// Clean up cached shadow textures
+	for key, entry := range r.shadowCache {
+		entry.release()
+		delete(r.shadowCache, key)
 	}
 
 	// Clean up cube resources
@@ -363,6 +356,12 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	size := backend.Size()
 	r.writeCombinedUniforms(r.blitUniformBuffer,
 		core.UnitRect{Width: size.Width, Height: size.Height}, size, aspect)
+
+	// Surface configuration can reset the Metal layer's opacity state,
+	// and an opaque layer discards alpha whatever we clear to.
+	if w.transparent {
+		reassertWindowAlpha(w.window)
+	}
 
 	// Get surface texture
 	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
@@ -631,177 +630,6 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	}
 
 	return nil
-}
-
-// initShadowPipeline creates the drop-shadow pipeline: the shared blit
-// vertex stage (so shadows position and rotate like their layers) with
-// the SDF shadow fragment stage, blending onto the scene.
-func (r *WebGPURenderer) initShadowPipeline() error {
-	var err error
-	r.shadowParamsLayout, err = r.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Entries: []gputypes.BindGroupLayoutEntry{
-			{
-				Binding:    0,
-				Visibility: wgpu.ShaderStageFragment,
-				Buffer: &gputypes.BufferBindingLayout{
-					Type:           0, // Uniform
-					MinBindingSize: 64,
-				},
-			},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create shadow params layout: %w", err)
-	}
-
-	vertexShader, err := r.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
-		Label: "Shadow Vertex Shader",
-		WGSL:  blitVertexShader,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create shadow vertex shader: %w", err)
-	}
-	defer vertexShader.Release()
-
-	fragmentShader, err := r.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
-		Label: "Shadow Fragment Shader",
-		WGSL:  shadowFragmentShader,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create shadow fragment shader: %w", err)
-	}
-	defer fragmentShader.Release()
-
-	pipelineLayout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
-		BindGroupLayouts: []*wgpu.BindGroupLayout{r.shadowParamsLayout, r.blitUniformLayout},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create shadow pipeline layout: %w", err)
-	}
-	defer pipelineLayout.Release()
-
-	r.shadowPipeline, err = r.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
-		Layout: pipelineLayout,
-		Vertex: wgpu.VertexState{
-			Module:     vertexShader,
-			EntryPoint: "vs_main",
-		},
-		Fragment: &wgpu.FragmentState{
-			Module:     fragmentShader,
-			EntryPoint: "fs_main",
-			Targets: []wgpu.ColorTargetState{
-				{
-					Format:    wgpu.TextureFormatBGRA8Unorm,
-					WriteMask: 0xF,
-					Blend: &gputypes.BlendState{
-						Color: gputypes.BlendComponent{
-							SrcFactor: gputypes.BlendFactorSrcAlpha,
-							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
-							Operation: gputypes.BlendOperationAdd,
-						},
-						Alpha: gputypes.BlendComponent{
-							SrcFactor: gputypes.BlendFactorOne,
-							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
-							Operation: gputypes.BlendOperationAdd,
-						},
-					},
-				},
-			},
-		},
-		Primitive: wgpu.PrimitiveState{
-			Topology: 3, // TriangleList
-		},
-		Multisample: wgpu.MultisampleState{
-			Count: 1,
-			Mask:  0xFFFFFFFF,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create shadow pipeline: %w", err)
-	}
-	return nil
-}
-
-// drawShadow records one drop shadow into the render pass: the caster
-// rect (unioned with the anchor when non-empty) cast down-right per the
-// spec. It temporarily switches to the shadow pipeline and restores the
-// blit pipeline before returning. The returned cleanup must run after
-// Submit.
-func (r *WebGPURenderer) drawShadow(
-	renderPass *wgpu.RenderPassEncoder,
-	caster, anchor core.UnitRect,
-	surfaceSize core.UnitSize,
-	ppuW, ppuH float64,
-	aspect float32,
-	spec shadowSpec,
-) (func(), error) {
-	if r.shadowPipeline == nil || caster.IsEmpty() {
-		return nil, nil
-	}
-
-	quad := shadowQuadBounds(caster, anchor, spec)
-
-	// Position uniforms (shared CombinedUniforms) for the quad.
-	posBuffer, posBindGroup, err := r.createWindowUniformBuffer(quad, surfaceSize, aspect)
-	if err != nil {
-		return nil, err
-	}
-
-	// Shadow params: rects shifted by the cast offset, in quad pixels.
-	castCaster := caster.Translated(spec.offsetX, spec.offsetY)
-	r1minX, r1minY, r1maxX, r1maxY := rectPxIn(quad, castCaster, ppuW, ppuH)
-	var r2minX, r2minY, r2maxX, r2maxY float32
-	if !anchor.IsEmpty() {
-		castAnchor := anchor.Translated(spec.offsetX, spec.offsetY)
-		r2minX, r2minY, r2maxX, r2maxY = rectPxIn(quad, castAnchor, ppuW, ppuH)
-	}
-
-	params := []float32{
-		float32(float64(quad.Width) * ppuW), float32(float64(quad.Height) * ppuH),
-		float32(float64(spec.blur) * ppuW), spec.alpha,
-		r1minX, r1minY, r1maxX, r1maxY,
-		r2minX, r2minY, r2maxX, r2maxY,
-		float32(float64(spec.radius) * ppuW), 0, 0, 0,
-	}
-	paramsBytes := (*[64]byte)(unsafe.Pointer(&params[0]))[:]
-
-	paramsBuffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
-		Size:  64,
-		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		posBindGroup.Release()
-		posBuffer.Release()
-		return nil, err
-	}
-	r.queue.WriteBuffer(paramsBuffer, 0, paramsBytes)
-
-	paramsBindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Layout: r.shadowParamsLayout,
-		Entries: []wgpu.BindGroupEntry{
-			{Binding: 0, Buffer: paramsBuffer, Size: 64},
-		},
-	})
-	if err != nil {
-		paramsBuffer.Release()
-		posBindGroup.Release()
-		posBuffer.Release()
-		return nil, err
-	}
-
-	renderPass.SetPipeline(r.shadowPipeline)
-	renderPass.SetBindGroup(0, paramsBindGroup, nil)
-	renderPass.SetBindGroup(1, posBindGroup, nil)
-	renderPass.Draw(6, 1, 0, 0)
-	renderPass.SetPipeline(r.blitPipeline)
-
-	cleanup := func() {
-		paramsBindGroup.Release()
-		paramsBuffer.Release()
-		posBindGroup.Release()
-		posBuffer.Release()
-	}
-	return cleanup, nil
 }
 
 // initCubePipeline creates the 3D cube rendering pipeline for the
@@ -1196,6 +1024,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		r.firstCompositorFrame = false
 	}
 
+	r.frameSeq++
+	defer r.evictStaleShadows()
+
 	if childWindowList == nil || len(childWindowList.Windows) == 0 {
 		// No child windows, just render normally
 		renderWindow(osWindow)
@@ -1480,6 +1311,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	// DON'T defer - must stay alive until after Submit
 	
 	// Step 3: Composite all textures
+	if osWindow.transparent {
+		reassertWindowAlpha(osWindow.window)
+	}
 	surfaceTexture, _, err := osWindow.gpuSurface.GetCurrentTexture()
 	if err != nil {
 		return err
@@ -1872,6 +1706,60 @@ func overlayBoundsAndPaint(overlay interface{}) (bounds, anchor core.UnitRect, p
 		}
 	}
 	return bounds, anchor, paint, true
+}
+
+// drawShadow records one drop shadow into the render pass: a CPU-
+// rasterized shadow image (caster unioned with its anchor, cast
+// down-right, blurred) uploaded and drawn through the SAME blit
+// pipeline every other layer uses. The shadow texture is cached by
+// geometry, so a still window costs one draw call per frame and nothing
+// else. The returned cleanup must run after Submit; it is nil when
+// there is nothing to draw.
+func (r *WebGPURenderer) drawShadow(
+	renderPass *wgpu.RenderPassEncoder,
+	caster, anchor core.UnitRect,
+	surfaceSize core.UnitSize,
+	ppuW, ppuH float64,
+	aspect float32,
+	spec shadowSpec,
+) (func(), error) {
+	if caster.IsEmpty() {
+		return nil, nil
+	}
+
+	key := shadowKey{caster: caster, anchor: anchor, spec: spec, ppuW: ppuW, ppuH: ppuH}
+	entry, cached := r.shadowCache[key]
+	if !cached {
+		img := shadowImage(caster, anchor, spec, ppuW, ppuH)
+		if img == nil {
+			return nil, nil
+		}
+		texture, textureView, bindGroup, err := r.createBoundTexture(img)
+		if err != nil {
+			return nil, err
+		}
+		entry = &shadowEntry{texture: texture, textureView: textureView, bindGroup: bindGroup}
+		r.shadowCache[key] = entry
+	}
+	entry.lastUsed = r.frameSeq
+
+	quad := shadowQuadBounds(caster, anchor, spec)
+	uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(quad, surfaceSize, aspect)
+	if err != nil {
+		return nil, err
+	}
+
+	renderPass.SetBindGroup(0, entry.bindGroup, nil)
+	renderPass.SetBindGroup(1, uniformBindGroup, nil)
+	renderPass.Draw(6, 1, 0, 0)
+
+	// Only the per-frame uniforms are transient; the texture lives in
+	// the cache until its geometry changes.
+	cleanup := func() {
+		uniformBindGroup.Release()
+		uniformBuffer.Release()
+	}
+	return cleanup, nil
 }
 
 // drawOverlay renders one overlay layer (popup or menu dropdown) into a

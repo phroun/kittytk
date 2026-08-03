@@ -137,13 +137,135 @@ func shadowQuadBounds(caster, anchor core.UnitRect, spec shadowSpec) core.UnitRe
 }
 
 // rectPxIn maps a unit rect to pixel min/max coordinates relative to a
-// quad's origin — the coordinates the shadow shader's SDF works in.
+// quad's origin — the coordinates a shadow image is rasterized in.
 func rectPxIn(quad, r core.UnitRect, ppuW, ppuH float64) (minX, minY, maxX, maxY float32) {
 	minX = float32(float64(r.X-quad.X) * ppuW)
 	minY = float32(float64(r.Y-quad.Y) * ppuH)
 	maxX = float32(float64(r.X+r.Width-quad.X) * ppuW)
 	maxY = float32(float64(r.Y+r.Height-quad.Y) * ppuH)
 	return minX, minY, maxX, maxY
+}
+
+// shadowImage rasterizes a drop shadow into an RGBA image sized to the
+// shadow quad: the caster rect (unioned with anchor when non-empty),
+// shifted by the cast offset, rounded, then blurred. The pixels are
+// black with the falloff in alpha, which the compositor's standard
+// SrcAlpha blend lays over the scene as a shadow. Generated on the CPU
+// and uploaded like every other layer — no bespoke GPU pipeline to go
+// wrong.
+func shadowImage(caster, anchor core.UnitRect, spec shadowSpec, ppuW, ppuH float64) *image.RGBA {
+	quad := shadowQuadBounds(caster, anchor, spec)
+	w := int(math.Round(float64(quad.Width) * ppuW))
+	h := int(math.Round(float64(quad.Height) * ppuH))
+	if w <= 0 || h <= 0 {
+		return nil
+	}
+
+	// Hard mask of the (shifted) caster and anchor, with rounded corners.
+	mask := make([]float64, w*h)
+	radius := float64(spec.radius) * ppuW
+	addRect := func(r core.UnitRect) {
+		if r.IsEmpty() {
+			return
+		}
+		minX, minY, maxX, maxY := rectPxIn(quad, r.Translated(spec.offsetX, spec.offsetY), ppuW, ppuH)
+		for y := 0; y < h; y++ {
+			py := float64(y) + 0.5
+			for x := 0; x < w; x++ {
+				px := float64(x) + 0.5
+				if px < float64(minX) || px > float64(maxX) || py < float64(minY) || py > float64(maxY) {
+					continue
+				}
+				// Corner rounding: reject pixels outside the quarter-circle
+				// at whichever corner this pixel is nearest.
+				if radius > 0 {
+					dx := 0.0
+					if cx := float64(minX) + radius; px < cx {
+						dx = cx - px
+					} else if cx := float64(maxX) - radius; px > cx {
+						dx = px - cx
+					}
+					dy := 0.0
+					if cy := float64(minY) + radius; py < cy {
+						dy = cy - py
+					} else if cy := float64(maxY) - radius; py > cy {
+						dy = py - cy
+					}
+					if dx > 0 && dy > 0 && dx*dx+dy*dy > radius*radius {
+						continue
+					}
+				}
+				mask[y*w+x] = 1
+			}
+		}
+	}
+	addRect(caster)
+	addRect(anchor)
+
+	// Separable box blur, three passes — a close Gaussian approximation.
+	blurPx := int(math.Round(float64(spec.blur) * ppuW / 2))
+	if blurPx > 0 {
+		buf := make([]float64, w*h)
+		for pass := 0; pass < 3; pass++ {
+			boxBlurH(mask, buf, w, h, blurPx)
+			boxBlurV(buf, mask, w, h, blurPx)
+		}
+	}
+
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for i, v := range mask {
+		a := v * float64(spec.alpha)
+		if a <= 0 {
+			continue
+		}
+		if a > 1 {
+			a = 1
+		}
+		// Black, premultiplied: RGB stay 0, only alpha carries the shape.
+		img.Pix[i*4+3] = uint8(a*255 + 0.5)
+	}
+	return img
+}
+
+// boxBlurH/boxBlurV are one separable box-blur pass each, with a running
+// sum over a (2*radius+1) window and edge clamping.
+func boxBlurH(src, dst []float64, w, h, radius int) {
+	for y := 0; y < h; y++ {
+		row := y * w
+		sum := 0.0
+		for i := -radius; i <= radius; i++ {
+			sum += src[row+clampIdx(i, w)]
+		}
+		inv := 1.0 / float64(2*radius+1)
+		for x := 0; x < w; x++ {
+			dst[row+x] = sum * inv
+			sum += src[row+clampIdx(x+radius+1, w)] - src[row+clampIdx(x-radius, w)]
+		}
+	}
+}
+
+func boxBlurV(src, dst []float64, w, h, radius int) {
+	for x := 0; x < w; x++ {
+		sum := 0.0
+		for i := -radius; i <= radius; i++ {
+			sum += src[clampIdx(i, h)*w+x]
+		}
+		inv := 1.0 / float64(2*radius+1)
+		for y := 0; y < h; y++ {
+			dst[y*w+x] = sum * inv
+			sum += src[clampIdx(y+radius+1, h)*w+x] - src[clampIdx(y-radius, h)*w+x]
+		}
+	}
+}
+
+func clampIdx(i, n int) int {
+	if i < 0 {
+		return 0
+	}
+	if i >= n {
+		return n - 1
+	}
+	return i
 }
 
 // gpuRowAlignment is WebGPU's required bytes-per-row alignment for
