@@ -72,6 +72,14 @@ func init() {
 				m.SetWellKnownID(s)
 				return nil
 			})).Tip("System role tag: app/file/edit/format/view/window/help"),
+			"after": protocol.NewProperty("string", wprop("after", func(_ *protocol.BindContext, m *Menu, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("after", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetAnchor(s)
+				return nil
+			})).Tip("Place this untagged menu after a well-known slot (e.g. after=file)"),
 		},
 		Append: func(parent, child any) error {
 			m := parent.(*Menu)
@@ -177,6 +185,14 @@ func init() {
 				m.Separator = b
 				return nil
 			})).Tip("Render as a separator line").Def("false"),
+			"wellknown": protocol.NewProperty("string", wprop("wellknown", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("wellknown", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetWellKnownID(s)
+				return nil
+			})).Tip("System item role: cut/copy/paste/selectall - this item BECOMES the standard one"),
 		},
 		Append: func(parent, child any) error {
 			it := parent.(*MenuItem)
