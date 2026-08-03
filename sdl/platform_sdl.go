@@ -359,6 +359,31 @@ const (
 // comes from painted content.
 var alphaPresentTest = os.Getenv("KITTYTK_ALPHA_TEST") != ""
 
+// roundedCornerMechanism selects how a rounded borderless window gets
+// its corners cut, via KITTYTK_WINDOW_SHAPE:
+//
+//	"shape"    SDL's shaped-window alpha mask. Binary (aliased) edges,
+//	           but it is SDL's own portable mechanism and works on
+//	           macOS with a Metal-rendered window.
+//	"perpixel" the Cocoa route: a non-opaque NSWindow compositing the
+//	           framebuffer's alpha channel. Antialiased corners, and
+//	           the historical default here - but it composites black
+//	           under the Metal presentation chain (a bare alpha-0
+//	           clear still shows opaque), so it is no longer the
+//	           default while that is unresolved.
+//
+// Off macOS there is no per-pixel window alpha at all and the shaped
+// window is the only mechanism, so this has no effect there.
+func roundedCornerMechanism() string {
+	switch os.Getenv("KITTYTK_WINDOW_SHAPE") {
+	case "perpixel":
+		return "perpixel"
+	case "shape":
+		return "shape"
+	}
+	return "shape"
+}
+
 // clampFontPt bounds a point size to the dynamic zoom range.
 func clampFontPt(size int) int {
 	if size < minFontPt {
@@ -497,7 +522,7 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 	w := &nativeWin{shapeRadiusPx: shapeRadiusPx}
 	var err error
 
-	if shapeRadiusPx > 0 && !platformPerPixelAlpha {
+	if shapeRadiusPx > 0 && (!platformPerPixelAlpha || roundedCornerMechanism() == "shape") {
 		w.window, err = sdl2.CreateShapedWindow(title, 0, 0, uint32(wPx), uint32(hPx), flags)
 		if err == nil {
 			w.window.SetPosition(x, y)
@@ -604,7 +629,10 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 		return nil, err
 	}
 
-	if w.shapeRadiusPx > 0 && platformPerPixelAlpha && makeWindowTransparent(w.window) {
+	if w.shapeRadiusPx > 0 && platformPerPixelAlpha &&
+		roundedCornerMechanism() == "perpixel" && makeWindowTransparent(w.window) {
+		// Per-pixel alpha replaces the shape mask entirely: the drawn
+		// frame's own alpha cuts the corners, antialiased.
 		w.transparent = true
 		w.shapeRadiusPx = 0
 	}
@@ -2232,7 +2260,15 @@ func (w *nativeWin) applyShape() {
 			}
 		}
 	}
-	_ = w.window.SetShape(mask, sdl2.ShapeModeDefault{})
+	// BinarizeAlpha with a mid cutoff, matching the known-good SDL
+	// shaped-window configuration (the mask is fully opaque inside and
+	// fully clear outside, so the exact cutoff only needs to sit
+	// between them).
+	// A non-zero result is one of SDL's shape errors (most likely
+	// NONSHAPEABLE_WINDOW: the window was not created shaped).
+	if rc := w.window.SetShape(mask, sdl2.ShapeModeBinarizeAlpha{Cutoff: 1 << 6}); rc != 0 {
+		fmt.Fprintf(os.Stderr, "WARNING: SetShape failed (rc=%d, window not shapeable?)\n", rc)
+	}
 }
 
 func min32(a, b int32) int32 {
