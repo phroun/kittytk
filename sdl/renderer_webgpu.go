@@ -1014,8 +1014,8 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
 		pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
 		
-		widthPx := int(float64(bounds.Width) * pixelsPerUnitW)
-		heightPx := int(float64(bounds.Height) * pixelsPerUnitH)
+		widthPx := int(math.Round(float64(bounds.Width) * pixelsPerUnitW))
+		heightPx := int(math.Round(float64(bounds.Height) * pixelsPerUnitH))
 		
 		if widthPx <= 0 || heightPx <= 0 {
 			continue
@@ -1565,10 +1565,10 @@ func (r *WebGPURenderer) drawOverlay(
 	pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
 	pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
 
-	// Pad the texture so outer strokes survive (2px per side).
-	strokePadding := int(overlayStrokeOffset) * 2
-	widthPx := int(float64(bounds.Width)*pixelsPerUnitW) + strokePadding
-	heightPx := int(float64(bounds.Height)*pixelsPerUnitH) + strokePadding
+	// Pad the texture so outer strokes drawn just outside the nominal
+	// bounds survive, with the padding converted at the surface density
+	// so texture pixels match the outset on-screen quad exactly.
+	widthPx, heightPx, _, _ := overlayTexturePx(bounds, pixelsPerUnitW, pixelsPerUnitH, overlayStrokeOffset)
 	if widthPx <= 0 || heightPx <= 0 {
 		return nil, fmt.Errorf("overlay pixel size %dx%d invalid", widthPx, heightPx)
 	}

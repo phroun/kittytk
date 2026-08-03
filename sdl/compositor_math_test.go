@@ -69,6 +69,40 @@ func TestOutsetBounds(t *testing.T) {
 	}
 }
 
+// An overlay's texture must describe the same physical size as the
+// outset quad it is drawn onto, at ANY pixel density — otherwise the
+// GPU stretches it (distorted glyphs) and the painted outer stroke
+// falls off the texture's right/bottom edge. Regression for the padding
+// being applied in raw pixels while the quad outset was in units.
+func TestOverlayTexturePxMatchesOutsetQuad(t *testing.T) {
+	bounds := core.UnitRect{X: 40, Y: 30, Width: 75, Height: 42}
+	const pad = core.Unit(2)
+
+	for _, ppu := range []float64{1.0, 2.0, 1.1666666} {
+		w, h, padPxW, padPxH := overlayTexturePx(bounds, ppu, ppu, pad)
+
+		outset := outsetBounds(bounds, pad)
+		wantW := int(float64(outset.Width)*ppu + 0.5)
+		wantH := int(float64(outset.Height)*ppu + 0.5)
+
+		// Within a pixel of the quad's physical size (independent
+		// roundings), never the old pixels-vs-units mismatch that grew
+		// with ppu.
+		if diff := w - wantW; diff < -1 || diff > 1 {
+			t.Errorf("ppu=%v: texture width %d vs quad width %d", ppu, w, wantW)
+		}
+		if diff := h - wantH; diff < -1 || diff > 1 {
+			t.Errorf("ppu=%v: texture height %d vs quad height %d", ppu, h, wantH)
+		}
+
+		// The padding scales with density: at 2x, a 2-unit pad is 4px.
+		wantPad := int(float64(pad)*ppu + 0.5)
+		if padPxW != wantPad || padPxH != wantPad {
+			t.Errorf("ppu=%v: padPx = (%d,%d), want %d", ppu, padPxW, padPxH, wantPad)
+		}
+	}
+}
+
 // bgraPixels swaps R<->B, keeps G/A, and pads rows to the GPU's 256-byte
 // upload alignment.
 func TestBGRAPixels(t *testing.T) {

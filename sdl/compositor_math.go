@@ -2,6 +2,7 @@ package sdl
 
 import (
 	"image"
+	"math"
 
 	"github.com/phroun/kittytk/core"
 )
@@ -37,6 +38,21 @@ func outsetBounds(bounds core.UnitRect, offset core.Unit) core.UnitRect {
 		Width:  bounds.Width + offset*2,
 		Height: bounds.Height + offset*2,
 	}
+}
+
+// overlayTexturePx sizes an overlay layer's texture: the bounds mapped
+// at the surface's pixels-per-unit, plus the stroke padding converted at
+// the SAME density on every side. Texture pixels and the outset
+// on-screen quad must describe the same physical size — padding the
+// texture by raw pixels while outsetting the quad by units stretched
+// the texture (distorted glyphs) and pushed the painted stroke off the
+// texture's right/bottom edge at any scale above 1.
+func overlayTexturePx(bounds core.UnitRect, ppuW, ppuH float64, pad core.Unit) (w, h, padPxW, padPxH int) {
+	padPxW = int(math.Round(float64(pad) * ppuW))
+	padPxH = int(math.Round(float64(pad) * ppuH))
+	w = int(math.Round(float64(bounds.Width)*ppuW)) + padPxW*2
+	h = int(math.Round(float64(bounds.Height)*ppuH)) + padPxH*2
+	return w, h, padPxW, padPxH
 }
 
 // gpuRowAlignment is WebGPU's required bytes-per-row alignment for
