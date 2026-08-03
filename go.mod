@@ -3,6 +3,7 @@ module github.com/phroun/kittytk
 go 1.25.0
 
 require (
+	github.com/phroun/mew v0.3.1-alpha
 	github.com/Zyko0/go-sdl3 v0.1.1
 	github.com/ebitengine/purego v0.10.0
 	github.com/go-text/render v0.2.1
