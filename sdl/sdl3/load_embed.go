@@ -1,6 +1,6 @@
 //go:build sdl && sdlembed
 
-package sdlcompat
+package sdl3
 
 import "github.com/Zyko0/go-sdl3/bin/binsdl"
 

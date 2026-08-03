@@ -1,22 +1,26 @@
 //go:build sdl
 
-// Package sdlcompat presents the small slice of SDL that KittyTK's
-// graphical host uses, implemented over SDL3.
+// Package sdl3 is KittyTK's SDL layer: the slice of SDL3 the graphical
+// host uses, with the awkward parts handled once.
 //
-// Why a shim rather than an in-place rewrite: the host's SDL surface is
-// ~110 symbols concentrated in a few hundred lines of an otherwise
-// SDL-agnostic 2000-line platform layer. Putting every SDL2/SDL3
-// difference HERE keeps those differences reviewable in one file,
-// makes the runtime switch atomic, and leaves the platform layer free
-// to shed the SDL2-shaped names incrementally rather than in one
-// high-risk sweep.
+// It exists because several SDL3 facts are worth confining to one
+// place rather than spreading through the platform layer:
 //
-// The names follow SDL2's spelling because that is what the platform
-// layer already calls; the behavior is SDL3's. The important thing
-// SDL3 brings is WindowTransparent: a window whose framebuffer alpha
-// actually composites, which SDL2 could not express at all and which
-// no amount of Cocoa poking could retrofit.
-package sdlcompat
+//   - The binding is purego, so libSDL3 is opened at RUN time (see
+//     Init) rather than linked, and has to be found in prefixes the
+//     dynamic loader does not search by default.
+//   - Some binding entry points are declared but panic; the ones the
+//     host needs are bound directly (gapfill.go).
+//   - SDL3 delivers a flat event union with distinct types per window
+//     event; PollEvent translates that into typed Go values the host
+//     can switch on.
+//   - Window creation lost its position arguments, native handles moved
+//     to properties, and the renderer is chosen by driver name.
+//
+// Names here are SDL3's where SDL3 has one. Where this package invents
+// something — the event kinds especially — the name is deliberately
+// unlike an SDL constant, so it cannot be mistaken for one.
+package sdl3
 
 import (
 	"fmt"
@@ -24,15 +28,15 @@ import (
 	"runtime"
 	"unsafe"
 
-	sdl3 "github.com/Zyko0/go-sdl3/sdl"
+	csdl "github.com/Zyko0/go-sdl3/sdl"
 	"github.com/ebitengine/purego"
 )
 
 // --- init / lifecycle ---
 
 const (
-	INIT_VIDEO  = sdl3.INIT_VIDEO
-	INIT_EVENTS = sdl3.INIT_EVENTS
+	INIT_VIDEO  = csdl.INIT_VIDEO
+	INIT_EVENTS = csdl.INIT_EVENTS
 )
 
 // Init loads libSDL3 and initializes the requested subsystems. The
@@ -40,11 +44,11 @@ const (
 // library has to be opened before any SDL call — otherwise the first
 // one dereferences an unregistered function pointer. Doing it here
 // keeps that requirement from leaking into the platform layer.
-func Init(flags sdl3.InitFlags) error {
+func Init(flags csdl.InitFlags) error {
 	if err := loadLibrary(); err != nil {
 		return err
 	}
-	return sdl3.Init(flags)
+	return csdl.Init(flags)
 }
 
 var libLoaded bool
@@ -79,7 +83,7 @@ func loadLibrary() error {
 		if path == "" {
 			continue
 		}
-		if err := sdl3.LoadLibrary(path); err == nil {
+		if err := csdl.LoadLibrary(path); err == nil {
 			libLoaded = true
 			return nil
 		} else if firstErr == nil {
@@ -99,7 +103,7 @@ func libraryCandidates() []string {
 	if custom := os.Getenv("KITTYTK_SDL3"); custom != "" {
 		c = append(c, custom)
 	}
-	c = append(c, sdl3.Path())
+	c = append(c, csdl.Path())
 	switch runtime.GOOS {
 	case "darwin":
 		c = append(c,
@@ -118,10 +122,10 @@ func libraryCandidates() []string {
 	}
 	return c
 }
-func Quit()                           { sdl3.Quit() }
-func Delay(ms uint32)                 { sdl3.Delay(ms) }
+func Quit()           { csdl.Quit() }
+func Delay(ms uint32) { csdl.Delay(ms) }
 
-func SetHint(name, value string) error { return sdl3.SetHint(name, value) }
+func SetHint(name, value string) error { return csdl.SetHint(name, value) }
 
 // --- windows ---
 
@@ -130,37 +134,37 @@ func SetHint(name, value string) error { return sdl3.SetHint(name, value) }
 // CreateWindow applies it after the window exists.
 const WINDOWPOS_CENTERED = 0x2FFF0000
 
-type WindowFlags = sdl3.WindowFlags
+type WindowFlags = csdl.WindowFlags
 
 const (
 	WINDOW_SHOWN      WindowFlags = 0 // SDL3 shows by default; HIDDEN is the opt-out
-	WINDOW_HIDDEN                 = sdl3.WINDOW_HIDDEN
-	WINDOW_RESIZABLE              = sdl3.WINDOW_RESIZABLE
-	WINDOW_BORDERLESS             = sdl3.WINDOW_BORDERLESS
-	WINDOW_MINIMIZED              = sdl3.WINDOW_MINIMIZED
-	WINDOW_METAL                  = sdl3.WINDOW_METAL
+	WINDOW_HIDDEN                 = csdl.WINDOW_HIDDEN
+	WINDOW_RESIZABLE              = csdl.WINDOW_RESIZABLE
+	WINDOW_BORDERLESS             = csdl.WINDOW_BORDERLESS
+	WINDOW_MINIMIZED              = csdl.WINDOW_MINIMIZED
+	WINDOW_METAL                  = csdl.WINDOW_METAL
 
 	// WINDOW_TRANSPARENT is the SDL3-only flag this whole migration was
 	// for: the window's framebuffer alpha composites with what is
 	// behind it. It must be set at CREATION - it cannot be applied to
 	// an existing window.
-	WINDOW_TRANSPARENT = sdl3.WINDOW_TRANSPARENT
+	WINDOW_TRANSPARENT = csdl.WINDOW_TRANSPARENT
 )
 
 // Window wraps an SDL3 window with the method names the platform layer
 // already uses.
 type Window struct {
-	w *sdl3.Window
+	w *csdl.Window
 }
 
 // Raw exposes the underlying SDL3 window for code that needs the real
 // thing (the macOS layer shim).
-func (w *Window) Raw() *sdl3.Window { return w.w }
+func (w *Window) Raw() *csdl.Window { return w.w }
 
 // CreateWindow creates a window at a position, SDL2-style. SDL3 dropped
 // the position arguments, so they are applied immediately after.
 func CreateWindow(title string, x, y int32, width, height int, flags WindowFlags) (*Window, error) {
-	sw, err := sdl3.CreateWindow(title, width, height, flags)
+	sw, err := csdl.CreateWindow(title, width, height, flags)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +188,7 @@ func (w *Window) Destroy()               { w.w.Destroy() }
 func (w *Window) SetTitle(title string)  { _ = w.w.SetTitle(title) }
 func (w *Window) SetPosition(x, y int32) { _ = w.w.SetPosition(int32(x), int32(y)) }
 
-func (w *Window) GetPosition() (int32, int32) {
+func (w *Window) Position() (int32, int32) {
 	x, y, err := w.w.Position()
 	if err != nil {
 		return 0, 0
@@ -192,7 +196,7 @@ func (w *Window) GetPosition() (int32, int32) {
 	return x, y
 }
 
-func (w *Window) GetSize() (int32, int32) {
+func (w *Window) Size() (int32, int32) {
 	width, height, err := w.w.Size()
 	if err != nil {
 		return 0, 0
@@ -202,35 +206,35 @@ func (w *Window) GetSize() (int32, int32) {
 
 func (w *Window) SetSize(width, height int32) { _ = w.w.SetSize(width, height) }
 
-func (w *Window) GetID() (uint32, error) {
+func (w *Window) ID() (uint32, error) {
 	id, err := w.w.ID()
 	return uint32(id), err
 }
 
-func (w *Window) GetFlags() WindowFlags       { return w.w.Flags() }
-func (w *Window) Minimize()                   { _ = w.w.Minimize() }
-func (w *Window) Restore()                    { _ = w.w.Restore() }
-func (w *Window) Raise()                      { _ = w.w.Raise() }
-func (w *Window) SetBordered(bordered bool)   { _ = w.w.SetBordered(bordered) }
-func (w *Window) SetWindowOpacity(o float32) error { return w.w.SetOpacity(o) }
+func (w *Window) Flags() WindowFlags         { return w.w.Flags() }
+func (w *Window) Minimize()                  { _ = w.w.Minimize() }
+func (w *Window) Restore()                   { _ = w.w.Restore() }
+func (w *Window) Raise()                     { _ = w.w.Raise() }
+func (w *Window) SetBordered(bordered bool)  { _ = w.w.SetBordered(bordered) }
+func (w *Window) SetOpacity(o float32) error { return w.w.SetOpacity(o) }
 
 // GetDisplayIndex reports the display this window is on. SDL3 returns a
 // DisplayID rather than an index; callers only use it to look the
 // display's bounds back up, so the ID serves the same purpose.
-func (w *Window) GetDisplayIndex() (int, error) {
-	id := sdl3.GetDisplayForWindow(w.w)
+func (w *Window) Display() (int, error) {
+	id := csdl.GetDisplayForWindow(w.w)
 	return int(id), nil
 }
 
 // --- displays ---
 
-type Rect = sdl3.Rect
+type Rect = csdl.Rect
 
 // GetDisplayUsableBounds returns the work area of a display (the screen
 // minus the menu bar and Dock), keyed by the value GetDisplayIndex
 // returned.
 func GetDisplayUsableBounds(display int) (Rect, error) {
-	r, err := sdl3.DisplayID(display).UsableBounds()
+	r, err := csdl.DisplayID(display).UsableBounds()
 	if err != nil {
 		return Rect{}, err
 	}
@@ -239,21 +243,20 @@ func GetDisplayUsableBounds(display int) (Rect, error) {
 
 // --- surfaces (shape masks) ---
 
-type Surface = sdl3.Surface
+type Surface = csdl.Surface
 
 const (
-	PIXELFORMAT_ARGB8888 = sdl3.PIXELFORMAT_ARGB8888
-	PIXELFORMAT_ABGR8888 = sdl3.PIXELFORMAT_ABGR8888
+	PIXELFORMAT_ARGB8888 = csdl.PIXELFORMAT_ARGB8888
+	PIXELFORMAT_ABGR8888 = csdl.PIXELFORMAT_ABGR8888
 )
 
-// CreateRGBSurfaceWithFormat keeps SDL2's name; SDL3 dropped the unused
-// flags and depth arguments.
-func CreateRGBSurfaceWithFormat(flags uint32, width, height, depth int32, format sdl3.PixelFormat) (*Surface, error) {
-	return sdl3.CreateSurface(int(width), int(height), format)
+// CreateSurface allocates an off-screen surface — the host uses one as
+// a window shape mask.
+func CreateSurface(width, height int32, format csdl.PixelFormat) (*Surface, error) {
+	return csdl.CreateSurface(int(width), int(height), format)
 }
 
-// FreeSurface releases a surface. SDL3 renamed SDL_FreeSurface, so the
-// host calls this rather than a method that no longer exists.
+// FreeSurface releases a surface.
 func FreeSurface(s *Surface) { s.Destroy() }
 
 // SetShape applies an alpha mask to a transparent window. SDL3 requires
@@ -264,47 +267,49 @@ func (w *Window) SetShape(shape *Surface) error {
 
 // --- mouse / cursors ---
 
-type Cursor = sdl3.Cursor
-type SystemCursor = sdl3.SystemCursor
+type Cursor = csdl.Cursor
+type SystemCursor = csdl.SystemCursor
 
+// Cursor shapes, in SDL3's spelling (SDL2 called these ARROW, IBEAM
+// and SIZE*).
 const (
-	SYSTEM_CURSOR_ARROW    = sdl3.SYSTEM_CURSOR_DEFAULT
-	SYSTEM_CURSOR_IBEAM    = sdl3.SYSTEM_CURSOR_TEXT
-	SYSTEM_CURSOR_SIZEWE   = sdl3.SYSTEM_CURSOR_EW_RESIZE
-	SYSTEM_CURSOR_SIZENS   = sdl3.SYSTEM_CURSOR_NS_RESIZE
-	SYSTEM_CURSOR_SIZENWSE = sdl3.SYSTEM_CURSOR_NWSE_RESIZE
-	SYSTEM_CURSOR_SIZENESW = sdl3.SYSTEM_CURSOR_NESW_RESIZE
+	SYSTEM_CURSOR_DEFAULT     = csdl.SYSTEM_CURSOR_DEFAULT
+	SYSTEM_CURSOR_TEXT        = csdl.SYSTEM_CURSOR_TEXT
+	SYSTEM_CURSOR_EW_RESIZE   = csdl.SYSTEM_CURSOR_EW_RESIZE
+	SYSTEM_CURSOR_NS_RESIZE   = csdl.SYSTEM_CURSOR_NS_RESIZE
+	SYSTEM_CURSOR_NWSE_RESIZE = csdl.SYSTEM_CURSOR_NWSE_RESIZE
+	SYSTEM_CURSOR_NESW_RESIZE = csdl.SYSTEM_CURSOR_NESW_RESIZE
 )
 
-func CreateSystemCursor(id SystemCursor) (*Cursor, error) { return sdl3.CreateSystemCursor(id) }
-func SetCursor(c *Cursor) error                           { return sdl3.SetCursor(c) }
-func CaptureMouse(enabled bool) error                     { return sdl3.CaptureMouse(enabled) }
+func CreateSystemCursor(id SystemCursor) (*Cursor, error) { return csdl.CreateSystemCursor(id) }
+func SetCursor(c *Cursor) error                           { return csdl.SetCursor(c) }
+func CaptureMouse(enabled bool) error                     { return csdl.CaptureMouse(enabled) }
 
 const (
 	BUTTON_LEFT   = 1
 	BUTTON_MIDDLE = 2
 	BUTTON_RIGHT  = 3
 
-	// ButtonLMask is the held-buttons bit for the left button.
-	ButtonLMask = 1 << 0
+	// ButtonLeftMask is the held-buttons bit for the left button.
+	ButtonLeftMask = 1 << 0
 )
 
 // GetGlobalMouseState reports the pointer in desktop coordinates. SDL3
 // returns floats; the platform layer works in whole pixels.
 func GetGlobalMouseState() (int32, int32, uint32) {
-	state, x, y := sdl3.GetGlobalMouseState()
+	state, x, y := csdl.GetGlobalMouseState()
 	return int32(x), int32(y), uint32(state)
 }
 
 // GetMouseState reports the pointer relative to the focused window.
 func GetMouseState() (int32, int32, uint32) {
-	state, x, y := sdl3.GetMouseState()
+	state, x, y := csdl.GetMouseState()
 	return int32(x), int32(y), uint32(state)
 }
 
 // --- keyboard ---
 
-type Keycode = sdl3.Keycode
+type Keycode = csdl.Keycode
 
 // Keysym keeps SDL2's shape: SDL3 puts the key and modifiers directly
 // on the event, so this is assembled when the event is translated.
@@ -314,56 +319,56 @@ type Keysym struct {
 }
 
 const (
-	KMOD_LSHIFT = uint16(sdl3.KMOD_LSHIFT)
-	KMOD_SHIFT  = uint16(sdl3.KMOD_SHIFT)
-	KMOD_LCTRL  = uint16(sdl3.KMOD_LCTRL)
-	KMOD_CTRL   = uint16(sdl3.KMOD_CTRL)
-	KMOD_LALT   = uint16(sdl3.KMOD_LALT)
-	KMOD_ALT    = uint16(sdl3.KMOD_ALT)
-	KMOD_LGUI   = uint16(sdl3.KMOD_LGUI)
-	KMOD_RGUI   = uint16(sdl3.KMOD_RGUI)
-	KMOD_GUI    = uint16(sdl3.KMOD_GUI)
+	KMOD_LSHIFT = uint16(csdl.KMOD_LSHIFT)
+	KMOD_SHIFT  = uint16(csdl.KMOD_SHIFT)
+	KMOD_LCTRL  = uint16(csdl.KMOD_LCTRL)
+	KMOD_CTRL   = uint16(csdl.KMOD_CTRL)
+	KMOD_LALT   = uint16(csdl.KMOD_LALT)
+	KMOD_ALT    = uint16(csdl.KMOD_ALT)
+	KMOD_LGUI   = uint16(csdl.KMOD_LGUI)
+	KMOD_RGUI   = uint16(csdl.KMOD_RGUI)
+	KMOD_GUI    = uint16(csdl.KMOD_GUI)
 )
 
-func GetModState() uint16 { return uint16(sdl3.GetModState()) }
+func GetModState() uint16 { return uint16(csdl.GetModState()) }
 
 const (
-	K_RETURN    = sdl3.K_RETURN
-	K_ESCAPE    = sdl3.K_ESCAPE
-	K_BACKSPACE = sdl3.K_BACKSPACE
-	K_TAB       = sdl3.K_TAB
-	K_DELETE    = sdl3.K_DELETE
-	K_INSERT    = sdl3.K_INSERT
-	K_HOME      = sdl3.K_HOME
-	K_END       = sdl3.K_END
-	K_PAGEUP    = sdl3.K_PAGEUP
-	K_PAGEDOWN  = sdl3.K_PAGEDOWN
-	K_UP        = sdl3.K_UP
-	K_DOWN      = sdl3.K_DOWN
-	K_LEFT      = sdl3.K_LEFT
-	K_RIGHT     = sdl3.K_RIGHT
-	K_EQUALS    = sdl3.K_EQUALS
-	K_PLUS      = sdl3.K_PLUS
-	K_MINUS     = sdl3.K_MINUS
-	K_0         = sdl3.K_0
-	K_a         = sdl3.K_A
-	K_r         = sdl3.K_R
-	K_KP_0      = sdl3.K_KP_0
-	K_KP_PLUS   = sdl3.K_KP_PLUS
-	K_KP_MINUS  = sdl3.K_KP_MINUS
-	K_KP_ENTER  = sdl3.K_KP_ENTER
-	K_F1        = sdl3.K_F1
-	K_F2        = sdl3.K_F2
-	K_F3        = sdl3.K_F3
-	K_F4        = sdl3.K_F4
-	K_F5        = sdl3.K_F5
-	K_F6        = sdl3.K_F6
-	K_F7        = sdl3.K_F7
-	K_F8        = sdl3.K_F8
-	K_F9        = sdl3.K_F9
-	K_F10       = sdl3.K_F10
-	K_F11       = sdl3.K_F11
-	K_F12       = sdl3.K_F12
+	K_RETURN    = csdl.K_RETURN
+	K_ESCAPE    = csdl.K_ESCAPE
+	K_BACKSPACE = csdl.K_BACKSPACE
+	K_TAB       = csdl.K_TAB
+	K_DELETE    = csdl.K_DELETE
+	K_INSERT    = csdl.K_INSERT
+	K_HOME      = csdl.K_HOME
+	K_END       = csdl.K_END
+	K_PAGEUP    = csdl.K_PAGEUP
+	K_PAGEDOWN  = csdl.K_PAGEDOWN
+	K_UP        = csdl.K_UP
+	K_DOWN      = csdl.K_DOWN
+	K_LEFT      = csdl.K_LEFT
+	K_RIGHT     = csdl.K_RIGHT
+	K_EQUALS    = csdl.K_EQUALS
+	K_PLUS      = csdl.K_PLUS
+	K_MINUS     = csdl.K_MINUS
+	K_0         = csdl.K_0
+	K_a         = csdl.K_A
+	K_r         = csdl.K_R
+	K_KP_0      = csdl.K_KP_0
+	K_KP_PLUS   = csdl.K_KP_PLUS
+	K_KP_MINUS  = csdl.K_KP_MINUS
+	K_KP_ENTER  = csdl.K_KP_ENTER
+	K_F1        = csdl.K_F1
+	K_F2        = csdl.K_F2
+	K_F3        = csdl.K_F3
+	K_F4        = csdl.K_F4
+	K_F5        = csdl.K_F5
+	K_F6        = csdl.K_F6
+	K_F7        = csdl.K_F7
+	K_F8        = csdl.K_F8
+	K_F9        = csdl.K_F9
+	K_F10       = csdl.K_F10
+	K_F11       = csdl.K_F11
+	K_F12       = csdl.K_F12
 )
 
 // StartTextInput enables text events. SDL3 scopes it to a window.
@@ -371,8 +376,8 @@ func StartTextInput(w *Window) error { return w.w.StartTextInput() }
 
 // --- clipboard ---
 
-func SetClipboardText(text string) error { return sdl3.SetClipboardText(text) }
-func GetClipboardText() (string, error)  { return sdl3.GetClipboardText() }
+func SetClipboardText(text string) error { return csdl.SetClipboardText(text) }
+func GetClipboardText() (string, error)  { return csdl.GetClipboardText() }
 
 // --- events ---
 //
@@ -381,16 +386,25 @@ func GetClipboardText() (string, error)  { return sdl3.GetClipboardText() }
 // PollEvent translates: a resized/focus/leave event becomes a
 // WindowEvent carrying the matching SDL2 subtype.
 
+// Event kinds. These are this package's own values, NOT SDL constants:
+// SDL3 encodes them in its event type, which PollEvent has already
+// consumed by the time a caller sees a typed event. They are spelled
+// unlike SDL's names on purpose — an invented constant wearing SDL's
+// spelling is how clicks were once silently dropped, by being compared
+// against SDL's raw event number.
 const (
-	KEYDOWN         = 1
-	KEYUP           = 2
-	MOUSEBUTTONDOWN = 3
-	MOUSEBUTTONUP   = 4
+	KeyDown = iota + 1
+	KeyUp
+	MouseDown
+	MouseUp
+)
 
-	WINDOWEVENT_SIZE_CHANGED = 1
-	WINDOWEVENT_FOCUS_GAINED = 2
-	WINDOWEVENT_FOCUS_LOST   = 3
-	WINDOWEVENT_LEAVE        = 4
+// Window event kinds, likewise this package's own.
+const (
+	WindowResized = iota + 1
+	WindowFocusGained
+	WindowFocusLost
+	WindowMouseLeave
 )
 
 // Event is any translated SDL event.
@@ -432,10 +446,10 @@ type MouseMotionEvent struct {
 }
 
 type MouseWheelEvent struct {
-	WindowID         uint32
-	X, Y             int32
-	PreciseX         float32
-	PreciseY         float32
+	WindowID uint32
+	X, Y     int32
+	PreciseX float32
+	PreciseY float32
 }
 
 func (*QuitEvent) isEvent()        {}
@@ -449,8 +463,8 @@ func (*MouseWheelEvent) isEvent()  {}
 // PollEvent returns the next translated event, or nil when the queue is
 // empty.
 func PollEvent() Event {
-	var ev sdl3.Event
-	if !sdl3.PollEvent(&ev) {
+	var ev csdl.Event
+	if !csdl.PollEvent(&ev) {
 		return nil
 	}
 	return translate(&ev)
@@ -461,34 +475,34 @@ func PollEvent() Event {
 // treats as "nothing for me" rather than "queue empty" — PollEvent's
 // contract is preserved because the platform loop drains until nil and
 // SDL3 delivers many more event types than SDL2 did.
-func translate(ev *sdl3.Event) Event {
+func translate(ev *csdl.Event) Event {
 	switch ev.Type {
-	case sdl3.EVENT_QUIT:
+	case csdl.EVENT_QUIT:
 		return &QuitEvent{}
 
-	case sdl3.EVENT_WINDOW_RESIZED, sdl3.EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+	case csdl.EVENT_WINDOW_RESIZED, csdl.EVENT_WINDOW_PIXEL_SIZE_CHANGED:
 		w := ev.WindowEvent()
 		return &WindowEvent{
 			WindowID: uint32(w.WindowID),
-			Event:    WINDOWEVENT_SIZE_CHANGED,
+			Event:    WindowResized,
 			Data1:    w.Data1,
 			Data2:    w.Data2,
 		}
-	case sdl3.EVENT_WINDOW_FOCUS_GAINED:
+	case csdl.EVENT_WINDOW_FOCUS_GAINED:
 		w := ev.WindowEvent()
-		return &WindowEvent{WindowID: uint32(w.WindowID), Event: WINDOWEVENT_FOCUS_GAINED}
-	case sdl3.EVENT_WINDOW_FOCUS_LOST:
+		return &WindowEvent{WindowID: uint32(w.WindowID), Event: WindowFocusGained}
+	case csdl.EVENT_WINDOW_FOCUS_LOST:
 		w := ev.WindowEvent()
-		return &WindowEvent{WindowID: uint32(w.WindowID), Event: WINDOWEVENT_FOCUS_LOST}
-	case sdl3.EVENT_WINDOW_MOUSE_LEAVE:
+		return &WindowEvent{WindowID: uint32(w.WindowID), Event: WindowFocusLost}
+	case csdl.EVENT_WINDOW_MOUSE_LEAVE:
 		w := ev.WindowEvent()
-		return &WindowEvent{WindowID: uint32(w.WindowID), Event: WINDOWEVENT_LEAVE}
+		return &WindowEvent{WindowID: uint32(w.WindowID), Event: WindowMouseLeave}
 
-	case sdl3.EVENT_KEY_DOWN, sdl3.EVENT_KEY_UP:
+	case csdl.EVENT_KEY_DOWN, csdl.EVENT_KEY_UP:
 		k := ev.KeyboardEvent()
-		typ := uint32(KEYDOWN)
-		if ev.Type == sdl3.EVENT_KEY_UP {
-			typ = KEYUP
+		typ := uint32(KeyDown)
+		if ev.Type == csdl.EVENT_KEY_UP {
+			typ = KeyUp
 		}
 		return &KeyboardEvent{
 			Type:     typ,
@@ -496,15 +510,15 @@ func translate(ev *sdl3.Event) Event {
 			Keysym:   Keysym{Sym: k.Key, Mod: uint16(k.Mod)},
 		}
 
-	case sdl3.EVENT_TEXT_INPUT:
+	case csdl.EVENT_TEXT_INPUT:
 		t := ev.TextInputEvent()
 		return &TextInputEvent{WindowID: uint32(t.WindowID), text: t.Text}
 
-	case sdl3.EVENT_MOUSE_BUTTON_DOWN, sdl3.EVENT_MOUSE_BUTTON_UP:
+	case csdl.EVENT_MOUSE_BUTTON_DOWN, csdl.EVENT_MOUSE_BUTTON_UP:
 		m := ev.MouseButtonEvent()
-		typ, state := uint32(MOUSEBUTTONUP), uint8(0)
-		if ev.Type == sdl3.EVENT_MOUSE_BUTTON_DOWN {
-			typ, state = MOUSEBUTTONDOWN, 1
+		typ, state := uint32(MouseUp), uint8(0)
+		if ev.Type == csdl.EVENT_MOUSE_BUTTON_DOWN {
+			typ, state = MouseDown, 1
 		}
 		return &MouseButtonEvent{
 			Type:     typ,
@@ -515,7 +529,7 @@ func translate(ev *sdl3.Event) Event {
 			Y:        int32(m.Y),
 		}
 
-	case sdl3.EVENT_MOUSE_MOTION:
+	case csdl.EVENT_MOUSE_MOTION:
 		m := ev.MouseMotionEvent()
 		return &MouseMotionEvent{
 			WindowID: uint32(m.WindowID),
@@ -524,7 +538,7 @@ func translate(ev *sdl3.Event) Event {
 			State:    uint32(m.State),
 		}
 
-	case sdl3.EVENT_MOUSE_WHEEL:
+	case csdl.EVENT_MOUSE_WHEEL:
 		m := ev.MouseWheelEvent()
 		// SDL3 split what SDL2 called X/Y: its X/Y are FRACTIONAL
 		// amounts (SDL2's PreciseX/Y), and the whole-tick counts SDL2
@@ -548,13 +562,13 @@ func AddEventWatchFunc(fn func(Event, interface{}) bool, userdata interface{}) {
 	// callback has to be trampolined. purego.NewCallback allocates a
 	// permanent trampoline, which suits a watch installed once for the
 	// process's lifetime.
-	cb := purego.NewCallback(func(_ uintptr, ev *sdl3.Event) uintptr {
+	cb := purego.NewCallback(func(_ uintptr, ev *csdl.Event) uintptr {
 		if translated := translate(ev); translated != nil {
 			fn(translated, userdata)
 		}
 		return 1
 	})
-	_ = sdl3.AddEventWatch(sdl3.EventFilter(cb))
+	_ = csdl.AddEventWatch(csdl.EventFilter(cb))
 }
 
 // --- renderer / textures ---
@@ -565,41 +579,28 @@ func AddEventWatchFunc(fn func(Event, interface{}) bool, userdata interface{}) {
 // driver choice rather than a flag bit.
 
 type Renderer struct {
-	r *sdl3.Renderer
+	r *csdl.Renderer
 }
 
 type Texture struct {
-	t *sdl3.Texture
+	t *csdl.Texture
 	w int32
 	h int32
-	f sdl3.PixelFormat
+	f csdl.PixelFormat
 }
 
-// Renderer creation flags kept for call-site compatibility. SDL3 has no
-// flag word: ACCELERATED is the default driver, and vsync is applied
-// separately, so these only carry intent.
-const (
-	RENDERER_ACCELERATED  = 1 << 0
-	RENDERER_PRESENTVSYNC = 1 << 1
-	RENDERER_SOFTWARE     = 1 << 2
-)
+const TEXTUREACCESS_STREAMING = csdl.TEXTUREACCESS_STREAMING
 
-const TEXTUREACCESS_STREAMING = sdl3.TEXTUREACCESS_STREAMING
-
-// CreateRenderer picks a driver for the window. index is ignored (SDL2
-// used -1 for "first supporting the flags"); PRESENTVSYNC in flags
-// switches vsync on afterwards, and SOFTWARE asks for SDL3's "software"
-// driver by name.
-func CreateRenderer(w *Window, index int, flags uint32) (*Renderer, error) {
-	name := ""
-	if flags&RENDERER_SOFTWARE != 0 {
-		name = "software"
-	}
-	r, err := w.w.CreateRenderer(name)
+// CreateRenderer makes a renderer for the window. SDL3 has no flag
+// word: the driver is chosen by name (empty picks the best available)
+// and vsync is a separate call, so these are plain options rather than
+// SDL2's flag bits.
+func CreateRenderer(w *Window, driver string, vsync bool) (*Renderer, error) {
+	r, err := w.w.CreateRenderer(driver)
 	if err != nil {
 		return nil, err
 	}
-	if flags&RENDERER_PRESENTVSYNC != 0 {
+	if vsync {
 		_ = r.SetVSync(1)
 	}
 	return &Renderer{r: r}, nil
@@ -607,7 +608,7 @@ func CreateRenderer(w *Window, index int, flags uint32) (*Renderer, error) {
 
 func (r *Renderer) Destroy() { r.r.Destroy() }
 
-func (r *Renderer) CreateTexture(format sdl3.PixelFormat, access sdl3.TextureAccess, w, h int32) (*Texture, error) {
+func (r *Renderer) CreateTexture(format csdl.PixelFormat, access csdl.TextureAccess, w, h int32) (*Texture, error) {
 	t, err := r.r.CreateTexture(format, access, int(w), int(h))
 	if err != nil {
 		return nil, err
@@ -636,12 +637,9 @@ func (t *Texture) Update(rect *Rect, pixels []byte, pitch int) error {
 	return t.t.Update(nil, pixels, int32(pitch))
 }
 
-// Query reports the texture's creation parameters, SDL2-style. SDL3
-// exposes size as floats and drops the combined query, so the values
-// are remembered at creation.
-func (t *Texture) Query() (uint32, int, int32, int32, error) {
-	return uint32(t.f), int(sdl3.TEXTUREACCESS_STREAMING), t.w, t.h, nil
-}
+// Format reports the pixel format the texture was created with. SDL3
+// dropped SDL2's combined query, so it is remembered at creation.
+func (t *Texture) Format() uint32 { return uint32(t.f) }
 
 // --- native handles ---
 //

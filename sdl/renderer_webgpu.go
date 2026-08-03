@@ -12,8 +12,8 @@ import (
 	"time"
 	"unsafe"
 
-	wgpu "github.com/gogpu/wgpu"
 	gputypes "github.com/gogpu/gputypes"
+	wgpu "github.com/gogpu/wgpu"
 	_ "github.com/gogpu/wgpu/hal/allbackends"
 
 	"github.com/phroun/kittytk/backend/raster"
@@ -28,25 +28,25 @@ type WindowSurface struct {
 	bindGroup   *wgpu.BindGroup
 	width       uint32
 	height      uint32
-	
+
 	// Per-window uniform buffer (for positioning)
 	uniformBuffer    *wgpu.Buffer
 	uniformBindGroup *wgpu.BindGroup
-	
+
 	// Transform state for compositing
-	translateX  float32
-	translateY  float32
-	rotation    float32 // radians
-	scaleX      float32
-	scaleY      float32
-	opacity     float32
-	
-	dirty       bool // needs re-render
+	translateX float32
+	translateY float32
+	rotation   float32 // radians
+	scaleX     float32
+	scaleY     float32
+	opacity    float32
+
+	dirty bool // needs re-render
 
 	// UI Window compositor support (for child windows within an OS window)
-	uiWindow    interface{}      // UI Window trinket (interface{} to avoid import cycle)
-	backend     *raster.Backend  // Per-window raster backend for UI windows
-	zOrder      int              // Z-order for compositing (higher = on top)
+	uiWindow interface{}     // UI Window trinket (interface{} to avoid import cycle)
+	backend  *raster.Backend // Per-window raster backend for UI windows
+	zOrder   int             // Z-order for compositing (higher = on top)
 }
 
 // WebGPURenderer implements GPU-accelerated rendering with WebGPU.
@@ -69,17 +69,16 @@ type WebGPURenderer struct {
 	blitUniformBindGroup *wgpu.BindGroup
 	blitPosLayout        *wgpu.BindGroupLayout // Per-window position uniforms
 
-
 	// Rotation/scale effect state
 	rotationStartTime           time.Time
 	rotationActivationTime      time.Time
 	rotationDeactivationTime    time.Time
 	rotationAngleAtDeactivation float64
 	rotationEnabled             bool
-	
+
 	// Per-window surfaces for compositing
-	windowSurfaces        map[uint32]*WindowSurface // windowID -> surface
-	firstCompositorFrame  bool                       // Track first compositor call
+	windowSurfaces       map[uint32]*WindowSurface // windowID -> surface
+	firstCompositorFrame bool                      // Track first compositor call
 
 	// Cached drop-shadow textures. Rasterizing a blurred shadow costs
 	// real CPU, and a shadow only changes when its geometry does, so
@@ -340,7 +339,7 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	if img == nil {
 		return fmt.Errorf("backend image is nil")
 	}
-	
+
 	// Upload backend to temporary texture and blit to screen
 	texture, textureView, bindGroup, err := r.uploadBackendToTexture(backend)
 	if err != nil {
@@ -374,7 +373,7 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 		texture.Release()
 		return err
 	}
-	
+
 	surfaceView, err := surfaceTexture.CreateView(nil)
 	if err != nil {
 		bindGroup.Release()
@@ -382,7 +381,7 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 		texture.Release()
 		return err
 	}
-	
+
 	// Create command encoder
 	encoder, err := r.device.CreateCommandEncoder(nil)
 	if err != nil {
@@ -392,7 +391,7 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 		texture.Release()
 		return err
 	}
-	
+
 	// Begin render pass. A transparent (per-pixel alpha) window must
 	// clear to alpha 0 or its rounded corners composite as opaque black.
 	clearAlpha := 1.0
@@ -402,9 +401,9 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		ColorAttachments: []wgpu.RenderPassColorAttachment{
 			{
-				View:    surfaceView,
-				LoadOp:  gputypes.LoadOpClear,
-				StoreOp: gputypes.StoreOpStore,
+				View:       surfaceView,
+				LoadOp:     gputypes.LoadOpClear,
+				StoreOp:    gputypes.StoreOpStore,
 				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: clearAlpha},
 			},
 		},
@@ -501,7 +500,7 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	// Create uniform buffer for combined uniforms (effects + position)
 	// 8 floats: angle, enabled, scale, padding, pos_x, pos_y, size_w, size_h
 	r.blitUniformBuffer, err = r.device.CreateBuffer(&wgpu.BufferDescriptor{
-		Size:  32,  // 8 floats = 32 bytes
+		Size:  32, // 8 floats = 32 bytes
 		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
 	})
 	if err != nil {
@@ -513,9 +512,9 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 		Entries: []gputypes.BindGroupLayoutEntry{
 			{
 				Binding:    0,
-				Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment,  // Both stages
+				Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment, // Both stages
 				Buffer: &gputypes.BufferBindingLayout{
-					Type:             0, // Uniform
+					Type:             0,  // Uniform
 					MinBindingSize:   32, // 8 floats
 					HasDynamicOffset: false,
 				},
@@ -557,7 +556,7 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 				Binding:    0,
 				Visibility: wgpu.ShaderStageVertex,
 				Buffer: &gputypes.BufferBindingLayout{
-					Type:             0, // Uniform
+					Type:             0,  // Uniform
 					MinBindingSize:   16, // vec4: x, y, width, height in NDC
 					HasDynamicOffset: false,
 				},
@@ -999,17 +998,15 @@ func (r *WebGPURenderer) RotationEnabled() bool {
 	return r.rotationEnabled
 }
 
-
 // RenderFrame implements the Renderer interface for per-window compositing.
 // For now, this is a simple implementation that just renders and presents.
 func (r *WebGPURenderer) RenderFrame(w *nativeWin, windows []*nativeWin, renderWindow func(*nativeWin)) error {
 	// Call the render callback for this window
 	renderWindow(w)
-	
+
 	// Present the rendered content
 	return r.Present(w, w.backend)
 }
-
 
 // RenderFrameWithChildWindows implements per-child-window GPU compositing.
 // Each UI child window is rendered to its own GPU texture, then all textures
@@ -1080,12 +1077,12 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		if !ok {
 			continue
 		}
-		
+
 		bounds := win.Bounds()
 		if bounds.Width <= 0 || bounds.Height <= 0 {
 			continue
 		}
-		
+
 		// Calculate pixel dimensions
 		backendImg := osWindow.backend.Image()
 		if backendImg == nil {
@@ -1093,23 +1090,23 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		}
 		backendSize := osWindow.backend.Size()
 		metrics := osWindow.backend.Metrics()
-		
+
 		backendBounds := backendImg.Bounds()
 		pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
 		pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
-		
+
 		widthPx := int(math.Round(float64(bounds.Width) * pixelsPerUnitW))
 		heightPx := int(math.Round(float64(bounds.Height) * pixelsPerUnitH))
-		
+
 		if widthPx <= 0 || heightPx <= 0 {
 			continue
 		}
-		
+
 		// Get stable window ID
 		winValue := reflect.ValueOf(childIface)
 		windowID := uint32(winValue.Pointer())
 		surf, ok := r.windowSurfaces[windowID]
-		
+
 		if !ok || surf.backend == nil {
 			// Create new surface
 			backend, err := raster.NewScaled(widthPx, heightPx, scale)
@@ -1121,7 +1118,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 
 			// Create GPU texture
 			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
-				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
+				Usage:     wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
 				Dimension: wgpu.TextureDimension2D,
 				Size: wgpu.Extent3D{
 					Width:              uint32(widthPx),
@@ -1214,7 +1211,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			surf.backend.SetFontSize(osWindow.backend.FontSize())
 
 			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
-				Usage: wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
+				Usage:     wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
 				Dimension: wgpu.TextureDimension2D,
 				Size: wgpu.Extent3D{
 					Width:              uint32(widthPx),
@@ -1234,7 +1231,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				texture.Release()
 				continue
 			}
-			
+
 			bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 				Layout: r.blitLayout,
 				Entries: []wgpu.BindGroupEntry{
@@ -1247,7 +1244,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				texture.Release()
 				continue
 			}
-			
+
 			// Recreate uniform buffer with new position
 			surfaceSize := osWindow.backend.Size()
 			uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(bounds, surfaceSize, frameAspect)
@@ -1257,7 +1254,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				texture.Release()
 				continue
 			}
-			
+
 			surf.texture = texture
 			surf.textureView = textureView
 			surf.bindGroup = bindGroup
@@ -1284,7 +1281,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 				oldTexture.Release()
 			}
 		}
-		
+
 		// Refresh this window's position uniforms EVERY frame. Bounds and the
 		// OS surface size both feed the NDC transform, so a window drag AND
 		// a desktop resize are covered without recreating any GPU resources;
@@ -1305,14 +1302,14 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 
 		surf.dirty = false
 	}
-	
+
 	// Step 2: Upload Desktop base layer
 	desktopTexture, desktopView, desktopBindGroup, err := r.uploadBackendToTexture(osWindow.backend)
 	if err != nil {
 		return fmt.Errorf("failed to upload Desktop base: %w", err)
 	}
 	// DON'T defer - must stay alive until after Submit
-	
+
 	// Step 3: Composite all textures
 	if osWindow.transparent {
 		reassertWindowAlpha(osWindow.window)
@@ -1324,7 +1321,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	if err != nil {
 		return err
 	}
-	
+
 	surfaceView, err := surfaceTexture.CreateView(nil)
 	if err != nil {
 		desktopBindGroup.Release()
@@ -1333,12 +1330,12 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		return err
 	}
 	// DON'T defer - release after Submit
-	
+
 	encoder, err := r.device.CreateCommandEncoder(nil)
 	if err != nil {
 		return err
 	}
-	
+
 	// A transparent (per-pixel alpha) OS window clears to alpha 0 so its
 	// rounded corners composite against what is behind it.
 	clearAlpha := 1.0
@@ -1348,9 +1345,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		ColorAttachments: []wgpu.RenderPassColorAttachment{
 			{
-				View:    surfaceView,
-				LoadOp:  gputypes.LoadOpClear,
-				StoreOp: gputypes.StoreOpStore,
+				View:       surfaceView,
+				LoadOp:     gputypes.LoadOpClear,
+				StoreOp:    gputypes.StoreOpStore,
 				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: clearAlpha},
 			},
 		},
@@ -1368,7 +1365,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	renderPass.SetBindGroup(0, desktopBindGroup, nil)
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
 	renderPass.Draw(6, 1, 0, 0) // Draw quad
-	
+
 	// Overlay/halo GPU resources must outlive Submit below; the deferred
 	// cleanups run when this function returns, after Present.
 	var overlayCleanups []func()
@@ -1511,7 +1508,6 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 
 	return nil
 }
-
 
 // uploadBackendToTexture creates a GPU texture from a raster backend.
 // uploadPixels converts a backend's RGBA image to BGRA and writes it

@@ -1,6 +1,6 @@
 //go:build sdl
 
-package sdlcompat
+package sdl3
 
 import (
 	"sync"

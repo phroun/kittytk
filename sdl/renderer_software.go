@@ -4,14 +4,14 @@ package sdl
 
 import (
 	"fmt"
-	
-	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
+
+	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/platform"
 )
 
-// SoftwareRenderer implements CPU-based rasterization with SDL2's
+// SoftwareRenderer implements CPU-based rasterization with SDL's
 // renderer and texture presentation. This is the traditional path:
 // trinkets paint to a shared raster.Backend, then SDL blits it to screen.
 type SoftwareRenderer struct {
@@ -34,16 +34,12 @@ func (r *SoftwareRenderer) Shutdown() {
 
 // CreateWindowRenderer creates SDL renderer and texture for a window
 func (r *SoftwareRenderer) CreateWindowRenderer(w *nativeWin, pxW, pxH int) error {
-	flags := uint32(sdl2.RENDERER_ACCELERATED)
-	if r.vsync {
-		flags |= sdl2.RENDERER_PRESENTVSYNC
-	}
-
-	renderer, err := sdl2.CreateRenderer(w.window, -1, flags)
+	// Empty driver name lets SDL pick the best available; falling back
+	// to the software driver covers video drivers with no acceleration
+	// (headless dummy, bare VMs).
+	renderer, err := sdl3.CreateRenderer(w.window, "", r.vsync)
 	if err != nil {
-		// No accelerated renderer on this video driver (headless dummy,
-		// bare VMs): fall back to any renderer SDL can offer.
-		renderer, err = sdl2.CreateRenderer(w.window, -1, 0)
+		renderer, err = sdl3.CreateRenderer(w.window, "software", false)
 		if err != nil {
 			return err
 		}
@@ -55,8 +51,8 @@ func (r *SoftwareRenderer) CreateWindowRenderer(w *nativeWin, pxW, pxH int) erro
 	// SDL's packed ABGR8888. ARGB8888 here reads as B,G,R,A and swaps
 	// red and blue across the whole UI.
 	texture, err := renderer.CreateTexture(
-		sdl2.PIXELFORMAT_ABGR8888,
-		sdl2.TEXTUREACCESS_STREAMING,
+		sdl3.PIXELFORMAT_ABGR8888,
+		sdl3.TEXTUREACCESS_STREAMING,
 		int32(pxW),
 		int32(pxH),
 	)
@@ -97,8 +93,8 @@ func (r *SoftwareRenderer) ResizeWindowRenderer(w *nativeWin, pxW, pxH int) erro
 	// Same byte-order contract as CreateWindowRenderer: image.RGBA is
 	// SDL ABGR8888 on little-endian.
 	texture, err := w.renderer.CreateTexture(
-		sdl2.PIXELFORMAT_ABGR8888,
-		sdl2.TEXTUREACCESS_STREAMING,
+		sdl3.PIXELFORMAT_ABGR8888,
+		sdl3.TEXTUREACCESS_STREAMING,
 		int32(pxW),
 		int32(pxH),
 	)
@@ -124,7 +120,8 @@ func (r *SoftwareRenderer) Present(w *nativeWin, backend *raster.Backend) error 
 
 	// Render to screen
 	if w.transparent {
-		// Alpha-0 clear for transparency (macOS per-pixel alpha)
+		// Alpha-0 clear so the window's cleared corners composite as
+		// nothing rather than as black.
 		_ = w.renderer.SetDrawColor(0, 0, 0, 0)
 	}
 	w.renderer.Clear()
@@ -140,22 +137,10 @@ func (r *SoftwareRenderer) RenderFrame(w *nativeWin, windows []*nativeWin, rende
 	return nil
 }
 
-// ApplyWindowShape applies rounded corners using SDL shape
+// ApplyWindowShape is a no-op: rounded corners come from the
+// framebuffer's own cleared pixels (see punchRoundedCorners), not from
+// a window-system shape.
 func (r *SoftwareRenderer) ApplyWindowShape(w *nativeWin, radiusPx int, transparent bool) error {
-	// Transparent windows don't need shape masks (macOS per-pixel alpha)
-	if transparent {
-		return nil
-
-	}
-
-	if radiusPx <= 0 {
-		return nil
-	}
-
-	// TODO: Implement window shaping with rounded corners
-	// This will be needed for torn-off windows with graphical frames
-	// For now, just return success (no shaping applied)
-
 	return nil
 }
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
+	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/platform"
@@ -61,7 +61,7 @@ func TestSoftwareTextureMatchesBackendByteOrder(t *testing.T) {
 
 			pf.PostAfter(50*time.Millisecond, func() {
 				if p.main != nil && p.main.texture != nil {
-					format, _, _, _, _ = p.main.texture.Query()
+					format = p.main.texture.Format()
 				}
 				pf.Quit(7)
 			})
@@ -80,9 +80,9 @@ func TestSoftwareTextureMatchesBackendByteOrder(t *testing.T) {
 	if format == 0 {
 		t.Fatal("no software texture was created")
 	}
-	if format != uint32(sdl2.PIXELFORMAT_ABGR8888) {
+	if format != uint32(sdl3.PIXELFORMAT_ABGR8888) {
 		t.Errorf("texture format = %#x, want ABGR8888 (%#x) to match image.RGBA byte order",
-			format, uint32(sdl2.PIXELFORMAT_ABGR8888))
+			format, uint32(sdl3.PIXELFORMAT_ABGR8888))
 	}
 }
 

@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
-	wgpu "github.com/gogpu/wgpu" // Native, zero-cgo WebGPU dependency
 	gputypes "github.com/gogpu/gputypes"
-    _ "github.com/gogpu/wgpu/hal/allbackends"
+	wgpu "github.com/gogpu/wgpu" // Native, zero-cgo WebGPU dependency
+	_ "github.com/gogpu/wgpu/hal/allbackends"
+	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
@@ -178,34 +178,34 @@ type Platform struct {
 
 	// WebGPU-specific fields (only used when renderer is WebGPURenderer)
 	// These will eventually be moved entirely into WebGPURenderer
-	gpuInstance *wgpu.Instance
-	gpuAdapter  *wgpu.Adapter
-	gpuDevice   *wgpu.Device
-	gpuQueue    *wgpu.Queue
-	blitPipeline  *wgpu.RenderPipeline
-	blitSampler   *wgpu.Sampler
-	blitLayout    *wgpu.BindGroupLayout
-	blitUniformBuffer *wgpu.Buffer
-	blitUniformLayout *wgpu.BindGroupLayout
-	blitUniformBindGroup *wgpu.BindGroup
-	cubePipeline *wgpu.RenderPipeline
-	cubeVertexBuffer *wgpu.Buffer
-	cubeIndexBuffer *wgpu.Buffer
-	cubeUniformBuffer *wgpu.Buffer
-	cubeUniformLayout *wgpu.BindGroupLayout
-	cubeUniformBindGroup *wgpu.BindGroup
-	cubeLayout *wgpu.BindGroupLayout
-	rotationStartTime time.Time
-	rotationEnabled atomic.Bool
-	rotationActivationTime time.Time
-	rotationDeactivationTime time.Time
+	gpuInstance                 *wgpu.Instance
+	gpuAdapter                  *wgpu.Adapter
+	gpuDevice                   *wgpu.Device
+	gpuQueue                    *wgpu.Queue
+	blitPipeline                *wgpu.RenderPipeline
+	blitSampler                 *wgpu.Sampler
+	blitLayout                  *wgpu.BindGroupLayout
+	blitUniformBuffer           *wgpu.Buffer
+	blitUniformLayout           *wgpu.BindGroupLayout
+	blitUniformBindGroup        *wgpu.BindGroup
+	cubePipeline                *wgpu.RenderPipeline
+	cubeVertexBuffer            *wgpu.Buffer
+	cubeIndexBuffer             *wgpu.Buffer
+	cubeUniformBuffer           *wgpu.Buffer
+	cubeUniformLayout           *wgpu.BindGroupLayout
+	cubeUniformBindGroup        *wgpu.BindGroup
+	cubeLayout                  *wgpu.BindGroupLayout
+	rotationStartTime           time.Time
+	rotationEnabled             atomic.Bool
+	rotationActivationTime      time.Time
+	rotationDeactivationTime    time.Time
 	rotationAngleAtDeactivation float64
 
 	main *nativeWin
 	wins map[uint32]*nativeWin // by SDL window ID, main included
 
 	// System mouse cursors, created on demand and cached by shape.
-	cursors   map[core.CursorShape]*sdl2.Cursor
+	cursors   map[core.CursorShape]*sdl3.Cursor
 	cursorSet bool
 
 	// FPS overlay in the OS title bar
@@ -225,22 +225,22 @@ func (p *Platform) SetVSync(on bool) { p.vsync = on }
 
 // nativeWin bundles one OS window with its GoGPU hardware presentation chain.
 type nativeWin struct {
-	window   *sdl2.Window
-	
+	window *sdl3.Window
+
 	// WebGPU rendering (when using webgpu renderer)
-	gpuSurface    *wgpu.Surface
-	config   *wgpu.SurfaceConfiguration
-	uiTexture *wgpu.Texture       // VRAM container matching your framebuffer dimensions
-	depthTexture *wgpu.Texture    // Depth buffer for 3D rendering
-	depthView *wgpu.TextureView   // View for depth texture
-	
+	gpuSurface   *wgpu.Surface
+	config       *wgpu.SurfaceConfiguration
+	uiTexture    *wgpu.Texture     // VRAM container matching your framebuffer dimensions
+	depthTexture *wgpu.Texture     // Depth buffer for 3D rendering
+	depthView    *wgpu.TextureView // View for depth texture
+
 	// Software rendering (when using software renderer)
-	renderer *sdl2.Renderer
-	texture  *sdl2.Texture
-	
+	renderer *sdl3.Renderer
+	texture  *sdl3.Texture
+
 	// Common fields
 	backend  *raster.Backend
-	uiBuffer *wgpu.Buffer        // Staging buffer (WebGPU only, unused now)
+	uiBuffer *wgpu.Buffer // Staging buffer (WebGPU only, unused now)
 	surface  *sdlSurface
 	id       uint32
 
@@ -285,7 +285,7 @@ func New(title string, widthPx, heightPx int, rendererType string) (*Platform, e
 		vsync:             true,
 		renderer:          renderer,
 		wins:              map[uint32]*nativeWin{},
-		cursors:           map[core.CursorShape]*sdl2.Cursor{},
+		cursors:           map[core.CursorShape]*sdl3.Cursor{},
 		rotationStartTime: time.Now(),
 	}, nil
 }
@@ -425,16 +425,16 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	defer runtime.UnlockOSThread()
 
 	if p.appName != "" {
-		_ = sdl2.SetHint("SDL_APP_NAME", p.appName)
+		_ = sdl3.SetHint("SDL_APP_NAME", p.appName)
 	}
 
-	if err := sdl2.Init(sdl2.INIT_VIDEO | sdl2.INIT_EVENTS); err != nil {
+	if err := sdl3.Init(sdl3.INIT_VIDEO | sdl3.INIT_EVENTS); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: SDL init failed: %v\n", err)
 		return 1
 	}
-	defer sdl2.Quit()
+	defer sdl3.Quit()
 
-	_ = sdl2.SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1")
+	_ = sdl3.SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1")
 
 	// Initialize the renderer (WebGPU setup or software renderer setup)
 	if err := p.renderer.Initialize(); err != nil {
@@ -446,11 +446,10 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	// For WebGPU renderer, expose GPU objects to Platform temporarily
 	// TODO: Remove this once full extraction is complete
 	p.exposeWebGPUObjects()
-	
 
 	// 2. Create Master System UI Window Viewport Surface
-	win, err := p.createWindow(p.title, sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED,
-		p.wPx, p.hPx, sdl2.WINDOW_SHOWN|sdl2.WINDOW_RESIZABLE, 0)
+	win, err := p.createWindow(p.title, sdl3.WINDOWPOS_CENTERED, sdl3.WINDOWPOS_CENTERED,
+		p.wPx, p.hPx, sdl3.WINDOW_SHOWN|sdl3.WINDOW_RESIZABLE, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to create window: %v\n", err)
 		return 1
@@ -467,11 +466,11 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		installAboutMenuHandler()
 	}
 
-	_ = sdl2.StartTextInput(win.window)
+	_ = sdl3.StartTextInput(win.window)
 
 	// Event watch hooks handle continuous redraw requests during active modal resize loops
-	sdl2.AddEventWatchFunc(func(ev sdl2.Event, _ interface{}) bool {
-		if e, ok := ev.(*sdl2.WindowEvent); ok && e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
+	sdl3.AddEventWatchFunc(func(ev sdl3.Event, _ interface{}) bool {
+		if e, ok := ev.(*sdl3.WindowEvent); ok && e.Event == sdl3.WindowResized {
 			p.drainPosts()
 			if !p.liveResize(e.WindowID, int(e.Data1), int(e.Data2)) {
 				// Same-size event: liveResize didn't present, so keep the
@@ -533,17 +532,17 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		// Always add a small delay to prevent event loop starvation
 		// Even when continuously rendering (rotation effects), we need to process events
 		if !delivered {
-			sdl2.Delay(5)
+			sdl3.Delay(5)
 		} else {
 			// Yield briefly even when events are flowing to prevent UI freeze
-			sdl2.Delay(1)
+			sdl3.Delay(1)
 		}
 	}
 	return int(p.exitCode.Load())
 }
 
 // createWindow builds one OS window with its presentation chain.
-func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sdl2.WindowFlags, shapeRadiusPx int) (*nativeWin, error) {
+func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sdl3.WindowFlags, shapeRadiusPx int) (*nativeWin, error) {
 	w := &nativeWin{shapeRadiusPx: shapeRadiusPx}
 	var err error
 
@@ -552,7 +551,7 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
 		// SDL3: a window whose framebuffer alpha composites. This is
 		// what SDL2's shaped windows were standing in for, and unlike
 		// them it must be requested at creation.
-		w.window, err = sdl2.CreateTransparentWindow(title, x, y, wPx, hPx, flags)
+		w.window, err = sdl3.CreateTransparentWindow(title, x, y, wPx, hPx, flags)
 		if err != nil {
 			w.shapeRadiusPx = 0
 		}
@@ -561,14 +560,14 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
 	if w.window == nil {
 		winFlags := flags
 		if p.gpuDevice != nil && runtime.GOOS == "darwin" {
-			winFlags |= sdl2.WINDOW_METAL
+			winFlags |= sdl3.WINDOW_METAL
 		}
 		// A rounded window needs its alpha to composite even when it is
 		// not created through the transparent path above.
 		if shapeRadiusPx > 0 {
-			winFlags |= sdl2.WINDOW_TRANSPARENT
+			winFlags |= sdl3.WINDOW_TRANSPARENT
 		}
-		w.window, err = sdl2.CreateWindow(title, x, y, wPx, hPx, winFlags)
+		w.window, err = sdl3.CreateWindow(title, x, y, wPx, hPx, winFlags)
 	}
 
 	if err != nil {
@@ -697,7 +696,7 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
 			}
 		}
 	}
-	w.id, _ = w.window.GetID()
+	w.id, _ = w.window.ID()
 	p.wins[w.id] = w
 
 	// Create renderer resources for this window (compositor texture)
@@ -757,7 +756,7 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 		p.backend = b
 		p.wPx, p.hPx = wPx, hPx
 	}
-	
+
 	// The fresh backend starts zero-filled, so the surface's damage
 	// tracking must be reset: without this the handler repaints only what
 	// it thinks changed, and the untouched area presents as black.
@@ -831,10 +830,10 @@ func createMVPMatrix(aspectRatio float32, rotationAngle float32, scale float32, 
 	cosY := float32(math.Cos(float64(rotationAngle)))
 	sinX := float32(math.Sin(float64(rotationAngle * 0.7)))
 	cosX := float32(math.Cos(float64(rotationAngle * 0.7)))
-	
+
 	// Use passed-in scale (will be eased from 0 to 1.5)
 	translateZ := float32(0.5) // Move it forward so it's in front of clip plane
-	
+
 	return [16]float32{
 		// Column 0 (X axis after transform)
 		scale * cosY / aspectRatio, scale * sinX * sinY / aspectRatio, scale * cosX * sinY / aspectRatio, 0,
@@ -964,7 +963,7 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 	if frameDuration < minFrameTime {
 		time.Sleep(minFrameTime - frameDuration)
 	}
-	
+
 	if frameDuration > 30*time.Millisecond {
 		fmt.Printf("SLOW FRAME: %v (%.1f FPS)\n", frameDuration, 1000.0/float64(frameDuration.Milliseconds()))
 	}
@@ -1035,16 +1034,16 @@ func (p *Platform) liveResize(id uint32, wPx, hPx int) bool {
 // the configured default; the keypad's +/-/0 count too. ok is false for any
 // other key: Ctrl or Alt in the chord makes it an ordinary key combination,
 // but Shift rides along freely — "+" IS Shift+"=" on common layouts.
-func zoomTarget(sym sdl2.Keysym, cur, def int) (int, bool) {
-	if sym.Mod&sdl2.KMOD_GUI == 0 || sym.Mod&(sdl2.KMOD_CTRL|sdl2.KMOD_ALT) != 0 {
+func zoomTarget(sym sdl3.Keysym, cur, def int) (int, bool) {
+	if sym.Mod&sdl3.KMOD_GUI == 0 || sym.Mod&(sdl3.KMOD_CTRL|sdl3.KMOD_ALT) != 0 {
 		return 0, false
 	}
 	switch sym.Sym {
-	case sdl2.K_EQUALS, sdl2.K_PLUS, sdl2.K_KP_PLUS:
+	case sdl3.K_EQUALS, sdl3.K_PLUS, sdl3.K_KP_PLUS:
 		return clampFontPt(cur + 1), true
-	case sdl2.K_MINUS, sdl2.K_KP_MINUS:
+	case sdl3.K_MINUS, sdl3.K_KP_MINUS:
 		return clampFontPt(cur - 1), true
-	case sdl2.K_0, sdl2.K_KP_0:
+	case sdl3.K_0, sdl3.K_KP_0:
 		return clampFontPt(def), true
 	}
 	return 0, false
@@ -1052,7 +1051,7 @@ func zoomTarget(sym sdl2.Keysym, cur, def int) (int, bool) {
 
 // fontZoomKey consumes a KEYDOWN when it is one of the zoom chords, applying
 // the resulting size live; the key never reaches the surface handler.
-func (p *Platform) fontZoomKey(sym sdl2.Keysym) bool {
+func (p *Platform) fontZoomKey(sym sdl3.Keysym) bool {
 	cur, def := p.fontSize, p.defaultFontSize
 	if cur < 1 {
 		cur = 12 // the raster base when no size was ever configured
@@ -1135,38 +1134,38 @@ func (p *Platform) surfaceFor(id uint32) *sdlSurface {
 func (p *Platform) pumpEvents() bool {
 	delivered := false
 	for {
-		ev := sdl2.PollEvent()
+		ev := sdl3.PollEvent()
 		if ev == nil {
 			return delivered
 		}
 		delivered = true
 		switch e := ev.(type) {
-		case *sdl2.QuitEvent:
+		case *sdl3.QuitEvent:
 			if s := p.mainSurface(); s != nil && s.handler != nil {
 				s.handler.Event(core.QuitEvent{})
 			}
-		case *sdl2.WindowEvent:
+		case *sdl3.WindowEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
 			switch e.Event {
-			case sdl2.WINDOWEVENT_SIZE_CHANGED:
+			case sdl3.WindowResized:
 				// Handled automatically via our event watch hook in Part 2.
 				// This acts as a reliable, idempotent backstop fallback.
 				p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
-			case sdl2.WINDOWEVENT_FOCUS_GAINED:
+			case sdl3.WindowFocusGained:
 				s.handler.Event(core.FocusEvent{Focused: true})
 				s.Invalidate(core.UnitRect{})
-			case sdl2.WINDOWEVENT_FOCUS_LOST:
+			case sdl3.WindowFocusLost:
 				s.handler.Event(core.FocusEvent{Focused: false})
 				s.Invalidate(core.UnitRect{})
-			case sdl2.WINDOWEVENT_LEAVE:
+			case sdl3.WindowMouseLeave:
 				// Pointer left the active boundary box: clear hover affordances.
 				s.handler.Event(core.MouseLeaveEvent{})
 				s.Invalidate(core.UnitRect{})
 			}
-		case *sdl2.TextInputEvent:
+		case *sdl3.TextInputEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
@@ -1191,16 +1190,16 @@ func (p *Platform) pumpEvents() bool {
 					Text: string(ch),
 				})
 			}
-		case *sdl2.KeyboardEvent:
+		case *sdl3.KeyboardEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
-			if e.Type == sdl2.KEYDOWN {
+			if e.Type == sdl3.KeyDown {
 				// Check for rotation trigger (R key) - toggles on/off.
 				// Only supported by renderers with rotation capability
 				// (WebGPU); works in plain-present AND compositor modes.
-				if e.Keysym.Sym == sdl2.K_r && p.renderer.SupportsFeature(FeatureRotation) {
+				if e.Keysym.Sym == sdl3.K_r && p.renderer.SupportsFeature(FeatureRotation) {
 					enabled := !p.rotationEnabled.Load()
 					p.rotationEnabled.Store(enabled)
 
@@ -1230,7 +1229,7 @@ func (p *Platform) pumpEvents() bool {
 					// The animation needs frames even while input is idle.
 					s.Invalidate(core.UnitRect{})
 				}
-				
+
 				if p.fontZoomKey(e.Keysym) {
 					continue // Consumed by host zoom controller, skip dispatching
 				}
@@ -1242,7 +1241,7 @@ func (p *Platform) pumpEvents() bool {
 					}
 					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
 				}
-			} else if e.Type == sdl2.KEYUP {
+			} else if e.Type == sdl3.KeyUp {
 				// Report release actions back to tracking vectors using the modifier
 				// states parsed immediately AFTER the key release event completes.
 				s.handler.Event(core.KeyReleaseEvent{
@@ -1250,7 +1249,7 @@ func (p *Platform) pumpEvents() bool {
 					Modifiers: currentKeyModifiers(),
 				})
 			}
-		case *sdl2.MouseButtonEvent:
+		case *sdl3.MouseButtonEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
@@ -1258,32 +1257,32 @@ func (p *Platform) pumpEvents() bool {
 			btn := mapButton(e.Button)
 			x, y := p.toUnits(e.X, e.Y, e.WindowID)
 			mods := currentKeyModifiers()
-			if e.Type == sdl2.MOUSEBUTTONDOWN {
+			if e.Type == sdl3.MouseDown {
 				// Enable pointer capturing so dragging actions extend beyond window borders
 				// to allow continuous, lag-free native widget tear-out gestures.
-				_ = sdl2.CaptureMouse(true)
+				_ = sdl3.CaptureMouse(true)
 				s.handler.Event(core.MousePressEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 			} else {
-				_ = sdl2.CaptureMouse(false)
+				_ = sdl3.CaptureMouse(false)
 				s.handler.Event(core.MouseReleaseEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 			}
-		case *sdl2.MouseMotionEvent:
+		case *sdl3.MouseMotionEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
 			var held core.MouseButton
-			if e.State&sdl2.ButtonLMask != 0 {
+			if e.State&sdl3.ButtonLeftMask != 0 {
 				held = core.LeftButton
 			}
 			x, y := p.toUnits(e.X, e.Y, e.WindowID)
 			s.handler.Event(core.MouseMoveEvent{X: x, Y: y, Buttons: held, Modifiers: currentKeyModifiers()})
-		case *sdl2.MouseWheelEvent:
+		case *sdl3.MouseWheelEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
-			mx, my, _ := sdl2.GetMouseState()
+			mx, my, _ := sdl3.GetMouseState()
 			x, y := p.toUnits(mx, my, e.WindowID)
 			s.handler.Event(core.MouseWheelEvent{
 				X: x, Y: y,
@@ -1360,7 +1359,7 @@ func (p *Platform) toUnits(x, y int32, windowID uint32) (core.Unit, core.Unit) {
 	// Check if rotation effects are active (either easing in or easing out)
 	isActive := p.rotationEnabled.Load()
 	isEasingOut := false
-	
+
 	if !isActive {
 		// Check if we're still in ease-out phase
 		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
@@ -1369,7 +1368,7 @@ func (p *Platform) toUnits(x, y int32, windowID uint32) (core.Unit, core.Unit) {
 			isActive = true // Treat as active for transformation purposes
 		}
 	}
-	
+
 	// Only apply rotation/scaling if enabled or easing out
 	if !isActive {
 		// Normal path - no transformation
@@ -1378,7 +1377,7 @@ func (p *Platform) toUnits(x, y int32, windowID uint32) (core.Unit, core.Unit) {
 		uy := pxToUnitAxis(int(y), denomH, p.cellPx(denomH))
 		return core.Unit(ux), core.Unit(uy)
 	}
-	
+
 	// Get window for rotation pivot (needed for display rotation compensation)
 	win, ok := p.wins[windowID]
 	if !ok || win.window == nil {
@@ -1387,37 +1386,37 @@ func (p *Platform) toUnits(x, y int32, windowID uint32) (core.Unit, core.Unit) {
 		uy := pxToUnitAxis(int(y), denomH, p.cellPx(denomH))
 		return core.Unit(ux), core.Unit(uy)
 	}
-	
-	w, h := win.window.GetSize()
+
+	w, h := win.window.Size()
 	centerX := float64(w) / 2.0
 	centerY := float64(h) / 2.0
-	
+
 	// Translate to center
 	fx := float64(x) - centerX
 	fy := float64(y) - centerY
-	
+
 	easeOutCubic := func(t float64) float64 {
 		t = math.Min(t, 1.0)
 		return 1.0 - math.Pow(1.0-t, 3.0)
 	}
-	
+
 	easeInOutCubic := func(t float64) float64 {
 		if t < 0.5 {
 			return 4.0 * t * t * t
 		}
 		return 1.0 - math.Pow(-2.0*t+2.0, 3.0)/2.0
 	}
-	
+
 	var currentScale float64
 	var angle float64
-	
+
 	if isEasingOut {
 		// Easing out - continue forward with speedup
 		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
 		scaleProgress := timeSinceDeactivation / 0.5
 		scaleEased := easeOutCubic(scaleProgress)
 		currentScale = 2.0 - scaleEased*1.0 // 2.0 -> 1.0
-		
+
 		// Match shader: continue forward with accelerated catch-up, capped at target
 		currentAngle := p.rotationAngleAtDeactivation
 		twoPi := 2.0 * math.Pi
@@ -1426,18 +1425,18 @@ func (p *Platform) toUnits(x, y int32, windowID uint32) (core.Unit, core.Unit) {
 			normalizedAngle += twoPi
 		}
 		angleRemaining := twoPi - normalizedAngle
-		
+
 		normalRotation := timeSinceDeactivation * 0.1
-		catchUpProgress := math.Min(timeSinceDeactivation / 0.5, 1.0)
+		catchUpProgress := math.Min(timeSinceDeactivation/0.5, 1.0)
 		catchUpEased := easeInOutCubic(catchUpProgress)
 		catchUpRotation := angleRemaining * catchUpEased
-		
+
 		targetAngle := currentAngle + angleRemaining
 		currentRotatedAngle := currentAngle + normalRotation + catchUpRotation
 		if currentRotatedAngle > targetAngle {
 			currentRotatedAngle = targetAngle
 		}
-		
+
 		angle = -currentRotatedAngle // Negative to match shader
 	} else {
 		// Easing in / active
@@ -1445,28 +1444,28 @@ func (p *Platform) toUnits(x, y int32, windowID uint32) (core.Unit, core.Unit) {
 		scaleProgress := timeSinceActivation / 0.5
 		scaleEased := easeOutCubic(scaleProgress)
 		currentScale = 1.0 + scaleEased*1.0 // 1.0 -> 2.0
-		
+
 		rotationProgress := timeSinceActivation / 1.0
 		rotationEased := easeOutCubic(rotationProgress)
 		elapsed := time.Since(p.rotationStartTime).Seconds()
 		angle = -(elapsed * 0.1 * rotationEased) // Negative to match shader
 	}
-	
+
 	// Scale by current scale to match the content scale
 	fx *= currentScale
 	fy *= currentScale
-	
+
 	// Rotate
 	cosA := math.Cos(angle)
 	sinA := math.Sin(angle)
-	
+
 	rotatedX := fx*cosA - fy*sinA
 	rotatedY := fx*sinA + fy*cosA
-	
+
 	// Translate back
 	finalX := rotatedX + centerX
 	finalY := rotatedY + centerY
-	
+
 	denomW, denomH := p.rootDenomination()
 	ux := pxToUnitAxis(int(finalX), denomW, p.cellPx(denomW))
 	uy := pxToUnitAxis(int(finalY), denomH, p.cellPx(denomH))
@@ -1478,17 +1477,17 @@ func (p *Platform) toUnits(x, y int32, windowID uint32) (core.Unit, core.Unit) {
 // scrolls horizontally).
 func currentKeyModifiers() core.KeyModifiers {
 	var mods core.KeyModifiers
-	state := sdl2.GetModState()
-	if state&sdl2.KMOD_SHIFT != 0 {
+	state := sdl3.GetModState()
+	if state&sdl3.KMOD_SHIFT != 0 {
 		mods |= core.ShiftModifier
 	}
-	if state&sdl2.KMOD_CTRL != 0 {
+	if state&sdl3.KMOD_CTRL != 0 {
 		mods |= core.ControlModifier
 	}
-	if state&sdl2.KMOD_ALT != 0 {
+	if state&sdl3.KMOD_ALT != 0 {
 		mods |= core.AltModifier
 	}
-	if state&sdl2.KMOD_GUI != 0 {
+	if state&sdl3.KMOD_GUI != 0 {
 		mods |= core.MetaModifier
 	}
 	return mods
@@ -1496,11 +1495,11 @@ func currentKeyModifiers() core.KeyModifiers {
 
 func mapButton(b uint8) core.MouseButton {
 	switch b {
-	case sdl2.BUTTON_LEFT:
+	case sdl3.BUTTON_LEFT:
 		return core.LeftButton
-	case sdl2.BUTTON_MIDDLE:
+	case sdl3.BUTTON_MIDDLE:
 		return core.MiddleButton
-	case sdl2.BUTTON_RIGHT:
+	case sdl3.BUTTON_RIGHT:
 		return core.RightButton
 	}
 	return core.NoButton
@@ -1508,44 +1507,43 @@ func mapButton(b uint8) core.MouseButton {
 
 // specialKeys maps SDL keycodes to D3 key names (spellings match
 // core/keybindings.go).
-var specialKeys = map[sdl2.Keycode]string{
-	sdl2.K_RETURN:    "Enter",
-	sdl2.K_KP_ENTER:  "Enter",
-	sdl2.K_TAB:       "Tab",
-	sdl2.K_ESCAPE:    "Escape",
-	sdl2.K_BACKSPACE: "Backspace",
-	sdl2.K_DELETE:    "Delete",
-	sdl2.K_INSERT:    "Insert",
-	sdl2.K_HOME:      "Home",
-	sdl2.K_END:       "End",
-	sdl2.K_PAGEUP:    "PageUp",
-	sdl2.K_PAGEDOWN:  "PageDown",
-	sdl2.K_UP:        "Up",
-	sdl2.K_DOWN:      "Down",
-	sdl2.K_LEFT:      "Left",
-	sdl2.K_RIGHT:     "Right",
-	sdl2.K_F1:        "F1",
-	sdl2.K_F2:        "F2",
-	sdl2.K_F3:        "F3",
-	sdl2.K_F4:        "F4",
-	sdl2.K_F5:        "F5",
-	sdl2.K_F6:        "F6",
-	sdl2.K_F7:        "F7",
-	sdl2.K_F8:        "F8",
-	sdl2.K_F9:        "F9",
-	sdl2.K_F10:       "F10",
-	sdl2.K_F11:       "F11",
-	sdl2.K_F12:       "F12",
+var specialKeys = map[sdl3.Keycode]string{
+	sdl3.K_RETURN:    "Enter",
+	sdl3.K_KP_ENTER:  "Enter",
+	sdl3.K_TAB:       "Tab",
+	sdl3.K_ESCAPE:    "Escape",
+	sdl3.K_BACKSPACE: "Backspace",
+	sdl3.K_DELETE:    "Delete",
+	sdl3.K_INSERT:    "Insert",
+	sdl3.K_HOME:      "Home",
+	sdl3.K_END:       "End",
+	sdl3.K_PAGEUP:    "PageUp",
+	sdl3.K_PAGEDOWN:  "PageDown",
+	sdl3.K_UP:        "Up",
+	sdl3.K_DOWN:      "Down",
+	sdl3.K_LEFT:      "Left",
+	sdl3.K_RIGHT:     "Right",
+	sdl3.K_F1:        "F1",
+	sdl3.K_F2:        "F2",
+	sdl3.K_F3:        "F3",
+	sdl3.K_F4:        "F4",
+	sdl3.K_F5:        "F5",
+	sdl3.K_F6:        "F6",
+	sdl3.K_F7:        "F7",
+	sdl3.K_F8:        "F8",
+	sdl3.K_F9:        "F9",
+	sdl3.K_F10:       "F10",
+	sdl3.K_F11:       "F11",
+	sdl3.K_F12:       "F12",
 }
-
 
 // translateKey produces the D3 key string for a KEYDOWN, or "" when
 // the TextInput path owns it (plain printable characters).
-func translateKey(sym sdl2.Keysym) string {
-	ctrl := sym.Mod&sdl2.KMOD_CTRL != 0
-	alt := sym.Mod&sdl2.KMOD_ALT != 0
-	shift := sym.Mod&sdl2.KMOD_SHIFT != 0
-	gui := sym.Mod&sdl2.KMOD_GUI != 0
+func translateKey(sym sdl3.Keysym) string {
+	ctrl := sym.Mod&sdl3.KMOD_CTRL != 0
+	alt := sym.Mod&sdl3.KMOD_ALT != 0
+	shift := sym.Mod&sdl3.KMOD_SHIFT != 0
+	gui := sym.Mod&sdl3.KMOD_GUI != 0
 
 	if name, ok := specialKeys[sym.Sym]; ok {
 		prefix := ""
@@ -1711,7 +1709,7 @@ func (p *Platform) SupportsMultipleSurfaces() bool { return true }
 
 // GlobalPointerPx implements platform.GlobalPointerPlatform.
 func (p *Platform) GlobalPointerPx() (int, int) {
-	x, y, _ := sdl2.GetGlobalMouseState()
+	x, y, _ := sdl3.GetGlobalMouseState()
 	return int(x), int(y)
 }
 
@@ -1736,13 +1734,13 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 	}
 	x, y := int32(opts.XPx), int32(opts.YPx)
 	if opts.XPx == 0 && opts.YPx == 0 {
-		x, y = sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED
+		x, y = sdl3.WINDOWPOS_CENTERED, sdl3.WINDOWPOS_CENTERED
 	}
-	flags := sdl2.WINDOW_SHOWN
+	flags := sdl3.WINDOW_SHOWN
 	if opts.Borderless {
-		flags |= sdl2.WINDOW_BORDERLESS
+		flags |= sdl3.WINDOW_BORDERLESS
 	} else {
-		flags |= sdl2.WINDOW_RESIZABLE
+		flags |= sdl3.WINDOW_RESIZABLE
 	}
 	radius := 0
 	if opts.Borderless {
@@ -1750,7 +1748,7 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 	}
 
 	// Prevent secondary torn-out windows from stealing active focus mid-drag sessions
-	_ = sdl2.SetHint("SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN", "1")
+	_ = sdl3.SetHint("SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN", "1")
 
 	// Spawns a native window and sets up its independent WebGPU surface swapchain contexts
 	w, err := p.createWindow(opts.Title, x, y, wPx, hPx, flags, radius)
@@ -1770,19 +1768,19 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 // mid-gesture, after which it CLAMPS motion coordinates to the window
 // rect - the tear-off drag would fence itself in.
 func reassertCapture() {
-	if _, _, state := sdl2.GetGlobalMouseState(); state&sdl2.ButtonLMask != 0 {
-		_ = sdl2.CaptureMouse(true)
+	if _, _, state := sdl3.GetGlobalMouseState(); state&sdl3.ButtonLeftMask != 0 {
+		_ = sdl3.CaptureMouse(true)
 	}
 }
 
 // Clipboard implements platform.Platform.
 func (p *Platform) Clipboard() string {
-	s, _ := sdl2.GetClipboardText()
+	s, _ := sdl3.GetClipboardText()
 	return s
 }
 
 // SetClipboard implements platform.Platform.
-func (p *Platform) SetClipboard(text string) { _ = sdl2.SetClipboardText(text) }
+func (p *Platform) SetClipboard(text string) { _ = sdl3.SetClipboardText(text) }
 
 // Beep implements platform.Platform.
 func (p *Platform) Beep() {}
@@ -1792,43 +1790,43 @@ func (p *Platform) Beep() {}
 // redundant sets (same shape) are skipped.
 func (p *Platform) SetCursor(shape core.CursorShape) {
 	if p.cursors == nil {
-		p.cursors = map[core.CursorShape]*sdl2.Cursor{}
+		p.cursors = map[core.CursorShape]*sdl3.Cursor{}
 	}
 	cur, ok := p.cursors[shape]
 	if !ok {
 		// SDL3 reports creation failure; a nil cursor is cached so the
 		// lookup is not retried every frame.
-		cur, _ = sdl2.CreateSystemCursor(systemCursorID(shape))
+		cur, _ = sdl3.CreateSystemCursor(systemCursorID(shape))
 		p.cursors[shape] = cur
 	}
 	if cur == nil {
 		return
 	}
-	_ = sdl2.SetCursor(cur)
+	_ = sdl3.SetCursor(cur)
 	p.cursorSet = true
 }
 
 func (p *Platform) reassertCursor() {
 	if p.cursorSet {
-		sdl2.SetCursor(nil)
+		sdl3.SetCursor(nil)
 	}
 }
 
 // systemCursorID maps a core cursor shape to its SDL system cursor.
-func systemCursorID(shape core.CursorShape) sdl2.SystemCursor {
+func systemCursorID(shape core.CursorShape) sdl3.SystemCursor {
 	switch shape {
 	case core.CursorText:
-		return sdl2.SYSTEM_CURSOR_IBEAM
+		return sdl3.SYSTEM_CURSOR_TEXT
 	case core.CursorResizeH:
-		return sdl2.SYSTEM_CURSOR_SIZEWE
+		return sdl3.SYSTEM_CURSOR_EW_RESIZE
 	case core.CursorResizeV:
-		return sdl2.SYSTEM_CURSOR_SIZENS
+		return sdl3.SYSTEM_CURSOR_NS_RESIZE
 	case core.CursorResizeNWSE:
-		return sdl2.SYSTEM_CURSOR_SIZENWSE
+		return sdl3.SYSTEM_CURSOR_NWSE_RESIZE
 	case core.CursorResizeNESW:
-		return sdl2.SYSTEM_CURSOR_SIZENESW
+		return sdl3.SYSTEM_CURSOR_NESW_RESIZE
 	default:
-		return sdl2.SYSTEM_CURSOR_ARROW
+		return sdl3.SYSTEM_CURSOR_DEFAULT
 	}
 }
 
@@ -1912,7 +1910,7 @@ func (s *sdlSurface) ScreenPositionPx() (int, int) {
 	if s.closed || s.win.window == nil {
 		return 0, 0
 	}
-	x, y := s.win.window.GetPosition()
+	x, y := s.win.window.Position()
 	return int(x), int(y)
 }
 
@@ -1941,7 +1939,7 @@ func (s *sdlSurface) ScreenSizePx() (int, int) {
 	if s.closed || s.win.window == nil {
 		return 0, 0
 	}
-	w, h := s.win.window.GetSize()
+	w, h := s.win.window.Size()
 	return int(w), int(h)
 }
 
@@ -1961,11 +1959,11 @@ func (s *sdlSurface) WorkAreaPx() (int, int, int, int) {
 	if s.closed || s.win.window == nil {
 		return 0, 0, 0, 0
 	}
-	idx, err := s.win.window.GetDisplayIndex()
+	idx, err := s.win.window.Display()
 	if err != nil {
 		idx = 0
 	}
-	r, err := sdl2.GetDisplayUsableBounds(idx)
+	r, err := sdl3.GetDisplayUsableBounds(idx)
 	if err != nil {
 		return 0, 0, 0, 0
 	}
@@ -1978,15 +1976,15 @@ func (w *nativeWin) applyShape() {
 	if w.shapeRadiusPx <= 0 || w.window == nil {
 		return
 	}
-	wPx, hPx := w.window.GetSize()
+	wPx, hPx := w.window.Size()
 	if wPx <= 0 || hPx <= 0 {
 		return
 	}
-	mask, err := sdl2.CreateRGBSurfaceWithFormat(0, wPx, hPx, 32, sdl2.PIXELFORMAT_ARGB8888)
+	mask, err := sdl3.CreateSurface(wPx, hPx, sdl3.PIXELFORMAT_ARGB8888)
 	if err != nil {
 		return
 	}
-	defer sdl2.FreeSurface(mask)
+	defer sdl3.FreeSurface(mask)
 	_ = mask.FillRect(nil, 0xffffffff)
 	pix := mask.Pixels()
 	pitch := int(mask.Pitch)
@@ -2051,8 +2049,8 @@ func (s *sdlSurface) Minimized() bool {
 	if s.closed || s.win.window == nil {
 		return true
 	}
-	flags := s.win.window.GetFlags()
-	return flags&sdl2.WINDOW_MINIMIZED != 0 || flags&sdl2.WINDOW_HIDDEN != 0
+	flags := s.win.window.Flags()
+	return flags&sdl3.WINDOW_MINIMIZED != 0 || flags&sdl3.WINDOW_HIDDEN != 0
 }
 
 // SetOpacity implements platform.NativeSurface.
@@ -2060,7 +2058,7 @@ func (s *sdlSurface) SetOpacity(opacity float64) {
 	if s.closed || s.win.window == nil {
 		return
 	}
-	_ = s.win.window.SetWindowOpacity(float32(opacity))
+	_ = s.win.window.SetOpacity(float32(opacity))
 }
 
 // Raise implements platform.NativeSurface: brings the OS window to the

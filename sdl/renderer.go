@@ -32,11 +32,11 @@ type Renderer interface {
 
 	// Present renders the backend's pixel buffer to the window and displays it
 	Present(w *nativeWin, backend *raster.Backend) error
-	
+
 	// RenderFrame handles the full frame: render windows to textures, composite, and present
 	// This is where per-window compositing happens
 	RenderFrame(w *nativeWin, windows []*nativeWin, renderWindow func(*nativeWin)) error
-	
+
 	// RenderFrameWithChildWindows handles UI child window compositing.
 	// Renders each UI child window to its own texture, then composites them all.
 	// scale is the device scale factor for creating backends
@@ -49,7 +49,7 @@ type Renderer interface {
 
 	// SetRotationEnabled toggles 2D rotation effects (no-op for software renderer)
 	SetRotationEnabled(enabled bool)
-	
+
 	// SetWindowTransform sets the transform for a window (for compositing)
 	SetWindowTransform(windowID uint32, translateX, translateY, rotation, scaleX, scaleY, opacity float32)
 
@@ -62,9 +62,9 @@ type RendererFeature int
 
 const (
 	FeatureRotation    RendererFeature = iota // 2D rotation transforms
-	FeatureScale                               // 2D scaling transforms
-	Feature3DCube                              // 3D rendering (demo cube)
-	FeatureCompositing                         // GPU compositing with per-window surfaces
+	FeatureScale                              // 2D scaling transforms
+	Feature3DCube                             // 3D rendering (demo cube)
+	FeatureCompositing                        // GPU compositing with per-window surfaces
 )
 
 // NewRenderer creates a renderer based on the requested type.

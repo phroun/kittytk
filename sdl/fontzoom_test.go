@@ -5,11 +5,11 @@ package sdl
 import (
 	"testing"
 
-	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
+	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
 )
 
-func guiKey(sym sdl2.Keycode, extraMod uint16) sdl2.Keysym {
-	return sdl2.Keysym{Sym: sym, Mod: sdl2.KMOD_LGUI | extraMod}
+func guiKey(sym sdl3.Keycode, extraMod uint16) sdl3.Keysym {
+	return sdl3.Keysym{Sym: sym, Mod: sdl3.KMOD_LGUI | extraMod}
 }
 
 // newTestPlatform builds a Platform on the software renderer, which needs
@@ -29,7 +29,7 @@ func newTestPlatform(t *testing.T) *Platform {
 // failure of the code under test.
 func requireSDL(t *testing.T) {
 	t.Helper()
-	if err := sdl2.Init(sdl2.INIT_VIDEO); err != nil {
+	if err := sdl3.Init(sdl3.INIT_VIDEO); err != nil {
 		t.Skipf("SDL3 unavailable: %v", err)
 	}
 }
@@ -41,23 +41,23 @@ func requireSDL(t *testing.T) {
 func TestZoomTargetChords(t *testing.T) {
 	cases := []struct {
 		name string
-		sym  sdl2.Keysym
+		sym  sdl3.Keysym
 		want int
 		ok   bool
 	}{
-		{"cmd equals", guiKey(sdl2.K_EQUALS, 0), 25, true},
-		{"cmd shift equals (plus)", guiKey(sdl2.K_EQUALS, sdl2.KMOD_LSHIFT), 25, true},
-		{"cmd plus", guiKey(sdl2.K_PLUS, 0), 25, true},
-		{"cmd keypad plus", guiKey(sdl2.K_KP_PLUS, 0), 25, true},
-		{"cmd minus", guiKey(sdl2.K_MINUS, 0), 23, true},
-		{"cmd keypad minus", guiKey(sdl2.K_KP_MINUS, 0), 23, true},
-		{"cmd zero", guiKey(sdl2.K_0, 0), 14, true},
-		{"cmd keypad zero", guiKey(sdl2.K_KP_0, 0), 14, true},
-		{"right-gui works too", sdl2.Keysym{Sym: sdl2.K_EQUALS, Mod: sdl2.KMOD_RGUI}, 25, true},
-		{"no gui modifier", sdl2.Keysym{Sym: sdl2.K_EQUALS}, 0, false},
-		{"ctrl breaks the chord", guiKey(sdl2.K_EQUALS, sdl2.KMOD_LCTRL), 0, false},
-		{"alt breaks the chord", guiKey(sdl2.K_MINUS, sdl2.KMOD_LALT), 0, false},
-		{"other key", guiKey(sdl2.K_a, 0), 0, false},
+		{"cmd equals", guiKey(sdl3.K_EQUALS, 0), 25, true},
+		{"cmd shift equals (plus)", guiKey(sdl3.K_EQUALS, sdl3.KMOD_LSHIFT), 25, true},
+		{"cmd plus", guiKey(sdl3.K_PLUS, 0), 25, true},
+		{"cmd keypad plus", guiKey(sdl3.K_KP_PLUS, 0), 25, true},
+		{"cmd minus", guiKey(sdl3.K_MINUS, 0), 23, true},
+		{"cmd keypad minus", guiKey(sdl3.K_KP_MINUS, 0), 23, true},
+		{"cmd zero", guiKey(sdl3.K_0, 0), 14, true},
+		{"cmd keypad zero", guiKey(sdl3.K_KP_0, 0), 14, true},
+		{"right-gui works too", sdl3.Keysym{Sym: sdl3.K_EQUALS, Mod: sdl3.KMOD_RGUI}, 25, true},
+		{"no gui modifier", sdl3.Keysym{Sym: sdl3.K_EQUALS}, 0, false},
+		{"ctrl breaks the chord", guiKey(sdl3.K_EQUALS, sdl3.KMOD_LCTRL), 0, false},
+		{"alt breaks the chord", guiKey(sdl3.K_MINUS, sdl3.KMOD_LALT), 0, false},
+		{"other key", guiKey(sdl3.K_a, 0), 0, false},
 	}
 	for _, c := range cases {
 		got, ok := zoomTarget(c.sym, 24, 14)
@@ -70,13 +70,13 @@ func TestZoomTargetChords(t *testing.T) {
 // The dynamic size is capped to 4..100pt — stepping past either end holds,
 // and a default outside the range restores to the nearest bound.
 func TestZoomTargetCaps(t *testing.T) {
-	if got, _ := zoomTarget(guiKey(sdl2.K_MINUS, 0), minFontPt, 12); got != minFontPt {
+	if got, _ := zoomTarget(guiKey(sdl3.K_MINUS, 0), minFontPt, 12); got != minFontPt {
 		t.Errorf("minus at the floor = %d, want %d", got, minFontPt)
 	}
-	if got, _ := zoomTarget(guiKey(sdl2.K_EQUALS, 0), maxFontPt, 12); got != maxFontPt {
+	if got, _ := zoomTarget(guiKey(sdl3.K_EQUALS, 0), maxFontPt, 12); got != maxFontPt {
 		t.Errorf("plus at the ceiling = %d, want %d", got, maxFontPt)
 	}
-	if got, _ := zoomTarget(guiKey(sdl2.K_0, 0), 24, 2); got != minFontPt {
+	if got, _ := zoomTarget(guiKey(sdl3.K_0, 0), 24, 2); got != minFontPt {
 		t.Errorf("reset to an under-floor default = %d, want %d", got, minFontPt)
 	}
 }
@@ -111,28 +111,28 @@ func TestFontZoomKeyWalksAndResets(t *testing.T) {
 	p := newTestPlatform(t)
 	p.SetFontSize(24)
 
-	if !p.fontZoomKey(guiKey(sdl2.K_EQUALS, 0)) || p.fontSize != 25 {
+	if !p.fontZoomKey(guiKey(sdl3.K_EQUALS, 0)) || p.fontSize != 25 {
 		t.Fatalf("zoom in: consumed with size 25, got %d", p.fontSize)
 	}
 	for i := 0; i < 5; i++ {
-		p.fontZoomKey(guiKey(sdl2.K_EQUALS, 0))
+		p.fontZoomKey(guiKey(sdl3.K_EQUALS, 0))
 	}
 	if p.fontSize != 30 {
 		t.Fatalf("five more steps: %d, want 30", p.fontSize)
 	}
-	if !p.fontZoomKey(guiKey(sdl2.K_0, 0)) || p.fontSize != 24 {
+	if !p.fontZoomKey(guiKey(sdl3.K_0, 0)) || p.fontSize != 24 {
 		t.Fatalf("reset: want the configured 24, got %d", p.fontSize)
 	}
-	if p.fontZoomKey(sdl2.Keysym{Sym: sdl2.K_EQUALS}) {
+	if p.fontZoomKey(sdl3.Keysym{Sym: sdl3.K_EQUALS}) {
 		t.Fatal("a bare '=' must not be consumed")
 	}
 
 	// An unconfigured platform zooms from the 12pt raster base.
 	q := newTestPlatform(t)
-	if !q.fontZoomKey(guiKey(sdl2.K_MINUS, 0)) || q.fontSize != 11 {
+	if !q.fontZoomKey(guiKey(sdl3.K_MINUS, 0)) || q.fontSize != 11 {
 		t.Fatalf("unconfigured zoom out: want 11, got %d", q.fontSize)
 	}
-	if !q.fontZoomKey(guiKey(sdl2.K_0, 0)) || q.fontSize != 12 {
+	if !q.fontZoomKey(guiKey(sdl3.K_0, 0)) || q.fontSize != 12 {
 		t.Fatalf("unconfigured reset: want the 12pt base, got %d", q.fontSize)
 	}
 }

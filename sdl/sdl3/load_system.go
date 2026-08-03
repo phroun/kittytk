@@ -1,6 +1,6 @@
 //go:build sdl && !sdlembed
 
-package sdlcompat
+package sdl3
 
 // System SDL3 (default): the host links nothing and opens the
 // platform's installed libSDL3 at startup. Build with -tags sdlembed

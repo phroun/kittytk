@@ -18,29 +18,29 @@ static void* kittytk_get_metal_layer(void *nswindow) {
 	if (!nswindow) {
 		return NULL;
 	}
-	
+
 	id win = (id)nswindow;
 	id contentView = ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView"));
 	if (!contentView) {
 		return NULL;
 	}
-	
+
 	// SDL creates subviews for Metal rendering - find the SDL_metalview
 	id subviews = ((id (*)(id, SEL))objc_msgSend)(contentView, sel_registerName("subviews"));
 	if (!subviews) {
 		return NULL;
 	}
-	
+
 	unsigned long count = ((unsigned long (*)(id, SEL))objc_msgSend)(subviews, sel_registerName("count"));
 	for (unsigned long i = 0; i < count; i++) {
 		id subview = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
 			subviews, sel_registerName("objectAtIndex:"), i);
 		if (!subview) continue;
-		
+
 		// Get the layer from this subview
 		id layer = ((id (*)(id, SEL))objc_msgSend)(subview, sel_registerName("layer"));
 		if (!layer) continue;
-		
+
 		// Check if it's a CAMetalLayer
 		Class metalLayerClass = objc_getClass("CAMetalLayer");
 		if (metalLayerClass && ((BOOL (*)(id, SEL, Class))objc_msgSend)(
@@ -48,7 +48,7 @@ static void* kittytk_get_metal_layer(void *nswindow) {
 			return (void*)layer;
 		}
 	}
-	
+
 	return NULL;
 }
 
@@ -325,7 +325,7 @@ import (
 	"os"
 	"unsafe"
 
-	sdl2 "github.com/phroun/kittytk/sdl/sdlcompat"
+	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
 )
 
 // platformPerPixelAlpha: macOS composites per-pixel window alpha via
@@ -337,7 +337,7 @@ const platformPerPixelAlpha = true
 // Call after the renderer exists (its layer must be reachable).
 // KITTYTK_ALPHA_DEBUG=1 dumps the window/view/layer opacity chain to
 // stderr before and after the arrangement.
-func makeWindowTransparent(win *sdl2.Window) bool {
+func makeWindowTransparent(win *sdl3.Window) bool {
 	cocoa := cocoaWindow(win)
 	if cocoa == nil {
 		return false
@@ -356,7 +356,7 @@ func makeWindowTransparent(win *sdl2.Window) bool {
 // roundWindowLayer rounds the window's Metal layer with Core Animation
 // (see kittytk_round_metal_layer) and reports whether a layer was
 // found. radiusPx is in device pixels.
-func roundWindowLayer(win *sdl2.Window, radiusPx int) bool {
+func roundWindowLayer(win *sdl3.Window, radiusPx int) bool {
 	if win == nil || radiusPx <= 0 {
 		return false
 	}
@@ -377,7 +377,7 @@ func roundWindowLayer(win *sdl2.Window, radiusPx int) bool {
 // every resize) can reset CAMetalLayer state, and an opaque layer
 // discards alpha regardless of what the renderer clears to — so the
 // present path calls this each frame for transparent windows.
-func reassertWindowAlpha(win *sdl2.Window) {
+func reassertWindowAlpha(win *sdl3.Window) {
 	if win == nil {
 		return
 	}
@@ -392,7 +392,7 @@ func reassertWindowAlpha(win *sdl2.Window) {
 }
 
 // makeWindowMiniaturizable lets a borderless window go to the Dock.
-func makeWindowMiniaturizable(win *sdl2.Window) {
+func makeWindowMiniaturizable(win *sdl3.Window) {
 	if cocoa := cocoaWindow(win); cocoa != nil {
 		C.kittytk_enable_miniaturize(cocoa)
 	}
@@ -400,17 +400,17 @@ func makeWindowMiniaturizable(win *sdl2.Window) {
 
 // cocoaWindow returns the NSWindow behind an SDL window. SDL3 exposes
 // it as a window property rather than through SDL_GetWindowWMInfo.
-func cocoaWindow(win *sdl2.Window) unsafe.Pointer {
+func cocoaWindow(win *sdl3.Window) unsafe.Pointer {
 	return unsafe.Pointer(win.CocoaWindow())
 }
 
 // getMetalLayer retrieves the CAMetalLayer from an SDL Metal window,
 // creating the backing Metal view on first use.
-func getMetalLayer(win *sdl2.Window) unsafe.Pointer {
+func getMetalLayer(win *sdl3.Window) unsafe.Pointer {
 	if layer := win.MetalLayer(); layer != nil {
 		return layer
 	}
-	
+
 	// Fallback: try to find an existing Metal layer
 	cocoa := cocoaWindow(win)
 	if cocoa == nil {
