@@ -367,23 +367,26 @@ var alphaPresentTest = os.Getenv("KITTYTK_ALPHA_TEST") != ""
 // roundedCornerMechanism selects how a rounded borderless window gets
 // its corners cut, via KITTYTK_WINDOW_SHAPE:
 //
-//	"layer"    (default on macOS) Core Animation clips the Metal layer
-//	           itself with cornerRadius + masksToBounds. The corner
-//	           pixels are never composited, so this does not depend on
-//	           the framebuffer's alpha surviving the swapchain - and CA
-//	           antialiases the curve.
+//	"layer"    Core Animation clips the Metal layer itself with
+//	           cornerRadius + masksToBounds. The corner pixels are
+//	           never composited, so this does not depend on the
+//	           framebuffer's alpha surviving the swapchain - and CA
+//	           antialiases the curve. Requires a Metal layer, so it
+//	           applies to the WebGPU renderer only.
 //	"shape"    SDL's shaped-window alpha mask. SDL masks the window's
-//	           CONTENT VIEW, but a Metal-rendered window draws through
-//	           a separate subview layer on top of it, so this cannot
-//	           clip our GPU output (it does work for SDL's own
-//	           renderer, which draws into the content view).
+//	           CONTENT VIEW, which is where SDL's OWN renderer draws -
+//	           so this is the mechanism for the software renderer. A
+//	           Metal-rendered window draws through a separate subview
+//	           layer on top of that view, which the mask cannot clip.
 //	"perpixel" the Cocoa route alone: a non-opaque NSWindow
 //	           compositing the framebuffer's alpha channel, with no
-//	           geometric clipping.
+//	           geometric clipping. Kept for experimentation; it has
+//	           never produced transparent corners here.
 //
-// Off macOS there is no per-pixel window alpha and no Metal layer, so
-// the shaped window is the only mechanism and this has no effect.
-func roundedCornerMechanism() string {
+// The default follows the renderer: "layer" when a GPU device gives us
+// a Metal layer, else "shape". Off macOS there is no per-pixel window
+// alpha and no Metal layer, so the shaped window is the only mechanism.
+func (p *Platform) roundedCornerMechanism() string {
 	switch os.Getenv("KITTYTK_WINDOW_SHAPE") {
 	case "perpixel":
 		return "perpixel"
@@ -392,7 +395,10 @@ func roundedCornerMechanism() string {
 	case "layer":
 		return "layer"
 	}
-	return "layer"
+	if platformPerPixelAlpha && p.gpuDevice != nil {
+		return "layer"
+	}
+	return "shape"
 }
 
 // clampFontPt bounds a point size to the dynamic zoom range.
@@ -533,7 +539,7 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 	w := &nativeWin{shapeRadiusPx: shapeRadiusPx}
 	var err error
 
-	if shapeRadiusPx > 0 && (!platformPerPixelAlpha || roundedCornerMechanism() == "shape") {
+	if shapeRadiusPx > 0 && (!platformPerPixelAlpha || p.roundedCornerMechanism() == "shape") {
 		// SDL's own shaped window: created shaped, masked in applyShape.
 		w.window, err = sdl2.CreateShapedWindow(title, 0, 0, uint32(wPx), uint32(hPx), flags)
 		if err == nil {
@@ -644,11 +650,11 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 	if shapeRadiusPx > 0 && os.Getenv("KITTYTK_ALPHA_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr,
 			"kittytk-alpha: rounding request: radius=%dpx mechanism=%q perPixelAlpha=%v shapedWindow=%v\n",
-			shapeRadiusPx, roundedCornerMechanism(), platformPerPixelAlpha, w.shapeRadiusPx > 0)
+			shapeRadiusPx, p.roundedCornerMechanism(), platformPerPixelAlpha, w.shapeRadiusPx > 0)
 	}
 
 	if w.shapeRadiusPx > 0 && platformPerPixelAlpha {
-		switch roundedCornerMechanism() {
+		switch p.roundedCornerMechanism() {
 		case "layer":
 			// Core Animation clips the Metal layer itself. The window
 			// must still be non-opaque for the clipped-away corners to
@@ -673,16 +679,20 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 			}
 		}
 	}
-	w.applyShape()
 	w.id, _ = w.window.GetID()
 	p.wins[w.id] = w
-	
+
 	// Create renderer resources for this window (compositor texture)
 	if err := p.renderer.CreateWindowRenderer(w, wPx, hPx); err != nil {
 		// Non-fatal for software renderer, but log it
 		fmt.Fprintf(os.Stderr, "WARNING: Failed to create window renderer resources: %v\n", err)
 	}
-	
+
+	// Shape AFTER the renderer exists, matching the order in the
+	// known-good SDL shaped-window sequence (create shaped window,
+	// create renderer, then SetShape).
+	w.applyShape()
+
 	return w, nil
 }
 
