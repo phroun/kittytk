@@ -209,6 +209,13 @@ type ChildWindowList struct {
 	Windows      []interface{}
 	Popups       []interface{} // Popup overlays to render on top of windows
 	MenuDropdown interface{}   // Active menu dropdown (nil if none)
+
+	// ClientArea is the region window content may occupy, in surface
+	// units — the surface minus menu bar, status bar, and dock. The
+	// compositor clips window layers to it so desktop chrome overlays
+	// windows exactly as the software path's client-area clip does.
+	// A zero rect means no clipping.
+	ClientArea core.UnitRect
 }
 
 // WindowProvider is an optional Surface Handler interface that allows

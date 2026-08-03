@@ -4164,6 +4164,7 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 		Windows:      result,
 		Popups:       popups,
 		MenuDropdown: menuDropdown,
+		ClientArea:   d.windowManager.ClientArea(),
 	}
 }
 

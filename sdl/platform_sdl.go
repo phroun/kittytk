@@ -536,10 +536,18 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 			presentMode = wgpu.PresentModeImmediate
 		}
 
+		// A shaped window on a per-pixel-alpha platform (macOS) will be
+		// made transparent below; its surface must publish the alpha
+		// channel or the rounded corners composite as opaque black.
+		alphaMode := gputypes.CompositeAlphaModeOpaque
+		if w.shapeRadiusPx > 0 && platformPerPixelAlpha {
+			alphaMode = gputypes.CompositeAlphaModePremultiplied
+		}
+
 		w.config = &wgpu.SurfaceConfiguration{
 			Format:      surfaceFormat,
 			Usage:       wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageCopyDst,
-			AlphaMode:   gputypes.CompositeAlphaModeOpaque,
+			AlphaMode:   alphaMode,
 			Width:       uint32(wPx),
 			Height:      uint32(hPx),
 			PresentMode: presentMode,
@@ -1030,14 +1038,20 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 	// Create command encoder
 	encoder, _ := p.gpuDevice.CreateCommandEncoder(nil)
 	
-	// Render pass that draws the UI texture to the surface
+	// Render pass that draws the UI texture to the surface. A transparent
+	// (per-pixel alpha) window must clear to alpha 0 or its rounded
+	// corners composite as opaque black.
+	clearAlpha := 1.0
+	if w.transparent {
+		clearAlpha = 0.0
+	}
 	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		ColorAttachments: []wgpu.RenderPassColorAttachment{
 			{
 				View:    surfaceView,
 				LoadOp:  gputypes.LoadOpClear,
 				StoreOp: gputypes.StoreOpStore,
-				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
+				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: clearAlpha},
 			},
 		},
 	})

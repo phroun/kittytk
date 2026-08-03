@@ -331,18 +331,23 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 		return err
 	}
 	
-	// Begin render pass
+	// Begin render pass. A transparent (per-pixel alpha) window must
+	// clear to alpha 0 or its rounded corners composite as opaque black.
+	clearAlpha := 1.0
+	if w.transparent {
+		clearAlpha = 0.0
+	}
 	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		ColorAttachments: []wgpu.RenderPassColorAttachment{
 			{
 				View:    surfaceView,
 				LoadOp:  gputypes.LoadOpClear,
 				StoreOp: gputypes.StoreOpStore,
-				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
+				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: clearAlpha},
 			},
 		},
 	})
-	
+
 	// Draw fullscreen quad with backend texture
 	renderPass.SetPipeline(r.blitPipeline)
 	renderPass.SetBindGroup(0, bindGroup, nil)
@@ -965,11 +970,21 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	// Step 0: Render Desktop base layer (background, menu, status, dock - NOT windows)
 	renderWindow(osWindow)
 
-	// One aspect ratio (surface width/height) for every layer this frame,
-	// so the rotation demo turns the scene rigidly without distortion.
+	// Frame-level pixel metrics: the surface's pixel size, its
+	// pixels-per-unit, and one aspect ratio (width/height) shared by
+	// every layer so the rotation demo turns the scene rigidly.
+	surfacePxW, surfacePxH := 0, 0
+	framePpuW, framePpuH := 1.0, 1.0
 	frameAspect := float32(1)
 	if img := osWindow.backend.Image(); img != nil && img.Bounds().Dy() > 0 {
-		frameAspect = float32(img.Bounds().Dx()) / float32(img.Bounds().Dy())
+		surfacePxW = img.Bounds().Dx()
+		surfacePxH = img.Bounds().Dy()
+		frameAspect = float32(surfacePxW) / float32(surfacePxH)
+		frameSize := osWindow.backend.Size()
+		if frameSize.Width > 0 && frameSize.Height > 0 {
+			framePpuW = float64(surfacePxW) / float64(frameSize.Width)
+			framePpuH = float64(surfacePxH) / float64(frameSize.Height)
+		}
 	}
 
 	// Evict surfaces whose child window is gone, so closed windows release
@@ -1249,17 +1264,23 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		return err
 	}
 	
+	// A transparent (per-pixel alpha) OS window clears to alpha 0 so its
+	// rounded corners composite against what is behind it.
+	clearAlpha := 1.0
+	if osWindow.transparent {
+		clearAlpha = 0.0
+	}
 	renderPass, _ := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		ColorAttachments: []wgpu.RenderPassColorAttachment{
 			{
 				View:    surfaceView,
 				LoadOp:  gputypes.LoadOpClear,
 				StoreOp: gputypes.StoreOpStore,
-				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
+				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: clearAlpha},
 			},
 		},
 	})
-	
+
 	renderPass.SetPipeline(r.blitPipeline)
 
 	// Draw Desktop base first: a fullscreen quad carrying the current
@@ -1273,7 +1294,35 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	renderPass.SetBindGroup(1, r.blitUniformBindGroup, nil)
 	renderPass.Draw(6, 1, 0, 0) // Draw quad
 	
-	// Draw each child window with its pre-baked uniforms
+	// Overlay/halo GPU resources must outlive Submit below; the deferred
+	// cleanups run when this function returns, after Present.
+	var overlayCleanups []func()
+	defer func() {
+		for _, cleanup := range overlayCleanups {
+			cleanup()
+		}
+	}()
+
+	// Windows never paint over desktop chrome: their quads are scissored
+	// to the client area (surface minus menu bar, status bar, dock),
+	// exactly like the software path's client-area clip. The tear-off
+	// halo deliberately escapes the clip — it bleeds over the bars.
+	clipX, clipY, clipW, clipH, clipOK := 0, 0, 0, 0, false
+	if !childWindowList.ClientArea.IsEmpty() && surfacePxW > 0 && surfacePxH > 0 {
+		clipX, clipY, clipW, clipH, clipOK = scissorPx(
+			childWindowList.ClientArea, framePpuW, framePpuH, surfacePxW, surfacePxH)
+	}
+
+	// tearHaloWindow is the tear-off drag affordance surface a child
+	// window may expose (window.Window does).
+	type tearHaloWindow interface {
+		TearIndicatorActive() bool
+		PaintTearHalo(*core.Painter, core.UnitRect)
+	}
+
+	// Draw each child window with its pre-baked uniforms, bottom to top,
+	// each preceded by its tear-off halo when active (the halo ring shows
+	// only beyond the window frame, and windows above may cover it).
 	for _, childIface := range childWindowList.Windows {
 		winValue := reflect.ValueOf(childIface)
 		windowID := uint32(winValue.Pointer())
@@ -1282,22 +1331,35 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			continue
 		}
 
+		if hw, isHalo := childIface.(tearHaloWindow); isHalo && hw.TearIndicatorActive() {
+			if wl, isWin := childIface.(WindowLike); isWin {
+				winBounds := wl.Bounds()
+				// The halo rect is the window outset by its margin; give
+				// drawOverlay those bounds so the stroke lands well inside
+				// the padded texture instead of on its edge.
+				cleanup, err := r.drawOverlay(renderPass, osWindow,
+					outsetBounds(winBounds, overlayStrokeOffset),
+					func(p *core.Painter) { hw.PaintTearHalo(p, winBounds) }, scale)
+				if err == nil {
+					overlayCleanups = append(overlayCleanups, cleanup)
+				}
+			}
+		}
+
+		if clipOK {
+			renderPass.SetScissorRect(uint32(clipX), uint32(clipY), uint32(clipW), uint32(clipH))
+		}
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
 		renderPass.SetBindGroup(1, surf.uniformBindGroup, nil)
 		renderPass.Draw(6, 1, 0, 0) // Draw quad at window position
+		if clipOK {
+			renderPass.SetScissorRect(0, 0, uint32(surfacePxW), uint32(surfacePxH))
+		}
 	}
 
 	// Overlay layers, bottom to top: the menu bar's open dropdown first,
 	// then popups (combo box lists, context menus). A popup opened FROM a
 	// menu must paint above the menu that spawned it, so popups come last.
-	var overlayCleanups []func()
-	defer func() {
-		// Overlay GPU resources must outlive Submit below; the deferred
-		// cleanups run when this function returns, after Present.
-		for _, cleanup := range overlayCleanups {
-			cleanup()
-		}
-	}()
 
 	// Step 4: The active menu bar dropdown.
 	if childWindowList.MenuDropdown != nil {

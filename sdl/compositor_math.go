@@ -55,6 +55,33 @@ func overlayTexturePx(bounds core.UnitRect, ppuW, ppuH float64, pad core.Unit) (
 	return w, h, padPxW, padPxH
 }
 
+// scissorPx maps a clip region in surface units to a framebuffer scissor
+// rectangle in pixels, clamped to the surface. ok is false for an empty
+// region (draw nothing) — callers treat a zero input rect as "no
+// clipping" BEFORE calling this.
+func scissorPx(area core.UnitRect, ppuW, ppuH float64, maxW, maxH int) (x, y, w, h int, ok bool) {
+	x0 := int(math.Round(float64(area.X) * ppuW))
+	y0 := int(math.Round(float64(area.Y) * ppuH))
+	x1 := int(math.Round(float64(area.X+area.Width) * ppuW))
+	y1 := int(math.Round(float64(area.Y+area.Height) * ppuH))
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+	if x1 > maxW {
+		x1 = maxW
+	}
+	if y1 > maxH {
+		y1 = maxH
+	}
+	if x1 <= x0 || y1 <= y0 {
+		return 0, 0, 0, 0, false
+	}
+	return x0, y0, x1 - x0, y1 - y0, true
+}
+
 // gpuRowAlignment is WebGPU's required bytes-per-row alignment for
 // texture uploads.
 const gpuRowAlignment = 256

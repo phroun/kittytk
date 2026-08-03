@@ -103,6 +103,30 @@ func TestOverlayTexturePxMatchesOutsetQuad(t *testing.T) {
 	}
 }
 
+// scissorPx maps the client area (units) to a framebuffer scissor rect
+// (pixels), scaled by density and clamped to the surface — the clip that
+// keeps composited windows from painting over the status bar and dock.
+func TestScissorPx(t *testing.T) {
+	// A client area below a 20-unit menu bar and above an 80-unit
+	// status/dock band, at 2x density on a 800x600-unit surface.
+	area := core.UnitRect{X: 0, Y: 20, Width: 800, Height: 500}
+	x, y, w, h, ok := scissorPx(area, 2, 2, 1600, 1200)
+	if !ok || x != 0 || y != 40 || w != 1600 || h != 1000 {
+		t.Errorf("scissor = (%d,%d %dx%d, ok=%v), want (0,40 1600x1000, true)", x, y, w, h, ok)
+	}
+
+	// Clamped to the surface even if the area overshoots.
+	x, y, w, h, ok = scissorPx(core.UnitRect{X: -10, Y: -10, Width: 900, Height: 700}, 2, 2, 1600, 1200)
+	if !ok || x != 0 || y != 0 || w != 1600 || h != 1200 {
+		t.Errorf("overshoot clamp = (%d,%d %dx%d, ok=%v), want full surface", x, y, w, h, ok)
+	}
+
+	// A degenerate area reports not-ok rather than a zero-size scissor.
+	if _, _, _, _, ok := scissorPx(core.UnitRect{X: 100, Y: 100}, 2, 2, 1600, 1200); ok {
+		t.Error("empty area should not produce a scissor")
+	}
+}
+
 // bgraPixels swaps R<->B, keeps G/A, and pads rows to the GPU's 256-byte
 // upload alignment.
 func TestBGRAPixels(t *testing.T) {
