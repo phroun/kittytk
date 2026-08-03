@@ -10,8 +10,8 @@ require (
 	github.com/gogpu/gputypes v0.5.1
 	github.com/gogpu/wgpu v0.30.32
 	github.com/phroun/argwild v0.0.1
-	github.com/phroun/direct-key-handler v0.3.9
-	github.com/phroun/purfecterm v0.2.27
+	github.com/phroun/direct-key-handler v0.3.11
+	github.com/phroun/purfecterm v0.2.30
 	golang.org/x/image v0.44.0
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.40.0
