@@ -226,6 +226,40 @@ static void kittytk_make_window_transparent(void *nswindow) {
 	}
 }
 
+// kittytk_round_metal_layer rounds a CAMetalLayer's corners with Core
+// Animation itself: cornerRadius + masksToBounds clip the layer when it
+// is composited, so the corner pixels are never drawn no matter what
+// Metal renders or whether the framebuffer's alpha survives. This is
+// the mechanism SDL's shaped windows cannot provide here — SDL masks
+// the window's CONTENT VIEW, while our Metal layer lives on a separate
+// subview that draws over it.
+//
+// radiusPx is in device pixels; CALayer geometry is in points, so it is
+// divided by the layer's contentsScale.
+static void kittytk_round_metal_layer(void *metalLayer, double radiusPx) {
+	if (!metalLayer) {
+		return;
+	}
+	id layer = (id)metalLayer;
+	double scale = ((double (*)(id, SEL))objc_msgSend)(
+		layer, sel_registerName("contentsScale"));
+	if (scale <= 0) {
+		scale = 1;
+	}
+	((void (*)(id, SEL, CGFloat))objc_msgSend)(
+		layer, sel_registerName("setCornerRadius:"), (CGFloat)(radiusPx / scale));
+	((void (*)(id, SEL, signed char))objc_msgSend)(
+		layer, sel_registerName("setMasksToBounds:"), 1);
+	// The layer must also be non-opaque, or Core Animation composites
+	// it as a filled rect and the rounding never shows. CAMetalLayer
+	// defaults to opaque, and the WebGPU surface configuration does not
+	// change it.
+	((void (*)(id, SEL, signed char))objc_msgSend)(
+		layer, sel_registerName("setOpaque:"), 0);
+	((void (*)(id, SEL, void*))objc_msgSend)(
+		layer, sel_registerName("setBackgroundColor:"), NULL);
+}
+
 // kittytk_reassert_layer_alpha re-applies non-opacity to a CAMetalLayer
 // (and its window/view chain) directly. Configuring a surface calls
 // setDrawableSize:, which "resets internal CAMetalLayer state on some
@@ -294,6 +328,25 @@ func makeWindowTransparent(win *sdl2.Window) bool {
 	if debug {
 		C.kittytk_debug_window_alpha(cocoa, 1)
 	}
+	return true
+}
+
+// roundWindowLayer rounds the window's Metal layer with Core Animation
+// (see kittytk_round_metal_layer) and reports whether a layer was
+// found. radiusPx is in device pixels.
+func roundWindowLayer(win *sdl2.Window, radiusPx int) bool {
+	if win == nil || radiusPx <= 0 {
+		return false
+	}
+	cocoa := cocoaWindow(win)
+	if cocoa == nil {
+		return false
+	}
+	layer := C.kittytk_get_metal_layer(cocoa)
+	if layer == nil {
+		return false
+	}
+	C.kittytk_round_metal_layer(layer, C.double(radiusPx))
 	return true
 }
 

@@ -12,6 +12,10 @@ import (
 // arrangement to maintain (see the darwin build for what this does).
 func reassertWindowAlpha(*sdl2.Window) {}
 
+// roundWindowLayer is the non-macOS stub: no Core Animation layer to
+// round, so callers fall back to SDL's shaped-window mask.
+func roundWindowLayer(*sdl2.Window, int) bool { return false }
+
 // nativeSurfaceHandles resolves the platform handles WebGPU surface
 // creation needs for one SDL window. Off macOS the handles come from
 // SDL's window-manager info: X11 wants (Display*, Window) and Windows

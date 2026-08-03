@@ -202,6 +202,9 @@ func shadowImage(caster, anchor core.UnitRect, spec shadowSpec, ppuW, ppuH float
 	addRect(caster)
 	addRect(anchor)
 
+	// Blur happens below; the anchor punch-out happens after it, so the
+	// hole has hard edges that line up exactly with the control.
+
 	// Separable box blur, three passes — a close Gaussian approximation.
 	blurPx := int(math.Round(float64(spec.blur) * ppuW / 2))
 	if blurPx > 0 {
@@ -209,6 +212,31 @@ func shadowImage(caster, anchor core.UnitRect, spec shadowSpec, ppuW, ppuH float
 		for pass := 0; pass < 3; pass++ {
 			boxBlurH(mask, buf, w, h, blurPx)
 			boxBlurV(buf, mask, w, h, blurPx)
+		}
+	}
+
+	// Punch the anchor's OWN rect (undisplaced) out of the shadow. The
+	// opening control sits on a layer below the popup and is never
+	// redrawn above the shadow, so without this the shadow's anchor lobe
+	// darkens the very control it belongs to. Clearing it here — rather
+	// than re-presenting the control over the shadow — also keeps each
+	// layer owning its own pixels: the shadow never has to carry the
+	// anchor's content, so live changes under it still show through.
+	// The hole's edges coincide with the control's edges, so the cut is
+	// invisible.
+	if !anchor.IsEmpty() {
+		minX, minY, maxX, maxY := rectPxIn(quad, anchor, ppuW, ppuH)
+		for y := 0; y < h; y++ {
+			py := float64(y) + 0.5
+			if py < float64(minY) || py > float64(maxY) {
+				continue
+			}
+			for x := 0; x < w; x++ {
+				px := float64(x) + 0.5
+				if px >= float64(minX) && px <= float64(maxX) {
+					mask[y*w+x] = 0
+				}
+			}
 		}
 	}
 
@@ -221,7 +249,7 @@ func shadowImage(caster, anchor core.UnitRect, spec shadowSpec, ppuW, ppuH float
 		if a > 1 {
 			a = 1
 		}
-		// Black, premultiplied: RGB stay 0, only alpha carries the shape.
+		// Black with the falloff in alpha; RGB stay 0.
 		img.Pix[i*4+3] = uint8(a*255 + 0.5)
 	}
 	return img

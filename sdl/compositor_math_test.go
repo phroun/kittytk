@@ -213,8 +213,17 @@ func TestShadowImage(t *testing.T) {
 	alpha2 := func(ux, uy core.Unit) int {
 		return int(img2.Pix[img2.PixOffset(int(ux-quad2.X), int(uy-quad2.Y))+3])
 	}
-	if a := alpha2(anchor.X+spec.offsetX+5, anchor.Y+spec.offsetY+5); a < 100 {
-		t.Errorf("anchor area alpha = %d, want near peak (anchor not unioned)", a)
+	// Just right of the anchor, the anchor's own shadow is cast.
+	if a := alpha2(anchor.X+anchor.Width+1, anchor.Y+10); a < 60 {
+		t.Errorf("beside the anchor alpha = %d, want shadow (anchor not unioned)", a)
+	}
+	// But the anchor's OWN rect is punched clear: the control sits on a
+	// layer below and must not be darkened by the shadow it helps cast.
+	if a := alpha2(anchor.X+anchor.Width/2, anchor.Y+anchor.Height/2); a != 0 {
+		t.Errorf("anchor interior alpha = %d, want 0 (punched out)", a)
+	}
+	if a := alpha2(anchor.X+1, anchor.Y+1); a != 0 {
+		t.Errorf("anchor top-left alpha = %d, want 0 (punched out)", a)
 	}
 }
 

@@ -362,6 +362,9 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	if w.transparent {
 		reassertWindowAlpha(w.window)
 	}
+	if w.layerRadiusPx > 0 {
+		roundWindowLayer(w.window, w.layerRadiusPx)
+	}
 
 	// Get surface texture
 	surfaceTexture, _, err := w.gpuSurface.GetCurrentTexture()
@@ -1313,6 +1316,9 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	// Step 3: Composite all textures
 	if osWindow.transparent {
 		reassertWindowAlpha(osWindow.window)
+	}
+	if osWindow.layerRadiusPx > 0 {
+		roundWindowLayer(osWindow.window, osWindow.layerRadiusPx)
 	}
 	surfaceTexture, _, err := osWindow.gpuSurface.GetCurrentTexture()
 	if err != nil {

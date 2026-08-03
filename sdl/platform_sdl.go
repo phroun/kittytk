@@ -251,6 +251,11 @@ type nativeWin struct {
 
 	// transparent marks a window with real per-pixel alpha (macOS)
 	transparent bool
+
+	// layerRadiusPx > 0 rounds the window by clipping its Core
+	// Animation layer; re-applied per present because surface
+	// configuration can reset layer state.
+	layerRadiusPx int
 }
 
 type timerEntry struct {
@@ -362,26 +367,32 @@ var alphaPresentTest = os.Getenv("KITTYTK_ALPHA_TEST") != ""
 // roundedCornerMechanism selects how a rounded borderless window gets
 // its corners cut, via KITTYTK_WINDOW_SHAPE:
 //
-//	"shape"    SDL's shaped-window alpha mask. Binary (aliased) edges,
-//	           but it is SDL's own portable mechanism and works on
-//	           macOS with a Metal-rendered window.
-//	"perpixel" the Cocoa route: a non-opaque NSWindow compositing the
-//	           framebuffer's alpha channel. Antialiased corners, and
-//	           the historical default here - but it composites black
-//	           under the Metal presentation chain (a bare alpha-0
-//	           clear still shows opaque), so it is no longer the
-//	           default while that is unresolved.
+//	"layer"    (default on macOS) Core Animation clips the Metal layer
+//	           itself with cornerRadius + masksToBounds. The corner
+//	           pixels are never composited, so this does not depend on
+//	           the framebuffer's alpha surviving the swapchain - and CA
+//	           antialiases the curve.
+//	"shape"    SDL's shaped-window alpha mask. SDL masks the window's
+//	           CONTENT VIEW, but a Metal-rendered window draws through
+//	           a separate subview layer on top of it, so this cannot
+//	           clip our GPU output (it does work for SDL's own
+//	           renderer, which draws into the content view).
+//	"perpixel" the Cocoa route alone: a non-opaque NSWindow
+//	           compositing the framebuffer's alpha channel, with no
+//	           geometric clipping.
 //
-// Off macOS there is no per-pixel window alpha at all and the shaped
-// window is the only mechanism, so this has no effect there.
+// Off macOS there is no per-pixel window alpha and no Metal layer, so
+// the shaped window is the only mechanism and this has no effect.
 func roundedCornerMechanism() string {
 	switch os.Getenv("KITTYTK_WINDOW_SHAPE") {
 	case "perpixel":
 		return "perpixel"
 	case "shape":
 		return "shape"
+	case "layer":
+		return "layer"
 	}
-	return "shape"
+	return "layer"
 }
 
 // clampFontPt bounds a point size to the dynamic zoom range.
@@ -523,6 +534,7 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 	var err error
 
 	if shapeRadiusPx > 0 && (!platformPerPixelAlpha || roundedCornerMechanism() == "shape") {
+		// SDL's own shaped window: created shaped, masked in applyShape.
 		w.window, err = sdl2.CreateShapedWindow(title, 0, 0, uint32(wPx), uint32(hPx), flags)
 		if err == nil {
 			w.window.SetPosition(x, y)
@@ -629,12 +641,37 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags ui
 		return nil, err
 	}
 
-	if w.shapeRadiusPx > 0 && platformPerPixelAlpha &&
-		roundedCornerMechanism() == "perpixel" && makeWindowTransparent(w.window) {
-		// Per-pixel alpha replaces the shape mask entirely: the drawn
-		// frame's own alpha cuts the corners, antialiased.
-		w.transparent = true
-		w.shapeRadiusPx = 0
+	if shapeRadiusPx > 0 && os.Getenv("KITTYTK_ALPHA_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr,
+			"kittytk-alpha: rounding request: radius=%dpx mechanism=%q perPixelAlpha=%v shapedWindow=%v\n",
+			shapeRadiusPx, roundedCornerMechanism(), platformPerPixelAlpha, w.shapeRadiusPx > 0)
+	}
+
+	if w.shapeRadiusPx > 0 && platformPerPixelAlpha {
+		switch roundedCornerMechanism() {
+		case "layer":
+			// Core Animation clips the Metal layer itself. The window
+			// must still be non-opaque for the clipped-away corners to
+			// show what is behind them.
+			transparent := makeWindowTransparent(w.window)
+			rounded := roundWindowLayer(w.window, w.shapeRadiusPx)
+			if os.Getenv("KITTYTK_ALPHA_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr,
+					"kittytk-alpha: layer rounding: transparent=%v layerFound=%v\n",
+					transparent, rounded)
+			}
+			if transparent && rounded {
+				w.transparent = true
+				w.layerRadiusPx = w.shapeRadiusPx
+				w.shapeRadiusPx = 0 // geometry comes from the layer, not a shape mask
+			}
+		case "perpixel":
+			// The drawn frame's own alpha cuts the corners.
+			if makeWindowTransparent(w.window) {
+				w.transparent = true
+				w.shapeRadiusPx = 0
+			}
+		}
 	}
 	w.applyShape()
 	w.id, _ = w.window.GetID()
@@ -933,6 +970,9 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 	// and an opaque layer discards alpha whatever we clear to.
 	if w.transparent {
 		reassertWindowAlpha(w.window)
+	}
+	if w.layerRadiusPx > 0 {
+		roundWindowLayer(w.window, w.layerRadiusPx)
 	}
 
 	// Get surface texture
