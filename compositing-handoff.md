@@ -340,6 +340,14 @@ knowing before touching it:
   needed, but libSDL3 is opened at RUN time. `Init` does that (widening
   the search past dyld's defaults, since Homebrew's prefixes are not on
   it); `-tags sdlembed` embeds SDL instead.
+- Some SDL2 calls became **per-window** in SDL3, and default to OFF.
+  `SDL_StartTextInput()` was global and on by default; SDL3's takes a
+  window and starts disabled. A port that keeps the single call gets a
+  first window that types and later windows that do not — and because
+  key events are a separate, always-on stream, Tab and the arrows keep
+  working, so it reads as a focus bug rather than a setup one. Anything
+  else moved this way (`SDL_SetTextInputArea`, formerly the global
+  `SDL_SetTextInputRect`) belongs in `createWindow` for the same reason.
 - Some of its functions are **declared but panic("not implemented")** —
   a failure the compiler cannot warn about. Three were in the host's
   path (`Metal_CreateView`, `PointerProperty`, `Metal_GetLayer`) and are

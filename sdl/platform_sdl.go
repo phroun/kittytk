@@ -351,7 +351,8 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		installAboutMenuHandler()
 	}
 
-	_ = sdl3.StartTextInput(win.window)
+	// (Text input is started per window in createWindow — SDL3 scopes it
+	// to a window rather than the process.)
 
 	// Event watch hooks handle continuous redraw requests during active modal resize loops
 	sdl3.AddEventWatchFunc(func(ev sdl3.Event, _ interface{}) bool {
@@ -594,6 +595,17 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
 	// known-good SDL shaped-window sequence (create shaped window,
 	// create renderer, then SetShape).
 	w.applyShape()
+
+	// Text input is PER WINDOW in SDL3, and off until asked for. SDL2's
+	// SDL_StartTextInput() was global and on by default, so the port
+	// carried a single call for the main window — and every window made
+	// afterwards, every torn-off window, silently received no
+	// SDL_EVENT_TEXT_INPUT at all. Key events are a separate stream that
+	// is always on, which is why Tab and the arrows kept working and
+	// only typing was lost.
+	if err := sdl3.StartTextInput(w.window); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: text input unavailable for window %d: %v\n", w.id, err)
+	}
 
 	return w, nil
 }

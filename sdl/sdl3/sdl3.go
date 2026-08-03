@@ -371,8 +371,16 @@ const (
 	K_F12       = csdl.K_F12
 )
 
-// StartTextInput enables text events. SDL3 scopes it to a window.
+// StartTextInput enables text events. SDL3 scopes it to a window, and
+// leaves it OFF until asked — unlike SDL2, whose global
+// SDL_StartTextInput() was on by default. Every window needs its own
+// call or it receives key events but no typed text.
 func StartTextInput(w *Window) error { return w.w.StartTextInput() }
+
+// TextInputActive reports whether text events are enabled for a window.
+// Exists so a test can prove every window got StartTextInput, rather
+// than the absence showing up as "typing does nothing" in one window.
+func TextInputActive(w *Window) bool { return w.w.TextInputActive() }
 
 // --- clipboard ---
 
