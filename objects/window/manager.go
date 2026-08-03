@@ -181,6 +181,8 @@ type PopupOverlay struct {
 	ID string
 	// Bounds in screen coordinates
 	Bounds core.UnitRect
+	// Anchor is the opening control's screen rect (see core.PopupRequest).
+	Anchor core.UnitRect
 	// Paint function to render the popup
 	Paint func(p *core.Painter)
 	// HandleMousePress function to handle clicks (returns true if handled)
@@ -1727,6 +1729,7 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 	overlay := &PopupOverlay{
 		ID:                 request.ID,
 		Bounds:             request.Bounds,
+		Anchor:             request.Anchor,
 		Paint:              request.Paint,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,

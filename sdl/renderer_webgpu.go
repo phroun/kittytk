@@ -21,6 +21,48 @@ import (
 	"github.com/phroun/kittytk/platform"
 )
 
+// shadowFragmentShader draws an analytic drop shadow: a signed-distance
+// field of the caster's rounded rect (unioned with an optional anchor
+// rect — the control a popup opened from) with a smooth falloff over the
+// blur radius. No blur passes, no textures: one quad, one fragment
+// evaluation. The vertex stage is the shared blit vertex shader, so
+// shadows also ride the rotation demo with their layers.
+const shadowFragmentShader = `
+struct ShadowParams {
+    quad_px:   vec2<f32>, // quad size in pixels
+    blur_px:   f32,       // falloff distance
+    alpha:     f32,       // peak opacity
+    rect1_min: vec2<f32>, // caster rect in quad pixels
+    rect1_max: vec2<f32>,
+    rect2_min: vec2<f32>, // anchor rect (empty when max <= min)
+    rect2_max: vec2<f32>,
+    radius_px: f32,       // caster corner rounding
+    pad0: f32,
+    pad1: f32,
+    pad2: f32,
+}
+
+@group(0) @binding(0) var<uniform> shadow: ShadowParams;
+
+fn sd_round_rect(p: vec2<f32>, mn: vec2<f32>, mx: vec2<f32>, r: f32) -> f32 {
+    let c = (mn + mx) * 0.5;
+    let h = max((mx - mn) * 0.5 - vec2<f32>(r, r), vec2<f32>(0.0, 0.0));
+    let q = abs(p - c) - h;
+    return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+@fragment
+fn fs_main(@builtin(position) fragPos: vec4<f32>, @location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
+    let p = texCoord * shadow.quad_px;
+    var d = sd_round_rect(p, shadow.rect1_min, shadow.rect1_max, shadow.radius_px);
+    if (shadow.rect2_max.x > shadow.rect2_min.x && shadow.rect2_max.y > shadow.rect2_min.y) {
+        d = min(d, sd_round_rect(p, shadow.rect2_min, shadow.rect2_max, shadow.radius_px));
+    }
+    let a = shadow.alpha * (1.0 - smoothstep(-shadow.blur_px, shadow.blur_px, d));
+    return vec4<f32>(0.0, 0.0, 0.0, a);
+}
+`
+
 // WindowSurface holds GPU resources for a single window's off-screen rendering
 type WindowSurface struct {
 	texture     *wgpu.Texture
@@ -68,6 +110,10 @@ type WebGPURenderer struct {
 	blitUniformLayout    *wgpu.BindGroupLayout
 	blitUniformBindGroup *wgpu.BindGroup
 	blitPosLayout        *wgpu.BindGroupLayout // Per-window position uniforms
+
+	// Drop shadow pipeline (SDF rounded-rect shadows under layers)
+	shadowPipeline     *wgpu.RenderPipeline
+	shadowParamsLayout *wgpu.BindGroupLayout
 
 	// Rotation/scale effect state
 	rotationStartTime           time.Time
@@ -142,6 +188,12 @@ func (r *WebGPURenderer) Initialize() error {
 		return fmt.Errorf("failed to initialize cube pipeline: %w", err)
 	}
 
+	// Initialize the drop-shadow pipeline
+	if err := r.initShadowPipeline(); err != nil {
+		r.Shutdown()
+		return fmt.Errorf("failed to initialize shadow pipeline: %w", err)
+	}
+
 	r.rotationStartTime = time.Now()
 	return nil
 }
@@ -152,6 +204,14 @@ func (r *WebGPURenderer) Shutdown() {
 	for id, surf := range r.windowSurfaces {
 		r.releaseWindowSurface(surf)
 		delete(r.windowSurfaces, id)
+	}
+
+	// Clean up shadow resources
+	if r.shadowPipeline != nil {
+		r.shadowPipeline.Release()
+	}
+	if r.shadowParamsLayout != nil {
+		r.shadowParamsLayout.Release()
 	}
 
 	// Clean up cube resources
@@ -571,6 +631,177 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 	}
 
 	return nil
+}
+
+// initShadowPipeline creates the drop-shadow pipeline: the shared blit
+// vertex stage (so shadows position and rotate like their layers) with
+// the SDF shadow fragment stage, blending onto the scene.
+func (r *WebGPURenderer) initShadowPipeline() error {
+	var err error
+	r.shadowParamsLayout, err = r.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Entries: []gputypes.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: wgpu.ShaderStageFragment,
+				Buffer: &gputypes.BufferBindingLayout{
+					Type:           0, // Uniform
+					MinBindingSize: 64,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create shadow params layout: %w", err)
+	}
+
+	vertexShader, err := r.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+		Label: "Shadow Vertex Shader",
+		WGSL:  blitVertexShader,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create shadow vertex shader: %w", err)
+	}
+	defer vertexShader.Release()
+
+	fragmentShader, err := r.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+		Label: "Shadow Fragment Shader",
+		WGSL:  shadowFragmentShader,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create shadow fragment shader: %w", err)
+	}
+	defer fragmentShader.Release()
+
+	pipelineLayout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+		BindGroupLayouts: []*wgpu.BindGroupLayout{r.shadowParamsLayout, r.blitUniformLayout},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create shadow pipeline layout: %w", err)
+	}
+	defer pipelineLayout.Release()
+
+	r.shadowPipeline, err = r.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+		Layout: pipelineLayout,
+		Vertex: wgpu.VertexState{
+			Module:     vertexShader,
+			EntryPoint: "vs_main",
+		},
+		Fragment: &wgpu.FragmentState{
+			Module:     fragmentShader,
+			EntryPoint: "fs_main",
+			Targets: []wgpu.ColorTargetState{
+				{
+					Format:    wgpu.TextureFormatBGRA8Unorm,
+					WriteMask: 0xF,
+					Blend: &gputypes.BlendState{
+						Color: gputypes.BlendComponent{
+							SrcFactor: gputypes.BlendFactorSrcAlpha,
+							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+							Operation: gputypes.BlendOperationAdd,
+						},
+						Alpha: gputypes.BlendComponent{
+							SrcFactor: gputypes.BlendFactorOne,
+							DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+							Operation: gputypes.BlendOperationAdd,
+						},
+					},
+				},
+			},
+		},
+		Primitive: wgpu.PrimitiveState{
+			Topology: 3, // TriangleList
+		},
+		Multisample: wgpu.MultisampleState{
+			Count: 1,
+			Mask:  0xFFFFFFFF,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create shadow pipeline: %w", err)
+	}
+	return nil
+}
+
+// drawShadow records one drop shadow into the render pass: the caster
+// rect (unioned with the anchor when non-empty) cast down-right per the
+// spec. It temporarily switches to the shadow pipeline and restores the
+// blit pipeline before returning. The returned cleanup must run after
+// Submit.
+func (r *WebGPURenderer) drawShadow(
+	renderPass *wgpu.RenderPassEncoder,
+	caster, anchor core.UnitRect,
+	surfaceSize core.UnitSize,
+	ppuW, ppuH float64,
+	aspect float32,
+	spec shadowSpec,
+) (func(), error) {
+	if r.shadowPipeline == nil || caster.IsEmpty() {
+		return nil, nil
+	}
+
+	quad := shadowQuadBounds(caster, anchor, spec)
+
+	// Position uniforms (shared CombinedUniforms) for the quad.
+	posBuffer, posBindGroup, err := r.createWindowUniformBuffer(quad, surfaceSize, aspect)
+	if err != nil {
+		return nil, err
+	}
+
+	// Shadow params: rects shifted by the cast offset, in quad pixels.
+	castCaster := caster.Translated(spec.offsetX, spec.offsetY)
+	r1minX, r1minY, r1maxX, r1maxY := rectPxIn(quad, castCaster, ppuW, ppuH)
+	var r2minX, r2minY, r2maxX, r2maxY float32
+	if !anchor.IsEmpty() {
+		castAnchor := anchor.Translated(spec.offsetX, spec.offsetY)
+		r2minX, r2minY, r2maxX, r2maxY = rectPxIn(quad, castAnchor, ppuW, ppuH)
+	}
+
+	params := []float32{
+		float32(float64(quad.Width) * ppuW), float32(float64(quad.Height) * ppuH),
+		float32(float64(spec.blur) * ppuW), spec.alpha,
+		r1minX, r1minY, r1maxX, r1maxY,
+		r2minX, r2minY, r2maxX, r2maxY,
+		float32(float64(spec.radius) * ppuW), 0, 0, 0,
+	}
+	paramsBytes := (*[64]byte)(unsafe.Pointer(&params[0]))[:]
+
+	paramsBuffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  64,
+		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		posBindGroup.Release()
+		posBuffer.Release()
+		return nil, err
+	}
+	r.queue.WriteBuffer(paramsBuffer, 0, paramsBytes)
+
+	paramsBindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: r.shadowParamsLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: paramsBuffer, Size: 64},
+		},
+	})
+	if err != nil {
+		paramsBuffer.Release()
+		posBindGroup.Release()
+		posBuffer.Release()
+		return nil, err
+	}
+
+	renderPass.SetPipeline(r.shadowPipeline)
+	renderPass.SetBindGroup(0, paramsBindGroup, nil)
+	renderPass.SetBindGroup(1, posBindGroup, nil)
+	renderPass.Draw(6, 1, 0, 0)
+	renderPass.SetPipeline(r.blitPipeline)
+
+	cleanup := func() {
+		paramsBindGroup.Release()
+		paramsBuffer.Release()
+		posBindGroup.Release()
+		posBuffer.Release()
+	}
+	return cleanup, nil
 }
 
 // initCubePipeline creates the 3D cube rendering pipeline for the
@@ -1335,20 +1566,23 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			continue
 		}
 
+		var winBounds core.UnitRect
+		if wl, isWin := childIface.(WindowLike); isWin {
+			winBounds = wl.Bounds()
+		}
+
 		haloActive := false
-		if hw, isHalo := childIface.(tearHaloWindow); isHalo && hw.TearIndicatorActive() {
+		if hw, isHalo := childIface.(tearHaloWindow); isHalo && hw.TearIndicatorActive() && !winBounds.IsEmpty() {
 			haloActive = true
-			if wl, isWin := childIface.(WindowLike); isWin {
-				winBounds := wl.Bounds()
-				// The halo rect is the window outset by its margin; give
-				// drawOverlay those bounds so the stroke lands well inside
-				// the padded texture instead of on its edge.
-				cleanup, err := r.drawOverlay(renderPass, osWindow,
-					outsetBounds(winBounds, overlayStrokeOffset),
-					func(p *core.Painter) { hw.PaintTearHalo(p, winBounds) }, scale)
-				if err == nil {
-					overlayCleanups = append(overlayCleanups, cleanup)
-				}
+			// The halo rect is the window outset by its margin; give
+			// drawOverlay those bounds so the stroke lands well inside
+			// the padded texture instead of on its edge.
+			bounds := winBounds
+			cleanup, err := r.drawOverlay(renderPass, osWindow,
+				outsetBounds(bounds, overlayStrokeOffset),
+				func(p *core.Painter) { hw.PaintTearHalo(p, bounds) }, scale)
+			if err == nil {
+				overlayCleanups = append(overlayCleanups, cleanup)
 			}
 		}
 
@@ -1358,6 +1592,13 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		if clipOK && !haloActive {
 			renderPass.SetScissorRect(uint32(clipX), uint32(clipY), uint32(clipW), uint32(clipH))
 		}
+
+		// Drop shadow beneath the window, sharing its clip state.
+		if cleanup, err := r.drawShadow(renderPass, winBounds, core.UnitRect{},
+			surfaceSize, framePpuW, framePpuH, frameAspect, windowShadowSpec); err == nil && cleanup != nil {
+			overlayCleanups = append(overlayCleanups, cleanup)
+		}
+
 		renderPass.SetBindGroup(0, surf.bindGroup, nil)
 		renderPass.SetBindGroup(1, surf.uniformBindGroup, nil)
 		renderPass.Draw(6, 1, 0, 0) // Draw quad at window position
@@ -1370,9 +1611,15 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 	// then popups (combo box lists, context menus). A popup opened FROM a
 	// menu must paint above the menu that spawned it, so popups come last.
 
-	// Step 4: The active menu bar dropdown.
+	// Step 4: The active menu bar dropdown, over its drop shadow. The
+	// anchor (the title on the bar) joins the shadow shape so title and
+	// menu read as one piece casting it.
 	if childWindowList.MenuDropdown != nil {
-		if bounds, paint, ok := overlayBoundsAndPaint(childWindowList.MenuDropdown); ok {
+		if bounds, anchor, paint, ok := overlayBoundsAndPaint(childWindowList.MenuDropdown); ok {
+			if cleanup, err := r.drawShadow(renderPass, bounds, anchor,
+				surfaceSize, framePpuW, framePpuH, frameAspect, overlayShadowSpec); err == nil && cleanup != nil {
+				overlayCleanups = append(overlayCleanups, cleanup)
+			}
 			if cleanup, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
 				overlayCleanups = append(overlayCleanups, cleanup)
 			} else {
@@ -1381,11 +1628,16 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		}
 	}
 
-	// Step 5: Popups — the topmost layer.
+	// Step 5: Popups — the topmost layer, each over its drop shadow
+	// (unioned with its opening control, e.g. the combo box).
 	for _, popupIface := range childWindowList.Popups {
-		bounds, paint, ok := overlayBoundsAndPaint(popupIface)
+		bounds, anchor, paint, ok := overlayBoundsAndPaint(popupIface)
 		if !ok {
 			continue
+		}
+		if cleanup, err := r.drawShadow(renderPass, bounds, anchor,
+			surfaceSize, framePpuW, framePpuH, frameAspect, overlayShadowSpec); err == nil && cleanup != nil {
+			overlayCleanups = append(overlayCleanups, cleanup)
 		}
 		if cleanup, err := r.drawOverlay(renderPass, osWindow, bounds, paint, scale); err == nil {
 			overlayCleanups = append(overlayCleanups, cleanup)
@@ -1585,33 +1837,41 @@ const overlayStrokeOffset = core.Unit(2)
 // an overlay value (window.PopupOverlay, or the anonymous menu dropdown
 // struct) by field name — reflection sidesteps the import cycle between
 // the sdl and window packages.
-func overlayBoundsAndPaint(overlay interface{}) (core.UnitRect, func(*core.Painter), bool) {
+func overlayBoundsAndPaint(overlay interface{}) (bounds, anchor core.UnitRect, paint func(*core.Painter), ok bool) {
 	v := reflect.ValueOf(overlay)
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
-			return core.UnitRect{}, nil, false
+			return core.UnitRect{}, core.UnitRect{}, nil, false
 		}
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		return core.UnitRect{}, nil, false
+		return core.UnitRect{}, core.UnitRect{}, nil, false
 	}
 
 	boundsField := v.FieldByName("Bounds")
 	paintField := v.FieldByName("Paint")
 	if !boundsField.IsValid() || !paintField.IsValid() {
-		return core.UnitRect{}, nil, false
+		return core.UnitRect{}, core.UnitRect{}, nil, false
 	}
 
-	bounds, ok := boundsField.Interface().(core.UnitRect)
-	if !ok || bounds.Width <= 0 || bounds.Height <= 0 {
-		return core.UnitRect{}, nil, false
+	bounds, bOK := boundsField.Interface().(core.UnitRect)
+	if !bOK || bounds.Width <= 0 || bounds.Height <= 0 {
+		return core.UnitRect{}, core.UnitRect{}, nil, false
 	}
-	paint, ok := paintField.Interface().(func(*core.Painter))
-	if !ok || paint == nil {
-		return core.UnitRect{}, nil, false
+	paint, pOK := paintField.Interface().(func(*core.Painter))
+	if !pOK || paint == nil {
+		return core.UnitRect{}, core.UnitRect{}, nil, false
 	}
-	return bounds, paint, true
+
+	// Anchor is optional: the opening control's rect, unioned into the
+	// popup's drop shadow so both cast one shape.
+	if anchorField := v.FieldByName("Anchor"); anchorField.IsValid() {
+		if a, aOK := anchorField.Interface().(core.UnitRect); aOK {
+			anchor = a
+		}
+	}
+	return bounds, anchor, paint, true
 }
 
 // drawOverlay renders one overlay layer (popup or menu dropdown) into a

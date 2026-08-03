@@ -2797,6 +2797,22 @@ func (m *MenuBar) ActiveMenuBounds() core.UnitRect {
 	return m.activeMenu.DropdownBounds()
 }
 
+// ActiveMenuTitleBounds returns the bar-row rect of the open menu's
+// title — the dropdown's anchor. The compositor unions it into the
+// dropdown's shadow so title and menu cast one shape. Zero rect when no
+// menu is open.
+func (m *MenuBar) ActiveMenuTitleBounds() core.UnitRect {
+	if m.activeMenu == nil || m.currentIndex < 0 || m.currentIndex >= len(m.menus) {
+		return core.UnitRect{}
+	}
+	return core.UnitRect{
+		X:      m.calculateMenuX(m.currentIndex),
+		Y:      0,
+		Width:  m.menuTitleWidth(m.menus[m.currentIndex].title),
+		Height: m.EffectiveCellMetrics().CellHeight,
+	}
+}
+
 // HandleKeyPress handles keyboard input.
 func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Handle active menu first

@@ -127,6 +127,46 @@ func TestScissorPx(t *testing.T) {
 	}
 }
 
+// Shadow geometry: the quad covers the caster (plus anchor) shifted by
+// the cast offset and outset by the blur; the SDF rects land inside it
+// at pixel coordinates that keep the shadow visibly displaced.
+func TestShadowQuadGeometry(t *testing.T) {
+	caster := core.UnitRect{X: 100, Y: 100, Width: 200, Height: 150}
+	anchor := core.UnitRect{X: 120, Y: 80, Width: 60, Height: 20}
+	spec := shadowSpec{offsetX: 2, offsetY: 3, blur: 8, radius: 4, alpha: 0.35}
+
+	// Union covers both rects.
+	u := unionRect(caster, anchor)
+	if u.X != 100 || u.Y != 80 || u.Width != 200 || u.Height != 170 {
+		t.Errorf("union = %+v, want {100 80 200 170}", u)
+	}
+	// Empty rects are identities.
+	if got := unionRect(caster, core.UnitRect{}); got != caster {
+		t.Errorf("union with empty = %+v, want caster", got)
+	}
+
+	quad := shadowQuadBounds(caster, anchor, spec)
+	want := core.UnitRect{X: 100 + 2 - 8, Y: 80 + 3 - 8, Width: 200 + 16, Height: 170 + 16}
+	if quad != want {
+		t.Errorf("shadow quad = %+v, want %+v", quad, want)
+	}
+
+	// The shifted caster maps into the quad with blur-sized margins at
+	// density 2: its min corner sits blur*ppu inside on the axes the
+	// union starts at.
+	shifted := caster.Translated(spec.offsetX, spec.offsetY)
+	minX, minY, maxX, maxY := rectPxIn(quad, shifted, 2, 2)
+	if minX != 16 { // (caster.X+2 - quad.X) * 2 = blur*2
+		t.Errorf("caster minX = %v, want 16", minX)
+	}
+	if minY != 56 { // caster is 20 units below the union top: (8+20)*2
+		t.Errorf("caster minY = %v, want 56", minY)
+	}
+	if maxX-minX != 400 || maxY-minY != 300 {
+		t.Errorf("caster extent = %vx%v px, want 400x300", maxX-minX, maxY-minY)
+	}
+}
+
 // bgraPixels swaps R<->B, keeps G/A, and pads rows to the GPU's 256-byte
 // upload alignment.
 func TestBGRAPixels(t *testing.T) {

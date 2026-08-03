@@ -4143,16 +4143,19 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 
 	popups := d.windowManager.GetPopups()
 
-	// An open menu bar dropdown becomes its own compositor layer.
+	// An open menu bar dropdown becomes its own compositor layer; its
+	// Anchor (the title on the bar) joins it under one drop shadow.
 	var menuDropdown interface{}
 	if d.menuBar != nil && d.menuBar.ActiveMenu() != nil {
 		menuBounds := d.menuBar.ActiveMenuBounds()
 		if !menuBounds.IsEmpty() {
 			menuDropdown = &struct {
 				Bounds core.UnitRect
+				Anchor core.UnitRect
 				Paint  func(*core.Painter)
 			}{
 				Bounds: menuBounds,
+				Anchor: d.menuBar.ActiveMenuTitleBounds(),
 				Paint: func(p *core.Painter) {
 					d.menuBar.PaintDropdown(p)
 				},

@@ -669,10 +669,17 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 		Height: popupHeightUnits,
 	}
 
-	// Create popup request
+	// Create popup request. Anchor is the box's own screen rect so the
+	// compositor casts one shadow over control + list together.
 	request := &core.PopupRequest{
 		ID:     c.popupID(),
 		Bounds: popupBounds,
+		Anchor: core.UnitRect{
+			X:      trinketTopPos.X,
+			Y:      trinketTopPos.Y,
+			Width:  core.ExchangeX(bounds.Width, metrics, screen),
+			Height: trinketBottomPos.Y - trinketTopPos.Y,
+		},
 		Paint: func(p *core.Painter) {
 			c.paintPopupOverlay(p, popupBounds)
 		},

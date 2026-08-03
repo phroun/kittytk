@@ -250,6 +250,11 @@ type PopupRequest struct {
 	ID string
 	// Bounds in screen coordinates
 	Bounds UnitRect
+	// Anchor is the screen rect of the control the popup opened from
+	// (combo box, menu title), or the zero rect when the popup is
+	// free-standing (context menus). The compositor unions it into the
+	// popup's drop shadow so control and popup cast one shape.
+	Anchor UnitRect
 	// Paint function to render the popup
 	Paint func(p *Painter)
 	// HandleMousePress function to handle clicks (returns true if handled)

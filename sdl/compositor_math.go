@@ -82,6 +82,70 @@ func scissorPx(area core.UnitRect, ppuW, ppuH float64, maxW, maxH int) (x, y, w,
 	return x0, y0, x1 - x0, y1 - y0, true
 }
 
+// shadowSpec describes one drop-shadow style, all lengths in surface
+// units (so shadows scale with density like everything else).
+type shadowSpec struct {
+	offsetX core.Unit // cast down-right
+	offsetY core.Unit
+	blur    core.Unit // falloff distance around the caster
+	radius  core.Unit // caster corner rounding
+	alpha   float32   // peak opacity
+}
+
+// windowShadowSpec is the soft, larger shadow under desktop windows;
+// overlayShadowSpec the tighter one under menus, popups, and combo
+// lists.
+var (
+	windowShadowSpec  = shadowSpec{offsetX: 2, offsetY: 3, blur: 8, radius: 4, alpha: 0.35}
+	overlayShadowSpec = shadowSpec{offsetX: 1, offsetY: 2, blur: 4, radius: 2, alpha: 0.40}
+)
+
+// unionRect returns the smallest rect containing both. An empty rect is
+// the identity.
+func unionRect(a, b core.UnitRect) core.UnitRect {
+	if a.IsEmpty() {
+		return b
+	}
+	if b.IsEmpty() {
+		return a
+	}
+	x0, y0 := a.X, a.Y
+	if b.X < x0 {
+		x0 = b.X
+	}
+	if b.Y < y0 {
+		y0 = b.Y
+	}
+	x1, y1 := a.X+a.Width, a.Y+a.Height
+	if b.X+b.Width > x1 {
+		x1 = b.X + b.Width
+	}
+	if b.Y+b.Height > y1 {
+		y1 = b.Y + b.Height
+	}
+	return core.UnitRect{X: x0, Y: y0, Width: x1 - x0, Height: y1 - y0}
+}
+
+// shadowQuadBounds returns the on-screen quad a shadow needs: the caster
+// (unioned with its anchor when present) shifted by the spec's offset
+// and outset by the blur so the falloff has room on every side.
+func shadowQuadBounds(caster, anchor core.UnitRect, spec shadowSpec) core.UnitRect {
+	shape := unionRect(caster, anchor)
+	shape.X += spec.offsetX
+	shape.Y += spec.offsetY
+	return outsetBounds(shape, spec.blur)
+}
+
+// rectPxIn maps a unit rect to pixel min/max coordinates relative to a
+// quad's origin — the coordinates the shadow shader's SDF works in.
+func rectPxIn(quad, r core.UnitRect, ppuW, ppuH float64) (minX, minY, maxX, maxY float32) {
+	minX = float32(float64(r.X-quad.X) * ppuW)
+	minY = float32(float64(r.Y-quad.Y) * ppuH)
+	maxX = float32(float64(r.X+r.Width-quad.X) * ppuW)
+	maxY = float32(float64(r.Y+r.Height-quad.Y) * ppuH)
+	return minX, minY, maxX, maxY
+}
+
 // gpuRowAlignment is WebGPU's required bytes-per-row alignment for
 // texture uploads.
 const gpuRowAlignment = 256
