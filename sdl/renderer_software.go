@@ -35,22 +35,28 @@ func (r *SoftwareRenderer) Shutdown() {
 
 // CreateWindowRenderer creates SDL renderer and texture for a window
 func (r *SoftwareRenderer) CreateWindowRenderer(w *nativeWin, pxW, pxH int) error {
-	var flags uint32
+	flags := uint32(sdl2.RENDERER_ACCELERATED)
 	if r.vsync {
-		flags = sdl2.RENDERER_ACCELERATED | sdl2.RENDERER_PRESENTVSYNC
-	} else {
-		flags = sdl2.RENDERER_ACCELERATED
+		flags |= sdl2.RENDERER_PRESENTVSYNC
 	}
 
 	renderer, err := sdl2.CreateRenderer(w.window, -1, flags)
 	if err != nil {
-		return err
+		// No accelerated renderer on this video driver (headless dummy,
+		// bare VMs): fall back to any renderer SDL can offer.
+		renderer, err = sdl2.CreateRenderer(w.window, -1, 0)
+		if err != nil {
+			return err
+		}
 	}
 	w.renderer = renderer
 
-	// Create streaming texture matching backend pixel format
+	// Create streaming texture matching the backend's pixel layout:
+	// Go's image.RGBA stores bytes R,G,B,A, which on little-endian is
+	// SDL's packed ABGR8888. ARGB8888 here reads as B,G,R,A and swaps
+	// red and blue across the whole UI.
 	texture, err := renderer.CreateTexture(
-		sdl2.PIXELFORMAT_ARGB8888,
+		sdl2.PIXELFORMAT_ABGR8888,
 		sdl2.TEXTUREACCESS_STREAMING,
 		int32(pxW),
 		int32(pxH),
@@ -89,8 +95,10 @@ func (r *SoftwareRenderer) ResizeWindowRenderer(w *nativeWin, pxW, pxH int) erro
 		w.texture.Destroy()
 	}
 
+	// Same byte-order contract as CreateWindowRenderer: image.RGBA is
+	// SDL ABGR8888 on little-endian.
 	texture, err := w.renderer.CreateTexture(
-		sdl2.PIXELFORMAT_ARGB8888,
+		sdl2.PIXELFORMAT_ABGR8888,
 		sdl2.TEXTUREACCESS_STREAMING,
 		int32(pxW),
 		int32(pxH),
