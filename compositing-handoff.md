@@ -215,11 +215,31 @@ A move is input, so it asked for a full repaint of a picture identical to
 the one on screen. Rather than unpick that contract, the revision lets
 the host notice the picture did not change.
 
+And it presents nothing when nothing changed — the window still shows
+the frame it last presented. A present WAITS for vsync, and the desktop's
+tick invalidates every torn-off host whenever anything wants a repaint,
+so an idle torn window was paying a refresh-rate stall per tick to
+redisplay an identical picture. The rotation demo is the exception: it
+animates through the uniform buffer rather than the pixels, so its frames
+have nothing dirty and present anyway.
+
+**There is no frame-rate floor in the present path.** There used to be a
+`time.Sleep` filling out the remainder of 16ms "to prevent event
+starvation" — which the main loop already guards with its own `Delay`
+every iteration, and which slept on the PLATFORM THREAD, stalling event
+handling and every other window along with it. It was also asymmetric:
+the compositing present returns before reaching `paintAndPresent`, so
+the desktop never paid it and only torn-off windows did. Caching the
+repaint made it worse rather than better — with the paint skipped there
+was nothing left to fill the budget, so it slept nearly the whole 16ms
+every frame.
+
 Diagnostics:
 
 ```
 KITTYTK_COMPOSITOR_REPAINT=always   # restore the unconditional repaint
 KITTYTK_COMPOSITOR_STATS=1          # per-second painted/skipped tally
+KITTYTK_FRAME_DEBUG=1               # report presents over 30ms
 ```
 
 If a window ever shows stale content, one run with `=always` settles

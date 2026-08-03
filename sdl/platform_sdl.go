@@ -865,6 +865,11 @@ func (p *Platform) scheduleAnimationFrame(s *sdlSurface) {
 	}
 }
 
+// frameDebug reports slow presents under KITTYTK_FRAME_DEBUG. It used to
+// print unconditionally to stdout, which on a genuinely slow frame added
+// a synchronous write to the terminal to the cost of the frame.
+var frameDebug = os.Getenv("KITTYTK_FRAME_DEBUG") != ""
+
 // surfaceNeedsRepaint reports whether a window's backend pixels are
 // stale. A handler that reports no repaint revision repaints every
 // frame, which is what every handler did before revisions existed.
@@ -924,9 +929,27 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 	// the present cadence is unchanged and nothing can go stale on an
 	// expose — only the CPU paint, the pixel conversion and the upload
 	// are skipped.
-	if p.surfaceNeedsRepaint(w, forceFull) {
+	repainted := p.surfaceNeedsRepaint(w, forceFull)
+	if repainted {
 		p.paintBackend(w, forceFull, false)
 		w.pixelsDirty = true
+	}
+
+	// Nothing changed, so present nothing: the window still shows the
+	// frame it last presented. Worth skipping because a present WAITS
+	// for vsync, and the desktop's tick invalidates every torn-off host
+	// whenever anything at all wants a repaint — so an idle torn window
+	// was paying a refresh-rate stall per tick to redisplay a picture
+	// identical to the one on screen.
+	//
+	// The rotation demo is the exception: it animates through the
+	// uniform buffer rather than the pixels, so its frames have nothing
+	// dirty and must present anyway.
+	animating := p.rotationEnabled.Load() ||
+		time.Since(p.rotationDeactivationTime).Seconds() < 0.5
+	if !repainted && !w.pixelsDirty && !forceFull && !animating {
+		p.scheduleAnimationFrame(s)
+		return
 	}
 
 	// The GPU blit, the effects, and the rounded-corner punch-out all
@@ -936,16 +959,22 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 		fmt.Fprintf(os.Stderr, "Present error on window %d: %v\n", w.id, err)
 	}
 
-	// Enforce minimum frame time to prevent event starvation
-	// Target 60 FPS = 16.67ms per frame
-	frameDuration := time.Since(frameStart)
-	minFrameTime := 16 * time.Millisecond
-	if frameDuration < minFrameTime {
-		time.Sleep(minFrameTime - frameDuration)
-	}
-
-	if frameDuration > 30*time.Millisecond {
-		fmt.Printf("SLOW FRAME: %v (%.1f FPS)\n", frameDuration, 1000.0/float64(frameDuration.Milliseconds()))
+	// No frame-rate floor here. This used to sleep out the remainder of
+	// 16ms "to prevent event starvation", which the main loop already
+	// guards with its own Delay every iteration — and it slept on the
+	// PLATFORM THREAD, so it stalled event handling and every other
+	// window along with this one.
+	//
+	// It was also asymmetric: the compositing present returns before
+	// reaching this function, so the desktop never paid it and only
+	// torn-off windows did. That is most of why they felt slower to
+	// move and update. Caching the repaint made it worse, not better —
+	// with the paint skipped there was nothing left to fill the budget,
+	// so it slept nearly the whole 16ms every frame.
+	if frameDebug {
+		if d := time.Since(frameStart); d > 30*time.Millisecond {
+			fmt.Fprintf(os.Stderr, "kittytk-frame: window %d took %v\n", w.id, d)
+		}
 	}
 
 	// Continuous rotation requires continuous repaints
