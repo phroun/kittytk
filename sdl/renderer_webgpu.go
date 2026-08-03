@@ -83,6 +83,16 @@ fn fs_main(@builtin(position) fragPos: vec4<f32>, @location(0) texCoord: vec2<f3
         }
     }
 
+    // KITTYTK_SHADOW_DEBUG paints the shadow's footprint opaque red
+    // instead, so a screenshot separates "the pipeline never drew" from
+    // "it drew, but the falloff or blend is wrong".
+    if (shadow.pad0 > 0.5) {
+        if (a > 0.002) {
+            return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+        }
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
     // Premultiplied black: colour stays 0, the shape lives in alpha.
     return vec4<f32>(0.0, 0.0, 0.0, a);
 }
@@ -647,7 +657,7 @@ func (r *WebGPURenderer) initBlitPipeline() error {
 			},
 		},
 		Primitive: wgpu.PrimitiveState{
-			Topology: 3, // TriangleList
+			Topology: gputypes.PrimitiveTopologyTriangleList,
 		},
 		Multisample: wgpu.MultisampleState{
 			Count: 1,
@@ -841,7 +851,7 @@ func (r *WebGPURenderer) initCubePipeline() error {
 			},
 		},
 		Primitive: wgpu.PrimitiveState{
-			Topology:  3,                     // TriangleList
+			Topology:  gputypes.PrimitiveTopologyTriangleList,
 			CullMode:  gputypes.CullModeBack, // Keep back-face culling for clean look
 			FrontFace: gputypes.FrontFaceCCW,
 		},
@@ -1789,7 +1799,7 @@ func (r *WebGPURenderer) drawShadow(
 		c1x0, c1y0, c1x1, c1y1,
 		c2x0, c2y0, c2x1, c2y1,
 		px0, py0, px1, py1,
-		float32(float64(spec.radius) * ppuW), 0, 0, 0,
+		float32(float64(spec.radius) * ppuW), shadowDebugFlag, 0, 0,
 	}
 	paramsBytes := (*[80]byte)(unsafe.Pointer(&params[0]))[:]
 
@@ -1832,6 +1842,16 @@ func (r *WebGPURenderer) drawShadow(
 	}
 	return cleanup, nil
 }
+
+// shadowDebugFlag is 1 under KITTYTK_SHADOW_DEBUG, which paints every
+// shadow opaque red — the fastest way to tell a pipeline that never
+// draws from one whose output is simply too faint to see.
+var shadowDebugFlag = func() float32 {
+	if os.Getenv("KITTYTK_SHADOW_DEBUG") != "" {
+		return 1
+	}
+	return 0
+}()
 
 // initShadowPipeline builds the drop-shadow pipeline: the shared blit
 // vertex stage (so shadows position and rotate with their layers) and
@@ -1910,7 +1930,7 @@ func (r *WebGPURenderer) initShadowPipeline() error {
 			},
 		},
 		Primitive: wgpu.PrimitiveState{
-			Topology: 3, // TriangleList
+			Topology: gputypes.PrimitiveTopologyTriangleList,
 		},
 		Multisample: wgpu.MultisampleState{
 			Count: 1,
