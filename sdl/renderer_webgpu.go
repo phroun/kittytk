@@ -476,6 +476,12 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	if cubeCleanup != nil {
 		cubeCleanup()
 	}
+	// Finish() transferred the native command encoder to this command buffer;
+	// Release() recycles it into the device's encoder pool. Skipping it leaks
+	// one native encoder PER PRESENT — the pool allocates a fresh one every
+	// frame — so a session that presents a lot inflates native memory without
+	// bound. Release is nil-safe, so a failed Finish (nil buffer) is fine.
+	cmdBuffer.Release()
 	surfaceView.Release()
 
 	if err != nil {
@@ -1619,6 +1625,10 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 
 	// Release temporary resources after GPU has the commands. The base
 	// layer's texture is NOT among them — it is cached across frames.
+	// Finish() transferred the native command encoder to this command buffer;
+	// Release() recycles it into the device's encoder pool. Skipping it leaks
+	// one native encoder per composited frame (see Present). Release is nil-safe.
+	cmdBuffer.Release()
 	surfaceView.Release()
 
 	if err != nil {
