@@ -18,7 +18,7 @@
 //     to properties, and the renderer is chosen by driver name.
 //
 // Names here are SDL3's where SDL3 has one. Where this package invents
-// something â the event kinds especially â the name is deliberately
+// something — the event kinds especially — the name is deliberately
 // unlike an SDL constant, so it cannot be mistaken for one.
 package sdl3
 
@@ -41,7 +41,7 @@ const (
 
 // Init loads libSDL3 and initializes the requested subsystems. The
 // binding is purego-based: nothing is linked at build time, so the
-// library has to be opened before any SDL call â otherwise the first
+// library has to be opened before any SDL call — otherwise the first
 // one dereferences an unregistered function pointer. Doing it here
 // keeps that requirement from leaking into the platform layer.
 func Init(flags csdl.InitFlags) error {
@@ -189,7 +189,7 @@ func CreateWindow(title string, x, y int32, width, height int, flags WindowFlags
 }
 
 // CreateTransparentWindow creates a window whose framebuffer alpha
-// composites â SDL3's replacement for SDL2's shaped windows, and the
+// composites — SDL3's replacement for SDL2's shaped windows, and the
 // mechanism rounded corners now rely on.
 func CreateTransparentWindow(title string, x, y int32, width, height int, flags WindowFlags) (*Window, error) {
 	return CreateWindow(title, x, y, width, height, flags|WINDOW_TRANSPARENT)
@@ -261,7 +261,7 @@ const (
 	PIXELFORMAT_ABGR8888 = csdl.PIXELFORMAT_ABGR8888
 )
 
-// CreateSurface allocates an off-screen surface â the host uses one as
+// CreateSurface allocates an off-screen surface — the host uses one as
 // a window shape mask.
 func CreateSurface(width, height int32, format csdl.PixelFormat) (*Surface, error) {
 	return csdl.CreateSurface(int(width), int(height), format)
@@ -383,7 +383,7 @@ const (
 )
 
 // StartTextInput enables text events. SDL3 scopes it to a window, and
-// leaves it OFF until asked â unlike SDL2, whose global
+// leaves it OFF until asked — unlike SDL2, whose global
 // SDL_StartTextInput() was on by default. Every window needs its own
 // call or it receives key events but no typed text.
 func StartTextInput(w *Window) error { return w.w.StartTextInput() }
@@ -427,7 +427,7 @@ func GetClipboardText() (string, error)  { return csdl.GetClipboardText() }
 // Event kinds. These are this package's own values, NOT SDL constants:
 // SDL3 encodes them in its event type, which PollEvent has already
 // consumed by the time a caller sees a typed event. They are spelled
-// unlike SDL's names on purpose â an invented constant wearing SDL's
+// unlike SDL's names on purpose — an invented constant wearing SDL's
 // spelling is how clicks were once silently dropped, by being compared
 // against SDL's raw event number.
 const (
@@ -527,7 +527,7 @@ func PollEvent() Event {
 
 // translate maps one SDL3 event onto the SDL2-shaped value the platform
 // layer switches on. Unhandled event types return nil, which the caller
-// treats as "nothing for me" rather than "queue empty" â PollEvent's
+// treats as "nothing for me" rather than "queue empty" — PollEvent's
 // contract is preserved because the platform loop drains until nil and
 // SDL3 delivers many more event types than SDL2 did.
 func translate(ev *csdl.Event) Event {
@@ -687,7 +687,7 @@ func (r *Renderer) SetDrawColor(red, g, b, a uint8) error {
 func (r *Renderer) Clear() error   { return r.r.Clear() }
 func (r *Renderer) Present() error { return r.r.Present() }
 
-// Copy blits a whole texture over the whole render target â the only
+// Copy blits a whole texture over the whole render target — the only
 // form the host uses. SDL3's rects are floats.
 func (r *Renderer) Copy(t *Texture, src, dst *Rect) error {
 	return r.r.RenderTexture(t.t, nil, nil)
