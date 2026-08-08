@@ -136,6 +136,26 @@ type TearOffHost struct {
 	// the platform's CursorController). nil when the platform can't set
 	// cursors.
 	setCursor func(core.CursorShape)
+
+	// geom converts unit sizes to device pixels on the HARDENED cell pitch —
+	// the same grid the window frame paints on — so the OS surface is sized
+	// and read back exactly as wide/tall as the frame draws
+	// (geometry-cells-units-pixels.md). nil falls back to the raw px()/ppu
+	// ratio, which coincides at the base zoom; the desktop wires the real one
+	// via SetTornGeometry.
+	geom TornGeometry
+}
+
+// TornGeometry is the hardened cell-pitch unit<->pixel conversion a torn
+// host uses to size and place its OS surface so it lines up with the frame
+// paint. The desktop supplies it (its backend's cell-snapped mapping); a
+// host without one falls back to the raw pixels-per-unit ratio, which
+// coincides at the base zoom. See geometry-cells-units-pixels.md.
+type TornGeometry interface {
+	HardUnitToPxX(core.Unit) int
+	HardUnitToPxY(core.Unit) int
+	HardPxToUnitX(int) core.Unit
+	HardPxToUnitY(int) core.Unit
 }
 
 // Resize edge bits. The top edge is the title bar (drag handle), so
@@ -352,21 +372,79 @@ func (h *TearOffHost) applyCursor(shape core.CursorShape) {
 // edgeAt returns the resize-edge bitmask for a window-local point, or 0
 // when the point starts no resize - mirroring beginResize (no resize in
 // the title row, on a non-resizable or zoomed window).
+// effectiveGrip is the resize-edge grab thickness INCLUDING the painted frame
+// border, so the torn window's grab zone (and its hover affordance) is as wide
+// as the border it draws — matching docked windows, whose grip is
+// EffectiveResizeGrip = sliver + frame border. FindFrameBorderUnits needs the
+// desktop in the parent chain, which a detached window lacks, so derive the
+// border straight from the live pixels-per-unit exactly as the desktop's
+// WindowFrameBorderUnits does (ceil(scaled border px / ppu)).
+func (h *TearOffHost) effectiveGrip() core.Unit {
+	return h.resizeGrip + h.frameBorderUnits()
+}
+
+// frameBorderUnits is the painted frame-border thickness in units, derived from
+// the live pixels-per-unit exactly as the desktop's WindowFrameBorderUnits does
+// (ceil(scaled border px / ppu), the zoom-scaled border law (a)). A detached
+// window has no desktop in its parent chain
+// for FindFrameBorderUnits, so it is computed here. It offsets both the resize
+// grip and the title-bar zone so torn windows match docked ones under a wide
+// border_width.
+func (h *TearOffHost) frameBorderUnits() core.Unit {
+	ppu := 1.0
+	if h.ppu != nil {
+		if v := h.ppu(); v > 0 {
+			ppu = v
+		}
+	}
+	b := core.ScaledWindowFrameBorderPx(ppu)
+	if b <= 0 {
+		return 0
+	}
+	return core.Unit(math.Ceil(float64(b) / ppu))
+}
+
 func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 	if h.win.Flags()&WindowFlagNoResize != 0 || h.zoomed {
 		return 0
 	}
 	b := h.win.Bounds()
+	grip := h.effectiveGrip()
 	edges := 0
-	if x < h.resizeGrip {
+
+	// On a window small enough (or a border wide enough) that opposite grips
+	// overlap, a pointer sits in BOTH the left and right zone, or BOTH the top
+	// and bottom. Rather than letting one side always win, the pointer's half
+	// decides: past the 50% line the far edge (right / bottom) takes it, before
+	// it the near edge (left / top) does — so both handles stay reachable.
+	leftZone := x < grip
+	rightZone := x >= b.Width-grip
+	if leftZone && rightZone {
+		if 2*x >= b.Width {
+			leftZone = false
+		} else {
+			rightZone = false
+		}
+	}
+	if leftZone {
 		edges |= resizeLeft
 	}
-	if x >= b.Width-h.resizeGrip {
+	if rightZone {
 		edges |= resizeRight
 	}
-	if y < h.resizeGrip {
+
+	topZone := y < grip
+	bottomZone := y >= b.Height-grip
+	if topZone && bottomZone {
+		if 2*y >= b.Height {
+			topZone = false
+		} else {
+			bottomZone = false
+		}
+	}
+	if topZone {
 		edges |= resizeTop
-	} else if y >= b.Height-h.resizeGrip {
+	} else if bottomZone {
 		edges |= resizeBottom
 	} else if y < core.DefaultCellMetrics().CellHeight {
 		// Title row below the top grip: drag, not resize.
@@ -425,7 +503,7 @@ func (h *TearOffHost) refreshResizeHover() {
 	if !h.resizing || h.resizeEdges == 0 {
 		return
 	}
-	h.win.SetResizeHoverEdges(h.resizeEdges, h.resizeGrip)
+	h.win.SetResizeHoverEdges(h.resizeEdges, h.effectiveGrip())
 }
 
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
@@ -445,7 +523,7 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	}
 	edges := h.edgeAt(x, y)
 	if edges != 0 {
-		h.win.SetResizeHoverEdges(edges, h.resizeGrip)
+		h.win.SetResizeHoverEdges(edges, h.effectiveGrip())
 		h.applyCursor(tornCursorForEdge(edges))
 		return
 	}
@@ -1013,12 +1091,64 @@ func (h *TearOffHost) px(u core.Unit) int {
 	return int(math.Round(float64(u) * ppu))
 }
 
+// SetTornGeometry wires the hardened cell-pitch conversions (the desktop's
+// backend mapping) so the OS surface is sized/read on the frame's own grid.
+func (h *TearOffHost) SetTornGeometry(g TornGeometry) { h.geom = g }
+
+// pxHardX / pxHardY convert a unit LENGTH to device pixels on the hardened
+// cell pitch (the frame's paint grid); size geometry uses these so the OS
+// surface matches what the frame draws. They fall back to the raw px()
+// ratio when no TornGeometry is wired (it coincides at the base zoom).
+func (h *TearOffHost) pxHardX(u core.Unit) int {
+	if h.geom != nil {
+		return h.geom.HardUnitToPxX(u)
+	}
+	return h.px(u)
+}
+
+func (h *TearOffHost) pxHardY(u core.Unit) int {
+	if h.geom != nil {
+		return h.geom.HardUnitToPxY(u)
+	}
+	return h.px(u)
+}
+
+// unitHardX / unitHardY invert pxHardX/pxHardY: they read a device-pixel
+// extent back to whole units on the hardened cell pitch, rounding to
+// nearest so a surface sized to pxHardX(W) reports exactly W (no drift).
+// Falls back to round(px / ppu) with no TornGeometry.
+func (h *TearOffHost) unitHardX(px int) core.Unit {
+	if h.geom != nil {
+		return h.geom.HardPxToUnitX(px)
+	}
+	return h.unitFromPxRaw(px)
+}
+
+func (h *TearOffHost) unitHardY(px int) core.Unit {
+	if h.geom != nil {
+		return h.geom.HardPxToUnitY(px)
+	}
+	return h.unitFromPxRaw(px)
+}
+
+// unitFromPxRaw is the raw-ratio px->unit fallback used when no hardened
+// TornGeometry is wired.
+func (h *TearOffHost) unitFromPxRaw(px int) core.Unit {
+	ppu := 1.0
+	if h.ppu != nil {
+		if v := h.ppu(); v > 0 {
+			ppu = v
+		}
+	}
+	return core.Unit(math.Round(float64(px) / ppu))
+}
+
 func (h *TearOffHost) resizeMove() bool {
 	gx, gy := h.global()
 	dx, dy := gx-h.startGX, gy-h.startGY
 	metrics := core.DefaultCellMetrics()
-	minW := h.px(metrics.CellWidth * 12)
-	minH := h.px(metrics.CellHeight * 4)
+	minW := h.pxHardX(metrics.CellWidth * 12)
+	minH := h.pxHardY(metrics.CellHeight * 4)
 
 	x, y, w, ht := h.startX, h.startY, h.startW, h.startH
 	if h.resizeEdges&resizeLeft != 0 {
@@ -1101,8 +1231,12 @@ func (h *TearOffHost) zoomToWorkArea() {
 		return
 	}
 	x, y := h.native.ScreenPositionPx()
-	size := h.surf.Size()
-	h.zoomSaved = [4]int{x, y, h.px(size.Width), h.px(size.Height)}
+	// Save the ACTUAL device-pixel size to restore, not a units->px
+	// reconversion: the surface is already sized on the hardened pitch, so
+	// reconverting would round-trip through the ratio and could restore a
+	// hair off. ScreenSizePx is the exact rect to put back.
+	pw, ph := h.native.ScreenSizePx()
+	h.zoomSaved = [4]int{x, y, pw, ph}
 	h.zoomed = true
 	h.win.Maximize()
 	h.native.SetScreenPositionPx(wx, wy)
@@ -1119,17 +1253,21 @@ func (h *TearOffHost) applyKeyboardBounds(b core.UnitRect) bool {
 		return h.zoomed // zoomed: swallow, geometry is the work area's
 	}
 	cur := h.win.Bounds()
-	dx := h.px(b.X - cur.X)
-	dy := h.px(b.Y - cur.Y)
-	dw := h.px(b.Width - cur.Width)
-	dh := h.px(b.Height - cur.Height)
+	// Everything converts on the hardened cell pitch (the frame's grid).
+	// Position is applied as a DELTA off the OS window's current screen px
+	// (its screen origin isn't the desktop-relative b.X); size is set to the
+	// TARGET width/height ABSOLUTELY, so it lands exactly where the frame
+	// paints with no current-px round-trip.
+	dx := h.pxHardX(b.X - cur.X)
+	dy := h.pxHardY(b.Y - cur.Y)
+	dw := b.Width - cur.Width
+	dh := b.Height - cur.Height
 	if dx != 0 || dy != 0 {
 		x, y := h.native.ScreenPositionPx()
 		h.native.SetScreenPositionPx(x+dx, y+dy)
 	}
 	if (dw != 0 || dh != 0) && h.win.Flags()&WindowFlagNoResize == 0 {
-		size := h.surf.Size()
-		h.native.SetScreenSizePx(h.px(size.Width)+dw, h.px(size.Height)+dh)
+		h.native.SetScreenSizePx(h.pxHardX(b.Width), h.pxHardY(b.Height))
 	}
 	return true
 }
@@ -1140,13 +1278,35 @@ func (h *TearOffHost) applyKeyboardBounds(b core.UnitRect) bool {
 // offered to the window and declined.
 func (h *TearOffHost) inTitleBar(x, y core.Unit) bool {
 	b := h.win.Bounds()
-	th := core.DefaultCellMetrics().CellHeight
+	// The title bar is painted BELOW the top frame border, so its zone runs to
+	// frameBorder + CellHeight — matching the WindowManager (titleTop +
+	// CellHeight). Without the border term a wide border_width left only a thin
+	// draggable/double-click strip. The top resize grip (checked before this)
+	// owns the overlap at the very top.
+	th := core.DefaultCellMetrics().CellHeight + h.frameBorderUnits()
 	return x >= 0 && x < b.Width && y >= 0 && y < th
 }
 
 // Resized implements platform.SurfaceHandler: the window tracks the
 // surface.
 func (h *TearOffHost) Resized(size core.UnitSize) {
+	// Derive the window's unit size from the actual device-pixel size on the
+	// HARDENED cell pitch — the same grid the frame paints on — so the bounds
+	// round-trip is exact: a surface sized to pxHardX(W) reads back as exactly
+	// W. This is what keeps a torn window from drifting on undock/zoom (the
+	// backend's cell-snapped Size() FLOORS, shedding up to a unit each cycle
+	// so it accumulated) without going the other way and sizing bounds off the
+	// raw ratio (which the frame does NOT paint on, so the frame's right/bottom
+	// edge fell outside the surface — the "lost right edge"). With no hardened
+	// geometry wired it falls back to the platform-reported size.
+	if h.native != nil {
+		if pw, ph := h.native.ScreenSizePx(); pw > 0 && ph > 0 {
+			size = core.UnitSize{
+				Width:  h.unitHardX(pw),
+				Height: h.unitHardY(ph),
+			}
+		}
+	}
 	h.win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
 	h.win.Layout()
 	// While an edge-resize is in progress, keep the resize-edge highlight rects
@@ -1155,7 +1315,7 @@ func (h *TearOffHost) Resized(size core.UnitSize) {
 	// recomputed accurately — otherwise they stay at the pre-resize position
 	// until the next hover recomputes them.
 	if h.resizing {
-		h.win.SetResizeHoverEdges(h.resizeEdges, h.resizeGrip)
+		h.win.SetResizeHoverEdges(h.resizeEdges, h.effectiveGrip())
 	}
 	h.surf.Invalidate(core.UnitRect{})
 }

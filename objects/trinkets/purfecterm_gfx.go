@@ -68,6 +68,18 @@ type purfecTermGfx struct {
 	vpWpx, vpHpx float64
 	hitKX, hitKY float64
 
+	// lockstepPitch makes the viewport follow this terminal's OWN pixel pitch
+	// (round(units*ppu)) instead of the painter's cell-snapped UnitSpanPx. A
+	// terminal hosted inside another one of a different denomination (a PTY in
+	// mew) paints its cells at its own pitch and is clipped to that pitch by
+	// its host, but UnitSpanPx would measure its width against the HOST's cell
+	// grid — which, at fractional zoom, overshoots the pitch by a few percent
+	// that grows across the width. Sized to the overshoot the grid gains phantom
+	// columns and the scrollbar lane snaps clean past the clip, so no bar shows.
+	// Set by the host (SetLockstepPitch); off by default, so a standalone
+	// terminal keeps measuring against the true device surface it fills.
+	lockstepPitch bool
+
 	// Local selection drag.
 	mouseDown      bool
 	mouseDownX     int
@@ -149,6 +161,15 @@ func (t *PurfecTerm) SetColorScheme(scheme purfecterm.ColorScheme) {
 // forwarded to the PTY when the application requests tracking.
 func (t *PurfecTerm) SetMouseReportingEnabled(enabled bool) {
 	t.gfx.reportingDisabled = !enabled
+}
+
+// SetLockstepPitch makes this terminal size its grid and place its scrollbar
+// lanes against its OWN pixel pitch rather than the host painter's cell-snapped
+// span — see purfecTermGfx.lockstepPitch. A host that paints a terminal into a
+// clip of a different cell denomination (mew hosting a PTY) sets this; a
+// standalone terminal filling its own device surface leaves it off.
+func (t *PurfecTerm) SetLockstepPitch(on bool) {
+	t.gfx.lockstepPitch = on
 }
 
 func (t *PurfecTerm) gfxScheme() purfecterm.ColorScheme {
@@ -281,8 +302,19 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// extent (snapped, as the outer system places it). Everything inside is
 	// laid out in these pixels. Using bounds.Width*ppu instead would fall
 	// short of the widget edge at fractional ppu, leaving a strip unpainted.
+	//
+	// A hosted terminal is the exception (lockstepPitch): it does not fill a
+	// device surface of its own, it paints its own pitch into a clip its host
+	// cut at that same pitch. Measured against the HOST's cell grid, its width
+	// overshoots the pitch by a fraction that grows across the row — the grid
+	// gains phantom columns and the lane snaps past the clip. So it measures at
+	// its own pitch, which is exactly what the clip guarantees visible.
 	vpFullWpx := p.UnitSpanPxX(0, bounds.Width)
 	vpFullHpx := p.UnitSpanPxY(0, bounds.Height)
+	if t.gfx.lockstepPitch {
+		vpFullWpx = int(math.Round(float64(bounds.Width) * ppu))
+		vpFullHpx = int(math.Round(float64(bounds.Height) * ppu))
+	}
 
 	// Two rates meet here and BOTH matter. ppu is the renderer's font-aware
 	// pixels-per-unit, which the cell grid is laid out and painted with.
@@ -312,6 +344,12 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	contentWpx := vpFullWpx
 	if t.gfxInputActive() && !t.editorMode {
 		contentWpx = p.UnitSpanPxX(0, bounds.Width-gfxScrollbarLane)
+		if t.gfx.lockstepPitch {
+			// Reserve exactly one of THIS terminal's columns for the lane (see
+			// lanePx), at the pitch — so the grid fills right up to a lane that
+			// is its own last column, with no blank sliver between them.
+			contentWpx = int(math.Round(float64(bounds.Width-baseCW) * ppu))
+		}
 	}
 	// ROWS fit the FULL height. The child's grid must be a pure function of its
 	// rectangle and font — never of its own content — or it oscillates. Reserving
@@ -1867,8 +1905,26 @@ func (t *PurfecTerm) gfxPixelFrame() (wPx, hPx, ppu float64) {
 // share one pixel width, so the corner where the bars meet is a square. On a
 // cell surface a lane cannot be thinner than a character, so it is one CELL
 // column wide and one CELL row tall — the ScrollArea idiom.
+//
+// A lockstep (hosted) surface is the exception on the graphical path: its lane
+// is one of ITS OWN columns, not the toolkit's fixed layout column. The two
+// differ (a terminal cell is not the toolkit's cell), and a lane that is not a
+// whole child column leaves a sliver of blank between the last content column
+// and the bar, and straddles two child columns so a cell-quantized pointer
+// misses it. One own column makes the bar the child's last column exactly:
+// content meets it, and the wire cell that lands on it is unambiguous.
 func (t *PurfecTerm) lanePx(ppu float64) (laneX, laneY float64) {
 	if t.gfxInputActive() {
+		if t.gfx.lockstepPitch {
+			// One of this terminal's own COLUMNS thick on BOTH axes — the
+			// vertical bar is one column wide, and the horizontal bar matches
+			// that width rather than standing a whole row tall (a row is far
+			// taller than a column, so ch here made the bottom bar a fat slab
+			// over the last row). Equal thickness keeps the corner a square.
+			cw, _ := t.cellDims()
+			lane := float64(cw) * ppu
+			return lane, lane
+		}
 		lane := float64(gfxScrollbarLane) * ppu
 		return lane, lane
 	}
