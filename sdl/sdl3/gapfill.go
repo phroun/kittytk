@@ -28,19 +28,28 @@ var (
 	gapfillOnce sync.Once
 )
 
+// gapCandidates is the search list gapfill reopens SDL3 through. It leads with
+// the EXACT path the binding loaded (loadedSDLPath), so the reopen lands on the
+// same file — refcounted, the same handle — rather than re-resolving a bare
+// name to a different SDL3 and loading a second copy (see loadedSDLPath). The
+// rest of libraryCandidates follows only as a fallback for an embedded build,
+// where no path was recorded.
+func gapCandidates() []string {
+	c := libraryCandidates()
+	if loadedSDLPath != "" {
+		c = append([]string{loadedSDLPath}, c...)
+	}
+	return c
+}
+
 // bindGaps runs lazily, after Init has opened libSDL3.
 func bindGaps() {
-	// Reopen the library the binding already loaded. dlopen is
-	// refcounted, so this hands back the same handle — but it has to
-	// find the file by the same widened search, since Homebrew's
-	// prefixes are not on dyld's default path.
-	var lib uintptr
-	for _, name := range libraryCandidates() {
-		if h, err := purego.Dlopen(name, purego.RTLD_LAZY|purego.RTLD_GLOBAL); err == nil {
-			lib = h
-			break
-		}
-	}
+	// Reopen the library the binding already loaded — the open is refcounted
+	// on every platform, so this hands back the same module rather than a
+	// second copy. The open and the symbol probe are platform-specific (dlopen
+	// on Unix, LoadLibrary on Windows), so they live in gapfill_unix.go /
+	// gapfill_windows.go; everything below is shared.
+	lib := openSDLForGaps()
 	if lib == 0 {
 		return // no SDL3 present; Init reports it
 	}
@@ -48,7 +57,7 @@ func bindGaps() {
 	// Registration panics on a missing symbol, so probe first: an SDL3
 	// built without the Metal backend simply has no layer to hand back.
 	bind := func(target any, symbol string) {
-		if sym, err := purego.Dlsym(lib, symbol); err == nil && sym != 0 {
+		if sym := gapSymbol(lib, symbol); sym != 0 {
 			purego.RegisterFunc(target, sym)
 		}
 	}
