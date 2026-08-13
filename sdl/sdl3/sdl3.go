@@ -371,14 +371,18 @@ type Keysym struct {
 
 const (
 	KMOD_LSHIFT = uint16(csdl.KMOD_LSHIFT)
+	KMOD_RSHIFT = uint16(csdl.KMOD_RSHIFT)
 	KMOD_SHIFT  = uint16(csdl.KMOD_SHIFT)
 	KMOD_LCTRL  = uint16(csdl.KMOD_LCTRL)
+	KMOD_RCTRL  = uint16(csdl.KMOD_RCTRL)
 	KMOD_CTRL   = uint16(csdl.KMOD_CTRL)
 	KMOD_LALT   = uint16(csdl.KMOD_LALT)
+	KMOD_RALT   = uint16(csdl.KMOD_RALT)
 	KMOD_ALT    = uint16(csdl.KMOD_ALT)
 	KMOD_LGUI   = uint16(csdl.KMOD_LGUI)
 	KMOD_RGUI   = uint16(csdl.KMOD_RGUI)
 	KMOD_GUI    = uint16(csdl.KMOD_GUI)
+	KMOD_MODE   = uint16(csdl.KMOD_MODE) // AltGr / ISO_Level3_Shift (the Glyph modifier)
 )
 
 func GetModState() uint16 { return uint16(csdl.GetModState()) }
@@ -451,6 +455,13 @@ func SetTextInputArea(w *Window, xPx, yPx, wPx, hPx, cursorPx int) error {
 // caret to report. An input method then falls back to its own placement
 // rather than anchoring on a stale rectangle.
 func ClearTextInputArea(w *Window) error { return w.w.SetTextInputArea(nil, 0) }
+
+// ClearComposition abandons whatever the input method is currently holding,
+// without committing it. Used where a composition turns out not to have been
+// text at all: a macOS dead-key Option chord arms an accent for the next
+// keystroke, and when that chord is a shortcut the armed accent has to go,
+// or the next character the user types wears it.
+func ClearComposition(w *Window) error { return w.w.ClearComposition() }
 
 // --- clipboard ---
 

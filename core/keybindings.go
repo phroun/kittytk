@@ -7,12 +7,12 @@ import "sync"
 // Key names follow direct-key-handler conventions:
 //   - Control+letter: "^A", "^X", "^C", "^V" etc.
 //   - Special keys: "Left", "Right", "Up", "Down", "Home", "End",
-//     "Enter", "Tab", "Escape", "Backspace", "Delete",
+//     "Return", "Tab", "Escape", "Backspace", "Delete",
 //     "PageUp", "PageDown", "Insert"
 //   - Function keys: "F1", "F2", ... "F12"
-//   - Alt combinations: "M-" prefix (e.g., "M-x", "M-Tab")
+//   - Mega combinations: "M-" prefix (e.g., "M-x", "M-Tab")
 //   - Shift combinations: "S-" prefix (e.g., "S-Tab", "S-Left")
-//   - Combined: "M-S-Tab" (Alt+Shift+Tab), "C-S-s" (Ctrl+Shift+s)
+//   - Combined: "M-S-Tab" (Mega+Shift+Tab), "C-S-s" (Ctrl+Shift+s)
 type KeyBindings struct {
 	mu       sync.RWMutex
 	bindings map[string][]string // action -> list of keys
@@ -132,9 +132,9 @@ func (kb *KeyBindings) SetDefaults() {
 	kb.bindings[ActionClearLine] = []string{"^U"}
 
 	// Activation
-	kb.bindings[ActionActivate] = []string{"Enter", " "}
+	kb.bindings[ActionActivate] = []string{"Return", " "}
 	kb.bindings[ActionCancel] = []string{"Escape"}
-	kb.bindings[ActionConfirm] = []string{"Enter"}
+	kb.bindings[ActionConfirm] = []string{"Return"}
 
 	// Focus
 	kb.bindings[ActionFocusNext] = []string{"Tab"}
@@ -147,7 +147,7 @@ func (kb *KeyBindings) SetDefaults() {
 	kb.bindings[ActionCollapseAll] = []string{"/"}
 
 	// Menu
-	kb.bindings[ActionMenuOpen] = []string{"Enter", " ", "Down"}
+	kb.bindings[ActionMenuOpen] = []string{"Return", " ", "Down"}
 	kb.bindings[ActionMenuClose] = []string{"Escape"}
 	kb.bindings[ActionMenuToggle] = []string{"F10"}
 
@@ -206,32 +206,6 @@ func (kb *KeyBindings) Keys(action string) []string {
 	kb.mu.RLock()
 	defer kb.mu.RUnlock()
 	return kb.bindings[action]
-}
-
-// MatchesAction checks if a key matches any binding for an action.
-func (kb *KeyBindings) MatchesAction(action, key string) bool {
-	kb.mu.RLock()
-	defer kb.mu.RUnlock()
-	for _, k := range kb.bindings[action] {
-		if k == key {
-			return true
-		}
-	}
-	return false
-}
-
-// FindAction returns the action for a key, or empty string if none.
-func (kb *KeyBindings) FindAction(key string) string {
-	kb.mu.RLock()
-	defer kb.mu.RUnlock()
-	for action, keys := range kb.bindings {
-		for _, k := range keys {
-			if k == key {
-				return action
-			}
-		}
-	}
-	return ""
 }
 
 // AllBindings returns a copy of all bindings.

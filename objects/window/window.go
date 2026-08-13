@@ -2,7 +2,6 @@
 package window
 
 import (
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -75,6 +74,7 @@ const (
 // and optional Mac-like menu integration.
 type Window struct {
 	core.TrinketBase
+	core.TrinketKeys
 	mu sync.RWMutex
 
 	// Window properties
@@ -239,7 +239,17 @@ type Window struct {
 	hoveredButton       TitleButton // Titlebar button under the pointer (plain hover)
 
 	// Title bar keyboard focus
-	titleFocus        TitleFocus    // Which title bar element has keyboard focus
+	titleFocus TitleFocus // Which title bar element has keyboard focus
+	// keyContext is what this window's keyboard currently offers, rebuilt when
+	// the UI state changes (see refreshKeyContext). Held per window so a
+	// change here cannot stale another window's.
+	keyContext *core.KeyContext
+	// What the context above was built from, so a stale one is noticed at the
+	// point of use rather than needing everything that could change it to
+	// remember to say so.
+	keyContextReg     *core.KeyRegistry
+	keyContextRev     uint64
+	keyContextState   core.UIState
 	resizeEdges       int           // Which edges are being keyboard-resized (ResizeEdge* constants)
 	resizeStartBounds core.UnitRect // Bounds when resize operation started (for Escape to revert)
 
@@ -268,6 +278,25 @@ func NewWindow(title string) *Window {
 		maxHeight:   1<<30 - 1,
 	}
 	w.TrinketBase = *core.NewTrinketBase()
+	// A window's own vocabulary: the frame commands it always answers to, and
+	// the geometry family that belongs to a FOCUSED TITLE BAR -- sixteen
+	// bindings that exist in no other situation, which is why the title bar
+	// is a UI state rather than a trinket. Nothing here reaches the content;
+	// the focused trinket resolves its own keys against its own set.
+	w.SetCommands(
+		core.CmdWindowClose, core.CmdWindowMaximizeToggle, core.CmdAppMenu,
+		core.CmdAppHelp, core.CmdAppQuit,
+		core.CmdFocusNext, core.CmdFocusPrior,
+		core.CmdTrinketActivate, core.CmdWindowCancelResize,
+		core.CmdWindowMoveFineUp, core.CmdWindowMoveFineDown,
+		core.CmdWindowMoveFineLeft, core.CmdWindowMoveFineRight,
+		core.CmdWindowSizeFineUp, core.CmdWindowSizeFineDown,
+		core.CmdWindowSizeFineLeft, core.CmdWindowSizeFineRight,
+		core.CmdWindowMoveUp, core.CmdWindowMoveDown,
+		core.CmdWindowMoveLeft, core.CmdWindowMoveRight,
+		core.CmdWindowSizeUp, core.CmdWindowSizeDown,
+		core.CmdWindowSizeLeft, core.CmdWindowSizeRight,
+	)
 	w.Init(w)
 	w.SetFocusPolicy(core.StrongFocus)
 	w.focusManager = core.NewFocusManager(nil)
@@ -579,6 +608,34 @@ func (w *Window) Restore() {
 	}
 }
 
+// RestoreInPlace clears a maximized state WITHOUT moving the window: its
+// current rect becomes its normal (floating) bounds. Restore() snaps back to
+// the saved pre-maximize rect, which is the wrong answer once the geometry has
+// already moved on — a torn/solo host whose OS window was edge-resized while
+// the window still believed it was maximized. Left maximized, such a window
+// paints the maximized frame (title bar only, no border stroke) around an
+// arbitrary rect and offers a restore button that would teleport it; adopting
+// the rect as normal makes it honest again, so the full frame and the maximize
+// button come back. No-op unless the window is maximized.
+func (w *Window) RestoreInPlace() {
+	w.mu.Lock()
+	if w.state != WindowStateMaximized {
+		w.mu.Unlock()
+		return
+	}
+	w.state = WindowStateNormal
+	w.stateBeforeMinimize = WindowStateNormal
+	w.normalBounds = w.Bounds()
+	handler := w.onStateChange
+	w.mu.Unlock()
+
+	w.Update()
+
+	if handler != nil {
+		handler(WindowStateNormal)
+	}
+}
+
 // keyboardTopSnapMaximize maximizes an in-surface window through its
 // maximize-request handler when it is already pressed against the top of
 // its client area - the keyboard equivalent of dragging the titlebar up
@@ -746,8 +803,28 @@ func (w *Window) SetActive(active bool) {
 	w.Update()
 }
 
-// Close attempts to close the window.
+// Close attempts to close the window, and reports whether it actually did. It
+// is an ATTEMPT throughout: this window's close handler may decline, and so
+// may any of its children, since a child left open over a closed parent is
+// not a window anyone can get back to.
+//
+// When something declines, the window that did so is brought back to the
+// user's attention along with every window between here and it, innermost
+// last so it lands on top. A refusal the user cannot see is a window that
+// simply will not close for no visible reason.
 func (w *Window) Close() bool {
+	ok, blocker := w.attemptClose()
+	if !ok {
+		w.surfaceBlockingChain(blocker)
+	}
+	return ok
+}
+
+// attemptClose is Close without the surfacing, so a nested child refusal
+// surfaces ONCE from the outermost Close rather than once per level (which
+// would raise the parents last and bury the window actually asking). It
+// reports the innermost window that declined.
+func (w *Window) attemptClose() (bool, *Window) {
 	w.mu.RLock()
 	handler := w.onClose
 	closeComplete := w.onCloseComplete
@@ -756,17 +833,24 @@ func (w *Window) Close() bool {
 	w.mu.RUnlock()
 
 	if handler != nil && !handler() {
-		return false
+		return false, w
 	}
 
-	// Announce window closing for accessibility
+	// Close child windows first. A child that declines cancels this close
+	// too: its own dialog is the one asking, and answering "don't close"
+	// there cannot mean the window behind it goes anyway. Children that
+	// already agreed stay closed, exactly as a refused application quit
+	// leaves the windows that agreed to it closed.
+	for _, child := range w.ChildWindows() {
+		if ok, blocker := child.attemptClose(); !ok {
+			return false, blocker
+		}
+	}
+
+	// Announce window closing for accessibility. After the children, so a
+	// close that a child cancels is never announced as having happened.
 	if am := core.FindAccessibilityManager(w); am != nil {
 		am.AnnouncePolite(title + ", closed")
-	}
-
-	// Close child windows first
-	for _, child := range w.ChildWindows() {
-		child.Close()
 	}
 
 	// Remove from parent
@@ -786,7 +870,55 @@ func (w *Window) Close() bool {
 		fn()
 	}
 
-	return true
+	return true, nil
+}
+
+// windowSurfacer is the desktop, which is the only thing that knows where a
+// window actually lives -- docked, minimized to the dock, or torn onto its own
+// OS surface, possibly minimized there too. Declared here rather than imported
+// so the dependency stays one-way.
+type windowSurfacer interface {
+	SurfaceWindow(win *Window)
+}
+
+// surfaceBlockingChain brings the window that refused back into view, together
+// with every window between this one and it. Outermost first so the innermost
+// -- the one actually asking the user something -- ends up on top.
+func (w *Window) surfaceBlockingChain(blocker *Window) {
+	if blocker == nil {
+		return
+	}
+	surfacer := w.findSurfacer()
+	if surfacer == nil {
+		return
+	}
+	// Walk up from the blocker to here, then surface in reverse.
+	chain := []*Window{blocker}
+	for p := blocker.ParentWindow(); p != nil; p = p.ParentWindow() {
+		chain = append(chain, p)
+		if p == w {
+			break
+		}
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		surfacer.SurfaceWindow(chain[i])
+	}
+}
+
+// findSurfacer walks up for the desktop.
+func (w *Window) findSurfacer() windowSurfacer {
+	var current any = w.Parent()
+	for current != nil {
+		if s, ok := current.(windowSurfacer); ok {
+			return s
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return nil
+		}
+		current = t.Parent()
+	}
+	return nil
 }
 
 // SetOnClose sets the close handler.
@@ -906,9 +1038,53 @@ func (w *Window) SetWindowMenuBar(mb core.Trinket) {
 	w.mu.Unlock()
 	if mb != nil {
 		mb.SetParent(w)
+		// A solo or torn-off window carries its own bar, so it forms its own
+		// accelerators, against its own context. The desktop's bar does the
+		// same for the desktop; neither has to know about the other.
+		w.refreshKeyContext()
+		// Tab out of this bar into the window's own focus chain. The desktop's
+		// bar hands Tab to the dock; a window's bar has no dock beside it, so
+		// without this the key fell through to the focused trinket and a
+		// full-screen one swallowed it (see focusOutOfMenuBar).
+		if fo, ok := mb.(interface{ SetOnFocusOut(func(bool) bool) }); ok {
+			fo.SetOnFocusOut(w.focusOutOfMenuBar)
+		}
 	}
 	w.layoutContent()
 	w.Update()
+}
+
+// focusOutOfMenuBar moves focus off this window's own menu bar: Shift+Tab
+// (forward=false) back to the title bar, Tab forward to the first content
+// trinket. It mirrors where Tab lands when it walks off either end of the
+// content chain, so the bar sits between the title bar and the content in one
+// continuous cycle. Reports whether focus moved; a window with nothing
+// focusable to move to leaves the key alone rather than eating it.
+func (w *Window) focusOutOfMenuBar(forward bool) bool {
+	fm := w.FocusManager()
+	if !forward {
+		// Backward into the title bar - the blur item when it is enabled,
+		// matching Shift+Tab off the front of the content chain.
+		if w.hasKeyboardBlurEnabled() {
+			w.SetTitleFocus(TitleFocusBlur)
+		} else {
+			w.SetTitleFocus(TitleFocusTitle)
+		}
+		if fm != nil {
+			fm.ClearFocus()
+		}
+		w.Update()
+		return true
+	}
+	if fm == nil {
+		return false
+	}
+	w.SetTitleFocus(TitleFocusNone)
+	if !fm.FocusFirst() {
+		return false
+	}
+	w.Update()
+	return true
 }
 
 // WindowMenuBar returns the window's own menu bar (the chrome a detached
@@ -918,6 +1094,32 @@ func (w *Window) WindowMenuBar() core.Trinket {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.menuBar
+}
+
+// applicationQuitter is the desktop. Declared here rather than imported so
+// the dependency stays one-way: a window knows nothing about applications,
+// and the desktop, which owns them, answers the question.
+type applicationQuitter interface {
+	QuitApplicationOwning(win *Window) bool
+}
+
+// quitOwningApplication walks up for the desktop and asks it to end the
+// application this window belongs to. The walk works for a torn-off window
+// too: tearing removes it from the manager but leaves it parented to the
+// desktop, which is exactly the link needed here.
+func (w *Window) quitOwningApplication() bool {
+	var current any = w.Parent()
+	for current != nil {
+		if q, ok := current.(applicationQuitter); ok {
+			return q.QuitApplicationOwning(w)
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return false
+		}
+		current = t.Parent()
+	}
+	return false
 }
 
 // SetShortcutResolver installs a fallback accelerator handler, consulted
@@ -2597,11 +2799,18 @@ func (w *Window) SetTitleFocus(focus TitleFocus) {
 	w.mu.Lock()
 	oldFocus := w.titleFocus
 	w.titleFocus = focus
+	stateChanged := (oldFocus == TitleFocusTitle) != (focus == TitleFocusTitle)
 	if focus == TitleFocusNone {
 		w.resizeEdges = ResizeEdgeNone // Clear resize state when leaving title bar
 	}
 	title := w.title
 	w.mu.Unlock()
+
+	// Entering or leaving the title bar changes which commands exist, so the
+	// context is rebuilt and the bar re-forms its accelerators against it.
+	if stateChanged {
+		w.refreshKeyContext()
+	}
 
 	// Announce titlebar element change for accessibility
 	if focus != oldFocus && focus != TitleFocusNone {
@@ -2669,7 +2878,7 @@ func (w *Window) performKeyboardBlur() {
 }
 
 // handleTitleBarKey handles keyboard input when title bar has focus.
-func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
+func (w *Window) handleTitleBarKey(event core.KeyPressEvent, cmd string) bool {
 	w.mu.RLock()
 	titleFocus := w.titleFocus
 	resizeEdges := w.resizeEdges
@@ -2679,22 +2888,8 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 	metrics := w.frameCellMetrics()
 
 	// Handle navigation between title bar elements
-	switch event.Key {
-	case "Tab":
-		// Check if Shift is held - use same logic as S-Tab case
-		if event.Modifiers&core.ShiftModifier != 0 {
-			prev := w.prevTitleFocus(titleFocus)
-			if prev == titleFocus {
-				// At first title element, loop to content's last trinket
-				w.SetTitleFocus(TitleFocusNone)
-				if fm := w.FocusManager(); fm != nil {
-					fm.FocusLast()
-				}
-			} else {
-				w.SetTitleFocus(prev)
-			}
-			return true
-		}
+	switch cmd {
+	case core.CmdFocusNext:
 		// Move to next title element or exit to content
 		next := w.nextTitleFocus(titleFocus)
 		if next == TitleFocusNone {
@@ -2708,7 +2903,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "S-Tab", "Shift-Tab":
+	case core.CmdFocusPrior:
 		// Move to previous title element, or loop to content's last trinket
 		prev := w.prevTitleFocus(titleFocus)
 		if prev == titleFocus {
@@ -2722,7 +2917,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Escape":
+	case core.CmdWindowCancelResize:
 		// Exit title bar focus, return to content
 		w.SetTitleFocus(TitleFocusNone)
 		w.mu.Lock()
@@ -2733,7 +2928,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Enter", " ", "Space":
+	case core.CmdTrinketActivate:
 		// Activate focused button or confirm resize
 		switch titleFocus {
 		case TitleFocusClose:
@@ -2781,52 +2976,57 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 	// Handle window movement and resizing when title has focus
 	if titleFocus == TitleFocusTitle {
 		bounds := w.Bounds()
-		hasShift := event.Modifiers&core.ShiftModifier != 0
-		hasCtrl := event.Modifiers&core.ControlModifier != 0
-		hasMeta := event.Modifiers&core.MetaModifier != 0
-		hasAlt := event.Modifiers&core.AltModifier != 0
 
-		// Determine movement multiplier based on modifiers
-		// Alt/Meta/Ctrl increases horizontal by 10 chars, vertical by 4 lines
+		// The command says which direction, whether this moves or resizes,
+		// and how big the step is. This replaces a loop that peeled modifier
+		// prefixes off the key string in any order and then re-derived the
+		// same three facts from the leftovers -- a keymap answers all of it
+		// now, including for chords the peeler never knew about.
+		var key string
+		var resize, coarse bool
+		switch cmd {
+		case core.CmdWindowMoveFineLeft:
+			key = "Left"
+		case core.CmdWindowMoveFineRight:
+			key = "Right"
+		case core.CmdWindowMoveFineUp:
+			key = "Up"
+		case core.CmdWindowMoveFineDown:
+			key = "Down"
+		case core.CmdWindowMoveLeft:
+			key, coarse = "Left", true
+		case core.CmdWindowMoveRight:
+			key, coarse = "Right", true
+		case core.CmdWindowMoveUp:
+			key, coarse = "Up", true
+		case core.CmdWindowMoveDown:
+			key, coarse = "Down", true
+		case core.CmdWindowSizeFineLeft:
+			key, resize = "Left", true
+		case core.CmdWindowSizeFineRight:
+			key, resize = "Right", true
+		case core.CmdWindowSizeFineUp:
+			key, resize = "Up", true
+		case core.CmdWindowSizeFineDown:
+			key, resize = "Down", true
+		case core.CmdWindowSizeLeft:
+			key, resize, coarse = "Left", true, true
+		case core.CmdWindowSizeRight:
+			key, resize, coarse = "Right", true, true
+		case core.CmdWindowSizeUp:
+			key, resize, coarse = "Up", true, true
+		case core.CmdWindowSizeDown:
+			key, resize, coarse = "Down", true, true
+		default:
+			return false
+		}
+
+		// hasShift is what the bodies below call "this is a resize", which is
+		// what the shifted arrow always meant.
+		hasShift := resize
 		horizStep := metrics.CellWidth
 		vertStep := metrics.CellHeight
-		if hasMeta || hasAlt || hasCtrl {
-			horizStep = metrics.CellWidth * 10
-			vertStep = metrics.CellHeight * 4
-		}
-
-		// Normalize key names. Modifier prefixes can arrive in any order
-		// and in combination - the SDL backend emits arrows as e.g.
-		// "M-S-Left" (Alt+Shift), so stripping only the single leading
-		// prefix would leave "S-Left" and lose the resize. Peel every
-		// recognized prefix, whatever the order.
-		key := event.Key
-		for {
-			switch {
-			case strings.HasPrefix(key, "S-"):
-				hasShift = true
-				key = key[2:]
-			case strings.HasPrefix(key, "M-"), strings.HasPrefix(key, "A-"):
-				hasMeta = true
-				hasAlt = true
-				key = key[2:]
-			case strings.HasPrefix(key, "C-"):
-				hasCtrl = true
-				key = key[2:]
-			case strings.HasPrefix(key, "s-"):
-				hasMeta = true
-				key = key[2:]
-			default:
-			}
-			if !strings.HasPrefix(key, "S-") && !strings.HasPrefix(key, "M-") &&
-				!strings.HasPrefix(key, "A-") && !strings.HasPrefix(key, "C-") &&
-				!strings.HasPrefix(key, "s-") {
-				break
-			}
-		}
-		// Any large-step modifier (Alt/Meta/Ctrl) makes moves and resizes
-		// chunky.
-		if hasMeta || hasAlt || hasCtrl {
+		if coarse {
 			horizStep = metrics.CellWidth * 10
 			vertStep = metrics.CellHeight * 4
 		}
@@ -3029,29 +3229,6 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			}
 			return true
 
-		case "Enter", "Return", "KPEnter":
-			// Confirm resize - clear edges so next Shift+arrow starts fresh
-			// Also update resizeStartBounds to current bounds
-			w.mu.Lock()
-			if w.resizeEdges != ResizeEdgeNone {
-				w.resizeEdges = ResizeEdgeNone
-				w.resizeStartBounds = w.Bounds()
-			}
-			w.mu.Unlock()
-			return true
-
-		case "Escape", "Esc":
-			// Cancel resize - revert to bounds from when resize started
-			w.mu.Lock()
-			if w.resizeEdges != ResizeEdgeNone {
-				startBounds := w.resizeStartBounds
-				w.resizeEdges = ResizeEdgeNone
-				w.mu.Unlock()
-				w.requestKeyboardBounds(startBounds, false)
-			} else {
-				w.mu.Unlock()
-			}
-			return true
 		}
 	}
 
@@ -3290,8 +3467,22 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	// The detached window's own menu bar owns keyboard navigation while it
 	// is focused (F10) or has a dropdown open, and F10 itself always goes
 	// to the bar so it can toggle that focus - matching the desktop bar.
+	// Resolved ONCE and used everywhere below: the menu key, the title bar's
+	// whole geometry model, Tab either way, and the frame commands. Feeding
+	// the sequence processor the same keystroke at each of those points would
+	// advance a chord's prefix once per check.
+	cmd := w.KeyCommand(event.Key)
+
 	if mb != nil {
-		menuActive := mb.HasFocus() || event.Key == "F10"
+		// The help key goes straight to Help on this window's own bar; an app
+		// with no Help menu falls through to the plain menu key below.
+		if cmd == core.CmdAppHelp {
+			if h, ok := mb.(interface{ OpenHelpMenu() bool }); ok && h.OpenHelpMenu() {
+				return true
+			}
+			cmd = core.CmdAppMenu
+		}
+		menuActive := mb.HasFocus() || cmd == core.CmdAppMenu
 		if o, ok := mb.(interface{ IsMenuOpen() bool }); ok && o.IsMenuOpen() {
 			menuActive = true
 		}
@@ -3306,10 +3497,42 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	// docked. A detached main window carries its own bar (mb); a torn-off
 	// child carries no chrome but borrows its app's bar via the resolver.
 	if mb != nil {
+		// An item that names a COMMAND is matched against the command this
+		// window already resolved, above -- the key is fed to the context once
+		// per keystroke, and asking again would advance a chord's prefix twice.
+		if ac, ok := mb.(interface{ ActivateCommand(string) bool }); ok &&
+			cmd != "" && ac.ActivateCommand(cmd) {
+			return true
+		}
 		if sc, ok := mb.(interface {
 			HandleShortcut(core.KeyPressEvent) bool
 		}); ok && sc.HandleShortcut(event) {
 			return true
+		}
+		// ...and its chord ACCELERATORS, which are not item shortcuts and do
+		// not go through HandleShortcut. The bar publishes them into this
+		// window's context, so this is the only place that reads them back --
+		// above the focused trinket, exactly where the desktop resolves them
+		// for a docked window. Without it a window carrying its own bar drew
+		// its accelerators lit and then let the focused trinket eat the chord.
+		if bar, ok := mb.(interface {
+			ActivateAcceleratorSequence(string) bool
+		}); ok {
+			// The context knows the whole sequence, which is what carries a
+			// multi-key chord: it holds the prefix between keystrokes and
+			// reports the lot when it lands.
+			if ctx := w.KeyContext(); ctx != nil &&
+				ctx.Resolve(event.Key) == core.CommandAppAccelerator &&
+				bar.ActivateAcceleratorSequence(ctx.MatchedSequence()) {
+				return true
+			}
+			// ...and the bar itself for a single-key one, which needs no
+			// prefix held and so does not need to have been published yet.
+			// This is what makes the very first keystroke work, before
+			// anything has painted and put the accelerators in the context.
+			if bar.ActivateAcceleratorSequence(event.Key) {
+				return true
+			}
 		}
 	}
 	if shortcutResolver != nil && shortcutResolver(event) {
@@ -3318,15 +3541,14 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	// If title bar has focus, handle title bar keys
 	if titleFocus != TitleFocusNone {
-		if w.handleTitleBarKey(event) {
+		if w.handleTitleBarKey(event, cmd) {
 			return true
 		}
 	}
 
 	// Check if this is a Tab or Shift+Tab event
-	isShiftTab := event.Key == "S-Tab" || event.Key == "Shift-Tab" ||
-		(event.Key == "Tab" && event.Modifiers&core.ShiftModifier != 0)
-	isTab := event.Key == "Tab" && event.Modifiers&core.ShiftModifier == 0
+	isShiftTab := cmd == core.CmdFocusPrior
+	isTab := cmd == core.CmdFocusNext
 
 	// For Tab/Shift+Tab, first give the focused trinket a chance to handle it.
 	// This is critical for containers like MDIPane that manage their own Tab navigation.
@@ -3389,12 +3611,29 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	}
 
 	// Handle window-specific keys
-	switch event.Key {
-	case "M-F4": // Alt+F4 - Close
+	switch cmd {
+	case core.CmdWindowClose:
 		w.Close()
 		return true
-	case "M-F10": // Alt+F10 - Maximize/Restore
-		if w.IsMaximized() {
+	case core.CmdAppQuit:
+		// Ending the APPLICATION, not this window. The desktop is the only
+		// thing that knows which app a window belongs to, so the window asks
+		// it; a window with no desktop above it has no application to end and
+		// lets the key fall through.
+		return w.quitOwningApplication()
+	case core.CmdWindowMaximizeToggle:
+		// Through the maximize-request handler when one is set, exactly as the
+		// titlebar button does: a torn/solo host maps maximize onto its OS
+		// window (zoom to the work area), and calling Maximize() directly here
+		// would flip the window's state while leaving the host un-zoomed and
+		// the surface its old size — a half-maximized window that paints no
+		// border and can still be edge-resized.
+		w.mu.RLock()
+		maxHandler := w.onMaximizeRequest
+		w.mu.RUnlock()
+		if maxHandler != nil {
+			maxHandler()
+		} else if w.IsMaximized() {
 			w.Restore()
 		} else {
 			w.Maximize()
@@ -3812,4 +4051,78 @@ func (w *Window) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	local.X = core.ExchangeX(event.X-contentBounds.X, outer, interior)
 	local.Y = core.ExchangeY(event.Y-contentBounds.Y, outer, interior)
 	return handler.HandleMouseWheel(local)
+}
+
+// keyContextConsumer is a menu bar that forms accelerators. Declared
+// structurally so a window need not import the trinket package to hand its bar
+// a context.
+type keyContextConsumer interface {
+	SetAcceleratorChord(string)
+	SetKeyContext(*core.KeyContext)
+}
+
+// windowUIState reports which situation this window's keyboard is in. A title
+// bar is a MODE of the window rather than a trinket with focus, which is why
+// the state and not the focus chain is what a context is keyed on.
+func (w *Window) windowUIState() core.UIState {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.titleFocus == TitleFocusTitle {
+		return core.StateTitleBarFocused
+	}
+	return core.StateNormal
+}
+
+// refreshKeyContext rebuilds this window's context for its current state and
+// hands it to the window's own menu bar, if it has one.
+//
+// A window builds its own rather than sharing the desktop's, so a change here
+// cannot stale anything over there: the commonest structural event of all --
+// focus moving between windows -- costs no rebuild at all, because each
+// window's context is already built and still valid.
+func (w *Window) refreshKeyContext() {
+	reg := w.FocusedKeyRegistry()
+	state := w.windowUIState()
+	ctx := reg.BuildStateContext(state)
+
+	w.mu.Lock()
+	w.keyContext = ctx
+	w.keyContextReg = reg
+	w.keyContextRev = reg.Revision()
+	w.keyContextState = state
+	mb := w.menuBar
+	w.mu.Unlock()
+
+	if c, ok := mb.(keyContextConsumer); ok {
+		c.SetAcceleratorChord(core.AcceleratorChord())
+		c.SetKeyContext(ctx)
+	}
+}
+
+// FocusedKeyRegistry is the registry in force for whatever holds the focus in
+// this window (core.KeyRegistryFocuser). A window resolves its own frame
+// commands through it, so they stand down when the focus is inside a trinket
+// that took the keyboard on its own terms.
+func (w *Window) FocusedKeyRegistry() *core.KeyRegistry {
+	return core.FindFocusedKeyRegistry(w)
+}
+
+// KeyContext returns the set of actions this window currently offers,
+// rebuilding it first if the keymap behind it has moved on: the focus landing
+// inside a trinket with its own registry changes which keymap answers here,
+// and does so without changing any registry's revision.
+func (w *Window) KeyContext() *core.KeyContext {
+	w.mu.RLock()
+	ctx, reg, rev, state := w.keyContext, w.keyContextReg, w.keyContextRev, w.keyContextState
+	w.mu.RUnlock()
+
+	if ctx != nil && reg == w.FocusedKeyRegistry() &&
+		rev == reg.Revision() && state == w.windowUIState() {
+		return ctx
+	}
+	w.refreshKeyContext()
+
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.keyContext
 }

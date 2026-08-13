@@ -1081,13 +1081,31 @@ func (p *Platform) liveResize(id uint32, wPx, hPx int) bool {
 	return true
 }
 
-// zoomTarget resolves a Command/Meta zoom chord to the font size it asks
-// for: "+"/"=" (same key) steps up a point, "-" steps down, "0" returns to
-// the configured default; the keypad's +/-/0 count too. ok is false for any
-// other key: Ctrl or Alt in the chord makes it an ordinary key combination,
-// but Shift rides along freely — "+" IS Shift+"=" on common layouts.
+// zoomChordActive reports whether the modifiers held are the platform's
+// font-zoom chord. On Windows that is Ctrl+Shift — Windows keyboards seldom have
+// a Command/Super key, and plain Ctrl+/- is commonly an app's own binding — so
+// zoom is Ctrl+Shift with "-", "=" and "0". Everywhere else it is the
+// Command/Meta (GUI) key, Shift free (Cmd++ is Cmd+Shift+= on common layouts).
+func zoomChordActive(mod uint16) bool {
+	return zoomChordActiveFor(mod, runtime.GOOS == "windows")
+}
+
+// zoomChordActiveFor is zoomChordActive with the platform decision passed in, so
+// both branches are testable on any host.
+func zoomChordActiveFor(mod uint16, windows bool) bool {
+	if windows {
+		return mod&sdl3.KMOD_CTRL != 0 && mod&sdl3.KMOD_SHIFT != 0 &&
+			mod&(sdl3.KMOD_GUI|sdl3.KMOD_ALT) == 0
+	}
+	return mod&sdl3.KMOD_GUI != 0 && mod&(sdl3.KMOD_CTRL|sdl3.KMOD_ALT) == 0
+}
+
+// zoomTarget resolves a font-zoom chord (see zoomChordActive) to the font size
+// it asks for: "+"/"=" (same key) steps up a point, "-" steps down, "0" returns
+// to the configured default; the keypad's +/-/0 count too. ok is false for any
+// other key or when the chord's modifiers are not held.
 func zoomTarget(sym sdl3.Keysym, cur, def int) (int, bool) {
-	if sym.Mod&sdl3.KMOD_GUI == 0 || sym.Mod&(sdl3.KMOD_CTRL|sdl3.KMOD_ALT) != 0 {
+	if !zoomChordActive(sym.Mod) {
 		return 0, false
 	}
 	switch sym.Sym {
@@ -1233,6 +1251,13 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			text := e.GetText()
+			// AltGr / ISO_Level3_Shift (the Glyph modifier) composes its
+			// character here on the TextInput path, not on KEY_DOWN. When it is
+			// held, tag the produced glyph with a "G-" prefix so it reaches the
+			// keymap as a distinct, bindable chord (an unbound G-glyph then
+			// self-inserts the character — see the sequence processor). The mask
+			// is read live: the modifier is still down while its glyph composes.
+			glyph := glyphMod(sdl3.GetModState())
 			for _, ch := range text {
 				// On macOS, handle native Option key shortcuts by mapping them
 				// back into clear "M-key" syntax to ensure uniformity across environments.
@@ -1247,8 +1272,12 @@ func (p *Platform) pumpEvents() bool {
 						continue
 					}
 				}
+				key := string(ch)
+				if glyph {
+					key = "G-" + key
+				}
 				s.handler.Event(core.KeyPressEvent{
-					Key:  string(ch),
+					Key:  key,
 					Text: string(ch),
 				})
 			}
@@ -1261,6 +1290,29 @@ func (p *Platform) pumpEvents() bool {
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
+			}
+			// ...except on macOS, where five of the Option chords are DEAD
+			// KEYS: Option+E, I, N, U and ` open a composition to accent the
+			// next character instead of producing a character of their own.
+			// Those arrive here rather than on the TextInput path, so the
+			// decoding that turns every other Option chord back into M-key
+			// never saw them and M-e opened an accent picker over whatever
+			// had focus. Decoded the same way, with Option still held, they
+			// are the shortcut the user pressed.
+			if runtime.GOOS == "darwin" && sdl3.GetModState()&sdl3.KMOD_ALT != 0 {
+				if key, ok := decodeMacOSDeadKey(e.GetText()); ok {
+					mods, name := core.ParseKeyModifiers(key)
+					text := ""
+					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
+						text = name
+					}
+					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
+					// Drop the composition the dead key opened, so the next
+					// character types plainly rather than wearing an accent
+					// from a keystroke that was meant as a shortcut.
+					_ = sdl3.ClearComposition(s.win.window)
+					continue
+				}
 			}
 			s.handler.Event(core.TextEditingEvent{
 				Text:   e.GetText(),
@@ -1653,10 +1705,10 @@ func currentKeyModifiers() core.KeyModifiers {
 		mods |= core.ControlModifier
 	}
 	if state&sdl3.KMOD_ALT != 0 {
-		mods |= core.AltModifier
+		mods |= core.MegaModifier
 	}
 	if state&sdl3.KMOD_GUI != 0 {
-		mods |= core.MetaModifier
+		mods |= core.SuperModifier
 	}
 	return mods
 }
@@ -1676,7 +1728,12 @@ func mapButton(b uint8) core.MouseButton {
 // specialKeys maps SDL keycodes to D3 key names (spellings match
 // core/keybindings.go).
 var specialKeys = map[sdl3.Keycode]string{
-	sdl3.K_RETURN:    "Enter",
+	// The home row's key and the keypad's are two PHYSICAL keys, and
+	// direct-key-handler -- the vocabulary this toolkit's key names are
+	// written in -- names them apart. Calling both "Enter" here made the two
+	// backends disagree about the home-row key, which the keymap then bound
+	// under only one of its two names.
+	sdl3.K_RETURN:    "Return",
 	sdl3.K_KP_ENTER:  "Enter",
 	sdl3.K_TAB:       "Tab",
 	sdl3.K_ESCAPE:    "Escape",
@@ -1705,14 +1762,110 @@ var specialKeys = map[sdl3.Keycode]string{
 	sdl3.K_F12:       "F12",
 }
 
+// glyphMod reports whether a modifier mask has AltGr / ISO_Level3_Shift active
+// — the "Glyph" level shift that reaches a key's third glyph plane (€, @, ä…).
+// It surfaces two ways: as KMOD_MODE on X11/Wayland layouts that carry AltGr,
+// and (only on Windows, where there is no KMOD_MODE) as the LCtrl+RAlt pair
+// AltGr sends there — distinguished from a deliberate Ctrl+Alt by requiring the
+// RIGHT Alt with no LEFT Alt, so a genuine Left-Ctrl+Left-Alt chord is untouched.
+func glyphMod(mod uint16) bool {
+	if mod&sdl3.KMOD_MODE != 0 {
+		return true
+	}
+	if runtime.GOOS == "windows" &&
+		mod&sdl3.KMOD_RALT != 0 && mod&sdl3.KMOD_LALT == 0 && mod&sdl3.KMOD_LCTRL != 0 {
+		return true
+	}
+	return false
+}
+
 // translateKey produces the D3 key string for a KEYDOWN, or "" when
 // the TextInput path owns it (plain printable characters).
+//
+// Hyper has no native SDL modifier, so mew synthesizes it from a doubled
+// side modifier: holding BOTH the left and right Ctrl (or both Alt) keys
+// promotes the chord to Hyper. The doubled modifier is consumed by the
+// promotion; any single-side modifier still held keeps its normal role, so
+//
+//	LCtrl+RCtrl+X        -> H-X       (both Ctrl -> Hyper)
+//	LAlt+RAlt+X          -> H-X       (both Alt  -> Hyper)
+//	LAlt+RAlt+Ctrl+X     -> H-^X      (Hyper + a single Ctrl)
+//	LCtrl+RCtrl+Alt+X    -> H-M-x     (Hyper + a single Alt)
+//
+// AltGr reports as a single (right) Alt, so it never trips the both-Alt
+// promotion. Shift is deliberately left out — it is a text-producing
+// modifier, so a doubled Shift would hijack ordinary capital letters.
 func translateKey(sym sdl3.Keysym) string {
+	// AltGr / ISO_Level3_Shift (the Glyph modifier) is a text-producing level
+	// shift: the composed character arrives via TextInput, where it is tagged
+	// "G-" (see the TextInputEvent handler / glyphMod). Yield the KEY_DOWN so we
+	// do not also fire a competing chord — notably on Windows, where AltGr
+	// surfaces as LCtrl+RAlt and would otherwise read as "M-^<letter>".
+	if glyphMod(sym.Mod) {
+		return ""
+	}
+
+	bothCtrl := sym.Mod&sdl3.KMOD_LCTRL != 0 && sym.Mod&sdl3.KMOD_RCTRL != 0
+	bothAlt := sym.Mod&sdl3.KMOD_LALT != 0 && sym.Mod&sdl3.KMOD_RALT != 0
+	hyper := bothCtrl || bothAlt
+
 	ctrl := sym.Mod&sdl3.KMOD_CTRL != 0
 	alt := sym.Mod&sdl3.KMOD_ALT != 0
 	shift := sym.Mod&sdl3.KMOD_SHIFT != 0
 	gui := sym.Mod&sdl3.KMOD_GUI != 0
 
+	if hyper {
+		// The doubled modifier is spent on the Hyper promotion; a
+		// single-side Ctrl or Alt still contributes its normal role.
+		if bothCtrl {
+			ctrl = false
+		}
+		if bothAlt {
+			alt = false
+		}
+	}
+
+	base := encodeKey(sym, ctrl, alt, shift, gui)
+
+	if !hyper {
+		return base
+	}
+
+	if base == "" {
+		// The residual modifiers alone would defer to TextInput (a plain
+		// or shifted printable). Hyper is a real chord, so synthesize the
+		// bare key token here instead of dropping the keystroke.
+		if base = bareKey(sym, shift); base == "" {
+			return ""
+		}
+	}
+	return "H-" + base
+}
+
+// bareKey returns the unmodified key token for a keysym: a special-key name,
+// or the printable character (upper-cased when Shift is held, so the caseful
+// hyphenated-modifier convention — H-a unshifted, H-A shifted — holds). It is
+// used only to give a Hyper chord a key to attach to when the residual
+// modifiers would otherwise have deferred the keystroke to TextInput.
+func bareKey(sym sdl3.Keysym, shift bool) string {
+	if name, ok := specialKeys[sym.Sym]; ok {
+		return name
+	}
+	if sym.Sym >= 32 && sym.Sym < 127 {
+		ch := rune(sym.Sym)
+		if shift && ch >= 'a' && ch <= 'z' {
+			return string(ch - 'a' + 'A')
+		}
+		return string(ch)
+	}
+	return ""
+}
+
+// encodeKey maps a keysym plus its effective modifier set to a D3 key string,
+// or "" when the TextInput path owns it (plain printable characters). The
+// modifier booleans are passed in rather than read from sym.Mod so translateKey
+// can strip the modifiers it has already spent on a Hyper promotion.
+func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 	if name, ok := specialKeys[sym.Sym]; ok {
 		prefix := ""
 		if alt {
@@ -1772,18 +1925,32 @@ func translateKey(sym sdl3.Keysym) string {
 		}
 
 		switch {
-		case ctrl && isLetter && !shift:
-			base := "^" + string(ch-'a'+'A')
-			if alt {
-				return "M-" + base
-			}
-			return base
-		case ctrl:
+		case ctrl && isLetter:
+			// Control is spelled with the caret when the key it pairs with is
+			// one the caret is natural for — a letter — and that choice
+			// follows the BASE KEY, never what else is held. So Ctrl+Shift+A
+			// is "S-^A", not "C-S-a": adding Shift does not change how Control
+			// is written. Shift has to be stated because "^A" already spent the
+			// letter's case on Control.
+			//
+			// Only a graphical host or a terminal speaking the kitty protocol
+			// can report this chord at all — a legacy terminal sends Ctrl+A's
+			// ASCII control code for both, with no room for a Shift bit.
 			prefix := ""
 			if alt {
 				prefix += "M-"
 			}
-			prefix += "C-"
+			if shift {
+				prefix += "S-"
+			}
+			return prefix + "^" + string(ch-'a'+'A')
+		case ctrl:
+			// Not caret-natural, so Control keeps its letter form — and sorts
+			// first in canonical order, ahead of Meta.
+			prefix := "C-"
+			if alt {
+				prefix += "M-"
+			}
 			if shift {
 				prefix += "S-"
 			}

@@ -19,6 +19,10 @@ type TearOffHost struct {
 	win    *Window
 	surf   platform.Surface
 	native platform.NativeSurface
+	// minimizeKeys resolves the one key the HOST takes before the window
+	// sees it: miniaturizing is the OS window's business, not the toolkit
+	// window's, so it cannot go through win's own context.
+	minimizeKeys core.TrinketKeys
 	// ppu reports the LIVE device pixels-per-unit (font_size-aware, may be
 	// fractional). A getter, not a captured value: the host font zoom can
 	// change the ratio at any time, and a snapshot from tear-off time made
@@ -181,6 +185,8 @@ func NewTearOffHost(win *Window, surf platform.Surface, ppu func() float64,
 	onRedock func(globalX, globalY int, grabX, grabY core.Unit) bool) *TearOffHost {
 	h := &TearOffHost{win: win, surf: surf, ppu: ppu, global: global, onRedock: onRedock, resizeGrip: tearResizeGrip}
 	h.native, _ = surf.(platform.NativeSurface)
+	h.minimizeKeys.SetCommands(core.CmdAppMinimize)
+	h.minimizeKeys.SetKeyOwner(win) // the torn window's own keymap, if it has one
 
 	// Popups from the torn window's trinkets open on this surface.
 	win.SetPopupController(h)
@@ -509,7 +515,7 @@ func (h *TearOffHost) refreshResizeHover() {
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
 // cursor for a plain (non-drag, non-resize) hover over the torn window.
 func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
-	// A popup (dropdown menu, context menu) composited on the torn surface
+	// A popup (combobox dropdown, context menu) composited on the torn surface
 	// floats above the content: over it, no trinket cursor from underneath
 	// shows through — just the arrow. Mirrors the desktop's CursorAt rule, so
 	// a torn-off window never shows an I-beam THROUGH an open menu.
@@ -520,6 +526,16 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 			h.applyCursor(core.CursorDefault)
 			return
 		}
+	}
+	// The open menu-bar dropdown is a SEPARATE compositor layer, not one of
+	// h.popups, so it needs its own check — otherwise the I-beam shows through
+	// where the dropdown overlaps the editor's text (the docked window gets this
+	// for free from CursorAt's ActiveMenuBounds test).
+	if b, _, _, ok := h.win.MenuDropdownLayer(); ok &&
+		x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
+		h.win.SetResizeHoverEdges(0, 0)
+		h.applyCursor(core.CursorDefault)
+		return
 	}
 	edges := h.edgeAt(x, y)
 	if edges != 0 {
@@ -830,9 +846,11 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		}
 		handled = true
 	case core.KeyPressEvent:
-		if h.native != nil && (e.Key == "s-m" ||
-			(e.Modifiers&core.MetaModifier != 0 && e.Key == "m")) {
-			// Cmd+M miniaturizes, like any macOS document window.
+		// Cmd+M miniaturizes, like any macOS document window. Resolved
+		// through the keymap rather than matched against a spelling, so the
+		// binding is what decides -- and so it is the same binding a docked
+		// window minimizes on.
+		if h.native != nil && h.minimizeKeys.KeyCommand(e.Key) == core.CmdAppMinimize {
 			h.native.Minimize()
 			handled = true
 			break
@@ -1048,6 +1066,40 @@ func (h *TearOffHost) dragMove() bool {
 	return true
 }
 
+// maximizedFillSlackPx is how far under the work area a window may sit and
+// still count as filling it — absorbing the rounding of a units/points/pixels
+// round-trip, so only a real shrink reads as one.
+const maximizedFillSlackPx = 4
+
+// healMaximizedDivergence un-maximizes a window whose surface no longer fills
+// the display's work area, adopting the size it actually has.
+//
+// The solo primary window is an OS-RESIZABLE window (created that way with a
+// title bar, its border stripped at runtime), so the window manager serves its
+// edges itself and a drag on one never reaches edgeAt — the check that keeps a
+// zoomed torn window (borderless from birth) from being resized at all. The
+// window therefore kept WindowStateMaximized at whatever size the OS gave it,
+// and a maximized-state window paints the maximized frame: title bar only, no
+// border stroke, a restore button that would teleport it, and no repaint of the
+// surface beyond the content. Reconciling here covers every route in, since
+// each one lands in Resized — the OS edge drag, a window-manager snap, or any
+// programmatic size that isn't the zoom itself.
+func (h *TearOffHost) healMaximizedDivergence() {
+	if h.native == nil || !h.win.IsMaximized() {
+		return
+	}
+	pw, ph := h.native.ScreenSizePx()
+	_, _, ww, wh := h.native.WorkAreaPx()
+	if pw <= 0 || ph <= 0 || ww <= 0 || wh <= 0 {
+		return
+	}
+	if pw >= ww-maximizedFillSlackPx && ph >= wh-maximizedFillSlackPx {
+		return // still filling the work area: genuinely maximized
+	}
+	h.zoomed = false
+	h.win.RestoreInPlace()
+}
+
 // beginResize arms an edge resize when the press lands within the
 // grip distance of the left, right, or bottom edge (the top edge is
 // the title bar). Returns false when the window is not resizable or
@@ -1062,6 +1114,15 @@ func (h *TearOffHost) beginResize(x, y core.Unit) bool {
 		// Interior press, or within the title row (drag, not resize).
 		return false
 	}
+	// A window still flagged maximized while this host is NOT zoomed is out of
+	// sync: something maximized it without going through ToggleZoom, so the OS
+	// surface never filled the work area and the edges stayed live (h.zoomed,
+	// checked above, is what suppresses them on a properly zoomed window).
+	// Resizing from there would leave a maximized-state window at an arbitrary
+	// rect — no border stroke, a restore button that teleports, and surface
+	// beyond the content left unpainted. Adopt the current rect as its normal
+	// bounds so it resizes as the ordinary window it now is.
+	h.win.RestoreInPlace()
 	h.resizing = true
 	h.resizeEdges = edges
 	h.startGX, h.startGY = h.global()
@@ -1308,6 +1369,7 @@ func (h *TearOffHost) Resized(size core.UnitSize) {
 		}
 	}
 	h.win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+	h.healMaximizedDivergence()
 	h.win.Layout()
 	// While an edge-resize is in progress, keep the resize-edge highlight rects
 	// in step with the new size. resizeMove only asks the OS to resize; the new

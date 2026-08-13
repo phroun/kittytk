@@ -1742,8 +1742,18 @@ func (r *WebGPURenderer) uploadBackendToTexture(backend *raster.Backend) (*wgpu.
 // fragment stage blits its texture. Every layer gets the same effect
 // values, which is what makes the whole composited scene rotate rigidly.
 func (r *WebGPURenderer) writeCombinedUniforms(buffer *wgpu.Buffer, bounds core.UnitRect, surfaceSize core.UnitSize, aspect float32) {
-	angle, enabledF, scale, _ := r.effectParams()
 	x, y, w, h := windowNDC(bounds, surfaceSize)
+	r.writeCombinedUniformsNDC(buffer, x, y, w, h, aspect)
+}
+
+// writeCombinedUniformsNDC is the shared core: it writes the blit uniform
+// block for a quad given directly in normalized device coordinates. The
+// window path derives the quad from unit bounds (writeCombinedUniforms);
+// the overlay path pins it to whole pixels (overlayNDC) for a 1:1 blit.
+// Every layer gets the same effect values, which is what makes the whole
+// composited scene rotate rigidly.
+func (r *WebGPURenderer) writeCombinedUniformsNDC(buffer *wgpu.Buffer, x, y, w, h, aspect float32) {
+	angle, enabledF, scale, _ := r.effectParams()
 	data := combinedUniformData{
 		angle, enabledF, scale, aspect,
 		x, y, w, h, // pos_x, pos_y, size_w, size_h
@@ -1765,6 +1775,36 @@ func (r *WebGPURenderer) createWindowUniformBuffer(bounds core.UnitRect, surface
 	}
 
 	r.writeCombinedUniforms(buffer, bounds, surfaceSize, aspect)
+
+	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Layout: r.blitUniformLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: buffer, Size: combinedUniformSize},
+		},
+	})
+	if err != nil {
+		buffer.Release()
+		return nil, nil, err
+	}
+
+	return buffer, bindGroup, nil
+}
+
+// createOverlayUniformBuffer creates a uniform buffer for an overlay quad
+// whose clip-space position is given directly in NDC — pinned to whole
+// pixels by overlayNDC so its texture blits 1:1, sidestepping the
+// fractional-pixel edges the int-unit windowNDC produces at fractional
+// pixels-per-unit.
+func (r *WebGPURenderer) createOverlayUniformBuffer(x, y, w, h, aspect float32) (*wgpu.Buffer, *wgpu.BindGroup, error) {
+	buffer, err := r.device.CreateBuffer(&wgpu.BufferDescriptor{
+		Size:  combinedUniformSize,
+		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	r.writeCombinedUniformsNDC(buffer, x, y, w, h, aspect)
 
 	bindGroup, err := r.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Layout: r.blitUniformLayout,
@@ -2448,23 +2488,39 @@ func (r *WebGPURenderer) drawOverlay(
 		return nil, core.TextCaret{}, err
 	}
 
-	// The on-screen quad grows by the same padding the texture gained. When the
-	// texture was padded up to the minimum above, grow the quad's unit extent to
-	// the padded pixel size too, so the texture still maps 1:1 (no stretch) and
-	// the transparent padding simply extends off the bottom-right of the menu.
+	// Position the quad on WHOLE pixels sized to the texture, so it blits
+	// 1:1. Deriving the quad from integer UNIT bounds (windowNDC) lands its
+	// edges on fractional pixels at fractional pixels-per-unit, and the
+	// surface's NDC centre falls on a half-pixel when the drawable width is
+	// odd — which sampled the centre source column twice, the faint doubled
+	// column that showed up mid-menu.
+	//
+	// The texture's top-left pixel comes from the backend's OWN cell-snapped
+	// unit→pixel mapping (UnitToPxX/Y), NOT bounds×pixels-per-unit. Deriving
+	// it from the density made the menu jitter a pixel sideways as the parent
+	// window was resized: the reported unit size floors the drawable to whole
+	// sub-cells (Backend.Size), so backendPx/backendUnits wobbles by a
+	// fraction with every 1px resize and round() flips. UnitToPxX is the exact
+	// mapping the window paints its own content with — deterministic per unit
+	// position, independent of the drawable's width — so the overlay lands on
+	// the same pixel as the control it drops from and stays put.
+	//
+	// The paint offset (-bounds.X+overlayStrokeOffset) places surface unit
+	// (bounds.X-overlayStrokeOffset, bounds.Y-overlayStrokeOffset) at the
+	// texture's origin, so snap THAT corner — using the same padding-band
+	// unit as the paint keeps the derivation free of any density term. The
+	// texture is texW×texH pixels (already grown past the DX12 minimum when
+	// needed), and the transparent padding simply extends off the
+	// bottom-right of the menu.
 	aspect := float32(1)
 	if backendBounds.Dy() > 0 {
 		aspect = float32(backendBounds.Dx()) / float32(backendBounds.Dy())
 	}
-	quad := outsetBounds(bounds, overlayStrokeOffset)
-	if texW != widthPx {
-		quad.Width = core.Unit(math.Round(float64(texW) / pixelsPerUnitW))
-	}
-	if texH != heightPx {
-		quad.Height = core.Unit(math.Round(float64(texH) / pixelsPerUnitH))
-	}
-	uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(
-		quad, backendSize, aspect)
+	leftPx := osWindow.backend.UnitToPxX(bounds.X - overlayStrokeOffset)
+	topPx := osWindow.backend.UnitToPxY(bounds.Y - overlayStrokeOffset)
+	qx, qy, qw, qh := overlayNDC(leftPx, topPx, texW, texH, backendBounds.Dx(), backendBounds.Dy())
+	uniformBuffer, uniformBindGroup, err := r.createOverlayUniformBuffer(
+		qx, qy, qw, qh, aspect)
 	if err != nil {
 		bindGroup.Release()
 		textureView.Release()
