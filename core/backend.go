@@ -308,34 +308,6 @@ type RoundedClipper interface {
 	SetRoundedClip(r UnitRect, radius Unit)
 }
 
-// ResizeGripProvider reports the window resize-grip thickness (in
-// units) for graphical frames: only the outer sliver of a window
-// edge acts as a resize handle (a quarter of a layout column, never
-// less than 4 device pixels), so trinkets living at the window's
-// edge remain clickable. Zero means the cell-frame behavior: the
-// whole border row/column is the grip (it IS the frame there).
-// The desktop provides it; window hosts discover it by ancestry
-// with FindResizeGrip.
-type ResizeGripProvider interface {
-	GraphicalResizeGrip() Unit
-}
-
-// FindResizeGrip walks up the trinket tree for a ResizeGripProvider.
-// Default (no provider found): 0 - classic full-cell grip zones.
-func FindResizeGrip(w Trinket) Unit {
-	for current := Trinket(w); current != nil; {
-		if p, ok := current.(ResizeGripProvider); ok {
-			return p.GraphicalResizeGrip()
-		}
-		parent := current.Parent()
-		if parent == nil {
-			return 0
-		}
-		current = parent
-	}
-	return 0
-}
-
 // GraphicalFrameProvider is the trinket-side carrier of the frame
 // mode: the desktop reports true when its backend paints rounded
 // window frames, and windows discover it by walking their ancestry
@@ -442,6 +414,37 @@ func FindFrameBorderUnits(w Trinket) Unit {
 		current = parent
 	}
 	return 0
+}
+
+// PxPerUnitProvider is the trinket-side carrier of the surface's
+// pixels-per-unit, so geometry expressed in DEVICE PIXELS (a minimum grab
+// width, say) can be converted honestly rather than assumed equal to the
+// integer device scale. The desktop reports its surface's ppu; a cell
+// surface has none and the walk falls back to 1.
+type PxPerUnitProvider interface {
+	SurfacePxPerUnit() float64
+}
+
+// FindPxPerUnit walks up from a trinket to the nearest surface that reports
+// pixels-per-unit, returning 1 when nothing does. ppu is font_size aware
+// (fontSize/12 x deviceScale), which is exactly why a device-pixel quantity
+// must be divided by IT and not by the device scale: the two agree only at
+// font size 12.
+func FindPxPerUnit(w Trinket) float64 {
+	for current := Trinket(w); current != nil; {
+		if p, ok := current.(PxPerUnitProvider); ok {
+			if ppu := p.SurfacePxPerUnit(); ppu > 0 {
+				return ppu
+			}
+			return 1
+		}
+		parent := current.Parent()
+		if parent == nil {
+			return 1
+		}
+		current = parent
+	}
+	return 1
 }
 
 // SnapOriginSetter is an optional RenderBackend capability: anchor cell

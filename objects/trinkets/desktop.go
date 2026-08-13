@@ -103,9 +103,9 @@ type Desktop struct {
 	// core.FindGraphicalFrames to pick their client-area contract.
 	graphicalFrames bool
 
-	// resizeGrip is the graphical resize-handle thickness in units
-	// (0 on cell frames, where the whole border cell is the grip).
-	resizeGrip core.Unit
+	// hostEdge is the desktop's OWN resize-edge state: the OS window's grab
+	// zones, hover bands and drag gesture (see desktop_edgeresize.go).
+	hostEdge hostEdgeState
 
 	// Graphical wallpaper (classic MacOS style): an 8x8 two-color
 	// bitmap, each bit rendered as wallpaperChunkPx x wallpaperChunkPx
@@ -552,32 +552,7 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	// this through the desktop via core.FindGraphicalFrames.
 	_, d.graphicalFrames = backend.(core.RoundedRectDrawer)
 
-	// Resize grip: on graphical frames only the outer sliver of a
-	// window edge resizes - a quarter of a layout column, scaled by
-	// the device scale so the physical grab target grows with the
-	// zoom, floored at whichever is larger of 3 device pixels or a
-	// quarter of a cell width - so edge trinkets stay clickable.
-	d.resizeGrip = 0
-	if d.graphicalFrames {
-		scale := 1
-		if ds, ok := backend.(core.DeviceScaler); ok && ds.Scale() > 0 {
-			scale = ds.Scale()
-		}
-		grip := rootMetrics.CellWidth / 4 * core.Unit(scale)
-		// Floor: at least 3 device pixels, and at least a quarter of a cell
-		// width, whichever is larger.
-		floor := core.Unit((3 + scale - 1) / scale) // ceil(3/scale) units == >= 3 device px
-		if quarterCell := rootMetrics.CellWidth / 4; quarterCell > floor {
-			floor = quarterCell
-		}
-		if grip < floor {
-			grip = floor
-		}
-		d.resizeGrip = grip
-	}
-
 	d.windowManager = window.NewWindowManager()
-	d.windowManager.SetResizeGrip(d.resizeGrip)
 	if sp, ok := backend.(core.SmoothPositioner); ok && sp.SmoothPositioning() {
 		// Pixel surfaces place windows at unit granularity; cell-grid
 		// surfaces keep the default snap-to-cell behavior.
@@ -839,14 +814,6 @@ func (d *Desktop) SetWallpaperChunk(px int) {
 	d.RequestUpdate()
 }
 
-// GraphicalResizeGrip implements core.ResizeGripProvider: the
-// resize-handle thickness for graphical frames (0 on cell frames).
-func (d *Desktop) GraphicalResizeGrip() core.Unit {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.resizeGrip
-}
-
 // GraphicalWindowFrames implements core.GraphicalFrameProvider: true
 // when the backend paints rounded window frames, which switches the
 // window client-area contract to edge-to-edge below the titlebar.
@@ -861,6 +828,11 @@ func (d *Desktop) GraphicalWindowFrames() bool {
 // windows reserve it outside their content area. 0 on cell surfaces
 // (there the border already occupies a full cell). Rounded up so the
 // content always clears the drawn stroke.
+// SurfacePxPerUnit reports this desktop surface's pixels-per-unit, so
+// geometry specified in device pixels converts honestly (see
+// core.FindPxPerUnit).
+func (d *Desktop) SurfacePxPerUnit() float64 { return d.pxPerUnit() }
+
 func (d *Desktop) WindowFrameBorderUnits() core.Unit {
 	d.mu.RLock()
 	graphical := d.graphicalFrames
@@ -1552,7 +1524,7 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 	if cc, ok := plat.(platform.CursorController); ok {
 		host.SetCursorSetter(cc.SetCursor)
 	}
-	host.SetResizeGrip(d.resizeGrip)
+	host.SetGraphicalFrames(d.graphicalFrames)
 	host.SetOnFocus(func(focused bool) {
 		if focused {
 			d.windowFocusChanged(win)
@@ -3252,6 +3224,13 @@ func (d *Desktop) updateCursor(x, y core.Unit) {
 	if !ok {
 		return
 	}
+	if edges := d.hostHoverEdges(); edges != 0 {
+		// The desktop's own edge zone claimed the point (hostHoverUpdate ran
+		// before the window manager saw the move); its cursor wins for the
+		// same reason its press does.
+		cc.SetCursor(window.ResizeCursorForEdge(edges))
+		return
+	}
 	cc.SetCursor(wm.CursorAt(x, y))
 }
 
@@ -3746,10 +3725,23 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		return true
 
 	case core.MousePressEvent:
+		// The desktop's own edge sliver is the outermost thing on the
+		// surface — like the OS resize border it extends — so it wins over
+		// anything corralled against the edge.
+		if d.hostResizeBegin(e) {
+			return true
+		}
 		return wm.HandleMousePress(e)
 
 	case core.MouseMoveEvent:
 		core.WheelPointerMoved()
+		// A desktop-edge resize in progress owns the pointer outright.
+		if d.hostResizeMove(e) {
+			return true
+		}
+		if e.Buttons == 0 {
+			d.hostHoverUpdate(e.X, e.Y)
+		}
 		handled := wm.HandleMouseMove(e)
 		// The resize cursor over a window edge is a hover affordance. While a
 		// button is held, a drag begun elsewhere is in progress: leave the
@@ -3767,6 +3759,9 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// the cursor to the arrow.
 		wm.ClearResizeHover()
 		wm.ClearHover()
+		// The pointer may have stepped off into the OS's own resize strip;
+		// keep the edge band lit across the boundary if so.
+		d.hostPointerLeft()
 		if d.menuBar != nil {
 			d.menuBar.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
 		}
@@ -3779,6 +3774,9 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		return true
 
 	case core.MouseReleaseEvent:
+		if d.hostResizeEnd(e) {
+			return true
+		}
 		return wm.HandleMouseRelease(e)
 
 	case core.MouseWheelEvent:
@@ -4987,6 +4985,9 @@ func (d *Desktop) Paint(p *core.Painter) {
 		statusPainter := p.WithOffset(0, y)
 		d.statusBar.Paint(statusPainter)
 	}
+
+	// The desktop's own resize affordance, over all of its chrome.
+	d.paintHostEdgeHover(p, bounds)
 
 	// NOTE: Menu dropdowns and popups are NOT painted here in compositor mode!
 	// They must be rendered AFTER windows as separate layers for drop shadows.
