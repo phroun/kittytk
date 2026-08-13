@@ -60,7 +60,7 @@ func TestTreeColumnDisplayValue(t *testing.T) {
 // navigation, and the committed value stores the option KEY here.
 func TestTreeEnumComboEditLifecycle(t *testing.T) {
 	tv, _ := newEnumTree("png")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.editCombo == nil || tv.editBox != nil {
 		t.Fatal("enum column did not mount a combo editor")
 	}
@@ -80,7 +80,7 @@ func TestTreeEnumComboEditLifecycle(t *testing.T) {
 	}
 	// Space confirms the current highlight and KEEPS the edit session
 	// alive, leaving the closed-combo state to exercise below.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if tv.editCombo.IsOpen() || !tv.rowEditing {
 		t.Fatal("popup Space should close the drop-down and keep editing")
 	}
@@ -95,12 +95,12 @@ func TestTreeEnumComboEditLifecycle(t *testing.T) {
 	}
 	// Space pops the drop-down; while open, Down+Space pick "Text" and
 	// KEEP the edit session alive (Enter there would commit the row).
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if !tv.editCombo.IsOpen() {
 		t.Fatal("Space did not open the drop-down")
 	}
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if tv.editCombo.IsOpen() {
 		t.Fatal("Space did not confirm/close the drop-down")
 	}
@@ -111,7 +111,7 @@ func TestTreeEnumComboEditLifecycle(t *testing.T) {
 		t.Fatalf("confirmed choice shows %q", got)
 	}
 	// Enter on the closed combo commits the row: the KEY is stored.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.rowEditing {
 		t.Fatal("row edit did not close")
 	}
@@ -125,8 +125,8 @@ func TestTreeEnumComboEditLifecycle(t *testing.T) {
 // unchanged - and gone once a listed option is stored.
 func TestTreeEnumMagicEntry(t *testing.T) {
 	tv, _ := newEnumTree("weird")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // edit + popup
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})     // confirm magic, stay editing
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // edit + popup
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})  // confirm magic, stay editing
 	if !tv.editComboMagic {
 		t.Fatal("unlisted stored value did not create the magic entry")
 	}
@@ -134,21 +134,21 @@ func TestTreeEnumMagicEntry(t *testing.T) {
 		t.Fatalf("magic entry shows %q", got)
 	}
 	// Committing with the magic entry selected changes nothing.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if got := tv.RootItems()[0].Value("kind"); got != "weird" {
 		t.Errorf("magic commit rewrote the value: %q", got)
 	}
 	// Pick a real option (magic sits at 0; options follow). Enter
 	// reopens the editor with the drop-down already popped, and Enter
 	// on the highlighted option confirms it AND commits the row.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"}) // onto "PNG image"
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if got := tv.RootItems()[0].Value("kind"); got != "png" {
 		t.Fatalf("stored value = %q, want png", got)
 	}
 	// The magic entry is gone on the next session.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.editComboMagic {
 		t.Error("magic entry survived after a listed option was stored")
 	}
@@ -160,7 +160,7 @@ func TestTreeEnumMagicEntry(t *testing.T) {
 func TestTreeEnterPopsTargetedCombo(t *testing.T) {
 	// Direct Enter on the (only-editable) enum column: pops open.
 	tv, _ := newEnumTree("png")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.editCombo == nil || !tv.editCombo.IsOpen() {
 		t.Fatal("Enter on a choice target did not pop the drop-down")
 	}
@@ -175,7 +175,7 @@ func TestTreeEnterPopsTargetedCombo(t *testing.T) {
 	parent := NewPanel()
 	parent.SetPopupController(host)
 	tv2.SetParent(parent)
-	tv2.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // edits size (text)
+	tv2.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // edits size (text)
 	if tv2.editBox == nil {
 		t.Fatal("precondition: text editor on size")
 	}
@@ -194,7 +194,7 @@ func TestTreeEnterPopsTargetedCombo(t *testing.T) {
 // never begins a text edit).
 func TestTreeSpacePopsTargetedCombo(t *testing.T) {
 	tv, _ := newEnumTree("png")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if !tv.rowEditing || tv.editCombo == nil || !tv.editCombo.IsOpen() {
 		t.Fatal("Space on a choice target did not open the combo editor")
 	}
@@ -206,7 +206,7 @@ func TestTreeSpacePopsTargetedCombo(t *testing.T) {
 	alpha.Expanded = true
 	tv2.rebuildFlatList()
 	tv2.SetCurrentIndex(0)
-	tv2.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv2.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if tv2.rowEditing {
 		t.Fatal("Space began a text edit; it must keep the classic toggle")
 	}
@@ -220,7 +220,7 @@ func TestTreeSpacePopsTargetedCombo(t *testing.T) {
 // combo it dismisses too. Nothing is written either way.
 func TestTreeEnumEscapeCancels(t *testing.T) {
 	tv, _ := newEnumTree("png")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})  // edit + popup
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // edit + popup
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})   // highlight "Text"
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // revert + cancel edit
 	if tv.rowEditing {
@@ -232,9 +232,9 @@ func TestTreeEnumEscapeCancels(t *testing.T) {
 
 	// Closed combo (a Space-confirm keeps the session alive): Escape
 	// dismisses without writing the confirmed-but-uncommitted choice.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // edit + popup
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})  // highlight "Text"
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})     // confirm, stay editing
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // edit + popup
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})   // highlight "Text"
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})  // confirm, stay editing
 	if !tv.rowEditing || tv.editCombo.IsOpen() {
 		t.Fatal("precondition: live edit on a closed combo")
 	}
@@ -251,9 +251,9 @@ func TestTreeEnumEscapeCancels(t *testing.T) {
 // the whole row edit in one press.
 func TestTreeEnumPopupEnterCommitsRow(t *testing.T) {
 	tv, _ := newEnumTree("png")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // edit + popup
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})  // highlight "Text"
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // edit + popup
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})   // highlight "Text"
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.rowEditing {
 		t.Fatal("popup Enter did not commit the row edit")
 	}
@@ -271,7 +271,7 @@ func TestTreeKeyColumnEditable(t *testing.T) {
 	var gotCol *TreeColumn
 	tv.SetOnCellEdited(func(_ *TreeItem, col *TreeColumn, _ string) { gotCol = col })
 
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.editCol != treeKeyColumn || tv.editBox == nil {
 		t.Fatalf("edit ring did not start on the key column")
 	}
@@ -524,7 +524,7 @@ func TestTreeClickToEditComboPopsOpen(t *testing.T) {
 
 	// Direct keyboard Enter on the choice target also pops it open
 	// (only Tab-arrival from another column stays closed).
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.editCombo == nil || !tv.editCombo.IsOpen() {
 		t.Error("keyboard Enter on a choice target should pop the drop-down")
 	}

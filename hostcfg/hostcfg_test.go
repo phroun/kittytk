@@ -527,3 +527,80 @@ wallpaper_filter = blurry
 		t.Error("a bad name changed the layout instead of leaving the default")
 	}
 }
+
+// [mappings] is a DATA section like [fonts]: the names on the left are keys as
+// the input layer reports them, not setting names, so it has to be read by
+// section. Read by key name instead, every binding would be an unrecognised
+// setting and silently dropped.
+func TestApplyReadsMappingsAsData(t *testing.T) {
+	var cfg Config
+	apply([]byte(`
+[window]
+accelerator_chord = M-*
+
+[mappings]
+M-F4 = window_close
+S-Tab = focus_prior
+s-Tab = something_else
+^K = block_menu
+Minus = gui_scale_down
+Return =
+`), &cfg)
+
+	if cfg.AcceleratorChord != "M-*" {
+		t.Errorf("accelerator_chord = %q, want M-*", cfg.AcceleratorChord)
+	}
+	for k, want := range map[string]string{
+		"M-F4":   "window_close",
+		"S-Tab":  "focus_prior",
+		"s-Tab":  "something_else",
+		"^K":     "block_menu",
+		"Minus":  "gui_scale_down",
+		"Return": "", // an empty value unbinds rather than being ignored
+	} {
+		got, ok := cfg.Mappings[k]
+		if !ok {
+			t.Errorf("missing binding for %q", k)
+			continue
+		}
+		if got != want {
+			t.Errorf("%q -> %q, want %q", k, got, want)
+		}
+	}
+
+	// Case is the difference between Shift and Super, so it must survive.
+	if cfg.Mappings["S-Tab"] == cfg.Mappings["s-Tab"] {
+		t.Error("S-Tab and s-Tab collapsed; case distinguishes Shift from Super")
+	}
+}
+
+// The chord pattern is free-form: "*" is a token substituted anywhere in a key
+// sequence, not a suffix, so a sequence pattern has to survive intact.
+func TestApplyKeepsAcceleratorChordVerbatim(t *testing.T) {
+	for _, pattern := range []string{"M-*", "^X * Return", "^X ^M 2 2 7 *", ""} {
+		var cfg Config
+		apply([]byte("[window]\naccelerator_chord = "+pattern+"\n"), &cfg)
+		if cfg.AcceleratorChord != pattern {
+			t.Errorf("accelerator_chord = %q, want %q", cfg.AcceleratorChord, pattern)
+		}
+	}
+}
+
+// [window] host_type forces what the keymap's desktop hints ((kde), (gnome),
+// only_xfce, ...) are tested against, for a session that says nothing about
+// itself, says the wrong thing, or is being made to pretend for an afternoon.
+func TestApplyReadsHostType(t *testing.T) {
+	var cfg Config
+	apply([]byte("[window]\nhost_type = gnome\n"), &cfg)
+	if cfg.HostType != "gnome" {
+		t.Errorf("host_type = %q, want gnome", cfg.HostType)
+	}
+
+	// Unset means detect, which is the blank the environment reads as "ask
+	// the session" rather than "no desktop at all".
+	var bare Config
+	apply([]byte("[window]\ntitle = mew\n"), &bare)
+	if bare.HostType != "" {
+		t.Errorf("host_type = %q with nothing configured, want blank", bare.HostType)
+	}
+}

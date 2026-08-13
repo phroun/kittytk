@@ -2756,31 +2756,39 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	desktop := m.desktop
 	m.mu.RUnlock()
 
-	// Any key other than the cycle keys ends an in-progress M-Tab run,
-	// Global shortcuts
-	// Uses direct-key-handler naming: M- = Alt, C- = Ctrl, S- = Shift
-	switch event.Key {
-	case "M-Tab", "C-Tab":
-		m.CycleWindows(true)
-		return true
-	case "M-S-Tab", "C-S-Tab":
-		m.CycleWindows(false)
-		return true
-	case "F10":
-		// F10 always goes to desktop for menu bar toggle
-		if desktop != nil {
-			return desktop.HandleKeyPress(event)
-		}
-	}
-
-	// Alt+letter (M-<letter>) always goes to desktop first for menu accelerators
-	if len(event.Key) == 3 && event.Key[0] == 'M' && event.Key[1] == '-' {
-		letter := event.Key[2]
-		if letter >= 'a' && letter <= 'z' {
-			if desktop != nil {
-				if desktop.HandleKeyPress(event) {
-					return true
-				}
+	// The layer above any window, resolved through the desktop's context
+	// rather than matched against key strings. Window cycling and the menu
+	// key are ordinary bindings, and a menu accelerator is whatever the
+	// context says it is -- which is how a configured chord of any shape
+	// reaches the bar, including a multi-key one, since the context holds the
+	// prefix between keystrokes.
+	//
+	// The key is fed to the context ONCE, here, and the command dispatched by
+	// name. Anything the manager does not own falls through to the window
+	// below exactly as it always did.
+	if kc, ok := desktop.(interface {
+		KeyContext() *core.KeyContext
+		HandleResolvedCommand(cmd, seq string) bool
+	}); ok && desktop != nil {
+		ctx := kc.KeyContext()
+		switch cmd := ctx.Resolve(event.Key); cmd {
+		case core.CmdWindowNext:
+			m.CycleWindows(true)
+			return true
+		case core.CmdWindowPrior:
+			m.CycleWindows(false)
+			return true
+		case core.CmdAppMenu, core.CmdAppHelp, core.CommandAppAccelerator:
+			if kc.HandleResolvedCommand(cmd, ctx.MatchedSequence()) {
+				return true
+			}
+		default:
+			// Whatever else the context made of it may be a menu item's own
+			// command -- Quit, Hide, an application's. The desktop looks; the
+			// key is not resolved a second time, because it has already been
+			// resolved once, here.
+			if cmd != "" && kc.HandleResolvedCommand(cmd, ctx.MatchedSequence()) {
+				return true
 			}
 		}
 	}

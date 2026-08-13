@@ -10,7 +10,6 @@ import (
 	_ "image/png"  // wallpaper files
 	"math"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -97,6 +96,7 @@ type ApplicationProvider interface {
 // managing multiple applications.
 type Desktop struct {
 	core.TrinketBase
+	core.TrinketKeys
 
 	// graphicalFrames reports whether the backend paints rounded
 	// window frames (core.RoundedRectDrawer); windows discover it via
@@ -135,6 +135,16 @@ type Desktop struct {
 
 	// Menu bar at the top (Mac-style)
 	menuBar *MenuBar
+	// keyContext is what the desktop currently offers. The bar publishes its
+	// live accelerators into it, so a chord accelerator is RESOLVED rather
+	// than recognised by shape.
+	keyContext *core.KeyContext
+	// What the context above was built from: the registry in force where the
+	// FOCUS is, and its revision. Both are compared at the point of use, so a
+	// keymap coming into force is noticed without anything having to announce
+	// it (see refreshKeyContextIfStale).
+	keyContextReg *core.KeyRegistry
+	keyContextRev uint64
 
 	// System menu (always present, upper-left)
 	systemMenu *Menu
@@ -163,6 +173,22 @@ type Desktop struct {
 	// replaces the desktop entirely - no system (Psi) menu, no dock, no
 	// wallpaper - and the host quits when the last window closes.
 	solo bool
+
+	// desktopEnvironment: this desktop is a PLACE, not a frame around one
+	// application. An empty screen is a perfectly good state for it -- the
+	// wallpaper, a menu bar and a dock to launch the next app from -- so the
+	// last window closing reveals the desktop instead of ending the process.
+	//
+	// Two ways in, and the flag is latched rather than toggled because both
+	// are one-way facts about what this process IS:
+	//
+	//   - launched ALONE, with no application of its own (see RunOn). A host
+	//     that starts with an app is that app's frame, and goes when it goes;
+	//     a host that starts bare was run as a desktop environment.
+	//   - revealed later, by show_desktop / the `spawndesktop` verb. Asking
+	//     for the desktop is asking for somewhere to go back TO, which turns
+	//     an app's frame into a desktop environment after the fact.
+	desktopEnvironment bool
 
 	// Status bar at the bottom
 	statusBar *StatusBar
@@ -239,6 +265,13 @@ type Desktop struct {
 	// because that surface owns the event loop). When its window closes,
 	// a remaining window is promoted onto the primary surface.
 	soloPrimaryHost *window.TearOffHost
+
+	// menuBarRowLent is true while the menu bar has BORROWED the top row on a
+	// screen where it is normally hidden (the chrome-free single-app case).
+	// lentBounds is what the windows looked like before, so giving the row
+	// back puts the screen exactly as it was.
+	menuBarRowLent bool
+	lentBounds     map[*window.Window]core.UnitRect
 
 	// aboutBox is the built-in About KittyTK dialog while it is open, so the
 	// R-key rotation easter egg can be gated to its focus (see
@@ -351,6 +384,10 @@ func NewDesktop() *Desktop {
 		wallpaperChunkPx: 2,
 	}
 	d.TrinketBase = *core.NewTrinketBase()
+	// The desktop itself claims only two: the key that summons the menu bar,
+	// and the one that dismisses it when the bar took focus without opening
+	// anything. Everything else belongs to a window or a trinket.
+	d.SetCommands(core.CmdAppMenu, core.CmdTrinketCancel)
 	d.Init(d)
 	d.SetFocusPolicy(core.NoFocus)
 	d.dockRow.SetParent(d)
@@ -365,6 +402,7 @@ func NewDesktop() *Desktop {
 	// Create menu bar (always present in Desktop)
 	d.menuBar = NewMenuBar()
 	d.menuBar.SetParent(d)
+	d.wireMenuBarKeys(d.menuBar)
 	d.menuBar.AddMenu(d.systemMenu)
 	// The menu bar represents the active app; when that app (or the desktop)
 	// is modally blocked, the bar is disabled and must not highlight items.
@@ -379,7 +417,7 @@ func NewDesktop() *Desktop {
 	// Wire up Tab navigation between dock and menu bar
 	d.dockRow.SetOnFocusMenuBar(func() {
 		d.UnfocusDock()
-		d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
+		d.menuBar.ToggleMenuFocus()
 	})
 	d.menuBar.SetOnFocusDock(func() {
 		if !d.dockRow.IsEmpty() {
@@ -400,11 +438,10 @@ func (d *Desktop) createSystemMenu() *Menu {
 	menu.AddItem(NewMenuItem("Desktop &Accessories").SetEnabled(false)) // Placeholder
 	menu.AddItem(NewSeparator())
 
-	// Exit Desktop - uses ActionExitDesktop keybinding
-	exitItem := NewMenuItem("E&xit Desktop")
-	if keys := core.DefaultKeyBindings.Keys(core.ActionExitDesktop); len(keys) > 0 {
-		exitItem.SetShortcut(core.NewShortcut(keys[0]))
-	}
+	// Exit Desktop. The item names what it MEANS; which key that is, and
+	// whether there is one here at all, is the keymap's business (and the
+	// focus's -- see MenuItem.Command).
+	exitItem := NewMenuItem("E&xit Desktop").SetCommand(core.CmdDesktopExit)
 	exitItem.SetOnTriggered(func() {
 		d.ExitDesktop()
 	})
@@ -518,8 +555,8 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	// Resize grip: on graphical frames only the outer sliver of a
 	// window edge resizes - a quarter of a layout column, scaled by
 	// the device scale so the physical grab target grows with the
-	// zoom, and never thinner than 4 device pixels - so edge trinkets
-	// stay clickable.
+	// zoom, floored at whichever is larger of 3 device pixels or a
+	// quarter of a cell width - so edge trinkets stay clickable.
 	d.resizeGrip = 0
 	if d.graphicalFrames {
 		scale := 1
@@ -527,8 +564,14 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 			scale = ds.Scale()
 		}
 		grip := rootMetrics.CellWidth / 4 * core.Unit(scale)
-		if minUnits := core.Unit((4 + scale - 1) / scale); grip < minUnits {
-			grip = minUnits
+		// Floor: at least 3 device pixels, and at least a quarter of a cell
+		// width, whichever is larger.
+		floor := core.Unit((3 + scale - 1) / scale) // ceil(3/scale) units == >= 3 device px
+		if quarterCell := rootMetrics.CellWidth / 4; quarterCell > floor {
+			floor = quarterCell
+		}
+		if grip < floor {
+			grip = floor
 		}
 		d.resizeGrip = grip
 	}
@@ -1137,6 +1180,82 @@ func (d *Desktop) IsSolo() bool {
 	return d.solo
 }
 
+// IsDesktopEnvironment reports whether this desktop is a destination in its
+// own right rather than the frame around one application -- launched with no
+// application of its own, or turned into one since by a desktop reveal. It is
+// the whole question behind "the last window closed, now what": a desktop
+// environment stays up and shows itself, anything else has nothing left to be.
+func (d *Desktop) IsDesktopEnvironment() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.desktopEnvironment
+}
+
+// SetDesktopEnvironment declares (or, with false, un-declares) this desktop a
+// desktop environment. A host calls it when it knows something RunOn cannot
+// see: the TUI mew host, say, whose show_desktop has no solo mode to exit and
+// reveals the desktop by other means.
+func (d *Desktop) SetDesktopEnvironment(on bool) {
+	d.mu.Lock()
+	d.desktopEnvironment = on
+	d.mu.Unlock()
+}
+
+// lastWindowClosed is what the desktop does when nothing is left on it. A
+// desktop environment shows itself -- that is what it is for. Anything else
+// was the frame around the application that just ended, and ends with it.
+func (d *Desktop) lastWindowClosed() {
+	if !d.IsDesktopEnvironment() {
+		// Nothing is left to ask -- that is the circumstance this is -- so
+		// this quit goes through rather than sweeping an empty desktop.
+		d.ForceQuit()
+		return
+	}
+	d.revealAsDesktop()
+}
+
+// revealAsDesktop takes the display back for the desktop after the last
+// application window has gone: solo mode ends (its chrome returns) and the
+// primary surface paints the desktop again. It is ExitSoloMode's job minus the
+// window -- that call re-homes the solo window as a torn one, and here there
+// is no window left to re-home -- so a closed-out solo host lands on the
+// wallpaper rather than a dead surface. No-op when not in solo mode.
+func (d *Desktop) revealAsDesktop() {
+	d.mu.RLock()
+	solo := d.solo
+	host := d.soloPrimaryHost
+	surf := d.surface
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if !solo {
+		return
+	}
+	// A live host still holding a window is ExitSoloMode's case, not ours.
+	if host != nil && host.Window() != nil {
+		d.ExitSoloMode()
+		return
+	}
+
+	if surf != nil {
+		if bt, ok := surf.(platform.BorderToggler); ok {
+			bt.SetBordered(true)
+		}
+		surf.SetHandler(&desktopSurfaceHandler{d: d})
+	}
+	d.mu.Lock()
+	d.solo = false
+	d.soloPrimaryHost = nil
+	d.mu.Unlock()
+
+	if surf != nil && wm != nil {
+		size := surf.Size()
+		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+	}
+	d.updateMenuBarContent()
+	d.updateStatusBarContent()
+	d.Update()
+}
+
 // EnterSoloMode makes win the whole display. The desktop's own OS window
 // is reshaped into the app's window: its border is stripped (the app's
 // chrome is the only title bar) and win is hosted on that surface via a
@@ -1148,6 +1267,13 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 	d.mu.Lock()
 	first := !d.solo
 	d.solo = true
+	// Solo mode is the exact opposite of a desktop environment: an
+	// application has taken the display over, so the display is that
+	// application and ends with it. This matters for a host that WAS a
+	// desktop environment - a bare display server a client then dials solo,
+	// or a desktop hidden again by hide_desktop - which stops being one for
+	// as long as the app owns the screen.
+	d.desktopEnvironment = false
 	wm := d.windowManager
 	d.mu.Unlock()
 
@@ -1219,6 +1345,10 @@ func (d *Desktop) ExitSoloMode() {
 	host.SetOnClosed(nil)
 	d.mu.Lock()
 	d.solo = false
+	// Revealing the desktop is asking for somewhere to go back to, so from
+	// here on this process is a desktop environment: the last window closing
+	// leaves the desktop showing rather than ending it.
+	d.desktopEnvironment = true
 	d.soloPrimaryHost = nil
 	for i, th := range d.tornHosts {
 		if th == host {
@@ -1293,6 +1423,10 @@ func (d *Desktop) EnterSoloFromDesktop() {
 		})
 		d.mu.Lock()
 		d.solo = true
+		// Hiding the desktop hands the display back to the app, which undoes
+		// what revealing it did: the app owns the screen again, so the screen
+		// is the app's again (see EnterSoloMode).
+		d.desktopEnvironment = false
 		d.mu.Unlock()
 		// Discard the window's own surface and host it on the primary,
 		// moving the primary to where the window was (reposition=true) so
@@ -1510,7 +1644,7 @@ func (d *Desktop) soloRebalance(primaryClosed bool) {
 		return
 	}
 	if len(hosts) == 0 && len(wm.Windows()) == 0 {
-		d.Quit()
+		d.lastWindowClosed()
 		return
 	}
 	if primaryClosed && !havePrimary {
@@ -1636,7 +1770,142 @@ func (d *Desktop) statusBarShown() bool {
 // on AND the sole-app chrome is being suppressed, in which case it too is
 // hidden (its row reclaimed) for a fully chrome-free single-app desktop.
 func (d *Desktop) menuBarShown() bool {
-	return d.menuBar != nil && !(d.hideMenuBarSoleApp && d.suppressSoleAppChrome())
+	if d.menuBar == nil {
+		return false
+	}
+	// A borrowed row is a row: while the bar holds the keyboard it is on
+	// screen even where it is normally hidden (see lendMenuBarRow).
+	if d.menuBarRowLent {
+		return true
+	}
+	return !(d.hideMenuBarSoleApp && d.suppressSoleAppChrome())
+}
+
+// syncMenuBarRow gives a borrowed row back when the menu system is no longer
+// holding the keyboard.
+//
+// A click landing in a window closes the dropdown through CloseActiveMenu,
+// which is the window manager saying "get the menu out of the way before I
+// hand this click on". It closes the menu and nothing else -- the bar keeps
+// focus. So the bar read as focused while the window had the keyboard, and
+// the row stayed out with it: a menu bar on screen over an app that had the
+// keyboard back, which is the one thing the loan exists to avoid.
+//
+// The bar takes the keyboard by DEACTIVATING the active window, so a focused
+// bar with a window active is not really holding anything. Asking that
+// question here, where events land, means no dismissal route has to remember
+// to unfocus -- including any added later.
+//
+// The question is asked of the MANAGER's active window, which deactivating
+// cleared. A torn window that yielded OS focus to the desktop stays lit while
+// the bar holds the keyboard -- but that is quasi-active, a PAINT state
+// (renderActive) that touches neither IsActive nor the manager, so a
+// legitimately lit window cannot take the row back.
+func (d *Desktop) syncMenuBarRow() {
+	if d.menuBar == nil || !d.menuBarRowLent {
+		return
+	}
+	if d.menuBar.ActiveMenu() != nil {
+		return // a dropdown is still down: the bar has it
+	}
+	if d.windowManager == nil || d.windowManager.ActiveWindow() == nil {
+		return // nothing else has the keyboard, so the bar may keep it
+	}
+	// Unfocus rather than just handing the row back, so the bar's own state
+	// agrees with the screen: CloseMenuWithoutRestore leaves the window that
+	// took the keyboard in front, which is where the user just clicked.
+	d.menuBar.CloseMenuWithoutRestore()
+	// ...and if that route left the row out anyway, take it back regardless.
+	d.lendMenuBarRow(false)
+}
+
+// lendMenuBarRow gives the menu bar the top row it does not normally get on a
+// chrome-free single-app screen, and takes it back again.
+//
+// A lone full-screen app owns every row, the bar's included, so a focused bar
+// would otherwise have nowhere to draw and no way to show which menu the
+// arrows are on. Lending shortens the windows by that row and scoots them down
+// into what is left; giving it back restores the bounds they had, exactly, so
+// the screen returns to how it was rather than to a recomputed guess.
+//
+// This is deliberately NOT the show_desktop path. That one is the app
+// declaring itself multi-window, which brings the whole chrome back and stays
+// until the app says otherwise; this is one row, for as long as the bar holds
+// the keyboard, and it leaves the app's own idea of itself alone.
+func (d *Desktop) lendMenuBarRow(lend bool) {
+	if d.menuBar == nil || lend == d.menuBarRowLent {
+		return
+	}
+	if lend {
+		// Nothing to lend where the bar already has a row of its own.
+		if !d.hideMenuBarSoleApp || !d.suppressSoleAppChrome() {
+			return
+		}
+		wm := d.windowManager
+		if wm == nil {
+			return
+		}
+		d.lentBounds = make(map[*window.Window]core.UnitRect)
+		for _, w := range wm.Windows() {
+			d.lentBounds[w] = w.Bounds()
+		}
+		d.menuBarRowLent = true
+		d.fitWindowsToClientArea()
+		d.Update()
+		return
+	}
+
+	d.menuBarRowLent = false
+	for w, b := range d.lentBounds {
+		if w != nil {
+			w.SetBounds(b)
+		}
+	}
+	d.lentBounds = nil
+	// Restore first, then fit. If the chrome changed while the row was out on
+	// loan -- show_desktop turning the app multi-window, say -- the bounds
+	// from before are no longer the whole story, and fitting settles them
+	// against the client area as it is NOW rather than as it was.
+	d.fitWindowsToClientArea()
+	d.Update()
+}
+
+// fitWindowsToClientArea scoots every window down out of the chrome and
+// shortens whatever then hangs off the bottom. A maximized window takes the
+// client area whole; a floating one keeps where it is unless the chrome has
+// moved in over it.
+//
+// Down and shorter is the whole of it, because that is the only direction the
+// client area moves here: lending the menu bar its row takes the row off the
+// TOP, so a window at the top slides down by it and gives the same amount
+// back at the bottom, leaving its bottom edge where it was.
+func (d *Desktop) fitWindowsToClientArea() {
+	d.layoutChildren()
+	wm := d.windowManager
+	if wm == nil {
+		return
+	}
+	client := d.ClientArea()
+	for _, w := range wm.Windows() {
+		if w == nil {
+			continue
+		}
+		if w.IsMaximized() {
+			w.SetBounds(client)
+			continue
+		}
+		b := w.Bounds()
+		if b.Y < client.Y {
+			b.Y = client.Y
+		}
+		if over := (b.Y + b.Height) - (client.Y + client.Height); over > 0 {
+			b.Height -= over
+		}
+		if b.Height < 1 {
+			b.Height = 1
+		}
+		w.SetBounds(b)
+	}
 }
 
 // SetHideMenuBarForSoleApp toggles whether the desktop menu bar is also hidden
@@ -1773,36 +2042,34 @@ func (d *Desktop) appendHideSection(menu *Menu, appName string, leadingSeparator
 	}
 
 	hideItem := NewMenuItem("&Hide " + appName)
-	if keys := core.DefaultKeyBindings.Keys(core.ActionAppHide); len(keys) > 0 {
-		hideItem.SetShortcut(core.NewShortcut(keys[0]))
-	}
+	hideItem.SetCommand(core.CmdAppHide)
 	hideItem.SetOnTriggered(func() { d.hideActiveApp() })
 	menu.AddItem(hideItem)
 
 	hideOthersItem := NewMenuItem("Hide &Others")
-	if keys := core.DefaultKeyBindings.Keys(core.ActionAppHideOthers); len(keys) > 0 {
-		hideOthersItem.SetShortcut(core.NewShortcut(keys[0]))
-	}
+	hideOthersItem.SetCommand(core.CmdAppHideOthers)
 	hideOthersItem.SetOnTriggered(func() { d.hideOtherApps() })
 	menu.AddItem(hideOthersItem)
 
 	showAllItem := NewMenuItem("&Show All")
-	if keys := core.DefaultKeyBindings.Keys(core.ActionAppShowAll); len(keys) > 0 {
-		showAllItem.SetShortcut(core.NewShortcut(keys[0]))
-	}
+	showAllItem.SetCommand(core.CmdAppShowAll)
 	showAllItem.SetOnTriggered(func() { d.showAllApps() })
 	menu.AddItem(showAllItem)
 }
 
 // appendQuitSection adds a separator and the app's Quit item. This is
 // the part that stays on a detached main window's own menu bar.
+//
+// The separator is only added when there is already something above it: an app
+// that declared no app-menu items (the synthesized "≡" menu) would otherwise
+// open with a stray separator as its first row, with nothing but Quit below.
 func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
-	menu.AddSeparator()
+	if len(menu.Items()) > 0 {
+		menu.AddSeparator()
+	}
 
 	quitItem := NewMenuItem("&Quit " + appName)
-	if keys := core.DefaultKeyBindings.Keys(core.ActionQuit); len(keys) > 0 {
-		quitItem.SetShortcut(core.NewShortcut(keys[0]))
-	}
+	quitItem.SetCommand(core.CmdAppQuit)
 	quitItem.SetOnTriggered(func() { d.quitActiveApp() })
 	menu.AddItem(quitItem)
 }
@@ -2261,10 +2528,11 @@ func (d *Desktop) focusedEditActor() (editActor, bool) {
 // still synthesized and prepended as usual, so claiming some and not others
 // works.
 func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuItem) func() {
-	shortcut := func(it *MenuItem, action string) {
-		if keys := core.DefaultKeyBindings.Keys(action); len(keys) > 0 {
-			it.SetShortcut(core.NewShortcut(keys[0]))
-		}
+	// Each item names the command it IS. What key that is here -- if any -- is
+	// resolved when the menu is drawn, so these advertise the platform's own
+	// spelling and advertise nothing while something has taken the keyboard.
+	shortcut := func(it *MenuItem, command string) {
+		it.SetCommand(command)
 	}
 	// claim returns the app's item for a role, or a fresh one marked for
 	// prepending in the standard block.
@@ -2279,7 +2547,7 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	}
 
 	cut := claim(ItemIDCut, "Cu&t")
-	shortcut(cut, core.ActionCut)
+	shortcut(cut, core.CmdTrinketCut)
 	cut.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			if hasSelection(ea) {
@@ -2291,7 +2559,7 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	})
 
 	copyIt := claim(ItemIDCopy, "&Copy")
-	shortcut(copyIt, core.ActionCopy)
+	shortcut(copyIt, core.CmdTrinketCopy)
 	copyIt.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			if hasSelection(ea) {
@@ -2303,7 +2571,7 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	})
 
 	pasteIt := claim(ItemIDPaste, "&Paste")
-	shortcut(pasteIt, core.ActionPaste)
+	shortcut(pasteIt, core.CmdTrinketPaste)
 	pasteIt.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			ea.Paste()
@@ -2316,7 +2584,7 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	trio := len(synthesized)
 
 	selectAll := claim(ItemIDSelectAll, "Select &All")
-	shortcut(selectAll, core.ActionSelectAll)
+	shortcut(selectAll, core.CmdTrinketSelectAll)
 	selectAll.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			ea.SelectAll()
@@ -2572,7 +2840,16 @@ func (d *Desktop) attachMainWindowChrome(win *window.Window) {
 	if app == nil {
 		return
 	}
-	win.SetWindowMenuBar(d.buildDetachedMenuBar(app))
+	mb := d.buildDetachedMenuBar(app)
+	// A detached window carries its own bar, so its items advertise what THIS
+	// window offers -- its own focus, its own keymap in force.
+	mb.SetKeyResolver(func(command string) string {
+		if key := core.FindKeyForCommand(core.FocusedTrinketOf(win), command); key != "" {
+			return key
+		}
+		return win.KeyContext().KeyForCommand(command)
+	})
+	win.SetWindowMenuBar(mb)
 	win.SetWindowStatusBar(d.buildDetachedStatusBar(app))
 }
 
@@ -2792,35 +3069,64 @@ func (d *Desktop) quitActiveApp() {
 	d.mu.RLock()
 	activeApp := d.activeApp
 	d.mu.RUnlock()
+	d.quitApplication(activeApp)
+}
 
-	if activeApp == nil {
+// QuitApplicationOwning ends the application that owns win, and reports
+// whether one was found. It is how a window reaches its application: the
+// window knows nothing about apps, and the desktop owns the registry.
+//
+// Satisfies the window package's applicationQuitter.
+func (d *Desktop) QuitApplicationOwning(win *window.Window) bool {
+	app := d.findApplicationForWindow(win)
+	if app == nil {
+		return false
+	}
+	d.quitApplication(app)
+	return true
+}
+
+// quitApplication closes one application's windows and takes it off the
+// desktop.
+//
+// Whether the DESKTOP survives that is a question about what this process is,
+// and it is only ever asked once nothing else is left on screen: a desktop
+// ENVIRONMENT (launched bare, or revealed since) is a place in its own right
+// and shows itself, while a desktop that was only ever the frame around this
+// one application has nothing to show and ends. See lastWindowClosed.
+func (d *Desktop) quitApplication(app ApplicationProvider) {
+	if app == nil {
 		return
 	}
 
-	// Close all windows of this application
-	for _, win := range activeApp.Windows() {
-		if win != nil {
-			win.Close()
+	// ATTEMPT to close this application's own windows -- its child windows go
+	// with them, since a window closes its children first -- and NOTHING
+	// belonging to any other application. A window may refuse (the usual
+	// reason being unsaved work, asked through its close handler), and a
+	// refusal cancels the quit: the application stays on the desktop rather
+	// than being torn off it with a window still open.
+	for _, win := range app.Windows() {
+		if win != nil && !win.Close() {
+			return
 		}
 	}
 
 	// Remove the application from the desktop
-	d.RemoveApplication(activeApp)
+	d.RemoveApplication(app)
 
 	// Check if there are any remaining windows across all applications
 	d.mu.RLock()
 	hasWindows := false
-	for _, app := range d.applications {
-		if len(app.Windows()) > 0 {
+	for _, a := range d.applications {
+		if len(a.Windows()) > 0 {
 			hasWindows = true
 			break
 		}
 	}
 	d.mu.RUnlock()
 
-	// If no windows remain, exit the desktop
 	if !hasWindows {
-		d.Quit()
+		d.lastWindowClosed()
 	}
 }
 
@@ -3047,6 +3353,15 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 	d.platform = p
 	onStartup := d.onStartup
 	wm := d.windowManager
+	// Launched ALONE - no application of its own - is what it means to be run
+	// AS a desktop environment: there is nothing here but the desktop, so an
+	// empty screen is the point rather than the end. A host that registered an
+	// application before running is that application's frame instead, and goes
+	// when its last window does. (Apps that CONNECT later don't change this:
+	// the question is what this process was started to be.)
+	if len(d.applications) == 0 {
+		d.desktopEnvironment = true
+	}
 	d.mu.Unlock()
 
 	code := p.Run(func(pf platform.Platform) {
@@ -3337,6 +3652,10 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		return true
 	}
 
+	// A borrowed menu-bar row is given back as soon as the bar stops holding
+	// the keyboard, whatever route let go of it (see syncMenuBarRow).
+	defer d.syncMenuBarRow()
+
 	// Handle event based on type
 	switch e := event.(type) {
 	case core.QuitEvent:
@@ -3556,7 +3875,7 @@ func (d *Desktop) checkMenuItemShortcuts(menu *Menu, event core.KeyPressEvent) b
 		// Check if this item's shortcut matches. Trigger routes
 		// through the command registry (dispatch by stable ID), and
 		// keeps checkable-toggle semantics consistent with clicking.
-		if item.Shortcut != "" && item.Shortcut.Matches(event) {
+		if item.Shortcut != "" && core.SameKey(string(item.Shortcut), event.Key) {
 			item.Trigger()
 			return true
 		}
@@ -3644,13 +3963,81 @@ func (d *Desktop) RequestUpdate() {
 	}
 }
 
-// Quit requests the desktop to quit.
+// Quit ASKS the desktop to quit: everything on it is closed first, and a
+// window that refuses -- the usual reason being unsaved work, asked through
+// its close handler -- abandons the quit. Shutting down is the same act as
+// closing every window, so it goes through the same door: a session that
+// wants to raise its own prompt gets to, and the desktop stays up while the
+// question is open.
+//
+// Like quitApplication, an abandoned quit is abandoned where it stood rather
+// than rolled back -- the windows that already agreed to close stay closed,
+// which is what every desktop does.
+//
+// ForceQuit is the unconditional form, for a caller that must not be refused.
 func (d *Desktop) Quit() {
 	d.QuitWithCode(0)
 }
 
-// QuitWithCode requests the desktop to quit with an exit code.
+// QuitWithCode is Quit with an exit code: it asks, and a refusal abandons it.
 func (d *Desktop) QuitWithCode(code int) {
+	if !d.closeEveryWindow() {
+		return
+	}
+	d.ForceQuitWithCode(code)
+}
+
+// ForceQuit ends the desktop without asking anything on it. It is for the
+// paths where there is nothing left to ask -- the last window has already
+// closed -- and for a caller that genuinely cannot be refused.
+func (d *Desktop) ForceQuit() {
+	d.ForceQuitWithCode(0)
+}
+
+// closeEveryWindow attempts to close everything on the desktop -- every
+// application's windows, whatever the window manager still holds, and the
+// windows living on their own torn-off surfaces -- and reports whether they
+// all agreed. It stops at the first refusal; child windows go with their
+// parents, since a window closes its children first.
+func (d *Desktop) closeEveryWindow() bool {
+	d.mu.RLock()
+	apps := append([]ApplicationProvider(nil), d.applications...)
+	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
+	wm := d.windowManager
+	d.mu.RUnlock()
+
+	seen := map[*window.Window]bool{}
+	var all []*window.Window
+	add := func(w *window.Window) {
+		if w != nil && !seen[w] {
+			seen[w] = true
+			all = append(all, w)
+		}
+	}
+	for _, a := range apps {
+		for _, w := range a.Windows() {
+			add(w)
+		}
+	}
+	if wm != nil {
+		for _, w := range wm.Windows() {
+			add(w)
+		}
+	}
+	for _, h := range hosts {
+		add(h.Window())
+	}
+
+	for _, w := range all {
+		if !w.Close() {
+			return false
+		}
+	}
+	return true
+}
+
+// ForceQuitWithCode is ForceQuit with an exit code.
+func (d *Desktop) ForceQuitWithCode(code int) {
 	d.mu.Lock()
 	d.exitCode = code
 	p := d.platform
@@ -3664,6 +4051,18 @@ func (d *Desktop) QuitWithCode(code int) {
 		// Already closed
 	default:
 		close(d.quitChan)
+	}
+}
+
+// QuitRequested reports whether the desktop has been asked to exit. Distinct
+// from IsRunning, which is false before Run starts as well as after it ends --
+// this says the request was made, which is what a host wants to assert about.
+func (d *Desktop) QuitRequested() bool {
+	select {
+	case <-d.quitChan:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -4004,12 +4403,91 @@ func (d *Desktop) SetLayoutManager(lm core.LayoutManager) {
 	// Desktop uses custom layout, ignores layout manager
 }
 
+// toggleMenuBarFromKey is the whole of what the menu key does: the bar takes
+// the keyboard, and the active window gives it up.
+//
+// Both halves matter, and they used to live in only one of the two places the
+// key arrives. The window manager resolves the desktop's context ABOVE any
+// window, so that is the path a real keystroke takes -- and it toggled the
+// bar's focus while leaving the window active and its trinket focused, so the
+// bar lit up over a window that still held the keyboard.
+func (d *Desktop) toggleMenuBarFromKey() {
+	d.summonMenuBarFromKey(false)
+}
+
+// helpMenuFromKey summons the bar and goes straight to Help. An application
+// with no Help menu gets exactly the menu key, so the binding is never dead.
+func (d *Desktop) helpMenuFromKey() {
+	d.summonMenuBarFromKey(true)
+}
+
+// summonMenuBarFromKey is the whole of what the menu key does: the bar takes
+// the keyboard, and the active window gives it up. help asks for the Help menu
+// to be dropped open on the way.
+func (d *Desktop) summonMenuBarFromKey(help bool) {
+	if d.menuBar == nil {
+		return
+	}
+	if help {
+		// Deactivate FIRST, exactly as below: the bar is about to hold the
+		// keyboard either way, and Help opening is not a reason to leave the
+		// window holding it.
+		if d.windowManager != nil && !d.menuBar.HasFocus() {
+			d.windowManager.DeactivateActiveWindow()
+		}
+		if d.menuBar.OpenHelpMenu() {
+			return
+		}
+		// No Help menu: fall through to the plain toggle, which is what the
+		// user would have got from the menu key.
+	}
+	// Only on the way IN: releasing the bar hands the keyboard back rather
+	// than deactivating anything.
+	if d.windowManager != nil && !d.menuBar.HasFocus() {
+		d.windowManager.DeactivateActiveWindow()
+	}
+	d.menuBar.ToggleMenuFocus()
+}
+
+// wireMenuBarKeys gives a menu bar what it takes to form chord accelerators:
+// the configured pattern, and the context they are formed against.
+//
+// The bar forms them against what the ordinary state offers, so a chord
+// something else has claimed is not the accelerator's to take. Note this is
+// the NORMAL state's set, not the whole registry: the sixteen window move and
+// size bindings exist only with a title bar focused, so their arrows stay
+// unclaimed here rather than being eaten on the desktop.
+//
+// Every desktop bar goes through here, including the built-in one a desktop
+// always carries. Wiring only the bar handed to SetMenuBar left an
+// application that declares its menus through SetMenuBarContent -- which is
+// the ordinary way -- with a bar that had no chord and no context: its
+// accelerators drew LIT, because a nil context claims nothing, and were never
+// published, because there was nowhere to publish them. The chord did nothing
+// at all while the underlying key went through to whatever had focus.
+func (d *Desktop) wireMenuBarKeys(mb *MenuBar) {
+	if mb == nil {
+		return
+	}
+	mb.SetAcceleratorChord(core.AcceleratorChord())
+	d.buildKeyContext()
+	mb.SetKeyContext(d.keyContext)
+	// What every item on this bar advertises: the key that means its command
+	// in the context the desktop currently has, which follows the focus. Asked
+	// afresh each time an item is drawn, so a rebinding, a platform's own
+	// spelling and a guest holding the keyboard all show through without
+	// anything having to rebuild the menus.
+	mb.SetKeyResolver(d.keyForCommandInFocus)
+	mb.SetOnFocusChanged(d.lendMenuBarRow)
+}
+
 // SetMenuBar sets the menu bar (displayed at the top of the screen).
 // The system menu (ψ) is automatically prepended to the menu bar.
 func (d *Desktop) SetMenuBar(menuBar *MenuBar) {
 	d.menuBar = menuBar
 	if menuBar != nil {
 		menuBar.SetParent(d)
+		d.wireMenuBarKeys(menuBar)
 		// Prepend system menu if we have one
 		if d.systemMenu != nil {
 			menuBar.InsertMenu(0, d.systemMenu)
@@ -4030,6 +4508,14 @@ func (d *Desktop) MenuBar() *MenuBar {
 // rebuilt the bar while the app still had no menus) - and the change
 // appears immediately instead of only after the next focus switch.
 func (d *Desktop) ActiveMenuBarContentChanged(who ApplicationProvider) {
+	// A DETACHED main window carries the app's own bar on its own surface,
+	// built when its chrome was attached and, until this, never rebuilt: an
+	// app that changed its menus while detached (or solo, which is the same
+	// thing on the primary surface) saw the change on the desktop's bar and
+	// nowhere the user was looking. That is any app's business, not only the
+	// active one's, so it happens before the active-app test below.
+	d.refreshDetachedMenuBar(who)
+
 	d.mu.RLock()
 	active := d.activeApp
 	d.mu.RUnlock()
@@ -4038,6 +4524,39 @@ func (d *Desktop) ActiveMenuBarContentChanged(who ApplicationProvider) {
 	}
 	d.updateMenuBarContent()
 	d.RequestUpdate()
+}
+
+// refreshDetachedMenuBar rebuilds the app's own menu bar (and status bar) on
+// its detached main window from the app's CURRENT content, and re-wires what
+// the window itself cannot provide. A no-op while the app's main window is
+// docked, where the desktop's own bar shows those menus and is rebuilt from
+// scratch on every composition.
+func (d *Desktop) refreshDetachedMenuBar(app ApplicationProvider) {
+	if app == nil {
+		return
+	}
+	win := app.MainWindow()
+	if win == nil || !win.IsDetached() {
+		return
+	}
+	d.attachMainWindowChrome(win)
+	// The detached bar's parent is the window, which has no timer system for
+	// its dropdowns' hover auto-scroll and no surface to repaint - the same
+	// wiring createTornHost and soloHostOnPrimary do for the bar they attach.
+	if mb, ok := win.WindowMenuBar().(*MenuBar); ok {
+		mb.SetScrollTimerStarter(func(interval time.Duration, cb func()) interface{ Stop() } {
+			return d.StartRepeatingTimer(interval, cb)
+		})
+		if host := d.hostForWindow(win); host != nil {
+			mb.SetRequestUpdate(host.Invalidate)
+		}
+	}
+	win.Layout()
+	if host := d.hostForWindow(win); host != nil {
+		host.Invalidate()
+		return
+	}
+	d.invalidateSurface()
 }
 
 // CloseActiveMenu closes any active dropdown menu.
@@ -4130,7 +4649,7 @@ func (d *Desktop) PerformKeyboardBlur() {
 	}
 	// Then activate the menu bar
 	if d.menuBar != nil {
-		d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
+		d.menuBar.ToggleMenuFocus()
 	}
 }
 
@@ -4534,27 +5053,29 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	// Check if menu bar wants to handle keys
 	if d.menuBar != nil {
-		// F10 toggles menu bar focus
-		if event.Key == "F10" {
-			// Deactivate the active window when invoking menu bar
-			if d.windowManager != nil && !d.menuBar.HasFocus() {
-				d.windowManager.DeactivateActiveWindow()
-			}
-			d.menuBar.HandleKeyPress(event)
+		cmd := d.KeyCommand(event.Key)
+		// The menu key summons the bar; the help key goes on to Help.
+		if cmd == core.CmdAppMenu {
+			d.toggleMenuBarFromKey()
 			return true
 		}
-		// Alt+letter (M-<letter>) for menu shortcuts
-		if strings.HasPrefix(event.Key, "M-") && len(event.Key) == 3 {
-			if d.menuBar.HandleKeyPress(event) {
-				return true
-			}
+		if cmd == core.CmdAppHelp {
+			d.helpMenuFromKey()
+			return true
+		}
+		// A formed chord accelerator. The bar compares the WHOLE formed
+		// sequence, so the mnemonic can sit anywhere in the pattern -- the
+		// old test here guessed at "M-" plus one letter and would have missed
+		// any other chord the keymap configured.
+		if d.menuBar.ActivateAcceleratorSequence(event.Key) {
+			return true
 		}
 		// If menu bar is active (menu open, or focused with accelerators showing), forward keys
 		if d.menuBar.ActiveMenu() != nil || (d.menuBar.HasFocus() && d.menuBar.AcceleratorsActive()) {
 			handled := d.menuBar.HandleKeyPress(event)
-			// If menu bar didn't handle Escape and has focus (no menu open),
-			// unfocus the menu bar
-			if !handled && event.Key == "Escape" && d.menuBar.HasFocus() {
+			// If the bar didn't handle the dismiss key and has focus (no menu
+			// open), unfocus the menu bar
+			if !handled && cmd == core.CmdTrinketCancel && d.menuBar.HasFocus() {
 				d.menuBar.CloseMenuAndUnfocus()
 				return true
 			}
@@ -4968,3 +5489,117 @@ func (s *StatusBar) HandleMousePress(event core.MousePressEvent) bool {
 
 // Verify Desktop implements KeyboardBlurChildrenProvider
 var _ core.KeyboardBlurChildrenProvider = (*Desktop)(nil)
+
+// KeyContext returns the set of actions available on the desktop right now.
+// The menu bar publishes its live accelerators into this same context, which
+// is what lets a chord accelerator be RESOLVED rather than recognised by
+// shape — including a multi-key one, since the context holds the prefix.
+// FocusedKeyRegistry is the registry in force for whatever holds the focus on
+// this desktop -- the active window's focused trinket, however deep
+// (core.KeyRegistryFocuser). The desktop resolves its own commands through it,
+// so they stand down while something has the keyboard on its own terms.
+func (d *Desktop) FocusedKeyRegistry() *core.KeyRegistry {
+	return core.FindFocusedKeyRegistry(d)
+}
+
+// keyForCommandInFocus is what this desktop's menu items ask: which key means
+// this command where the FOCUS is. The chain answers first -- Cut belongs to
+// whatever has the keyboard, and only that trinket knows which key it hears it
+// on -- and the desktop's own context answers for the frame's commands, the
+// Quits and Hides no trinket offers.
+func (d *Desktop) keyForCommandInFocus(command string) string {
+	if key := core.FindKeyForCommand(core.FocusedTrinketOf(d), command); key != "" {
+		return key
+	}
+	return d.KeyContext().KeyForCommand(command)
+}
+
+// buildKeyContext rebuilds the desktop's context and records what it was built
+// from, so staleness is a comparison at the point of use.
+func (d *Desktop) buildKeyContext() {
+	reg := d.FocusedKeyRegistry()
+	d.keyContext = reg.BuildStateContext(core.StateNormal)
+	d.keyContextReg = reg
+	d.keyContextRev = reg.Revision()
+}
+
+// refreshKeyContextIfStale rebuilds the context when the keymap behind it has
+// moved on -- the focus landing inside a trinket with its own registry changes
+// which keymap answers here, without changing any registry's revision -- and
+// hands the new one to the bar, which holds its own reference.
+func (d *Desktop) refreshKeyContextIfStale() {
+	if d.keyContext != nil && d.keyContextReg == d.FocusedKeyRegistry() &&
+		d.keyContextRev == d.keyContextReg.Revision() {
+		return
+	}
+	d.buildKeyContext()
+	if d.menuBar != nil {
+		d.menuBar.SetKeyContext(d.keyContext)
+	}
+}
+
+func (d *Desktop) KeyContext() *core.KeyContext {
+	d.refreshKeyContextIfStale()
+	// Bring the bar's accelerators into the context before anyone resolves
+	// against it. Publication happens when the assignment is recomputed,
+	// which otherwise waits for a paint -- so the first press of a chord
+	// after the menus change found nothing published and fell through to
+	// whatever had focus.
+	if d.menuBar != nil {
+		d.menuBar.refreshAccelerators()
+	}
+	return d.keyContext
+}
+
+// HandleResolvedCommand acts on a command the window manager already resolved,
+// so the key is fed to the context once rather than at every layer that might
+// care about it. seq is the whole sequence that matched.
+func (d *Desktop) HandleResolvedCommand(cmd, seq string) bool {
+	switch cmd {
+	case core.CommandAppAccelerator:
+		if d.menuBar != nil {
+			return d.menuBar.ActivateAcceleratorSequence(seq)
+		}
+	case core.CmdAppMenu:
+		if d.menuBar != nil {
+			d.toggleMenuBarFromKey()
+			return true
+		}
+	case core.CmdAppHelp:
+		if d.menuBar != nil {
+			d.helpMenuFromKey()
+			return true
+		}
+	}
+	// Anything else may be a menu item's own command -- Quit, Hide, Exit
+	// Desktop, an application's. The key has already been resolved once, by
+	// the caller, and this takes that answer rather than matching a key again:
+	// a key spelling is not a menu item's business any more.
+	return d.activateMenuCommand(cmd)
+}
+
+// activateMenuCommand triggers the item that names cmd, looking where a menu
+// shortcut has always been looked for: the system menu first, then the active
+// application's own menus (its detached main window carries them itself, so
+// they are asked there when it has them).
+func (d *Desktop) activateMenuCommand(cmd string) bool {
+	if cmd == "" {
+		return false
+	}
+	if menuActivateCommand(d.systemMenu, cmd) {
+		return true
+	}
+
+	d.mu.RLock()
+	activeApp := d.activeApp
+	d.mu.RUnlock()
+	if activeApp == nil {
+		return false
+	}
+	for _, menu := range activeApp.MenuBarContent() {
+		if menuActivateCommand(menu, cmd) {
+			return true
+		}
+	}
+	return false
+}
