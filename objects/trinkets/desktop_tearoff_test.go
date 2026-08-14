@@ -12,17 +12,20 @@ import (
 
 // msSurface is a fake native surface: an OS window's worth of state.
 type msSurface struct {
-	size        core.UnitSize
-	handler     platform.SurfaceHandler
-	x, y        int
-	closed      bool
-	invalidated bool
-	opacity     float64
-	minimized   bool
-	raised      bool
-	primary     bool // the loop-owning surface; like SDL, refuses Close
-	bordered    bool // OS title bar present (solo strips it, ExitSolo restores)
-	opts        platform.SurfaceOptions
+	size         core.UnitSize
+	handler      platform.SurfaceHandler
+	x, y         int
+	closed       bool
+	invalidated  bool
+	opacity      float64
+	minimized    bool
+	raised       bool
+	primary      bool // the loop-owning surface; like SDL, refuses Close
+	bordered     bool // OS title bar present (solo strips it, ExitSolo restores)
+	zoomed       bool // OS-maximized/fullscreen (NativeZoomReporter)
+	squaredShape bool // corners forced square (NativeShapeSquarer)
+	minW, minH   int  // OS-enforced floor (NativeMinimumSizer)
+	opts         platform.SurfaceOptions
 
 	// Platform text caret, as the desktop's frame last set it.
 	caretVisible bool
@@ -54,16 +57,39 @@ func (s *msSurface) Close() {
 	}
 	s.closed = true
 }
-func (s *msSurface) SetOpacity(o float64)             { s.opacity = o }
-func (s *msSurface) Raise()                           { s.raised = true }
-func (s *msSurface) Minimized() bool                  { return s.minimized }
-func (s *msSurface) Minimize()                        { s.minimized = true }
-func (s *msSurface) Restore()                         { s.minimized = false } // NativeRestorer
+func (s *msSurface) SetOpacity(o float64)   { s.opacity = o }
+func (s *msSurface) Raise()                 { s.raised = true }
+func (s *msSurface) Minimized() bool        { return s.minimized }
+func (s *msSurface) Minimize()              { s.minimized = true }
+func (s *msSurface) NativeZoomed() bool     { return s.zoomed }
+func (s *msSurface) SetShapeSquared(b bool) { s.squaredShape = b }
+
+// SetMinimumSizePx implements platform.NativeMinimumSizer: the real
+// platform hands this to the OS; the fake records it and enforces it on
+// every size change, as the OS would.
+func (s *msSurface) SetMinimumSizePx(w, h int) { s.minW, s.minH = w, h }
+
+// SetScreenRectPx implements platform.NativeRectSetter: one geometry
+// change, releasing any maximize (the real platform primes the restore
+// target with this rectangle first, so the un-maximize animates here).
+func (s *msSurface) SetScreenRectPx(x, y, w, h int) {
+	s.zoomed = false
+	s.x, s.y = x, y
+	s.SetScreenSizePx(w, h)
+}
+
+func (s *msSurface) Restore()                         { s.minimized = false; s.zoomed = false } // NativeRestorer
 func (s *msSurface) WorkAreaPx() (int, int, int, int) { return 0, 0, 1600, 1000 }
 
 // SetScreenSizePx mimics the real platform: the size change reports
 // back through Resized (scale 1: pixels are units).
 func (s *msSurface) SetScreenSizePx(w, h int) {
+	if s.minW > 0 && w < s.minW {
+		w = s.minW
+	}
+	if s.minH > 0 && h < s.minH {
+		h = s.minH
+	}
 	s.size = core.UnitSize{Width: core.Unit(w), Height: core.Unit(h)}
 	if s.handler != nil {
 		s.handler.Resized(s.size)
@@ -514,15 +540,19 @@ func TestTornWindowResizeGripMatchesDesktop(t *testing.T) {
 
 	plat := &msPlatform{}
 	plat.script = func() {
-		if d.resizeGrip <= 0 {
-			t.Fatalf("desktop has no graphical resize grip (%d); test needs one", d.resizeGrip)
+		if !d.GraphicalWindowFrames() {
+			t.Fatal("desktop does not paint graphical frames; test needs one that does")
 		}
 		d.tearOffInPlace(win)
 		if len(d.tornHosts) == 0 {
 			t.Fatal("window did not tear off")
 		}
-		if got := d.tornHosts[0].ResizeGrip(); got != d.resizeGrip {
-			t.Errorf("torn window grip = %d, want the desktop grip %d", got, d.resizeGrip)
+		// A detached window's parent chain no longer reaches the desktop, so
+		// FindGraphicalFrames cannot answer for it — the desktop has to have
+		// pushed the answer in, or the torn window gets cell-frame edges on a
+		// pixel surface.
+		if !d.tornHosts[0].GraphicalFrames() {
+			t.Error("torn window did not inherit the desktop's graphical frames")
 		}
 		d.QuitWithCode(0)
 	}
@@ -794,11 +824,16 @@ func TestSoloModePrimaryCloserPromotesPeer(t *testing.T) {
 // surface is re-bordered and reclaimed by the desktop, and the solo window
 // becomes an ordinary tearable torn-off window on its own surface at the
 // same screen rectangle (so it can be dragged in to dock).
+//
+// Pinned to native_titlebar: this test is about the solo lifecycle, and
+// re-bordering on exit is that mode's behavior. Under the themed default
+// the strip is permanent (TestThemedFrameStaysBorderlessAcrossSolo).
 func TestExitSoloModeRevealsDesktop(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	px, _ := raster.New(800, 480)
 	d := NewDesktop()
 	d.SetBackend(px)
+	d.SetDesktopFrame(DesktopFrameNativeTitlebar)
 
 	main := window.NewWindow("Solo")
 	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
@@ -874,6 +909,9 @@ func TestReSoloFromDesktop(t *testing.T) {
 	px, _ := raster.New(800, 480)
 	d := NewDesktop()
 	d.SetBackend(px)
+	// native_titlebar: the border round-trip is this mode's story (the
+	// themed default never restores it).
+	d.SetDesktopFrame(DesktopFrameNativeTitlebar)
 
 	main := window.NewWindow("Solo")
 	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}

@@ -131,6 +131,12 @@ type nativeWin struct {
 	// never rounded (a plain bordered window).
 	wantRadiusPx int
 
+	// forceSquare squares the corners regardless of the maximize flag: the
+	// desktop's own Zoom fills the work area with a plain move+resize the
+	// OS never marks maximized, and a screen-filling window keeps the
+	// maximized convention (square, no shadow). Set via SetShapeSquared.
+	forceSquare bool
+
 	// appliedShapePx is the radius applyWindowShape last applied (-1 before its
 	// first call), so an ordinary resize — which changes neither the radius nor
 	// the maximized/borderless state — doesn't needlessly re-round the window
@@ -1506,7 +1512,7 @@ func (p *Platform) applyWindowShape(w *nativeWin) {
 		return // a plain window that is never rounded
 	}
 	flags := w.window.Flags()
-	round := flags&sdl3.WINDOW_BORDERLESS != 0 && flags&sdl3.WINDOW_MAXIMIZED == 0
+	round := flags&sdl3.WINDOW_BORDERLESS != 0 && flags&sdl3.WINDOW_MAXIMIZED == 0 && !w.forceSquare
 	r := 0
 	if round {
 		r = p.shapeRadiusPx()
@@ -2337,6 +2343,17 @@ func (s *sdlSurface) SetBordered(bordered bool) {
 	s.platform.applyWindowShape(s.win)
 }
 
+// SetShapeSquared implements platform.NativeShapeSquarer: a client-side
+// zoom that fills the screen squares the rounded corners (and drops the
+// shadow) exactly as an OS maximize does; restoring rounds them again.
+func (s *sdlSurface) SetShapeSquared(squared bool) {
+	if s.closed || s.win == nil || s.win.window == nil {
+		return
+	}
+	s.win.forceSquare = squared
+	s.platform.applyWindowShape(s.win)
+}
+
 // ScreenSizePx implements platform.NativeSurface: the OS window's current
 // pixel size, straight from SDL (no unit round-trip that would drift at
 // fractional pixels-per-unit).
@@ -2369,6 +2386,11 @@ func (s *sdlSurface) SetScreenSizePx(w, h int) {
 		return
 	}
 	if s.win.window.Flags()&sdl3.WINDOW_MAXIMIZED != 0 {
+		// Prime the restore target BEFORE releasing the maximize: SDL
+		// keeps a windowed rectangle that the un-maximize animates to,
+		// and the one it holds may be stale. (See SetScreenRectPx, which
+		// does this for the position too.)
+		s.win.window.SetSize(int32(w), int32(h))
 		s.win.window.Restore()
 	}
 	s.win.window.SetSize(int32(w), int32(h))
@@ -2376,6 +2398,57 @@ func (s *sdlSurface) SetScreenSizePx(w, h int) {
 	if pxW > 0 && pxH > 0 {
 		s.platform.liveResize(s.win.id, int(pxW), int(pxH))
 	}
+}
+
+// SetMinimumSizePx implements platform.NativeMinimumSizer: the floor the
+// OS itself enforces, so a resize we do not drive cannot undercut the
+// minimum our own gestures clamp to.
+func (s *sdlSurface) SetMinimumSizePx(w, h int) {
+	if s.closed || s.win == nil || s.win.window == nil || w <= 0 || h <= 0 {
+		return
+	}
+	s.win.window.SetMinimumSize(int32(w), int32(h))
+}
+
+// SetScreenRectPx implements platform.NativeRectSetter: move and resize as
+// ONE geometry change, priming the restore target before releasing a
+// maximize.
+//
+// Un-zooming a window the WM considers maximized used to animate to the
+// WM's own stored floating rectangle — which could be an era stale (a
+// solo-mode layout from before the desktop was revealed) — and only then
+// jump to the real destination as our writes landed. Writing the
+// destination while still maximized sets the rectangle SDL restores INTO,
+// so the single animation the user sees ends in the right place.
+func (s *sdlSurface) SetScreenRectPx(x, y, w, h int) {
+	if s.closed || s.win.window == nil || w <= 0 || h <= 0 {
+		return
+	}
+	maximized := s.win.window.Flags()&sdl3.WINDOW_MAXIMIZED != 0
+	if maximized {
+		// Prime, then release: these writes are the restore target, not
+		// the live geometry (a maximized window ignores them as geometry).
+		s.win.window.SetPosition(int32(x), int32(y))
+		s.win.window.SetSize(int32(w), int32(h))
+		s.win.window.Restore()
+	}
+	// Apply for real (idempotent when the restore already landed here).
+	s.win.window.SetPosition(int32(x), int32(y))
+	s.win.window.SetSize(int32(w), int32(h))
+	pxW, pxH := s.win.window.SizeInPixels()
+	if pxW > 0 && pxH > 0 {
+		s.platform.liveResize(s.win.id, int(pxW), int(pxH))
+	}
+}
+
+// NativeZoomed implements platform.NativeZoomReporter: a maximized or
+// fullscreen OS window holds its geometry, so edge-resize grab zones on its
+// content stand down.
+func (s *sdlSurface) NativeZoomed() bool {
+	if s.closed || s.win.window == nil {
+		return false
+	}
+	return s.win.window.Flags()&(sdl3.WINDOW_MAXIMIZED|sdl3.WINDOW_FULLSCREEN) != 0
 }
 
 // WorkAreaPx implements platform.NativeSurface: the usable bounds of

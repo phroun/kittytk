@@ -131,6 +131,13 @@ func main() {
 	// native modifier glyphs (⌃⌥⇧⌘) instead of the compact ^X/M-x notation.
 	core.SetMacNativeShortcuts(cfg.UseMacNativeShortcuts())
 
+	// [window] titlebar_scale: every graphical title bar (windows and the
+	// themed desktop) at this fraction of the classic full-cell row, fonts
+	// and controls scaled to match. 1.0 is the default. The scale quantizes
+	// to the frame denomination's unit grid, and the TUI host stays at 1.0
+	// regardless — a terminal cannot subdivide a character cell.
+	core.SetTitleBarScale(cfg.TitleBarScale)
+
 	backend, err := plat.EnsureBackend()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -162,6 +169,11 @@ func main() {
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font
+	// [window] desktop_frame: themed (the desktop paints its own title bar
+	// and handles its own moving/resizing), native_titlebar, or native.
+	// The themed title bar shows the same [window] title the OS bar would.
+	desktop.SetDesktopFrame(cfg.DesktopFrame)
+	desktop.SetTitle(cfg.Title)
 	// The UI font stays one cell tall in UNITS (12); font_size makes it
 	// render larger by growing the cell's pixel size, not its unit count.
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})
