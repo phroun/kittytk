@@ -574,6 +574,10 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 
 	t.renderSpritesGfx(painter, front, buf, scheme, isDark, cw, chh, ppu, scrollOffset, horizOffset)
 
+	// Cell-anchored bitmaps (Sixel) sit above the front sprites: an image is
+	// program output the text layer has already made room for, not chrome.
+	t.renderImagesGfx(painter, buf.GetImages(), cw, chh, ppu, scrollOffset, horizOffset)
+
 	// Screen splits overlay regions of the logical screen.
 	splits := buf.GetScreenSplitsSorted()
 	if len(splits) > 0 {
@@ -1605,6 +1609,48 @@ func (t *PurfecTerm) renderSpritesGfx(p *core.Painter, sprites []*purfecterm.Spr
 			})
 		}
 		target.DrawImageOffset(0, 0, originX, originY, img)
+	}
+}
+
+// renderImagesGfx blits cell-anchored bitmaps (decoded Sixel) over the text
+// layer. An image is anchored at a screen cell and scrolls with the text, so it
+// lands on the cell grid the same way a sprite does: scaled cell metrics, then
+// the scroll and horizontal-offset shifts renderSpritesGfx applies.
+//
+// The decoder yields row-major RGBA with alpha either 0 (transparent) or 255 —
+// already Go's premultiplied convention — so the bytes wrap into an
+// *image.RGBA with no copy and no conversion.
+func (t *PurfecTerm) renderImagesGfx(p *core.Painter, images []*purfecterm.PlacedImage,
+	cw, chh, ppu float64, scrollOffsetY, horizOffsetX int) {
+
+	if len(images) == 0 {
+		return
+	}
+	cwPx := cw * ppu
+	chPx := chh * ppu
+	scrollPixelX := float64(horizOffsetX) * cwPx
+	scrollPixelY := float64(scrollOffsetY) * chPx
+
+	for _, im := range images {
+		if im == nil || im.Image == nil {
+			continue
+		}
+		si := im.Image
+		if si.W <= 0 || si.H <= 0 || len(si.RGBA) < si.W*si.H*4 {
+			continue
+		}
+		img := &image.RGBA{
+			Pix:    si.RGBA[:si.W*si.H*4],
+			Stride: si.W * 4,
+			Rect:   image.Rect(0, 0, si.W, si.H),
+		}
+
+		// Anchor at the floor pixel of the cell, like the sprite path: the
+		// bitmap has its own pixels and must not be resampled onto a rounded
+		// unit position.
+		pixelX := float64(im.Col)*cwPx - scrollPixelX
+		pixelY := float64(im.Row)*chPx + scrollPixelY
+		p.DrawImageOffset(0, 0, int(math.Floor(pixelX)), int(math.Floor(pixelY)), img)
 	}
 }
 
