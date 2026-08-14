@@ -30,8 +30,8 @@ github.com/phroun/key-sequence-processor v0.1.5 h1:tBbyO3x350+ElKxRi6uNQd9ZaHn6R
 github.com/phroun/key-sequence-processor v0.1.5/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
 github.com/phroun/pawscript v0.2.11-alpha h1:Z2mVJ8agR2GE1DO6ZrccX3vpIXdLXb9gXL2/DgR+HPc=
 github.com/phroun/pawscript v0.2.11-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
-github.com/phroun/purfecterm v0.2.30 h1:xRNj3nqzizFY1txlZYp7hT4LeHliEPeoqHUz9EZ5ww4=
-github.com/phroun/purfecterm v0.2.30/go.mod h1:9tZ5sV6a8trOv+AZ9syWw4o6EREti1gxrLW9E7eyeVA=
+github.com/phroun/purfecterm v0.2.42-0.20260814110724-a8a33e052ca1 h1:BTQrWUBaHDEIydK9iigffC21HpALQ1R6V5wutDtoDfY=
+github.com/phroun/purfecterm v0.2.42-0.20260814110724-a8a33e052ca1/go.mod h1:9tZ5sV6a8trOv+AZ9syWw4o6EREti1gxrLW9E7eyeVA=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c h1:km8GpoQut05eY3GiYWEedbTT0qnSxrCjsVbb7yKY1KE=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c/go.mod h1:cNQ3dwVJtS5Hmnjxy6AgTPd0Inb3pW05ftPSX7NZO7Q=
 github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef h1:Ch6Q+AZUxDBCVqdkI8FSpFyZDtCVBc2VmejdNrm5rRQ=
