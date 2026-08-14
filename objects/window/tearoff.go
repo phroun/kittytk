@@ -183,6 +183,14 @@ func NewTearOffHost(win *Window, surf platform.Surface, ppu func() float64,
 	onRedock func(globalX, globalY int, grabX, grabY core.Unit) bool) *TearOffHost {
 	h := &TearOffHost{win: win, surf: surf, ppu: ppu, global: global, onRedock: onRedock, graphicalFrames: true}
 	h.native, _ = surf.(platform.NativeSurface)
+	// The OS-side floor, matching what resizeMove clamps to: a resize we
+	// do not drive (the window manager's own keyboard resize or tiling)
+	// answers only to the OS.
+	if ms, ok := surf.(platform.NativeMinimumSizer); ok {
+		metrics := core.DefaultCellMetrics()
+		ms.SetMinimumSizePx(h.pxHardX(metrics.CellWidth*MinHostCols),
+			h.pxHardY(metrics.CellHeight*MinHostRows))
+	}
 	h.minimizeKeys.SetCommands(core.CmdAppMinimize)
 	h.minimizeKeys.SetKeyOwner(win) // the torn window's own keymap, if it has one
 
@@ -1240,12 +1248,56 @@ func (h *TearOffHost) unitFromPxRaw(px int) core.Unit {
 	return core.Unit(math.Round(float64(px) / ppu))
 }
 
+// paintablePxX / paintablePxY round a DRAGGED surface size down to an
+// extent the surface can actually paint: the largest pixel size that is
+// exactly where some whole unit count lands on the hardened cell pitch.
+//
+// A drag hands the window an arbitrary pixel count. The reported extent
+// floors (it must never point past the true edge), so an odd size leaves
+// a last column or row outside every unit — nothing paints it, the
+// frame's outermost stroke is clipped against it, and that edge reads
+// thinner than the other three. It costs at most a pixel of window. The
+// desktop's own edge gesture rounds the same way; a torn window (and a
+// solo one, hosted here on the primary surface) is the other half of it.
+//
+// Only whole-window SIZES come here. Positions, deltas, and the sizes we
+// derive from our own unit bounds keep the geometry they had — those
+// already land on the grid by construction.
+func (h *TearOffHost) paintablePxX(px int) int {
+	u := h.unitHardX(px)
+	for u > 0 && h.pxHardX(u) > px {
+		u--
+	}
+	if u <= 0 {
+		return px
+	}
+	if fit := h.pxHardX(u); fit > 0 {
+		return fit
+	}
+	return px
+}
+
+func (h *TearOffHost) paintablePxY(px int) int {
+	u := h.unitHardY(px)
+	for u > 0 && h.pxHardY(u) > px {
+		u--
+	}
+	if u <= 0 {
+		return px
+	}
+	if fit := h.pxHardY(u); fit > 0 {
+		return fit
+	}
+	return px
+}
+
 func (h *TearOffHost) resizeMove() bool {
 	gx, gy := h.global()
 	dx, dy := gx-h.startGX, gy-h.startGY
 	metrics := core.DefaultCellMetrics()
-	minW := h.pxHardX(metrics.CellWidth * 12)
-	minH := h.pxHardY(metrics.CellHeight * 4)
+	// The shared host minimum, on the hardened cell pitch this host sizes by.
+	minW := h.pxHardX(metrics.CellWidth * MinHostCols)
+	minH := h.pxHardY(metrics.CellHeight * MinHostRows)
 
 	x, y, w, ht := h.startX, h.startY, h.startW, h.startH
 	if h.resizeEdges&resizeLeft != 0 {
@@ -1275,6 +1327,21 @@ func (h *TearOffHost) resizeMove() bool {
 			ht = minH
 		}
 		y += dy
+	}
+	// Round the dragged size DOWN to what this surface can paint, so no
+	// half-addressable pixel is left to clip the frame's outer stroke.
+	// Left/top edges absorb the trim so the opposite edge stays put.
+	if pw := h.paintablePxX(w); pw != w {
+		if h.resizeEdges&resizeLeft != 0 {
+			x += w - pw
+		}
+		w = pw
+	}
+	if ph := h.paintablePxY(ht); ph != ht {
+		if h.resizeEdges&resizeTop != 0 {
+			y += ht - ph
+		}
+		ht = ph
 	}
 	if h.resizeEdges&(resizeLeft|resizeTop) != 0 {
 		h.native.SetScreenPositionPx(x, y)

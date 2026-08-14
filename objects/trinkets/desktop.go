@@ -107,6 +107,31 @@ type Desktop struct {
 	// zones, hover bands and drag gesture (see desktop_edgeresize.go).
 	hostEdge hostEdgeState
 
+	// desktopFrame is how the desktop's own OS window is framed: one of the
+	// DesktopFrame* modes ("" means the default, themed). Set once at startup
+	// from [window] desktop_frame; see SetDesktopFrame.
+	desktopFrame string
+
+	// The themed frame's own state (desktop_titlebar.go): the title text on
+	// the desktop's painted title bar, its drag-to-move gesture, and whether
+	// the OS window has lost focus (inverted so the zero value reads
+	// focused, which is how a window comes up).
+	hostTitle     string
+	hostMove      hostMoveState
+	hostZoom      hostZoomState
+	hostUnfocused bool
+
+	// The title bar's controls: keyboard focus, pointer hover, and an
+	// armed press (hostTitleButton* values; see desktop_titlebar.go).
+	hostTitleFocus   int
+	hostTitleHover   int
+	hostTitlePressed int
+
+	// hostTitleKeys resolves the focused title bar's keys against the
+	// DEFAULT registry (ownerless TrinketKeys), never the focused
+	// control's — see the SetCommands call in NewDesktop.
+	hostTitleKeys core.TrinketKeys
+
 	// Graphical wallpaper (classic MacOS style): an 8x8 two-color
 	// bitmap, each bit rendered as wallpaperChunkPx x wallpaperChunkPx
 	// device pixels. Tune via SetWallpaperPattern/SetWallpaperChunk.
@@ -388,6 +413,25 @@ func NewDesktop() *Desktop {
 	// and the one that dismisses it when the bar took focus without opening
 	// anything. Everything else belongs to a window or a trinket.
 	d.SetCommands(core.CmdAppMenu, core.CmdTrinketCancel)
+
+	// The themed title bar's own key scope. Deliberately OWNERLESS, which
+	// makes TrinketKeys resolve against the DEFAULT registry: while the
+	// title bar holds the keyboard, focus is on the desktop's chrome — NOT
+	// in the focused control, whose registry (a full-screen editor's, say)
+	// speaks its own vocabulary and may carry no trinket focus bindings at
+	// all. Resolving through d.KeyCommand followed the focus down there
+	// and went dead the moment such a control was focused.
+	d.hostTitleKeys.SetCommands(
+		core.CmdFocusNext, core.CmdFocusPrior,
+		core.CmdTrinketActivate, core.CmdTrinketCancel,
+		core.CmdWindowMoveFineLeft, core.CmdWindowMoveFineRight,
+		core.CmdWindowMoveFineUp, core.CmdWindowMoveFineDown,
+		core.CmdWindowMoveLeft, core.CmdWindowMoveRight,
+		core.CmdWindowMoveUp, core.CmdWindowMoveDown,
+		core.CmdWindowSizeFineLeft, core.CmdWindowSizeFineRight,
+		core.CmdWindowSizeFineUp, core.CmdWindowSizeFineDown,
+		core.CmdWindowSizeLeft, core.CmdWindowSizeRight,
+		core.CmdWindowSizeUp, core.CmdWindowSizeDown)
 	d.Init(d)
 	d.SetFocusPolicy(core.NoFocus)
 	d.dockRow.SetParent(d)
@@ -414,12 +458,31 @@ func NewDesktop() *Desktop {
 	d.statusBar = NewStatusBar()
 	d.statusBar.SetParent(d)
 
-	// Wire up Tab navigation between dock and menu bar
-	d.dockRow.SetOnFocusMenuBar(func() {
+	// The keyboard ring around the desktop chrome: dock → title bar → menu
+	// bar going forward, and the reverse going back. The title-bar leg
+	// exists only under the themed frame (enterHostTitleFocus declines
+	// otherwise), so in the other modes this collapses to the old two-node
+	// dock ↔ menu bar ring.
+	d.dockRow.SetOnFocusMenuBar(func(forward bool) {
 		d.UnfocusDock()
+		if forward && d.enterHostTitleFocus(true) {
+			return
+		}
 		d.menuBar.ToggleMenuFocus()
 	})
-	d.menuBar.SetOnFocusDock(func() {
+	d.menuBar.SetOnFocusDock(func(forward bool) {
+		if forward {
+			if !d.dockRow.IsEmpty() {
+				d.FocusDock()
+				return
+			}
+			// No dock to land on: carry on round to the title bar.
+			d.enterHostTitleFocus(true)
+			return
+		}
+		if d.enterHostTitleFocus(false) {
+			return
+		}
 		if !d.dockRow.IsEmpty() {
 			d.FocusDock()
 		}
@@ -823,6 +886,54 @@ func (d *Desktop) GraphicalWindowFrames() bool {
 	return d.graphicalFrames
 }
 
+// The desktop's own OS window can be framed three ways ([window]
+// desktop_frame). The strings are the config values verbatim.
+const (
+	// DesktopFrameThemed: no OS chrome at all. The desktop paints its own
+	// title bar in the toolkit's style and handles moving and resizing
+	// itself, so the main window is cohesive with every other window the
+	// toolkit draws. The default.
+	DesktopFrameThemed = "themed"
+	// DesktopFrameNativeTitlebar: the OS title bar and border, with the
+	// desktop's own resize zones along the client edges (the behavior
+	// before this knob existed).
+	DesktopFrameNativeTitlebar = "native_titlebar"
+	// DesktopFrameNative: pure OS chrome; the desktop's own edge zones
+	// stand down entirely.
+	DesktopFrameNative = "native"
+)
+
+// SetDesktopFrame chooses how the desktop's own OS window is framed (one
+// of the DesktopFrame* modes; anything else means the default, themed).
+// Call before RunOn — the mode is applied when the surface is created,
+// and an OS title bar cannot be honestly restored mid-session.
+func (d *Desktop) SetDesktopFrame(mode string) {
+	switch mode {
+	case DesktopFrameThemed, DesktopFrameNativeTitlebar, DesktopFrameNative:
+	default:
+		mode = DesktopFrameThemed
+	}
+	d.mu.Lock()
+	d.desktopFrame = mode
+	d.mu.Unlock()
+}
+
+// DesktopFrame reports the chosen frame mode (never "": the default is
+// DesktopFrameThemed).
+func (d *Desktop) DesktopFrame() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.desktopFrameLocked()
+}
+
+// desktopFrameLocked is DesktopFrame under a lock already held.
+func (d *Desktop) desktopFrameLocked() string {
+	if d.desktopFrame == "" {
+		return DesktopFrameThemed
+	}
+	return d.desktopFrame
+}
+
 // WindowFrameBorderUnits implements core.FrameBorderProvider: the frame
 // border width (device pixels) converted to this surface's units, so
 // windows reserve it outside their content area. 0 on cell surfaces
@@ -1210,7 +1321,9 @@ func (d *Desktop) revealAsDesktop() {
 
 	if surf != nil {
 		if bt, ok := surf.(platform.BorderToggler); ok {
-			bt.SetBordered(true)
+			// Restore the chrome the frame mode wants: the OS border unless
+			// the themed frame paints its own (then the strip stays).
+			bt.SetBordered(d.wantsNativeBorder())
 		}
 		surf.SetHandler(&desktopSurfaceHandler{d: d})
 	}
@@ -1305,10 +1418,11 @@ func (d *Desktop) ExitSoloMode() {
 		return
 	}
 
-	// Give the primary surface back to the desktop: re-border it and point
-	// its handler at the desktop again so it paints its own chrome.
+	// Give the primary surface back to the desktop: re-border it (unless the
+	// themed frame paints its own chrome) and point its handler at the
+	// desktop again so it paints its own chrome.
 	if bt, ok := surf.(platform.BorderToggler); ok {
-		bt.SetBordered(true)
+		bt.SetBordered(d.wantsNativeBorder())
 	}
 	surf.SetHandler(&desktopSurfaceHandler{d: d})
 
@@ -1361,7 +1475,7 @@ func (d *Desktop) ExitSoloMode() {
 	// and menu bars peek out above and to the left of the desktop rather than
 	// being fully covered by it.
 	if ns, ok := surf.(platform.NativeSurface); ok {
-		off := d.unitToPx(d.EffectiveCellMetrics().CellHeight + d.MenuBarHeight() + core.FindFrameBorderUnits(win))
+		off := d.unitToPx(d.EffectiveCellMetrics().CellHeight + d.MenuBarHeight() + d.TitleBarHeight() + core.FindFrameBorderUnits(win))
 		x, y := ns.ScreenPositionPx()
 		ns.SetScreenPositionPx(x+off, y+off)
 	}
@@ -3353,6 +3467,16 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 		d.surface = surface
 		d.mu.Unlock()
 		surface.SetHandler(&desktopSurfaceHandler{d: d})
+		// [window] desktop_frame: themed strips the OS chrome here, once,
+		// so the desktop's own painted title bar is the only one — and the
+		// window verbs the OS bar carried (Minimize, Zoom) move onto the
+		// system menu.
+		d.applyDesktopFrame(surface)
+		d.addHostWindowMenuItems()
+		// The OS-side floor for this window (and for the app that fills
+		// this same surface in solo mode): the same minimum our own
+		// resize gestures clamp to.
+		d.applyHostMinimumSize()
 		d.setupTearOff(pf, surface)
 
 		// Offer the rotation easter egg's focus gate to any platform that has
@@ -3647,6 +3771,15 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		if d.handleShortcut(e) {
 			return true
 		}
+		// The themed title bar's keyboard focus outranks the focus
+		// manager: the title bar is desktop chrome, not a trinket, so no
+		// focus-manager scope carries it — without this, whatever trinket
+		// last held real focus (a full-screen editor, say) would keep
+		// eating the keys and the title bar would go dead the moment it
+		// was reached. Keys its handler declines still fall through.
+		if d.hostTitleFocused() && d.handleHostTitleKey(e) {
+			return true
+		}
 		// Try focus manager
 		if fm != nil && fm.HandleKeyPress(e) {
 			return true
@@ -3700,6 +3833,15 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// line), regaining focus must NOT re-light an in-surface window -
 		// that would silently steal focus from the detached window. Only
 		// an actual click on an in-surface window changes the focus.
+		// The themed title bar dims like any window title when the OS
+		// window blurs; track the state for its paint.
+		d.mu.Lock()
+		flipped := d.hostUnfocused == e.Focused
+		d.hostUnfocused = !e.Focused
+		d.mu.Unlock()
+		if flipped {
+			d.RequestUpdate()
+		}
 		d.mu.RLock()
 		owner := d.tornFocusOwner
 		d.mu.RUnlock()
@@ -3728,19 +3870,32 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// The desktop's own edge sliver is the outermost thing on the
 		// surface — like the OS resize border it extends — so it wins over
 		// anything corralled against the edge.
+		// Any press moves the keyboard off the title bar's controls, the
+		// way clicking anywhere blurs a window's title focus.
+		d.setHostTitleFocus(hostTitleButtonNone)
 		if d.hostResizeBegin(e) {
+			return true
+		}
+		// The themed title bar's controls and drag-to-move (the resize
+		// sliver above it was consulted first, like a torn window's).
+		if d.hostMoveBegin(e) {
 			return true
 		}
 		return wm.HandleMousePress(e)
 
 	case core.MouseMoveEvent:
 		core.WheelPointerMoved()
-		// A desktop-edge resize in progress owns the pointer outright.
+		// A desktop-edge resize or title-bar move in progress owns the
+		// pointer outright.
 		if d.hostResizeMove(e) {
+			return true
+		}
+		if d.hostMoveMove(e) {
 			return true
 		}
 		if e.Buttons == 0 {
 			d.hostHoverUpdate(e.X, e.Y)
+			d.hostTitleHoverUpdate(e.X, e.Y)
 		}
 		handled := wm.HandleMouseMove(e)
 		// The resize cursor over a window edge is a hover affordance. While a
@@ -3759,9 +3914,8 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// the cursor to the arrow.
 		wm.ClearResizeHover()
 		wm.ClearHover()
-		// The pointer may have stepped off into the OS's own resize strip;
-		// keep the edge band lit across the boundary if so.
-		d.hostPointerLeft()
+		d.hostHoverClear()
+		d.hostTitleHoverClear()
 		if d.menuBar != nil {
 			d.menuBar.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
 		}
@@ -3775,6 +3929,9 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 
 	case core.MouseReleaseEvent:
 		if d.hostResizeEnd(e) {
+			return true
+		}
+		if d.hostMoveEnd(e) {
 			return true
 		}
 		return wm.HandleMouseRelease(e)
@@ -3792,9 +3949,17 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// MenuBar.HandleMouseWheel; it declines (false) when neither
 		// applies, so we fall through to the windows below.
 		if d.menuBar != nil {
+			// The bar's Bounds carry its real desktop place (inset by the
+			// themed frame), so the over-the-bar test is in desktop
+			// coords; the bar handles the wheel origin-locally, so the
+			// event translates on the way in.
 			overBar := d.menuBar.Bounds().Contains(core.UnitPoint{X: e.X, Y: e.Y})
 			if d.menuBar.ActiveMenu() != nil || overBar {
-				if d.menuBar.HandleMouseWheel(e) {
+				bx, by := d.hostChromeOffset()
+				localEvent := e
+				localEvent.X -= bx
+				localEvent.Y -= by
+				if d.menuBar.HandleMouseWheel(localEvent) {
 					return true
 				}
 			}
@@ -4365,13 +4530,20 @@ func (d *Desktop) ChildAt(pos core.UnitPoint) core.Trinket {
 	metrics := d.EffectiveCellMetrics()
 	bounds := d.Bounds()
 
+	// The themed frame's border band and title row are the desktop's own
+	// chrome, not a child.
+	bx, by := d.hostChromeOffset()
+	if pos.Y < by {
+		return nil
+	}
+
 	// Check menu bar
-	if d.menuBarShown() && pos.Y < metrics.CellHeight {
+	if d.menuBarShown() && pos.Y < by+metrics.CellHeight {
 		return d.menuBar
 	}
 
 	// Check status bar
-	if d.statusBarShown() && pos.Y >= bounds.Height-metrics.CellHeight {
+	if d.statusBarShown() && pos.Y >= bounds.Height-bx-metrics.CellHeight && pos.Y < bounds.Height-bx {
 		return d.statusBar
 	}
 
@@ -4564,19 +4736,31 @@ func (d *Desktop) CloseActiveMenu() {
 	}
 }
 
-// ActiveMenuBounds returns the bounds of the active dropdown menu.
-// Returns an empty rect if no menu is open.
+// ActiveMenuBounds returns the bounds of the active dropdown menu, in
+// desktop coordinates (the bar answers origin-locally; the themed frame's
+// shift is applied here). Returns an empty rect if no menu is open.
 func (d *Desktop) ActiveMenuBounds() core.UnitRect {
 	if d.menuBar == nil {
 		return core.UnitRect{}
 	}
-	return d.menuBar.ActiveMenuBounds()
+	b := d.menuBar.ActiveMenuBounds()
+	if !b.IsEmpty() {
+		bx, by := d.hostChromeOffset()
+		b.X += bx
+		b.Y += by
+	}
+	return b
 }
 
 // IsMenuBarActive returns true if the menu bar should capture keyboard events.
 // This is true when a menu is open, or when the menu bar is focused AND
 // actively showing accelerators (not just technically holding focus).
+// The themed title bar's keyboard focus captures the same way — the window
+// manager consults this before offering keys to the active window.
 func (d *Desktop) IsMenuBarActive() bool {
+	if d.hostTitleFocused() {
+		return true
+	}
 	if !d.menuBarShown() {
 		return false
 	}
@@ -4708,17 +4892,24 @@ func (d *Desktop) SetBounds(bounds core.UnitRect) {
 }
 
 // layoutChildren updates the bounds of menu bar, status bar, dock row, and content.
+// The themed frame RESERVES its border around all of the chrome, the way a
+// window's frame does (the title row sits inside the top border, everything
+// insets by the border on the sides and bottom); bx/by are (0,0) in the
+// other frame modes, and the menu bar itself stays origin-local, so only
+// its Bounds carry the shift.
 func (d *Desktop) layoutChildren() {
 	bounds := d.Bounds()
 	metrics := d.EffectiveCellMetrics()
+	bx, by := d.hostChromeOffset()
+	innerW := bounds.Width - 2*bx
 
 	// Menu bar at top (skipped when suppressed for a single-app desktop; its
 	// row is reclaimed by the content area, see ClientArea/menuBarShown).
 	if d.menuBarShown() {
 		d.menuBar.SetBounds(core.UnitRect{
-			X:      0,
-			Y:      0,
-			Width:  bounds.Width,
+			X:      bx,
+			Y:      by,
+			Width:  innerW,
 			Height: metrics.CellHeight,
 		})
 	}
@@ -4728,9 +4919,9 @@ func (d *Desktop) layoutChildren() {
 	if d.dockVisible() {
 		// First set width so RowCount works correctly
 		d.dockRow.SetBounds(core.UnitRect{
-			X:     0,
+			X:     bx,
 			Y:     0,
-			Width: bounds.Width,
+			Width: innerW,
 		})
 		dockHeight = d.dockRow.RequiredHeight()
 	}
@@ -4739,23 +4930,23 @@ func (d *Desktop) layoutChildren() {
 	// its row is reclaimed by the content area, see ClientArea/statusBarShown).
 	if d.statusBarShown() {
 		d.statusBar.SetBounds(core.UnitRect{
-			X:      0,
-			Y:      bounds.Height - metrics.CellHeight,
-			Width:  bounds.Width,
+			X:      bx,
+			Y:      bounds.Height - bx - metrics.CellHeight,
+			Width:  innerW,
 			Height: metrics.CellHeight,
 		})
 	}
 
 	// Dock row above status bar
 	if d.dockVisible() {
-		dockY := bounds.Height - metrics.CellHeight - dockHeight
+		dockY := bounds.Height - bx - metrics.CellHeight - dockHeight
 		if !d.statusBarShown() {
-			dockY = bounds.Height - dockHeight
+			dockY = bounds.Height - bx - dockHeight
 		}
 		d.dockRow.SetBounds(core.UnitRect{
-			X:      0,
+			X:      bx,
 			Y:      dockY,
-			Width:  bounds.Width,
+			Width:  innerW,
 			Height: dockHeight,
 		})
 	}
@@ -4777,11 +4968,15 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	bounds := d.Bounds()
 	metrics := d.EffectiveCellMetrics()
 
-	top := core.Unit(0)
-	bottom := bounds.Height
+	// The themed frame's reserved border and title row come off the top
+	// first ((0,0) in the other frame modes), then the menu bar's row; the
+	// border insets the sides and bottom too, like a window's interior.
+	bx, by := d.hostChromeOffset()
+	top := by
+	bottom := bounds.Height - bx
 
 	if d.menuBarShown() {
-		top = metrics.CellHeight
+		top += metrics.CellHeight
 	}
 	if d.statusBarShown() {
 		bottom -= metrics.CellHeight
@@ -4789,14 +4984,14 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	// Account for dock row height (when not empty)
 	if d.dockVisible() {
 		// Need to calculate height based on current width
-		d.dockRow.SetBounds(core.UnitRect{Width: bounds.Width})
+		d.dockRow.SetBounds(core.UnitRect{Width: bounds.Width - 2*bx})
 		bottom -= d.dockRow.RequiredHeight()
 	}
 
 	return core.UnitRect{
-		X:      0,
+		X:      bx,
 		Y:      top,
-		Width:  bounds.Width,
+		Width:  bounds.Width - 2*bx,
 		Height: bottom - top,
 	}
 }
@@ -4821,16 +5016,18 @@ func (d *Desktop) StatusBarHeight() core.Unit {
 
 // StatusBarBounds returns the bounds of the status bar area (empty rect when
 // there is no status bar or it is suppressed for a single-app desktop).
+// Inset by the themed frame's reserved border, like all the chrome.
 func (d *Desktop) StatusBarBounds() core.UnitRect {
 	if !d.statusBarShown() {
 		return core.UnitRect{}
 	}
 	bounds := d.Bounds()
 	metrics := d.EffectiveCellMetrics()
+	b := d.hostFrameInset()
 	return core.UnitRect{
-		X:      0,
-		Y:      bounds.Height - metrics.CellHeight,
-		Width:  bounds.Width,
+		X:      b,
+		Y:      bounds.Height - b - metrics.CellHeight,
+		Width:  bounds.Width - 2*b,
 		Height: metrics.CellHeight,
 	}
 }
@@ -4848,22 +5045,24 @@ func (d *Desktop) DockRowHeight() core.Unit {
 	return d.dockRow.RequiredHeight()
 }
 
-// DockBounds returns the bounds of the dock row area (empty rect if no dock or empty).
+// DockBounds returns the bounds of the dock row area (empty rect if no dock
+// or empty). Inset by the themed frame's reserved border, like all the chrome.
 func (d *Desktop) DockBounds() core.UnitRect {
 	if d.dockRow == nil || d.dockRow.IsEmpty() {
 		return core.UnitRect{}
 	}
 	bounds := d.Bounds()
 	metrics := d.EffectiveCellMetrics()
+	b := d.hostFrameInset()
 	dockHeight := d.dockRow.RequiredHeight()
-	dockY := bounds.Height - dockHeight
+	dockY := bounds.Height - b - dockHeight
 	if d.statusBar != nil {
-		dockY = bounds.Height - metrics.CellHeight - dockHeight
+		dockY = bounds.Height - b - metrics.CellHeight - dockHeight
 	}
 	return core.UnitRect{
-		X:      0,
+		X:      b,
 		Y:      dockY,
-		Width:  bounds.Width,
+		Width:  bounds.Width - 2*b,
 		Height: dockHeight,
 	}
 }
@@ -4944,49 +5143,62 @@ func (d *Desktop) Paint(p *core.Painter) {
 		d.content.Paint(contentPainter)
 	}
 
-	// Draw menu bar at top (skipped when suppressed for a single-app desktop)
+	// The desktop's own themed title bar, above the menu bar (paints
+	// nothing in the other frame modes). The themed frame's reserved
+	// border insets ALL the chrome, like a window's interior; bx/by are
+	// (0,0) in the other modes.
+	d.paintHostTitleBar(p, bounds)
+	bx, by := d.hostChromeOffset()
+	innerW := bounds.Width - 2*bx
+
+	// Draw menu bar at top (skipped when suppressed for a single-app desktop).
+	// The bar is origin-local — it paints its row at Y=0 — so the themed
+	// frame's shift rides in on an offset painter, while its Bounds carry
+	// the real place for the desktop-side hit checks.
 	if d.menuBarShown() {
 		// Set menu bar bounds
 		d.menuBar.SetBounds(core.UnitRect{
-			X:      0,
-			Y:      0,
-			Width:  bounds.Width,
+			X:      bx,
+			Y:      by,
+			Width:  innerW,
 			Height: metrics.CellHeight,
 		})
-		d.menuBar.Paint(p)
+		d.menuBar.Paint(p.WithOffset(bx, by))
 	}
 
 	// Draw dock row above status bar (if not empty)
 	if d.dockVisible() {
 		dockHeight := d.dockRow.RequiredHeight()
-		dockY := bounds.Height - metrics.CellHeight - dockHeight
+		dockY := bounds.Height - bx - metrics.CellHeight - dockHeight
 		if d.statusBar == nil {
-			dockY = bounds.Height - dockHeight
+			dockY = bounds.Height - bx - dockHeight
 		}
 		d.dockRow.SetBounds(core.UnitRect{
-			X:      0,
+			X:      bx,
 			Y:      dockY,
-			Width:  bounds.Width,
+			Width:  innerW,
 			Height: dockHeight,
 		})
-		dockPainter := p.WithOffset(0, dockY)
+		dockPainter := p.WithOffset(bx, dockY)
 		d.dockRow.Paint(dockPainter)
 	}
 
 	// Draw status bar at bottom
 	if d.statusBar != nil {
-		y := bounds.Height - metrics.CellHeight
+		y := bounds.Height - bx - metrics.CellHeight
 		d.statusBar.SetBounds(core.UnitRect{
-			X:      0,
+			X:      bx,
 			Y:      y,
-			Width:  bounds.Width,
+			Width:  innerW,
 			Height: metrics.CellHeight,
 		})
-		statusPainter := p.WithOffset(0, y)
+		statusPainter := p.WithOffset(bx, y)
 		d.statusBar.Paint(statusPainter)
 	}
 
-	// The desktop's own resize affordance, over all of its chrome.
+	// The genuine window border around the themed surface, over the chrome
+	// like a window's re-stroked frame; then the resize affordance over all.
+	d.paintHostFrame(p, bounds)
 	d.paintHostEdgeHover(p, bounds)
 
 	// NOTE: Menu dropdowns and popups are NOT painted here in compositor mode!
@@ -5084,6 +5296,14 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
+	// The themed title bar's keyboard focus: walk its controls, activate,
+	// or step off either end of the chrome ring.
+	if d.hostTitleFocused() {
+		if d.handleHostTitleKey(event) {
+			return true
+		}
+	}
+
 	// If dock has focus, forward keys to it
 	if d.dockRow != nil && d.dockRow.HasFocus() {
 		return d.dockRow.HandleKeyPress(event)
@@ -5097,10 +5317,13 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 	return false
 }
 
-// PaintMenuDropdown paints the active menu dropdown (call after windows for z-order).
+// PaintMenuDropdown paints the active menu dropdown (call after windows for
+// z-order). The bar is origin-local, so the themed frame's shift rides in
+// on the painter.
 func (d *Desktop) PaintMenuDropdown(p *core.Painter) {
 	if d.menuBar != nil {
-		d.menuBar.PaintDropdown(p)
+		bx, by := d.hostChromeOffset()
+		d.menuBar.PaintDropdown(p.WithOffset(bx, by))
 	}
 }
 
@@ -5149,20 +5372,28 @@ func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
 	popups := d.windowManager.GetPopups()
 
 	// An open menu bar dropdown becomes its own compositor layer; its
-	// Anchor (the title on the bar) joins it under one drop shadow.
+	// Anchor (the title on the bar) joins it under one drop shadow. The
+	// bar answers in its own origin-local coordinates, so the themed title
+	// bar's shift is applied here, on the way out to the compositor.
 	var menuDropdown interface{}
 	if d.menuBar != nil && d.menuBar.ActiveMenu() != nil {
+		bx, by := d.hostChromeOffset()
 		menuBounds := d.menuBar.ActiveMenuBounds()
 		if !menuBounds.IsEmpty() {
+			menuBounds.X += bx
+			menuBounds.Y += by
+			anchor := d.menuBar.ActiveMenuTitleBounds()
+			anchor.X += bx
+			anchor.Y += by
 			menuDropdown = &struct {
 				Bounds core.UnitRect
 				Anchor core.UnitRect
 				Paint  func(*core.Painter)
 			}{
 				Bounds: menuBounds,
-				Anchor: d.menuBar.ActiveMenuTitleBounds(),
+				Anchor: anchor,
 				Paint: func(p *core.Painter) {
-					d.menuBar.PaintDropdown(p)
+					d.menuBar.PaintDropdown(p.WithOffset(bx, by))
 				},
 			}
 		}
@@ -5225,26 +5456,35 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 		}
 	}
 
-	// Check menu bar first - either in menu bar area or when menu is open
+	// The themed frame's reserved border insets all the chrome ((0,0) in
+	// the other frame modes); the bars hit-test origin-locally, so the
+	// shift is subtracted on the way in.
+	bx, by := d.hostChromeOffset()
+
+	// Check menu bar first - either in menu bar area or when menu is open.
 	if d.menuBar != nil {
-		if event.Y < metrics.CellHeight || d.menuBar.ActiveMenu() != nil {
+		if (event.Y >= by && event.Y < by+metrics.CellHeight) || d.menuBar.ActiveMenu() != nil {
 			// Cancel drags on other children
 			cancelDrag(d.statusBar)
 			cancelDrag(d.dockRow)
 			cancelDrag(d.content)
-			return d.menuBar.HandleMousePress(event)
+			localEvent := event
+			localEvent.X -= bx
+			localEvent.Y -= by
+			return d.menuBar.HandleMousePress(localEvent)
 		}
 	}
 
 	// Check status bar
 	if d.statusBar != nil {
-		statusY := bounds.Height - metrics.CellHeight
+		statusY := bounds.Height - bx - metrics.CellHeight
 		if event.Y >= statusY {
 			// Cancel drags on other children
 			cancelDrag(d.menuBar)
 			cancelDrag(d.dockRow)
 			cancelDrag(d.content)
 			localEvent := event
+			localEvent.X -= bx
 			localEvent.Y -= statusY
 			return d.statusBar.HandleMousePress(localEvent)
 		}
@@ -5253,9 +5493,9 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 	// Check dock row (above status bar)
 	if d.dockVisible() {
 		dockHeight := d.dockRow.RequiredHeight()
-		dockY := bounds.Height - metrics.CellHeight - dockHeight
+		dockY := bounds.Height - bx - metrics.CellHeight - dockHeight
 		if d.statusBar == nil {
-			dockY = bounds.Height - dockHeight
+			dockY = bounds.Height - bx - dockHeight
 		}
 		if event.Y >= dockY && event.Y < dockY+dockHeight {
 			// Cancel drags on other children
@@ -5263,6 +5503,7 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 			cancelDrag(d.statusBar)
 			cancelDrag(d.content)
 			localEvent := event
+			localEvent.X -= bx
 			localEvent.Y -= dockY
 			return d.dockRow.HandleMousePress(localEvent)
 		}
@@ -5293,25 +5534,31 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement.
 func (d *Desktop) HandleMouseMove(event core.MouseMoveEvent) bool {
-	// Forward to menu bar for drag navigation
+	// Forward to menu bar for drag navigation (origin-local: the themed
+	// frame's shift is subtracted on the way in).
+	bx, by := d.hostChromeOffset()
 	if d.menuBar != nil {
-		if d.menuBar.HandleMouseMove(event) {
+		localEvent := event
+		localEvent.X -= bx
+		localEvent.Y -= by
+		if d.menuBar.HandleMouseMove(localEvent) {
 			return true
 		}
 	}
 
 	// Forward to the dock for hover highlighting. The dock self-clears when
 	// the pointer isn't over an entry, so this can run unconditionally; the
-	// Y offset matches the press path.
+	// offsets match the press path.
 	if d.dockVisible() {
 		bounds := d.Bounds()
 		metrics := d.EffectiveCellMetrics()
 		dockHeight := d.dockRow.RequiredHeight()
-		dockY := bounds.Height - metrics.CellHeight - dockHeight
+		dockY := bounds.Height - bx - metrics.CellHeight - dockHeight
 		if d.statusBar == nil {
-			dockY = bounds.Height - dockHeight
+			dockY = bounds.Height - bx - dockHeight
 		}
 		localEvent := event
+		localEvent.X -= bx
 		localEvent.Y -= dockY
 		d.dockRow.HandleMouseMove(localEvent)
 	}
@@ -5320,9 +5567,14 @@ func (d *Desktop) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 // HandleMouseRelease handles mouse release.
 func (d *Desktop) HandleMouseRelease(event core.MouseReleaseEvent) bool {
-	// Forward to menu bar for drag release
+	// Forward to menu bar for drag release (origin-local: the themed
+	// frame's shift is subtracted on the way in).
 	if d.menuBar != nil {
-		if d.menuBar.HandleMouseRelease(event) {
+		bx, by := d.hostChromeOffset()
+		localEvent := event
+		localEvent.X -= bx
+		localEvent.Y -= by
+		if d.menuBar.HandleMouseRelease(localEvent) {
 			return true
 		}
 	}

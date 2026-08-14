@@ -1,9 +1,6 @@
 package trinkets
 
 import (
-	"math"
-	"time"
-
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/platform"
@@ -16,10 +13,10 @@ import (
 // which is thinner than the grab zone every window INSIDE the desktop gets —
 // so the easiest window to miss was the outermost one. The outer sliver of
 // the desktop surface now behaves like any window edge: the grab rule is
-// ResizeHitGrip with a border of zero (the desktop paints no frame of its
-// own; the OS chrome is outside the client area), the hover affordance is
-// the same translucent band at ResizeOverlayGrip width, and the corners
-// reach as far as the affordance.
+// ResizeHitGrip with the frame border the surface actually carries — the
+// themed frame's reserved border, or zero where the OS chrome sits outside
+// the client area — the hover affordance is the same translucent band at
+// ResizeOverlayGrip width, and the corners reach as far as the affordance.
 //
 // The press is applied the way TearOffHost applies one — global pointer
 // deltas onto the OS window's pixel geometry through platform.NativeSurface
@@ -43,30 +40,20 @@ type hostEdgeState struct {
 	startGX, startGY int // global pointer at press, device px
 	startX, startY   int // OS window origin at press, device px
 	startW, startH   int // OS window size at press, device px
-
-	// outsideTimer polls the global pointer while it sits in the OS's own
-	// resize strip just OUTSIDE the client area, where no surface events
-	// arrive, so the affordance stays lit across the whole combined edge
-	// instead of going dark at the client boundary.
-	outsideTimer *DesktopTimer
 }
-
-// osResizeMarginPx is how far outside the client area still reads as the
-// OS's own resize strip. The OS's true grab width is not queryable from
-// here and varies by platform (Windows ~8 device px, GNOME ~10); this is a
-// display hint for the affordance, not a hit zone — the OS answers the
-// actual press out there — so approximately right is right.
-const osResizeMarginPx = 10
 
 // hostResizeParts returns what the desktop-edge gesture needs, or ok=false
 // where the feature cannot run at all.
 func (d *Desktop) hostResizeParts() (platform.NativeSurface, platform.GlobalPointerPlatform, bool) {
 	d.mu.RLock()
 	graphical := d.graphicalFrames
+	frame := d.desktopFrameLocked()
 	surf := d.surface
 	plat := d.platform
 	d.mu.RUnlock()
-	if !graphical || surf == nil {
+	// desktop_frame=native: the OS chrome is the whole resize story, and the
+	// desktop's own zones stand down entirely.
+	if !graphical || surf == nil || frame == DesktopFrameNative {
 		return nil, nil, false
 	}
 	native, ok := surf.(platform.NativeSurface)
@@ -83,18 +70,73 @@ func (d *Desktop) hostResizeParts() (platform.NativeSurface, platform.GlobalPoin
 	return native, gp, true
 }
 
+// applyHostMinimumSize tells the OS the smallest this window may become —
+// the same floor our own gestures clamp to (window.MinHostCols/Rows), so
+// a resize we do not drive (a native title bar's edges in the
+// native/native_titlebar frame modes, the window manager's own keyboard
+// resize or tiling) cannot pull the desktop — or, in solo mode, the app
+// filling this same surface — down to nothing.
+//
+// Called when the surface is created and again whenever the cell metrics
+// or zoom change, since the floor is measured in cells.
+func (d *Desktop) applyHostMinimumSize() {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	ms, ok := surf.(platform.NativeMinimumSizer)
+	if !ok {
+		return
+	}
+	w, h := window.MinHostSizePx(d.EffectiveCellMetrics(), d.pxPerUnit())
+	ms.SetMinimumSizePx(w, h)
+}
+
+// paintableSurfacePx rounds a requested surface size DOWN to a size the
+// surface can actually paint: the largest pixel extent that is exactly
+// where some whole unit count lands on the snapped grid.
+//
+// A drag hands us an arbitrary pixel count, and the reported extent floors
+// (it must never point past the true edge), so an odd size leaves a last
+// column or row outside every unit — nothing paints it, the frame's
+// outermost stroke is clipped against it, and that edge reads thinner
+// than the other three. Asking for the paintable size below instead costs
+// at most a pixel of window and keeps the border one thickness all the
+// way round. Only whole-window SIZES go through this.
+func (d *Desktop) paintableSurfacePx(px int, vertical bool) int {
+	toUnit, toPx := d.HardPxToUnitX, d.HardUnitToPxX
+	if vertical {
+		toUnit, toPx = d.HardPxToUnitY, d.HardUnitToPxY
+	}
+	u := toUnit(px)
+	// The unmapper rounds to nearest, so step down until the unit extent
+	// fits, then take the pixels that extent actually paints.
+	for u > 0 && toPx(u) > px {
+		u--
+	}
+	if u <= 0 {
+		return px
+	}
+	if fit := toPx(u); fit > 0 {
+		return fit
+	}
+	return px
+}
+
 // hostEdgeAt is the desktop's own resize-edge answer for a surface-local
-// point: the same geometry a child window's edges use, with a border of
-// zero, so the zone is a bare quarter column (or 3 device pixels) and the
-// corners reach as far as the affordance bands.
+// point: the same geometry a child window's edges use, with the frame
+// border the surface actually carries — the reserved themed border, or
+// zero under an OS title bar — so the grab zone is the border plus a
+// quarter column (floored at 3 device pixels) and the corners reach as
+// far as the affordance bands, exactly the window rule.
 func (d *Desktop) hostEdgeAt(x, y core.Unit) int {
 	if _, _, ok := d.hostResizeParts(); !ok {
 		return 0
 	}
 	b := d.Bounds()
+	border := d.hostFrameInset()
 	metrics := d.EffectiveCellMetrics()
-	grip := window.ResizeHitGrip(true, metrics, d.pxPerUnit(), 0)
-	corner := window.ResizeOverlayGrip(true, metrics, 0)
+	grip := window.ResizeHitGrip(true, metrics, d.pxPerUnit(), border)
+	corner := window.ResizeOverlayGrip(true, metrics, border)
 	return window.ResizeEdgeAt(core.UnitRect{Width: b.Width, Height: b.Height},
 		x, y, metrics, grip, corner)
 }
@@ -149,16 +191,25 @@ func (d *Desktop) hostResizeMove(e core.MouseMoveEvent) bool {
 		return true
 	}
 	gx, gy := gp.GlobalPointerPx()
+	if gx != st.startGX || gy != st.startGY {
+		// ACTUALLY resizing (not just a press in the zone): a hand-resized
+		// window is an ordinary floating window again, not the zoom
+		// rectangle, so the frame returns and the next Zoom starts fresh.
+		d.hostZoomForget()
+	}
 	metrics := d.EffectiveCellMetrics()
 	ppu := d.pxPerUnit()
 	if ppu <= 0 {
 		ppu = 1
 	}
-	// Same minimum a torn window enforces: 12 columns by 4 rows.
-	minW := int(math.Round(float64(metrics.CellWidth*12) * ppu))
-	minH := int(math.Round(float64(metrics.CellHeight*4) * ppu))
+	// The same minimum every host surface enforces (window.MinHostCols/Rows).
+	minW, minH := window.MinHostSizePx(metrics, ppu)
 	x, y, w, h := applyHostResize(st.edges, st.startX, st.startY, st.startW, st.startH,
 		gx-st.startGX, gy-st.startGY, minW, minH)
+	// Round the dragged size DOWN to what the surface can paint, so no
+	// half-addressable pixel is left to clip the frame's outer stroke.
+	w = d.paintableSurfacePx(w, false)
+	h = d.paintableSurfacePx(h, true)
 	if st.edges&(window.ResizeEdgeLeft|window.ResizeEdgeTop) != 0 {
 		native.SetScreenPositionPx(x, y)
 	}
@@ -230,9 +281,6 @@ func applyHostResize(edges, startX, startY, startW, startH, dx, dy, minW, minH i
 // hostHoverUpdate re-derives the hovered desktop edge for a plain pointer
 // move (no gesture in progress), lighting or clearing the affordance bands.
 func (d *Desktop) hostHoverUpdate(x, y core.Unit) {
-	// A surface event means the pointer is back inside: the outside poll's
-	// job is over.
-	d.hostOutsideStop()
 	d.mu.RLock()
 	active := d.hostEdge.active
 	prev := d.hostEdge.hover
@@ -261,129 +309,6 @@ func (d *Desktop) hostHoverClear() {
 	}
 }
 
-// hostPointerLeft handles the pointer leaving the surface: if it stepped
-// off across an edge into the OS's own resize strip, keep that edge's band
-// lit and start the outside poll; anywhere else, the affordance clears as
-// it always did. Detecting the strip at all takes the global pointer —
-// events stop at the client boundary, which is exactly the problem.
-func (d *Desktop) hostPointerLeft() {
-	edges := 0
-	if _, _, ok := d.hostResizeParts(); ok {
-		edges = d.hostOutsideEdges()
-	}
-	if edges == 0 {
-		d.hostHoverClear()
-		return
-	}
-	d.mu.Lock()
-	changed := d.hostEdge.hover != edges
-	d.hostEdge.hover = edges
-	timer := d.hostEdge.outsideTimer
-	d.mu.Unlock()
-	if changed {
-		d.RequestUpdate()
-	}
-	if timer == nil {
-		t := d.StartRepeatingTimer(50*time.Millisecond, d.hostOutsidePoll)
-		d.mu.Lock()
-		d.hostEdge.outsideTimer = t
-		d.mu.Unlock()
-	}
-}
-
-// hostOutsidePoll re-derives the outside-strip hover between surface events.
-// It retires itself the moment the pointer is back inside (a move event owns
-// hover from there) or has wandered past the strip.
-func (d *Desktop) hostOutsidePoll() {
-	edges := 0
-	if _, _, ok := d.hostResizeParts(); ok {
-		edges = d.hostOutsideEdges()
-	}
-	d.mu.RLock()
-	prev := d.hostEdge.hover
-	d.mu.RUnlock()
-	if edges != prev {
-		d.mu.Lock()
-		d.hostEdge.hover = edges
-		d.mu.Unlock()
-		d.RequestUpdate()
-	}
-	if edges == 0 {
-		d.hostOutsideStop()
-	}
-}
-
-// hostOutsideStop retires the outside poll.
-func (d *Desktop) hostOutsideStop() {
-	d.mu.Lock()
-	t := d.hostEdge.outsideTimer
-	d.hostEdge.outsideTimer = nil
-	d.mu.Unlock()
-	if t != nil {
-		d.StopTimer(t)
-	}
-}
-
-// hostOutsideEdges reads the global pointer against the OS window's screen
-// rectangle: edge bits when it sits in the resize strip just outside the
-// client area, zero when it is inside (surface events own that) or beyond
-// the strip.
-//
-// The TOP strip is deliberately absent: on a decorated window the area just
-// above the client is the TITLE BAR — a move, not a resize — and the
-// borderless case (solo) never reaches this path at all. The sides run the
-// window's full height, and the bottom corners reach as far as the
-// affordance, matching the inside rule.
-func (d *Desktop) hostOutsideEdges() int {
-	native, gp, ok := d.hostResizeParts()
-	if !ok {
-		return 0
-	}
-	gx, gy := gp.GlobalPointerPx()
-	x, y := native.ScreenPositionPx()
-	w, h := native.ScreenSizePx()
-	if w <= 0 || h <= 0 {
-		return 0
-	}
-	ppu := d.pxPerUnit()
-	if ppu <= 0 {
-		ppu = 1
-	}
-	cornerPx := int(math.Round(float64(window.ResizeOverlayGrip(true, d.EffectiveCellMetrics(), 0)) * ppu))
-
-	const m = osResizeMarginPx
-	if gx < x-m || gx >= x+w+m || gy < y || gy >= y+h+m {
-		return 0 // beyond the strip (or above the client: the title bar's)
-	}
-	if gx >= x && gx < x+w && gy >= y && gy < y+h {
-		return 0 // back inside: surface events own hover here
-	}
-
-	edges := 0
-	if gx < x {
-		edges |= window.ResizeEdgeLeft
-	} else if gx >= x+w {
-		edges |= window.ResizeEdgeRight
-	}
-	if gy >= y+h {
-		edges |= window.ResizeEdgeBottom
-	}
-	// Corner reach, matching the inside rule: a side near the bottom takes
-	// the bottom too, and the bottom strip near a side takes that side.
-	if edges&(window.ResizeEdgeLeft|window.ResizeEdgeRight) != 0 &&
-		edges&window.ResizeEdgeBottom == 0 && gy >= y+h-cornerPx {
-		edges |= window.ResizeEdgeBottom
-	}
-	if edges == window.ResizeEdgeBottom {
-		if gx < x+cornerPx {
-			edges |= window.ResizeEdgeLeft
-		} else if gx >= x+w-cornerPx {
-			edges |= window.ResizeEdgeRight
-		}
-	}
-	return edges
-}
-
 // hostHoverEdges is what the cursor and the bands show right now.
 func (d *Desktop) hostHoverEdges() int {
 	d.mu.RLock()
@@ -401,6 +326,13 @@ func (d *Desktop) applyHostCursor(shape core.CursorShape) {
 	}
 }
 
+// The affordance ends exactly where our authority does: at the client-area
+// boundary. The OS's own resize strip lies beyond it, its true width is not
+// queryable, and the pointer out there may in fact be over ANOTHER window —
+// so a band lit past the edge would be a promise this program cannot keep,
+// and a click on it could go somewhere else entirely. Better a dark strip
+// that resizes than a lit one that lies.
+
 // paintHostEdgeHover draws the desktop's own resize affordance: the same
 // translucent bands a window edge shows, along the hovered edges of the
 // surface itself. Painted last in the desktop's own pass, so the bands lie
@@ -412,7 +344,7 @@ func (d *Desktop) paintHostEdgeHover(p *core.Painter, bounds core.UnitRect) {
 	if edges == 0 {
 		return
 	}
-	band := window.ResizeOverlayGrip(true, d.EffectiveCellMetrics(), 0)
+	band := window.ResizeOverlayGrip(true, d.EffectiveCellMetrics(), d.hostFrameInset())
 	var rects []core.UnitRect
 	if edges&window.ResizeEdgeLeft != 0 {
 		rects = append(rects, core.UnitRect{Width: band, Height: bounds.Height})

@@ -152,6 +152,40 @@ type NativeRestorer interface {
 	Restore()
 }
 
+// NativeShapeSquarer is an optional NativeSurface capability: force a
+// shaped (rounded) window's corners square, the way an OS maximize does.
+// The desktop's own Zoom is a plain move+resize the OS does not recognize
+// as a maximize, so it squares the corners itself while zoomed and
+// re-rounds them on restore.
+type NativeShapeSquarer interface {
+	SetShapeSquared(squared bool)
+}
+
+// NativeMinimumSizer is an optional NativeSurface capability: tell the OS
+// the smallest this window may become. Our own resize gestures clamp
+// themselves, but a resize we do NOT drive — a native title bar's edges,
+// the window manager's own keyboard resize or tiling — answers only to
+// the OS, and without this it will happily pull a window down to nothing.
+type NativeMinimumSizer interface {
+	SetMinimumSizePx(w, h int)
+}
+
+// NativeRectSetter is an optional NativeSurface capability: move AND
+// resize in one call, as one geometry change.
+//
+// It exists for un-zooming. Setting the position and the size separately
+// is two changes the window manager may animate independently, and where
+// the WM holds the window maximized it also has a stored "floating"
+// rectangle of its own — which can be stale (the geometry from before a
+// mode change, an era-old solo layout) — so a plain Restore animates to
+// THAT and only then gets corrected by our writes, visibly landing wrong
+// and snapping. An implementation must prime its restore target with the
+// destination rectangle BEFORE releasing the maximized state, so the one
+// animation the user sees ends where the window actually belongs.
+type NativeRectSetter interface {
+	SetScreenRectPx(x, y, w, h int)
+}
+
 // Surface is one render target: per-surface size, damage, input.
 type Surface interface {
 	// Size returns the surface size in units.
