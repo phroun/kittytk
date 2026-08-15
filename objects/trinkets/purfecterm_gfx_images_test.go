@@ -1,6 +1,7 @@
 package trinkets
 
 import (
+	"encoding/base64"
 	"fmt"
 	"image/color"
 	"math"
@@ -10,6 +11,7 @@ import (
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/purfecterm"
 )
 
 // sixelSolidBlock builds a DCS Sixel sequence painting a solid w x h block in
@@ -34,12 +36,18 @@ func sixelSolidBlock(w, h, r, g, b int) []byte {
 // colorExtent returns the bounding box (inclusive) and count of framebuffer
 // pixels exactly matching want.
 func colorExtent(b *raster.Backend, want color.RGBA) (x0, y0, x1, y1, n int) {
+	return pixelExtent(b, func(c color.RGBA) bool { return c == want })
+}
+
+// pixelExtent is colorExtent over an arbitrary predicate, for imagery that has
+// been resampled and so lands near a color rather than exactly on it.
+func pixelExtent(b *raster.Backend, match func(color.RGBA) bool) (x0, y0, x1, y1, n int) {
 	img := b.Image()
 	x0, y0 = math.MaxInt32, math.MaxInt32
 	x1, y1 = -1, -1
 	for y := 0; y < img.Rect.Max.Y; y++ {
 		for x := 0; x < img.Rect.Max.X; x++ {
-			if img.RGBAAt(x, y) != want {
+			if !match(img.RGBAAt(x, y)) {
 				continue
 			}
 			n++
@@ -66,22 +74,7 @@ func colorExtent(b *raster.Backend, want color.RGBA) (x0, y0, x1, y1, n int) {
 // scaling, stride or premultiply mistake shows up as the wrong coverage or the
 // wrong extent - not merely the wrong shade.
 func TestGfxSixelImageBlit(t *testing.T) {
-	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	b, err := raster.New(640, 400)
-	if err != nil {
-		t.Fatal(err)
-	}
-	core.SetTextMeasurer(b)
-
-	term := NewPurfecTerm()
-	if term.Terminal() == nil {
-		t.Skip("terminal unavailable")
-	}
-	term.SetBounds(core.UnitRect{Width: 640, Height: 400})
-	// Settle the grid (and the cell pixel size the emulator anchors against)
-	// before the image is placed.
-	b.Clear(style.DefaultStyle())
-	term.Paint(core.NewPainter(b))
+	term, b := gfxImageTerm(t)
 
 	const imgW, imgH = 24, 24
 	const anchorRow, anchorCol = 2, 3
@@ -122,20 +115,7 @@ func TestGfxSixelImageBlit(t *testing.T) {
 // A transparent Sixel pixel leaves the terminal background alone: the decoder
 // emits alpha 0 for unset pixels and the blit must composite, not overwrite.
 func TestGfxSixelImageTransparency(t *testing.T) {
-	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	b, err := raster.New(640, 400)
-	if err != nil {
-		t.Fatal(err)
-	}
-	core.SetTextMeasurer(b)
-
-	term := NewPurfecTerm()
-	if term.Terminal() == nil {
-		t.Skip("terminal unavailable")
-	}
-	term.SetBounds(core.UnitRect{Width: 640, Height: 400})
-	b.Clear(style.DefaultStyle())
-	term.Paint(core.NewPainter(b))
+	term, b := gfxImageTerm(t)
 
 	// Two bands, 12 px wide: the first painted, the second left unset.
 	// "#0;2;0;100;0" defines register 0 as pure green.
@@ -152,5 +132,321 @@ func TestGfxSixelImageTransparency(t *testing.T) {
 	}
 	if y1 != 5 {
 		t.Errorf("painted band reaches y=%d, want 5: the unset band must stay transparent", y1)
+	}
+}
+
+// gfxImageTerm builds a painted terminal on a raster backend, ready for image
+// tests: the grid (and the cell pixel size the emulator anchors images against)
+// has settled by the time it returns.
+func gfxImageTerm(t *testing.T) (*PurfecTerm, *raster.Backend) {
+	t.Helper()
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.New(640, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+
+	term := NewPurfecTerm()
+	if term.Terminal() == nil {
+		t.Skip("terminal unavailable")
+	}
+	term.SetBounds(core.UnitRect{Width: 640, Height: 400})
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+	return term, b
+}
+
+// cellPx is the terminal's cell size in device pixels, computed the way the
+// paint path computes it.
+func cellPx(term *PurfecTerm) (w, h float64) {
+	buf := term.Terminal().Buffer()
+	cwU, chU := term.cellDims()
+	return float64(cwU) * buf.GetHorizontalScale() * term.gfx.ppu,
+		float64(chU) * term.gfx.ppu * buf.GetVerticalScale()
+}
+
+// kittyRGBA builds a kitty graphics transmit-and-display command carrying raw
+// RGBA (f=32) pixels, with any extra keys the caller needs.
+func kittyRGBA(w, h int, pix []byte, extra string) []byte {
+	return []byte(fmt.Sprintf("\x1b_Ga=T,f=32,s=%d,v=%d%s;%s\x1b\\",
+		w, h, extra, base64.StdEncoding.EncodeToString(pix)))
+}
+
+// The cell size the terminal reports (CSI 16 t) must be its REAL device cell,
+// because a program sizes images against it and the emulator divides by it to
+// work out how many rows a placement reserves. The synthetic sub-unit grid used
+// for ?1016 pointer coordinates is a separate axis and must not leak into it.
+func TestGfxCellPixelSizeIsRealDeviceSize(t *testing.T) {
+	term, _ := gfxImageTerm(t)
+	buf := term.Terminal().Buffer()
+
+	wantW, wantH := cellPx(term)
+	gotW, gotH := buf.GetCellPixelSize()
+	if gotW != int(math.Round(wantW)) || gotH != int(math.Round(wantH)) {
+		t.Errorf("reported cell size = %dx%d px, want %dx%d",
+			gotW, gotH, int(math.Round(wantW)), int(math.Round(wantH)))
+	}
+	if gotW == gfxCellSubUnits || gotH == gfxCellSubUnits {
+		t.Errorf("cell size %dx%d is the synthetic ?1016 grid, not device pixels", gotW, gotH)
+	}
+	if pw, ph := buf.GetPointerPixelUnit(); pw != gfxCellSubUnits || ph != gfxCellSubUnits {
+		t.Errorf("pointer pixel unit = %dx%d, want %d square", pw, ph, gfxCellSubUnits)
+	}
+
+	// The size is reported so image geometry works: a bitmap taller than one
+	// cell must reserve the rows it actually covers.
+	const imgW, imgH = 24, 24
+	term.Feed([]byte("\x1b[3;1H"))
+	term.Feed(sixelSolidBlock(imgW, imgH, 100, 0, 100))
+	images := buf.GetImages()
+	if len(images) != 1 {
+		t.Fatalf("emulator placed %d images, want 1", len(images))
+	}
+	wantRows := (imgH + gotH - 1) / gotH
+	if images[0].CellsHigh != wantRows {
+		t.Errorf("a %d px tall image reserved %d rows, want %d at a %d px cell",
+			imgH, images[0].CellsHigh, wantRows, gotH)
+	}
+}
+
+// Partial alpha must be premultiplied before the blit. A Bitmap carries STRAIGHT
+// alpha; handing those bytes to the painter as if they were Go's premultiplied
+// image.RGBA makes a half-transparent pixel composite at full source intensity,
+// which washes out every soft edge a PNG or a browser frame brings in.
+func TestGfxImagePartialAlphaBlend(t *testing.T) {
+	term, b := gfxImageTerm(t)
+
+	const anchorRow, anchorCol = 3, 5
+	cwPx, chPx := cellPx(term)
+	px := int(math.Floor(float64(anchorCol) * cwPx))
+	py := int(math.Floor(float64(anchorRow) * chPx))
+
+	// What the image will land on, sampled before it is placed, so the
+	// expectation holds whatever the color scheme paints.
+	dst := b.Image().RGBAAt(px, py)
+
+	const alpha = 128
+	pix := make([]byte, 0, 2*2*4)
+	for i := 0; i < 4; i++ {
+		pix = append(pix, 255, 255, 255, alpha) // white at half alpha
+	}
+	term.Feed([]byte(fmt.Sprintf("\x1b[%d;%dH", anchorRow+1, anchorCol+1)))
+	term.Feed(kittyRGBA(2, 2, pix, ""))
+	if n := len(term.Terminal().Buffer().GetImages()); n != 1 {
+		t.Fatalf("emulator placed %d images, want 1", n)
+	}
+
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+	got := b.Image().RGBAAt(px, py)
+
+	// Source-over with STRAIGHT source alpha: src*a + dst*(1-a).
+	blend := func(d uint8) uint8 {
+		return uint8(255*alpha/255 + uint32(d)*(255-alpha)/255)
+	}
+	want := color.RGBA{blend(dst.R), blend(dst.G), blend(dst.B), 255}
+	// Treating the straight bytes as premultiplied instead: src + dst*(1-a),
+	// which saturates. Only meaningful where the two actually differ.
+	bug := func(d uint8) uint8 {
+		v := 255 + uint32(d)*(255-alpha)/255
+		if v > 255 {
+			v = 255
+		}
+		return uint8(v)
+	}
+	near := func(a, b uint8) bool { return int(a)-int(b) <= 2 && int(b)-int(a) <= 2 }
+	if !near(got.R, want.R) || !near(got.G, want.G) || !near(got.B, want.B) {
+		t.Errorf("half-alpha pixel = %v over %v, want ~%v", got, dst, want)
+	}
+	if near(want.R, bug(dst.R)) && near(want.G, bug(dst.G)) && near(want.B, bug(dst.B)) {
+		t.Skip("background too bright to tell a premultiply mistake from a correct blend")
+	}
+	if near(got.R, bug(dst.R)) && near(got.G, bug(dst.G)) && near(got.B, bug(dst.B)) {
+		t.Errorf("half-alpha pixel = %v, the unpremultiplied result: straight alpha was blitted as premultiplied", got)
+	}
+}
+
+// A placement can ask to be drawn at a size that is not the size it was decoded
+// at - the kitty protocol's c= and r= size an image in CELLS. The renderer must
+// scale to PlacedImage.DestSize, in the same device pixels it draws in.
+func TestGfxImageScaledToCells(t *testing.T) {
+	term, b := gfxImageTerm(t)
+
+	const cols, rows = 4, 3
+	pix := make([]byte, 0, 2*2*4)
+	for i := 0; i < 4; i++ {
+		pix = append(pix, 255, 0, 0, 255) // opaque red
+	}
+	term.Feed([]byte("\x1b[3;1H"))
+	term.Feed(kittyRGBA(2, 2, pix, fmt.Sprintf(",c=%d,r=%d", cols, rows)))
+
+	images := term.Terminal().Buffer().GetImages()
+	if len(images) != 1 {
+		t.Fatalf("emulator placed %d images, want 1", len(images))
+	}
+	cellW, cellH := term.Terminal().Buffer().GetCellPixelSize()
+	wantW, wantH := cols*cellW, rows*cellH
+	if dw, dh := images[0].DestSize(); dw != wantW || dh != wantH {
+		t.Fatalf("emulator sized the placement %dx%d px, want %dx%d", dw, dh, wantW, wantH)
+	}
+
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+
+	// Resampled, so match on hue rather than an exact value.
+	red := func(c color.RGBA) bool { return c.R > 200 && c.G < 60 && c.B < 60 }
+	x0, y0, x1, y1, n := pixelExtent(b, red)
+	if n == 0 {
+		t.Fatal("scaled image did not render")
+	}
+	if w, h := x1-x0+1, y1-y0+1; w != wantW || h != wantH {
+		t.Errorf("scaled extent = %dx%d px, want %dx%d (the 2x2 source was not scaled to its dest size)",
+			w, h, wantW, wantH)
+	}
+	if n != wantW*wantH {
+		t.Errorf("scaled coverage = %d px, want %d (solid source, solid result)", n, wantW*wantH)
+	}
+}
+
+// A source crop (the kitty protocol's x/y/w/h) shows only part of the stored
+// image, and the placement is the size of the CROP, not of the whole bitmap.
+func TestGfxImageSourceCrop(t *testing.T) {
+	term, b := gfxImageTerm(t)
+
+	// 4x4: the left half red, the right half blue. Cropping to the right half
+	// must leave no red on screen at all.
+	pix := make([]byte, 0, 4*4*4)
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			if x < 2 {
+				pix = append(pix, 255, 0, 0, 255)
+			} else {
+				pix = append(pix, 0, 0, 255, 255)
+			}
+		}
+	}
+	term.Feed([]byte("\x1b[3;1H"))
+	term.Feed(kittyRGBA(4, 4, pix, ",x=2,y=0,w=2,h=4"))
+
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+
+	blue := color.RGBA{0, 0, 255, 255}
+	x0, y0, x1, y1, n := colorExtent(b, blue)
+	if n != 2*4 {
+		t.Errorf("cropped image covered %d px, want %d", n, 2*4)
+	}
+	if w, h := x1-x0+1, y1-y0+1; w != 2 || h != 4 {
+		t.Errorf("cropped extent = %dx%d, want 2x4", w, h)
+	}
+	if _, _, _, _, red := colorExtent(b, color.RGBA{255, 0, 0, 255}); red != 0 {
+		t.Errorf("%d px of the cropped-away half rendered: the source rect is being ignored", red)
+	}
+}
+
+// An image at a negative z-index draws UNDER the glyphs, which is what makes
+// text-over-image work; a virtual placement is positioned by placeholder cells
+// and must not be drawn at its anchor at all.
+func TestGfxImageZOrderAndVirtual(t *testing.T) {
+	term, b := gfxImageTerm(t)
+
+	buf := term.Terminal().Buffer()
+	below, above := buf.GetImagesByZ()
+	if len(below)+len(above) != 0 {
+		t.Fatalf("terminal started with %d placements", len(below)+len(above))
+	}
+
+	// A virtual placement (U=1) is held for its placeholder cells, not drawn.
+	pix := make([]byte, 0, 2*2*4)
+	for i := 0; i < 4; i++ {
+		pix = append(pix, 0, 255, 0, 255)
+	}
+	term.Feed([]byte("\x1b[3;1H"))
+	term.Feed(kittyRGBA(2, 2, pix, ",i=7,U=1"))
+
+	if n := len(buf.GetImages()); n != 1 {
+		t.Fatalf("emulator placed %d images, want 1", n)
+	}
+	if below, above := buf.GetImagesByZ(); len(below)+len(above) != 0 {
+		t.Fatalf("a virtual placement reached the draw bands (%d below, %d above)",
+			len(below), len(above))
+	}
+
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+	if _, _, _, _, n := colorExtent(b, color.RGBA{0, 255, 0, 255}); n != 0 {
+		t.Errorf("%d px of a virtual placement rendered at its anchor", n)
+	}
+}
+
+// kittyPlaceholders renders n placeholder cells for image id: the first cell
+// carries the image row and column as combining diacritics and the rest inherit
+// from it, which is how a client emits one row of a virtual placement.
+func kittyPlaceholders(id uint32, imgRow, imgCol, n int) string {
+	rowMark, _ := purfecterm.KittyDiacriticFor(imgRow)
+	colMark, _ := purfecterm.KittyDiacriticFor(imgCol)
+	var s strings.Builder
+	fmt.Fprintf(&s, "\x1b[38;2;%d;%d;%dm", (id>>16)&0xff, (id>>8)&0xff, id&0xff)
+	s.WriteRune(purfecterm.KittyPlaceholderRune)
+	s.WriteRune(rowMark)
+	s.WriteRune(colMark)
+	for i := 1; i < n; i++ {
+		s.WriteRune(purfecterm.KittyPlaceholderRune)
+	}
+	s.WriteString("\x1b[0m")
+	return s.String()
+}
+
+// A virtual placement is drawn where its Unicode placeholder cells are printed,
+// filling exactly those cells - not at the anchor it was created with, and not
+// at the size it was decoded at.
+func TestGfxKittyPlaceholderRendering(t *testing.T) {
+	term, b := gfxImageTerm(t)
+	buf := term.Terminal().Buffer()
+	cellW, cellH := buf.GetCellPixelSize()
+
+	pix := make([]byte, 0, 2*2*4)
+	for i := 0; i < 4; i++ {
+		pix = append(pix, 255, 0, 0, 255) // opaque red
+	}
+	term.Feed([]byte("\x1b[1;1H"))
+	term.Feed(kittyRGBA(2, 2, pix, ",i=42,c=2,r=1,U=1"))
+
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+	red := func(c color.RGBA) bool { return c.R > 200 && c.G < 60 && c.B < 60 }
+	if _, _, _, _, n := pixelExtent(b, red); n != 0 {
+		t.Fatalf("%d px drawn for a virtual placement with no placeholder cells", n)
+	}
+
+	// Two cells at screen row 3, column 1.
+	const anchorRow, anchorCol = 3, 1
+	term.Feed([]byte(fmt.Sprintf("\x1b[%d;%dH", anchorRow+1, anchorCol+1)))
+	term.Feed([]byte(kittyPlaceholders(42, 0, 0, 2)))
+
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+
+	x0, y0, x1, y1, n := pixelExtent(b, red)
+	if n == 0 {
+		t.Fatal("the placeholder cells rendered no image")
+	}
+	cwPx, chPx := cellPx(term)
+	wantX := int(math.Floor(float64(anchorCol) * cwPx))
+	wantY := int(math.Floor(float64(anchorRow) * chPx))
+	if x0 != wantX || y0 != wantY {
+		t.Errorf("image at (%d,%d) px, want (%d,%d): it must land on the placeholder cells",
+			x0, y0, wantX, wantY)
+	}
+	if w, h := x1-x0+1, y1-y0+1; w != 2*cellW || h != cellH {
+		t.Errorf("image covers %dx%d px, want %dx%d (two cells wide, one tall)",
+			w, h, 2*cellW, cellH)
+	}
+
+	// The placeholder cells themselves must not paint a character over it.
+	if n != 2*cellW*cellH {
+		t.Errorf("image coverage = %d px, want %d: something is drawn on top of it",
+			n, 2*cellW*cellH)
 	}
 }
