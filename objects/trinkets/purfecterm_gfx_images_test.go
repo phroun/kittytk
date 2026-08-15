@@ -11,6 +11,7 @@ import (
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/purfecterm"
 )
 
 // sixelSolidBlock builds a DCS Sixel sequence painting a solid w x h block in
@@ -376,5 +377,76 @@ func TestGfxImageZOrderAndVirtual(t *testing.T) {
 	term.Paint(core.NewPainter(b))
 	if _, _, _, _, n := colorExtent(b, color.RGBA{0, 255, 0, 255}); n != 0 {
 		t.Errorf("%d px of a virtual placement rendered at its anchor", n)
+	}
+}
+
+// kittyPlaceholders renders n placeholder cells for image id: the first cell
+// carries the image row and column as combining diacritics and the rest inherit
+// from it, which is how a client emits one row of a virtual placement.
+func kittyPlaceholders(id uint32, imgRow, imgCol, n int) string {
+	rowMark, _ := purfecterm.KittyDiacriticFor(imgRow)
+	colMark, _ := purfecterm.KittyDiacriticFor(imgCol)
+	var s strings.Builder
+	fmt.Fprintf(&s, "\x1b[38;2;%d;%d;%dm", (id>>16)&0xff, (id>>8)&0xff, id&0xff)
+	s.WriteRune(purfecterm.KittyPlaceholderRune)
+	s.WriteRune(rowMark)
+	s.WriteRune(colMark)
+	for i := 1; i < n; i++ {
+		s.WriteRune(purfecterm.KittyPlaceholderRune)
+	}
+	s.WriteString("\x1b[0m")
+	return s.String()
+}
+
+// A virtual placement is drawn where its Unicode placeholder cells are printed,
+// filling exactly those cells - not at the anchor it was created with, and not
+// at the size it was decoded at.
+func TestGfxKittyPlaceholderRendering(t *testing.T) {
+	term, b := gfxImageTerm(t)
+	buf := term.Terminal().Buffer()
+	cellW, cellH := buf.GetCellPixelSize()
+
+	pix := make([]byte, 0, 2*2*4)
+	for i := 0; i < 4; i++ {
+		pix = append(pix, 255, 0, 0, 255) // opaque red
+	}
+	term.Feed([]byte("\x1b[1;1H"))
+	term.Feed(kittyRGBA(2, 2, pix, ",i=42,c=2,r=1,U=1"))
+
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+	red := func(c color.RGBA) bool { return c.R > 200 && c.G < 60 && c.B < 60 }
+	if _, _, _, _, n := pixelExtent(b, red); n != 0 {
+		t.Fatalf("%d px drawn for a virtual placement with no placeholder cells", n)
+	}
+
+	// Two cells at screen row 3, column 1.
+	const anchorRow, anchorCol = 3, 1
+	term.Feed([]byte(fmt.Sprintf("\x1b[%d;%dH", anchorRow+1, anchorCol+1)))
+	term.Feed([]byte(kittyPlaceholders(42, 0, 0, 2)))
+
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+
+	x0, y0, x1, y1, n := pixelExtent(b, red)
+	if n == 0 {
+		t.Fatal("the placeholder cells rendered no image")
+	}
+	cwPx, chPx := cellPx(term)
+	wantX := int(math.Floor(float64(anchorCol) * cwPx))
+	wantY := int(math.Floor(float64(anchorRow) * chPx))
+	if x0 != wantX || y0 != wantY {
+		t.Errorf("image at (%d,%d) px, want (%d,%d): it must land on the placeholder cells",
+			x0, y0, wantX, wantY)
+	}
+	if w, h := x1-x0+1, y1-y0+1; w != 2*cellW || h != cellH {
+		t.Errorf("image covers %dx%d px, want %dx%d (two cells wide, one tall)",
+			w, h, 2*cellW, cellH)
+	}
+
+	// The placeholder cells themselves must not paint a character over it.
+	if n != 2*cellW*cellH {
+		t.Errorf("image coverage = %d px, want %d: something is drawn on top of it",
+			n, 2*cellW*cellH)
 	}
 }

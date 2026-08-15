@@ -458,6 +458,15 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 			logicalX := x + horizOffset
 			cell := buf.GetVisibleCell(x, y)
 
+			// A kitty Unicode placeholder reserves the cell for a virtual image
+			// placement; the image is drawn into it from the resolved draw list
+			// (GetImagesByZ). The cell itself must not also paint a character:
+			// U+10EEEE is private-use, so whatever a font happens to have there
+			// would land on top of the image the cell exists to position.
+			if purfecterm.IsKittyPlaceholderCell(cell) {
+				cell.Char, cell.Combining = ' ', ""
+			}
+
 			cellVisualWidth := 1.0
 			if cell.CellWidth > 0 { // CellWidth is authoritative (see patches/purfecterm/PROTOCOL.md)
 				cellVisualWidth = cell.CellWidth
