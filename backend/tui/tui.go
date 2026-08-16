@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/phroun/direct-key-handler/keyboard"
@@ -84,6 +85,40 @@ type TUIBackend struct {
 	metrics core.CellMetrics
 
 	// Screen buffers (double buffering)
+	// dmgMin/dmgMax are the column range the text diff rewrote on each row
+	// this frame, -1 when the row was untouched. Images need it: sixel pixels
+	// are screen content, so a picture survives until text is painted over
+	// THOSE cells - a change on an unrelated row is not a reason to re-send it.
+	dmgMin, dmgMax []int
+
+	// cellSeq is the paint ORDER of the last write to each cell this frame,
+	// and paintSeq the counter it comes from. Trinkets paint back to front, so
+	// a higher number is content drawn LATER and therefore on top. An image is
+	// queued rather than composited, so this is how the flush finds out which
+	// of its cells a window painted over afterwards.
+	cellSeq  [][]uint32
+	paintSeq uint32
+
+	// motionWanted is set during a frame by anything that needs pointer
+	// motion; motionOn is whether the outer terminal is currently sending it
+	// (?1003). Free motion is not enabled by default because it puts a report
+	// on the wire for every pixel the pointer crosses — it is turned on only
+	// while something is actually watching. See RequestMotionTracking.
+	motionWanted bool
+	motionOn     bool
+
+	// What kitty currently has on screen. kittyBaseIDs is one id per block,
+	// the full picture; kittyPatchIDs are the deltas layered over them since
+	// the last full send. kittyNextID only ever counts up, so a new placement
+	// can never collide with one being deleted in the same frame.
+	// kittyPatchArea is the pixel area patched since the last full send, which
+	// is what decides when patching has stopped being cheaper than starting
+	// over.
+	kittyBaseIDs   []uint32
+	kittyPatchIDs  []uint32
+	kittyPatchArea int
+	kittyNextID    uint32
+
 	frontBuffer [][]Cell
 	backBuffer  [][]Cell
 
@@ -134,6 +169,21 @@ type TUIBackend struct {
 	outerCellH      int  // outer terminal cell height in pixels
 	outerPixelOK    bool // DECRQM: ?1016 is recognized (settable)
 	outerCellSizeOK bool // CSI 16 t gave a usable cell pixel size
+
+	// Outer-terminal graphics (see graphics.go). The startup probe asks the
+	// real terminal whether it can draw a picture and in which protocol; a
+	// terminal that answers neither query falls back to what the environment
+	// says. Images the paint pass asks for are collected here and emitted
+	// after the text diff, since the screen is written as one flush.
+	graphics         int // Graphics{None,Kitty,Sixel}
+	graphicsAnswered bool
+	pendingImages    []placedImage
+	// shownImages is what the last flush actually put on screen, so an
+	// unchanged frame can be skipped rather than re-transmitted (see
+	// flushImagesLocked). Compared by value, which is why a queued image must
+	// be one nobody else will overwrite.
+	shownImages []placedImage
+	hadImages   bool // last frame placed images (kitty needs them deleted)
 
 	// Output writer
 	output io.Writer
@@ -356,6 +406,17 @@ func (t *TUIBackend) Init() error {
 		t.writeTTY("\033[16t")     // XTWINOPS: report the cell size in pixels
 	}
 
+	// Ask the same terminal whether it can draw a PICTURE, and in which
+	// protocol (see graphics.go). Asynchronous like the probes above: the
+	// answers arrive as APC:/DA1: keys. A terminal that ignores both is
+	// settled from the environment once the window has passed, so a
+	// multiplexer swallowing the replies still gets an answer.
+	t.probeGraphics()
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		t.resolveGraphicsFallback()
+	}()
+
 	// Handle terminal resize
 	go t.handleResize()
 
@@ -397,7 +458,7 @@ func (t *TUIBackend) RestoreTerminal() {
 		// Disable mouse. ?1016l first (harmless if it was never enabled) so the
 		// outer terminal drops back to cell reports before the rest go off.
 		if t.hasMouse {
-			t.writeTTY("\033[?1016l\033[?1006l\033[?1002l\033[?1000l")
+			t.writeTTY("\033[?1016l\033[?1006l\033[?1003l\033[?1002l\033[?1000l")
 		}
 
 		// Show cursor
@@ -435,6 +496,12 @@ func (t *TUIBackend) RestoreTerminal() {
 func (t *TUIBackend) allocateBuffers() {
 	t.frontBuffer = make([][]Cell, t.rows)
 	t.backBuffer = make([][]Cell, t.rows)
+	t.dmgMin = make([]int, t.rows)
+	t.dmgMax = make([]int, t.rows)
+	t.cellSeq = make([][]uint32, t.rows)
+	for y := range t.cellSeq {
+		t.cellSeq[y] = make([]uint32, t.cols)
+	}
 	t.frontLineAttr = make([]byte, t.rows)
 
 	defaultCell := Cell{Char: ' ', Style: style.DefaultStyle()}
@@ -468,9 +535,13 @@ func (t *TUIBackend) BeginFrame() {
 
 	// Clear back buffer
 	defaultCell := Cell{Char: ' ', Style: style.DefaultStyle()}
+	t.paintSeq = 0
+	// A request lasts one frame: whoever still needs motion asks again.
+	t.motionWanted = false
 	for y := 0; y < t.rows; y++ {
 		for x := 0; x < t.cols; x++ {
 			t.backBuffer[y][x] = defaultCell
+			t.cellSeq[y][x] = 0
 		}
 	}
 
@@ -519,6 +590,10 @@ func (t *TUIBackend) EndFrame() {
 	termX, termY := -1, -1 // where the terminal cursor sits (unknown)
 	penStyle := ""         // SGR last emitted ("" = unknown, always emit)
 
+	for y := range t.dmgMin {
+		t.dmgMin[y], t.dmgMax[y] = -1, -1
+	}
+
 	for y := 0; y < t.rows; y++ {
 		lineCleared := false
 
@@ -532,6 +607,7 @@ func (t *TUIBackend) EndFrame() {
 			sb.WriteString(fmt.Sprintf("\033[%d;1H\033#5\033[0m\033[2K", y+1))
 			t.frontLineAttr[y] = 0
 			lineCleared = true
+			t.markDamage(y, 0, t.cols-1)
 			termY, termX = y, 0
 			penStyle = "" // the [0m reset invalidated the tracked pen
 		}
@@ -551,6 +627,7 @@ func (t *TUIBackend) EndFrame() {
 				}
 			}
 			if changed {
+				t.markDamage(y, 0, t.cols-1)
 				sb.WriteString(fmt.Sprintf("\033[%d;1H\033#%c\033[0m\033[2K", y+1, mode))
 				penStyle = ""
 				for x := 0; x < t.cols; x++ {
@@ -626,6 +703,7 @@ func (t *TUIBackend) EndFrame() {
 				continue
 			}
 
+			t.markDamage(y, x, x+w-1)
 			if termY != y || termX != x {
 				sb.WriteString(fmt.Sprintf("\033[%d;%dH", y+1, x+1))
 				termY, termX = y, x
@@ -691,6 +769,13 @@ func (t *TUIBackend) EndFrame() {
 	}
 
 	t.write(out.String())
+
+	// Pictures go last: the text diff addresses cells all over the screen,
+	// and anything emitted before it would be painted over by text written
+	// afterwards. This is also the right order to read - the image sits on
+	// the row the text layer already made room for.
+	t.flushImagesLocked()
+	t.applyMotionTrackingLocked()
 }
 
 // Clear fills the entire surface with a style.
@@ -742,6 +827,16 @@ func (t *TUIBackend) setCell(col, row int, ch rune, s style.CellStyle) {
 		return
 	}
 	t.backBuffer[row][col] = Cell{Char: ch, Style: s}
+	t.touchCell(col, row)
+}
+
+// touchCell stamps a cell with the current paint order. Called wherever the
+// back buffer is written, so "who is on top" is answerable after the fact.
+func (t *TUIBackend) touchCell(col, row int) {
+	t.paintSeq++
+	if row >= 0 && row < len(t.cellSeq) && col >= 0 && col < len(t.cellSeq[row]) {
+		t.cellSeq[row][col] = t.paintSeq
+	}
 }
 
 // DrawCell draws a single character at the given position.
@@ -960,6 +1055,7 @@ func (t *TUIBackend) setCellDWL(col, row int, c Cell) {
 		return
 	}
 	t.backBuffer[row][col] = c
+	t.touchCell(col, row)
 }
 
 // isAlphanumeric returns true if the character is a letter or digit.
@@ -1376,6 +1472,14 @@ func (t *TUIBackend) handleKey(key string) {
 		t.handleDECRPM(key)
 		return
 	}
+	if strings.HasPrefix(key, "APC:") {
+		t.handleAPC(key)
+		return
+	}
+	if strings.HasPrefix(key, "DA1:") {
+		t.handleDA1(key)
+		return
+	}
 	if strings.HasPrefix(key, "WinOp:") {
 		t.handleWinOp(key)
 		return
@@ -1435,9 +1539,22 @@ func (t *TUIBackend) handleKey(key string) {
 
 // handleMouseAction processes mouse action events from direct-key-handler.
 func (t *TUIBackend) handleMouseAction(key string) {
+	// One snapshot, under one lock: the stashed position AND the frame it is
+	// resolved against. The probe replies that set that frame land on the
+	// terminal's read path while events are being converted here, and its
+	// three fields only mean anything together — pixelMouse says to divide by
+	// a cell size that outerCell{W,H} supplies, so reading them at separate
+	// moments could pair a mode from after the flip with a size from before
+	// it. Taking them apart was also a data race outright, benign-looking or
+	// not. (t.metrics is written once at construction and never after.)
 	t.mu.Lock()
 	x := t.pendingMouseX
 	y := t.pendingMouseY
+	frame := outerMouseFrame{
+		pixelMouse: t.pixelMouse,
+		cellW:      t.outerCellW,
+		cellH:      t.outerCellH,
+	}
 	t.mu.Unlock()
 
 	// Strip modifier prefixes ("S-MouseRightPress") into event modifiers.
@@ -1449,18 +1566,20 @@ func (t *TUIBackend) handleMouseAction(key string) {
 
 	// Convert the raw 1-based coordinate to units (cell- or pixel-based
 	// depending on whether ?1016 is active — see outerToUnitsX/Y).
-	unitX := t.outerToUnitsX(x)
-	unitY := t.outerToUnitsY(y)
+	unitX := t.outerToUnitsX(x, frame)
+	unitY := t.outerToUnitsY(y, frame)
 
 	// For drag events, position is embedded: MouseLeftDrag@x,y (also raw
-	// 1-based, same conversion).
+	// 1-based, same conversion). Everything else uses the stashed position
+	// from the Mouse@x,y key that preceded it.
 	if strings.Contains(key, "@") {
 		var dragX, dragY int
 		parts := strings.SplitN(key, "@", 2)
 		if len(parts) == 2 {
 			if _, err := fmt.Sscanf(parts[1], "%d,%d", &dragX, &dragY); err == nil {
-				unitX = t.outerToUnitsX(dragX)
-				unitY = t.outerToUnitsY(dragY)
+				x, y = dragX, dragY
+				unitX = t.outerToUnitsX(dragX, frame)
+				unitY = t.outerToUnitsY(dragY, frame)
 			}
 		}
 		key = parts[0] // Strip position from key for matching
@@ -1487,7 +1606,21 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	case "MouseRelease":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
-	case "MouseLeftDrag", "MouseMiddleDrag", "MouseRightDrag", "MouseDrag":
+	// Motion, with whichever button is held. direct-key-handler names the
+	// button in the event, and "MouseDrag" is its name for motion with NO
+	// button — the buttonless tracking a terminal sends under ?1003 — so that
+	// one carries no button rather than a default.
+	//
+	// Buttons went unset here, which made every motion look button-free to a
+	// trinket: a drag passing over a scrollbar lit its hover instead of
+	// clearing it, since the hover test is exactly "no button held".
+	case "MouseLeftDrag":
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.LeftButton, Modifiers: mods}
+	case "MouseMiddleDrag":
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.MiddleButton, Modifiers: mods}
+	case "MouseRightDrag":
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.RightButton, Modifiers: mods}
+	case "MouseDrag":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Modifiers: mods}
 
 	case "MouseScrollUp":
@@ -1510,34 +1643,42 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	}
 }
 
+// outerMouseFrame is the state a raw mouse coordinate is resolved against,
+// taken as one snapshot under the lock (see handleMouseAction). The three
+// fields are only meaningful together, so they travel together.
+type outerMouseFrame struct {
+	pixelMouse   bool // ?1016 is on, so the raw numbers are outer pixels
+	cellW, cellH int  // the outer terminal's cell size, in those pixels
+}
+
 // outerToUnitsX converts a raw 1-based mouse X coordinate to units. In the
 // default SGR mode the number is a 1-based cell column, so it maps to that
 // cell's left edge. Under ?1016 it is a 1-based OUTER PIXEL: the integer cell
 // index divides out, and the sub-cell remainder scales into a fraction of this
 // backend's cell width — the sub-cell position mew's nearest-edge caret uses.
-func (t *TUIBackend) outerToUnitsX(raw int) core.Unit {
-	if t.pixelMouse && t.outerCellW > 0 {
+func (t *TUIBackend) outerToUnitsX(raw int, f outerMouseFrame) core.Unit {
+	if f.pixelMouse && f.cellW > 0 {
 		px := raw - 1
 		if px < 0 {
 			px = 0
 		}
-		cell := px / t.outerCellW
-		frac := px % t.outerCellW
-		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.CellWidth/core.Unit(t.outerCellW)
+		cell := px / f.cellW
+		frac := px % f.cellW
+		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.CellWidth/core.Unit(f.cellW)
 	}
 	return t.metrics.CellToUnitsX(raw - 1)
 }
 
 // outerToUnitsY is the vertical twin of outerToUnitsX.
-func (t *TUIBackend) outerToUnitsY(raw int) core.Unit {
-	if t.pixelMouse && t.outerCellH > 0 {
+func (t *TUIBackend) outerToUnitsY(raw int, f outerMouseFrame) core.Unit {
+	if f.pixelMouse && f.cellH > 0 {
 		px := raw - 1
 		if px < 0 {
 			px = 0
 		}
-		cell := px / t.outerCellH
-		frac := px % t.outerCellH
-		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.CellHeight/core.Unit(t.outerCellH)
+		cell := px / f.cellH
+		frac := px % f.cellH
+		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.CellHeight/core.Unit(f.cellH)
 	}
 	return t.metrics.CellToUnitsY(raw - 1)
 }
@@ -1646,4 +1787,84 @@ func detectColorDepth() int {
 
 	// Default to 16 colors
 	return 16
+}
+
+// markDamage records that the text diff rewrote cells [c0,c1] of row y.
+func (t *TUIBackend) markDamage(y, c0, c1 int) {
+	if y < 0 || y >= len(t.dmgMin) {
+		return
+	}
+	if c0 < 0 {
+		c0 = 0
+	}
+	if c1 > t.cols-1 {
+		c1 = t.cols - 1
+	}
+	if t.dmgMin[y] < 0 || c0 < t.dmgMin[y] {
+		t.dmgMin[y] = c0
+	}
+	if c1 > t.dmgMax[y] {
+		t.dmgMax[y] = c1
+	}
+}
+
+// damagedRectLocked returns the bounding box of the cells the frame's text diff
+// rewrote WITHIN the rectangle [c0,c1] x [r0,r1], and whether any were.
+func (t *TUIBackend) damagedRectLocked(c0, r0, c1, r1 int) (dc0, dr0, dc1, dr1 int, any bool) {
+	dc0, dr0, dc1, dr1 = c1, r1, c0, r0
+	for y := r0; y <= r1; y++ {
+		if y < 0 || y >= len(t.dmgMin) || t.dmgMin[y] < 0 {
+			continue
+		}
+		lo, hi := t.dmgMin[y], t.dmgMax[y]
+		if lo > c1 || hi < c0 {
+			continue // this row's damage misses the rectangle entirely
+		}
+		if lo < c0 {
+			lo = c0
+		}
+		if hi > c1 {
+			hi = c1
+		}
+		if !any {
+			dr0 = y
+		}
+		dr1 = y
+		if lo < dc0 {
+			dc0 = lo
+		}
+		if hi > dc1 {
+			dc1 = hi
+		}
+		any = true
+	}
+	return dc0, dr0, dc1, dr1, any
+}
+
+// RequestMotionTracking implements core.MotionTracker: something painting this
+// frame needs to follow the pointer with no button held.
+func (t *TUIBackend) RequestMotionTracking() {
+	t.mu.Lock()
+	t.motionWanted = true
+	t.mu.Unlock()
+}
+
+// applyMotionTrackingLocked turns ?1003 on or off to match this frame's
+// requests, and only when it actually changes.
+//
+// The mode is the difference between a hosted browser seeing hover and not
+// seeing it at all: without ?1003 the outer terminal reports motion only while
+// a button is held, so those events never reach us to forward. It is off by
+// default because it is not free — every pixel the pointer crosses becomes a
+// report on the wire — so it follows demand rather than being pinned on.
+func (t *TUIBackend) applyMotionTrackingLocked() {
+	if t.motionWanted == t.motionOn {
+		return
+	}
+	t.motionOn = t.motionWanted
+	if t.motionOn {
+		t.writeTTY("\033[?1003h")
+	} else {
+		t.writeTTY("\033[?1003l")
+	}
 }

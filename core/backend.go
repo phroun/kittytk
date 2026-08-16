@@ -209,6 +209,40 @@ type ImageDrawer interface {
 	DrawImagePx(xPx, yPx int, img image.Image)
 }
 
+// CellPixelSizer is an optional RenderBackend capability reporting how many
+// DEVICE PIXELS one cell of this surface covers — which a cell surface knows
+// only if it asked, and only a terminal host has anyone to ask.
+//
+// A graphical surface derives its cell from its own font and never needs this.
+// A TUI host does: it draws into somebody else's terminal, whose cell size is
+// that terminal's business, and it finds out by querying (CSI 16 t). The number
+// matters beyond its own layout, because a program hosted INSIDE such a surface
+// asks the same question of us and can do nothing about pictures without an
+// answer — no image can be sized, positioned, or scaled without it.
+//
+// Zero means the question has not been answered, which is the honest state
+// before the reply arrives and on a terminal that never sends one.
+type CellPixelSizer interface {
+	CellPixelSize() (w, h int)
+}
+
+// MotionTracker is an optional RenderBackend capability: a surface that has to
+// ASK to be told about pointer motion.
+//
+// A graphical host is given every mouse move whether it wants one or not. A
+// terminal host is given only what it asked its own terminal for, and asking
+// for motion is a separate mode (?1003) from asking for clicks — so a trinket
+// that needs to follow the pointer without a button held has to say so, every
+// frame it still needs it. Hover is the obvious case; a hosted program that
+// turned on its own motion tracking is the one that made this necessary,
+// because the events it is waiting for do not otherwise exist.
+//
+// Requests are per FRAME and not sticky: a surface stops asking and the mode
+// goes away, which keeps a busy wire quiet when nothing is watching.
+type MotionTracker interface {
+	RequestMotionTracking()
+}
+
 // MaskTintDrawer is an optional RenderBackend capability: composite a
 // color-independent coverage mask (only its alpha is read) tinted with a solid
 // color. Lets a caller cache one grayscale glyph per shape and recolor it per
@@ -224,6 +258,25 @@ type MaskTintDrawer interface {
 // uses UnitPixelMapper instead.
 type DeviceScaler interface {
 	Scale() int
+}
+
+// DisplayDensityReporter is an optional RenderBackend capability reporting the
+// PHYSICAL display's content scale — 2 on a HiDPI panel, 1 on an ordinary one.
+//
+// This is emphatically not DeviceScaler. That one is how much this application
+// magnifies itself, a preference; this one is a fact about the screen, and the
+// two are independent (a user may well ask for 1 on a HiDPI panel, which is
+// exactly the case that tells them apart).
+//
+// It matters because a SEPARATE process rendering pictures for us — a browser
+// in a terminal pane — reads the display's density from the window system
+// itself and sizes its content to it, entirely outside our sight. Nothing in
+// the terminal protocols carries that number in either direction, so the only
+// way to end up agreeing with such a child is to learn the same fact it did.
+// Deriving it from our own magnification instead looks right exactly when the
+// two happen to be equal.
+type DisplayDensityReporter interface {
+	DisplayDensity() float64
 }
 
 // UnitPixelMapper is an optional RenderBackend capability exposing the
@@ -975,6 +1028,45 @@ func (p *Painter) DeviceScale() int {
 		}
 	}
 	return 1
+}
+
+// DisplayDensity reports the physical display's content scale (see
+// DisplayDensityReporter): 2 on a HiDPI panel, 1 on an ordinary one, and 1
+// when the backend does not know — a backend that cannot see a screen (an
+// off-screen raster, a terminal host) has no business claiming one.
+//
+// Use it only for agreeing with something OUTSIDE this process about density.
+// Everything internal — geometry, hairlines, cell metrics — uses DeviceScale
+// or PxPerUnitF, which describe how this application draws.
+func (p *Painter) DisplayDensity() float64 {
+	if d, ok := p.backend.(DisplayDensityReporter); ok {
+		if s := d.DisplayDensity(); s > 0 {
+			return s
+		}
+	}
+	return 1
+}
+
+// CellPixelSize reports the device pixels one cell of this surface covers, or
+// 0,0 when the backend does not know (see CellPixelSizer). A graphical surface
+// answers 0,0 and should be asked its font metrics instead; this exists for the
+// number a cell surface had to ask its host terminal for.
+func (p *Painter) CellPixelSize() (w, h int) {
+	if cs, ok := p.backend.(CellPixelSizer); ok {
+		if cw, ch := cs.CellPixelSize(); cw > 0 && ch > 0 {
+			return cw, ch
+		}
+	}
+	return 0, 0
+}
+
+// RequestMotionTracking asks the surface to deliver pointer motion for the rest
+// of this frame's lifetime (see MotionTracker). A backend that always has
+// motion ignores it, so callers need not ask what kind of host they are on.
+func (p *Painter) RequestMotionTracking() {
+	if mt, ok := p.backend.(MotionTracker); ok {
+		mt.RequestMotionTracking()
+	}
 }
 
 // PxPerUnitF reports the fractional device pixels per unit, tracking

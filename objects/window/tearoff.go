@@ -1264,10 +1264,7 @@ func (h *TearOffHost) unitFromPxRaw(px int) core.Unit {
 // derive from our own unit bounds keep the geometry they had — those
 // already land on the grid by construction.
 func (h *TearOffHost) paintablePxX(px int) int {
-	u := h.unitHardX(px)
-	for u > 0 && h.pxHardX(u) > px {
-		u--
-	}
+	u := h.paintableUnitsX(px)
 	if u <= 0 {
 		return px
 	}
@@ -1278,10 +1275,7 @@ func (h *TearOffHost) paintablePxX(px int) int {
 }
 
 func (h *TearOffHost) paintablePxY(px int) int {
-	u := h.unitHardY(px)
-	for u > 0 && h.pxHardY(u) > px {
-		u--
-	}
+	u := h.paintableUnitsY(px)
 	if u <= 0 {
 		return px
 	}
@@ -1289,6 +1283,39 @@ func (h *TearOffHost) paintablePxY(px int) int {
 		return fit
 	}
 	return px
+}
+
+// paintableUnitsX / paintableUnitsY read a device-pixel extent back to the
+// largest whole unit count the surface can actually PAINT inside it: the
+// nearest-unit answer, stepped down while the extent it paints overruns the
+// pixels really there.
+//
+// Rounding to nearest alone answers one unit too MANY for an extent that
+// falls between units — at 2 device px per unit a 101px surface reads as 51
+// units, which is 102px of paint — and the frame then strokes its outer edge
+// against a column the surface does not have, so that edge reads a pixel
+// thin. Flooring the raw ratio instead sheds up to a unit every cycle and
+// drifts. Stepping down from nearest does neither: a surface sized to
+// pxHardX(W) still reads back as exactly W, because pxHardX(W) never
+// overruns itself and the loop does not run.
+//
+// A size WE asked for is already paintable (resizeMove rounds it), so this
+// matters for the sizes we do not choose: the OS's own configure events on
+// the primary surface, a compositor's adjustment, a work-area zoom.
+func (h *TearOffHost) paintableUnitsX(px int) core.Unit {
+	u := h.unitHardX(px)
+	for u > 0 && h.pxHardX(u) > px {
+		u--
+	}
+	return u
+}
+
+func (h *TearOffHost) paintableUnitsY(px int) core.Unit {
+	u := h.unitHardY(px)
+	for u > 0 && h.pxHardY(u) > px {
+		u--
+	}
+	return u
 }
 
 func (h *TearOffHost) resizeMove() bool {
@@ -1398,12 +1425,20 @@ func (h *TearOffHost) zoomToWorkArea() {
 	// Save the ACTUAL device-pixel size to restore, not a units->px
 	// reconversion: the surface is already sized on the hardened pitch, so
 	// reconverting would round-trip through the ratio and could restore a
-	// hair off. ScreenSizePx is the exact rect to put back.
+	// hair off. ScreenSizePx is the rect to put back — floored to a
+	// paintable extent, since the OS may have left the window between units
+	// and restoring that verbatim would restore a thin edge with it. The
+	// floor is identity on a size already on the grid, so this is still the
+	// exact rect wherever it matters.
 	pw, ph := h.native.ScreenSizePx()
-	h.zoomSaved = [4]int{x, y, pw, ph}
+	h.zoomSaved = [4]int{x, y, h.paintablePxX(pw), h.paintablePxY(ph)}
 	h.zoomed = true
 	h.win.Maximize()
 	h.native.SetScreenPositionPx(wx, wy)
+	// The work-area size itself is NOT rounded: a maximized window draws no
+	// rounded frame (window.go's graphicalFrame excludes WindowStateMaximized,
+	// as hostFrameInset does for the desktop), so there is no outer stroke to
+	// protect here — and shrinking it would leave the screen edge uncovered.
 	h.native.SetScreenSizePx(ww, wh)
 }
 
@@ -1465,9 +1500,13 @@ func (h *TearOffHost) Resized(size core.UnitSize) {
 	// geometry wired it falls back to the platform-reported size.
 	if h.native != nil {
 		if pw, ph := h.native.ScreenSizePx(); pw > 0 && ph > 0 {
-			size = core.UnitSize{
-				Width:  h.unitHardX(pw),
-				Height: h.unitHardY(ph),
+			// The largest extent that FITS, not the nearest one: a size the
+			// OS chose (an app-switch configure, a corner drag the compositor
+			// adjusted, a work-area zoom) can fall between units, and rounding
+			// it up leaves the frame stroking an edge column the surface does
+			// not have. See paintableUnitsX.
+			if w, ht := h.paintableUnitsX(pw), h.paintableUnitsY(ph); w > 0 && ht > 0 {
+				size = core.UnitSize{Width: w, Height: ht}
 			}
 		}
 	}

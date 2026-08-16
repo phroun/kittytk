@@ -703,6 +703,81 @@ func (d *Desktop) applicationForWindow(win *window.Window) ApplicationProvider {
 	return nil
 }
 
+// BlurDetachedWindow implements the window package's detachedBlurrer: where
+// the blur control sends the keyboard when the window it leaves is TORN.
+//
+// A docked window's blur focuses the container's menu bar, which works
+// because the window is still on screen beside it. A torn window's surface
+// holds that one window and nothing else, so there is no "rest of the
+// surface" to fall back to - blurring has to leave the OS window entirely.
+// It goes up the OWNERSHIP chain: a secondary window returns to its app's
+// main window, and the main window returns to the desktop it was torn from.
+//
+// In solo mode there is no desktop behind the app, so the main window's blur
+// has nowhere to go and the window keeps the keyboard rather than dropping
+// it into nothing.
+// CanBlurDetachedWindow implements the window package's detachedBlurrer: it
+// answers whether a torn window has anywhere to blur TO, so the control is
+// simply not offered when it would be inert.
+//
+// It is asked fresh on every layout rather than latched, which is what makes
+// the control correct itself: a solo app's main window has no desktop behind
+// it and no app window above it, so it offers no blur item - and the moment
+// show_desktop reveals a desktop, the same question answers yes and the item
+// is there.
+func (d *Desktop) CanBlurDetachedWindow(win *window.Window) bool {
+	if win == nil {
+		return false
+	}
+	if app := d.applicationForWindow(win); app != nil {
+		if main := app.MainWindow(); main != nil && main != win {
+			return true // its app's main window is above it
+		}
+	}
+	// Nothing above it but the desktop, which solo mode does not have.
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return !d.solo
+}
+
+func (d *Desktop) BlurDetachedWindow(win *window.Window) {
+	if win == nil || !d.CanBlurDetachedWindow(win) {
+		return
+	}
+	if app := d.applicationForWindow(win); app != nil {
+		if main := app.MainWindow(); main != nil && main != win {
+			d.SurfaceWindow(main)
+			// SurfaceWindow raises a TORN main window's own surface, but a
+			// docked one it can only activate - that window lives on the
+			// desktop's surface, which has to be brought forward separately
+			// or the activation happens somewhere the user cannot see.
+			if d.tornHostForWindow(main) == nil {
+				d.raiseDesktopSurface()
+			}
+			return
+		}
+	}
+	// The app's own main window (or a window no app claims): the level above
+	// it is the desktop itself.
+	d.raiseDesktopSurface()
+}
+
+// raiseDesktopSurface brings the desktop's own OS window forward. A no-op in
+// solo mode, where the primary surface IS an application window and there is
+// no desktop behind it to return to.
+func (d *Desktop) raiseDesktopSurface() {
+	d.mu.RLock()
+	solo := d.solo
+	surf := d.surface
+	d.mu.RUnlock()
+	if solo || surf == nil {
+		return
+	}
+	if n, ok := surf.(platform.NativeSurface); ok {
+		n.Raise()
+	}
+}
+
 // redockInPlace re-docks a torn window to the desktop at its current
 // on-screen position, retaining its size - the '#' handle click path.
 func (d *Desktop) redockInPlace(host *window.TearOffHost) {

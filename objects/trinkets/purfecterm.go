@@ -2,7 +2,6 @@
 package trinkets
 
 import (
-	"strings"
 	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
@@ -20,6 +19,12 @@ type PurfecTerm struct {
 
 	// The underlying terminal emulator
 	terminal *cli.Terminal
+
+	// tuiImgCache holds the pixels handed to a CELL surface last frame, one
+	// entry per placement (see tuiImageFor). Only the terminal-host paint
+	// touches it; the graphical path composites straight from its scratch
+	// buffer and needs nothing kept.
+	tuiImgCache []tuiImgEntry
 
 	// Cached size in cells
 	cols, rows int
@@ -237,6 +242,11 @@ func (t *PurfecTerm) toChild(b []byte) {
 // Until purfecterm's sendToPTY falls back to the input callback, the trinket
 // owns this relay. With tracking OFF, everything falls through to the local
 // pseudo-key path (selection, scrollback) exactly as before.
+
+// mouseTrackAnyEvent is DECSET 1003: report motion whether or not a button is
+// held. 1000 is presses only and 1002 adds motion WHILE dragging; both of those
+// a terminal host already receives, so this is the one that needs asking for.
+const mouseTrackAnyEvent = 1003
 
 // mouseTracking reports the hosted app's mouse tracking and encoding modes
 // (0 = off).
@@ -640,9 +650,24 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 	// updateTerminalSize no-ops when nothing changed.
 	t.updateTerminalSize()
 
+	// Tell the child how big a cell is in pixels, and paint whatever pictures
+	// it drew. Both need the OUTER terminal's cell size, which only a cell
+	// surface can supply and only by having asked for it.
+	t.pushCellPixelSizeTUI(p)
+	// A child in any-event tracking is waiting for motion with no button
+	// held. On a cell surface those reports do not exist until the outer
+	// terminal is asked for them, so ask — every frame the child still wants
+	// them, since the request lasts one frame (core.MotionTracker).
+	if mode, _ := t.mouseTracking(); mode == mouseTrackAnyEvent {
+		p.RequestMotionTracking()
+	}
+
 	// Get terminal cells
 	cells := t.terminal.GetCells()
 	buf := t.terminal.Buffer()
+	// Pictures are queued AFTER this trinket's own text — see the note in
+	// renderImagesTUI on why the order is load-bearing now.
+	defer t.renderImagesTUI(p, buf, metrics, bounds)
 
 	// Render each cell. The purfecterm grid is LOGICAL — one cell per
 	// character, a wide character occupying ONE cell with its visual width
@@ -899,35 +924,17 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	// the blink phase so the cursor shows immediately.
 	t.resetCursorBlink()
 
-	// Forward the key to the terminal, in the encoder's own vocabulary. It
-	// knows the keypad's "Enter" and not the home row's "Return", and its
-	// last resort for a name it does not know is to send the name's LETTERS
-	// -- so an untranslated "Return" typed the word into the child.
-	t.terminal.HandleKeyString(terminalKeyName(event.Key))
+	// Forward the key to the terminal under its own name.
+	//
+	// This used to rename "Return" to "Enter" first, because the encoder knew
+	// only the keypad's "Enter" and would otherwise fall through and type the
+	// letters R-e-t-u-r-n at the child. purfecterm v0.2.48 knows both keys and
+	// encodes them apart — CR for the home row, SS3 M for the keypad — so the
+	// rename now does active harm: it would hand the home-row key the keypad's
+	// sequence, which is the confusion it was written to avoid, inverted.
+	t.terminal.HandleKeyString(event.Key)
 	t.Update()
 	return true
-}
-
-// terminalKeyName renames a key into the terminal encoder's vocabulary.
-//
-// Only one name differs today: the encoder predates the home-row/keypad split
-// and calls the carriage return "Enter". Everything else is already the same
-// in both, and an unknown name is passed through unchanged.
-func terminalKeyName(key string) string {
-	prefix, base := "", key
-	for {
-		if len(base) > 2 && (strings.HasPrefix(base, "S-") ||
-			strings.HasPrefix(base, "M-") || strings.HasPrefix(base, "C-") ||
-			strings.HasPrefix(base, "s-")) {
-			prefix, base = prefix+base[:2], base[2:]
-			continue
-		}
-		break
-	}
-	if base == "Return" {
-		return prefix + "Enter"
-	}
-	return key
 }
 
 // handleScrollbackKey runs the scrollback navigation locally (it scrolls the

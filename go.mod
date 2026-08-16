@@ -10,9 +10,9 @@ require (
 	github.com/gogpu/gputypes v0.5.1
 	github.com/gogpu/wgpu v0.30.32
 	github.com/phroun/argwild v0.0.1
-	github.com/phroun/direct-key-handler v0.3.12
-	github.com/phroun/key-sequence-processor v0.1.5
-	github.com/phroun/purfecterm v0.2.45
+	github.com/phroun/direct-key-handler v0.3.21
+	github.com/phroun/key-sequence-processor v0.1.8
+	github.com/phroun/purfecterm v0.2.49
 	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
@@ -25,7 +25,7 @@ require (
 	github.com/go-webgpu/webgpu v0.5.4 // indirect
 	github.com/gogpu/gpucontext v0.24.0 // indirect
 	github.com/gogpu/naga v0.17.16 // indirect
-	github.com/phroun/pawscript v0.2.11-alpha // indirect
+	github.com/phroun/pawscript v0.2.12-alpha // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	golang.org/x/net v0.57.0 // indirect

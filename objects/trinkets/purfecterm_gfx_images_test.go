@@ -3,6 +3,7 @@ package trinkets
 import (
 	"encoding/base64"
 	"fmt"
+	"image"
 	"image/color"
 	"math"
 	"strings"
@@ -187,11 +188,17 @@ func TestGfxCellPixelSizeIsRealDeviceSize(t *testing.T) {
 		t.Errorf("reported cell size = %dx%d px, want %dx%d",
 			gotW, gotH, int(math.Round(wantW)), int(math.Round(wantH)))
 	}
-	if gotW == gfxCellSubUnits || gotH == gfxCellSubUnits {
-		t.Errorf("cell size %dx%d is the synthetic ?1016 grid, not device pixels", gotW, gotH)
+	if gotW == 1000 || gotH == 1000 {
+		t.Errorf("cell size %dx%d is a synthetic grid, not device pixels", gotW, gotH)
 	}
-	if pw, ph := buf.GetPointerPixelUnit(); pw != gfxCellSubUnits || ph != gfxCellSubUnits {
-		t.Errorf("pointer pixel unit = %dx%d, want %d square", pw, ph, gfxCellSubUnits)
+	// The pointer unit is the SAME as the reported cell size, not a synthetic
+	// grid of its own. This assertion used to demand 1000 square, which is the
+	// half of the split that broke the mouse: the app has one number to divide
+	// a ?1016 coordinate by - the cell size CSI 16 t gave it - so a report
+	// encoded in any other unit lands the click off by the ratio between them.
+	// See TestPixelReportDividesByTheAdvertisedCellSize.
+	if pw, ph := buf.GetPointerPixelUnit(); pw != gotW || ph != gotH {
+		t.Errorf("pointer unit = %dx%d, want the advertised cell %dx%d", pw, ph, gotW, gotH)
 	}
 
 	// The size is reported so image geometry works: a bitmap taller than one
@@ -448,5 +455,315 @@ func TestGfxKittyPlaceholderRendering(t *testing.T) {
 	if n != 2*cellW*cellH {
 		t.Errorf("image coverage = %d px, want %d: something is drawn on top of it",
 			n, 2*cellW*cellH)
+	}
+}
+
+// gfxImageTermScaled is gfxImageTerm on a surface magnified by scale, standing
+// on a screen whose content scale is density. The two are given separately
+// BECAUSE they are separate: the magnification is what this application chose,
+// the density is what panel it is on, and every interesting case is one where
+// they differ.
+func gfxImageTermScaled(t *testing.T, scale int, density float64) (*PurfecTerm, *raster.Backend) {
+	t.Helper()
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.NewScaled(640, 400, scale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetDisplayDensity(density)
+	core.SetTextMeasurer(b)
+
+	term := NewPurfecTerm()
+	if term.Terminal() == nil {
+		t.Skip("terminal unavailable")
+	}
+	term.SetBounds(core.UnitRect{Width: 640, Height: 400})
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+	return term, b
+}
+
+// On a HiDPI SCREEN the cell we ADVERTISE is deliberately larger than the one
+// we paint, by the screen's density.
+//
+// The kitty protocol gives a terminal no way to state a display scale - a
+// client works density out purely from the pixels-per-cell it is told - so
+// claiming a bigger cell is the only way to ask for a denser rendering. A
+// browser told a cell is twice its real size lays out half as many css pixels
+// in it, which is precisely a device-pixel ratio of 2, and the image it sends
+// back is twice the size we draw it at.
+func TestGfxOversampledCellIsAdvertisedLarger(t *testing.T) {
+	const scale, density = 2, 2.0
+	term, _ := gfxImageTermScaled(t, scale, density)
+	buf := term.Terminal().Buffer()
+
+	realW, realH := cellPx(term)
+	gotW, gotH := buf.GetCellPixelSize()
+	wantW := int(math.Round(math.Round(realW) * density))
+	wantH := int(math.Round(math.Round(realH) * density))
+	if gotW != wantW || gotH != wantH {
+		t.Errorf("advertised cell = %dx%d, want the real %vx%v times the density %v = %dx%d",
+			gotW, gotH, math.Round(realW), math.Round(realH), density, wantW, wantH)
+	}
+	// The pointer unit follows the advertised cell, so the mouse stays
+	// self-consistent through the oversample (it encodes in these units).
+	if pw, ph := buf.GetPointerPixelUnit(); pw != gotW || ph != gotH {
+		t.Errorf("pointer unit %dx%d drifted from the advertised cell %dx%d", pw, ph, gotW, gotH)
+	}
+}
+
+// And the image that comes back is drawn at the size we PAINT, not the size it
+// was sent at: an image covering N advertised cells covers N real cells. That
+// halving is what turns the child's oversampled render into a crisp one rather
+// than a picture spilling past its pane.
+func TestGfxOversampledImageDrawsAtRealCellSize(t *testing.T) {
+	const scale, density = 2, 2.0
+	term, b := gfxImageTermScaled(t, scale, density)
+
+	realW, realH := cellPx(term)
+	rcw, rch := int(math.Round(realW)), int(math.Round(realH))
+	if rcw <= 0 || rch <= 0 {
+		t.Fatalf("no real cell (%vx%v)", realW, realH)
+	}
+	// Two advertised cells wide and tall - so four REAL cells of source
+	// pixels, which must land on two real cells of screen.
+	acw, ach := rcw*int(density), rch*int(density)
+	imgW, imgH := acw*2, ach*2
+	pix := make([]byte, imgW*imgH*4)
+	for i := 0; i < len(pix); i += 4 {
+		pix[i], pix[i+1], pix[i+2], pix[i+3] = 0, 255, 0, 255
+	}
+
+	term.Feed([]byte("\x1b[1;1H"))
+	// c/r place it across exactly two advertised cells, which is what a
+	// client sizing against the cell we reported would ask for.
+	term.Feed(kittyRGBA(imgW, imgH, pix, ",c=2,r=2"))
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+
+	img := b.Image()
+	green := func(x, y int) bool {
+		c := img.RGBAAt(x, y)
+		return c.G > 200 && c.R < 80 && c.B < 80
+	}
+	// Inside two REAL cells: painted.
+	if !green(rcw/2, rch/2) {
+		t.Error("the image did not paint at its anchor")
+	}
+	if !green(2*rcw-2, 2*rch-2) {
+		t.Error("the image did not cover the two real cells it claims")
+	}
+	// Beyond them: NOT painted. Undivided, it would have spilled to four.
+	if green(2*rcw+rcw/2, rch/2) {
+		t.Errorf("the image spilled past two real cells - it was drawn at the "+
+			"advertised size (%dx%d) instead of the painted one", imgW, imgH)
+	}
+	if green(rcw/2, 2*rch+rch/2) {
+		t.Error("the image spilled below two real cells")
+	}
+}
+
+// The oversample path halves an image on its way to the screen, and what that
+// halving keeps is the whole of the source, not a sample of it.
+//
+// A 1px checkerboard is the honest test: averaged, every destination pixel is
+// the same mid-tone, because each covers one white pixel and one black. Sampled
+// - two of the four read, two dropped - the destination keeps the checker, at
+// half the frequency and full contrast. That second picture is the aliasing
+// this is here to prevent; it is also indistinguishable from a correct render
+// until the source has fine detail, which is exactly when it matters.
+func TestGfxDownscaleAveragesRatherThanSamples(t *testing.T) {
+	checker := func(w, h int) *image.NRGBA {
+		im := image.NewNRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				v := byte(0)
+				if (x+y)%2 == 0 {
+					v = 255
+				}
+				o := im.PixOffset(x, y)
+				im.Pix[o], im.Pix[o+1], im.Pix[o+2], im.Pix[o+3] = v, v, v, 255
+			}
+		}
+		return im
+	}
+
+	// Exactly halved, and one pixel off exactly halved: a window an odd number
+	// of pixels wide produces the second, and ApproxBiLinear's fixed 2x2 tap
+	// aliases badly there.
+	for _, c := range []struct{ srcW, srcH, dstW, dstH int }{
+		{64, 32, 32, 16},
+		{65, 33, 33, 17},
+	} {
+		src := checker(c.srcW, c.srcH)
+		dst := image.NewRGBA(image.Rect(0, 0, c.dstW, c.dstH))
+		if !boxDownscaleGfx(dst, src, src.Rect) {
+			t.Errorf("%dx%d -> %dx%d: declined to average", c.srcW, c.srcH, c.dstW, c.dstH)
+			continue
+		}
+		// The last row/column of an odd source is a half block, so it keeps
+		// the checker legitimately; the interior must be flat.
+		lo, hi := 255, 0
+		for y := 0; y < c.dstH-1; y++ {
+			for x := 0; x < c.dstW-1; x++ {
+				v := int(dst.RGBAAt(x, y).R)
+				if v < lo {
+					lo = v
+				}
+				if v > hi {
+					hi = v
+				}
+			}
+		}
+		if hi-lo > 2 {
+			t.Errorf("%dx%d -> %dx%d: interior ranges %d..%d, want one flat mid-tone: "+
+				"the checker survived, so pixels were dropped rather than averaged",
+				c.srcW, c.srcH, c.dstW, c.dstH, lo, hi)
+		}
+		if lo < 120 || hi > 136 {
+			t.Errorf("%dx%d -> %dx%d: mid-tone %d..%d, want ~128", c.srcW, c.srcH, c.dstW, c.dstH, lo, hi)
+		}
+	}
+}
+
+// Blocks only apply where they land exactly and actually reduce; everything
+// else stays with the resampler, which handles arbitrary ratios.
+func TestGfxDownscaleDeclinesWhereBlocksDoNotFit(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 64, 32))
+	for _, c := range []struct {
+		dstW, dstH int
+		why        string
+	}{
+		{128, 64, "an upscale"},
+		{50, 30, "a ratio under 2 on both axes"},
+		{20, 16, "blocks that miss dst's width"},
+	} {
+		dst := image.NewRGBA(image.Rect(0, 0, c.dstW, c.dstH))
+		if boxDownscaleGfx(dst, src, src.Rect) {
+			t.Errorf("64x32 -> %dx%d: averaged %s", c.dstW, c.dstH, c.why)
+		}
+	}
+}
+
+// A crop is downscaled from where it sits, not from the image's origin.
+func TestGfxDownscaleHonoursTheSourceRect(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			o := src.PixOffset(x, y)
+			v := byte(0)
+			if x >= 4 && y >= 4 {
+				v = 200 // only the bottom-right quadrant is lit
+			}
+			src.Pix[o], src.Pix[o+1], src.Pix[o+2], src.Pix[o+3] = v, v, v, 255
+		}
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	if !boxDownscaleGfx(dst, src, image.Rect(4, 4, 8, 8)) {
+		t.Fatal("declined the cropped 4x4 -> 2x2")
+	}
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			if got := dst.RGBAAt(x, y).R; got != 200 {
+				t.Errorf("crop pixel (%d,%d) = %d, want 200: averaged from the wrong origin", x, y, got)
+			}
+		}
+	}
+}
+
+// The oversample follows the SCREEN, not this application's magnification.
+//
+// These two numbers were one number for a while, and it read correctly the
+// whole time a user's magnification happened to match their panel. It does not
+// have to. Someone on a HiDPI screen who asks for a magnification of 1 — "use
+// my real pixels, I will pick bigger fonts" — still has a child process that
+// asks the window system for the density, gets 2, and renders to it. Deriving
+// the correction from the magnification switches it off in exactly that case
+// and leaves every picture twice the size it should be, which is the same
+// symptom as having no correction at all.
+//
+// So: vary them independently, and check the advertised cell follows the panel.
+func TestGfxOversampleFollowsTheScreenNotTheMagnification(t *testing.T) {
+	for _, c := range []struct {
+		scale   int
+		density float64
+		want    float64
+	}{
+		{1, 2, 2}, // real pixels on a HiDPI panel: the case that was broken
+		{2, 2, 2}, // magnification matching the panel: the case that hid it
+		{2, 1, 1}, // a magnified view of an ordinary screen: no correction owed
+		{1, 1, 1},
+	} {
+		term, _ := gfxImageTermScaled(t, c.scale, c.density)
+		if got := term.gfx.oversample; got != c.want {
+			t.Errorf("scale=%d density=%v: oversample %v, want %v",
+				c.scale, c.density, got, c.want)
+		}
+		realW, _ := cellPx(term)
+		gotW, _ := term.Terminal().Buffer().GetCellPixelSize()
+		if want := int(math.Round(math.Round(realW) * c.want)); gotW != want {
+			t.Errorf("scale=%d density=%v: advertised cell %d px, want %d",
+				c.scale, c.density, gotW, want)
+		}
+	}
+}
+
+// The density goes INSIDE the rounding to whole pixels, not after it.
+//
+// A cell is rarely a whole number of device pixels — 14 units at 1.667 px/unit
+// is 23.33 — and the one we advertise has to be whole. Round it first and
+// multiply after and the slack is multiplied too: 23 becomes 46 where an exact
+// doubling wants 47. That is half a pixel per row of error, in the direction
+// that makes the child's window bigger than the pane, and it lands as content
+// cut off at the edge. Take the density first and round once and it is a
+// quarter of a pixel, in no particular direction.
+//
+// The other oversample tests cannot catch this: their cell divides evenly, so
+// both orders agree.
+func TestGfxOversampleRoundsAfterApplyingTheDensity(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.NewScaled(640, 400, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetFontSize(10) // 2 * 10/12 = 1.667 px/unit: a deliberately fractional cell
+	b.SetDisplayDensity(2)
+	core.SetTextMeasurer(b)
+
+	term := NewPurfecTerm()
+	if term.Terminal() == nil {
+		t.Skip("terminal unavailable")
+	}
+	term.SetFont(&core.Font{Name: "ui-text", Size: 10})
+	term.SetBounds(core.UnitRect{Width: 640, Height: 400})
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+
+	realW, realH := cellPx(term) // unrounded, in real device pixels
+	f := term.gfx.oversample
+	if f != 2 {
+		t.Fatalf("oversample = %v, want 2", f)
+	}
+	if realH == math.Trunc(realH) {
+		t.Skipf("cell height %v is whole; this test needs a fractional one to mean anything", realH)
+	}
+
+	gotW, gotH := term.Terminal().Buffer().GetCellPixelSize()
+	wantW := int(math.Round(realW * f))
+	wantH := int(math.Round(realH * f))
+	// What the discarded order would have produced, named so a failure says
+	// which mistake was made rather than only that a number is off.
+	doubleRounded := int(math.Round(math.Round(realH) * f))
+	if gotH != wantH {
+		if gotH == doubleRounded {
+			t.Errorf("advertised cell height %d px: the real %.3f was rounded to %v BEFORE "+
+				"the density was applied; want round(%.3f * %v) = %d",
+				gotH, realH, math.Round(realH), realH, f, wantH)
+		} else {
+			t.Errorf("advertised cell height = %d px, want round(%.3f * %v) = %d", gotH, realH, f, wantH)
+		}
+	}
+	if gotW != wantW {
+		t.Errorf("advertised cell width = %d px, want round(%.3f * %v) = %d", gotW, realW, f, wantW)
 	}
 }
