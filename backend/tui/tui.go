@@ -1570,29 +1570,19 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	unitY := t.outerToUnitsY(y, frame)
 
 	// For drag events, position is embedded: MouseLeftDrag@x,y (also raw
-	// 1-based, same conversion).
-	//
-	// Which of the two sources a gesture used is the thing the trace below
-	// exists to record: the stash is shared state a press depends on and a
-	// motion never touches, so it is the one place the two can diverge.
-	src := "stash"
+	// 1-based, same conversion). Everything else uses the stashed position
+	// from the Mouse@x,y key that preceded it.
 	if strings.Contains(key, "@") {
 		var dragX, dragY int
 		parts := strings.SplitN(key, "@", 2)
 		if len(parts) == 2 {
 			if _, err := fmt.Sscanf(parts[1], "%d,%d", &dragX, &dragY); err == nil {
 				x, y = dragX, dragY
-				src = "embedded"
 				unitX = t.outerToUnitsX(dragX, frame)
 				unitY = t.outerToUnitsY(dragY, frame)
 			}
 		}
 		key = parts[0] // Strip position from key for matching
-	}
-
-	if core.MouseTracing() {
-		core.MouseTracef("outer  %-18s raw=(%d,%d) via=%-8s pixelMouse=%v outerCell=%dx%d -> units=(%v,%v)",
-			key, x, y, src, t.pixelMouse, t.outerCellW, t.outerCellH, unitX, unitY)
 	}
 
 	var event core.Event
