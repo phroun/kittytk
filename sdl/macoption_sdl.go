@@ -2,17 +2,23 @@
 
 package sdl
 
+import (
+	"runtime"
+
+	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
+)
+
 // macOS Option-key decoding.
 //
 // On macOS the Option key composes text rather than acting as a plain Mega
-// modifier: pressing Option+a produces the Unicode character "å", which SDL
-// delivers as a TextInput event. Left untranslated that character is simply
+// modifier: pressing Option+a produces the Unicode character "å", which arrives
+// as an SDLTextInput event. Left untranslated that character is simply
 // typed, so Meta shortcuts (Select All is M-a, etc.) never fire.
 //
 // The TUI backend already solves this in the direct-key-handler, whose
 // gold-standard table maps each Option-composed character (US layout) back to
 // its "M-key" notation. We mirror that table verbatim here and apply it to
-// SDL's TextInput characters when running on macOS, so both backends emit the
+// the SDLTextInput characters when running on macOS, so both backends emit the
 // same key names for the same physical keystroke.
 
 // macOSOptionChars maps the Unicode characters a US-layout macOS keyboard
@@ -118,6 +124,157 @@ func decodeMacOSOptionChar(r rune) (string, bool) {
 	return decoded, ok
 }
 
+// pendingKeyPress is a key press that has been NAMED but not yet dispatched,
+// because the text it produces has not arrived.
+//
+// SDL splits one keystroke in two: the KEY_DOWN carries the physical key and
+// the modifiers held, which is what names it, and a TEXT_INPUT (or, for a dead
+// key, a TEXT_EDITING) follows with whatever it produced. Waiting the one event
+// costs nothing perceptible and buys two things: the pairing is observed rather
+// than looked up, and — because the observation is recorded BEFORE the press is
+// dispatched — anything that reads KeyChordText for this chord sees this
+// keystroke's answer rather than the last one's. The first press of a chord is
+// as good as the hundredth.
+//
+// A press that produces nothing is flushed unchanged, so nothing is lost by
+// waiting for text that never comes.
+//
+// It began as the macOS Option case and is general because that case was never
+// special: it was a press whose text arrives in a separate event, which is
+// every printable key.
+type pendingKeyPress struct {
+	key      string
+	scancode uint32
+	repeat   bool
+	surface  *sdlSurface
+
+	// optionChord marks a macOS Option chord, where the keystroke is a CHORD
+	// that happens to compose — M-e is a shortcut whether or not an accent
+	// comes of it.
+	//
+	// A plain printable is the opposite: it is nothing but the text it makes.
+	// The distinction decides both of the questions asked when no text arrives:
+	//
+	// A composition that follows it is the chord's own output, so the chord is
+	// dispatched carrying it. A composition following a plain key belongs to
+	// the input method taking that keystroke over — hold a letter down on macOS
+	// and its accent palette opens one — and is not the key's to report.
+	//
+	// And no text at all still leaves a chord to report, because the shortcut
+	// was pressed. A plain key with no text typed nothing: macOS hands a held
+	// letter to its palette as marked text rather than committing it.
+	optionChord bool
+}
+
+// macOptionMayCompose reports whether this key-down is one this platform
+// answers with a composed character, and so should be held for it.
+func macOptionMayCompose(sym sdl3.Keysym) bool {
+	return runtime.GOOS == "darwin" && optionComposes(sym)
+}
+
+// keyAwaitsText reports whether SDL will follow this key-down with text, and so
+// whether its press should be held until the text arrives.
+//
+// Two cases, and they are the same case. A macOS Option chord composes a
+// character; a plain or shifted printable produces the character it shows. Both
+// are a press whose text comes in the next event, and both want the text
+// recorded before the press goes out.
+//
+// Everything else — a named key, a Control chord, a Command chord — produces no
+// text at all and is dispatched where it is read.
+func keyAwaitsText(sym sdl3.Keysym) bool {
+	if macOptionMayCompose(sym) {
+		return true
+	}
+	if sym.Mod&(sdl3.KMOD_CTRL|sdl3.KMOD_GUI|sdl3.KMOD_ALT) != 0 {
+		return false
+	}
+	// A pad cap is named from the key, prefix and all, and the text event it
+	// produces is thrown away (padTyped) so the one press does not arrive
+	// twice. There is no text coming that this press could wait for — waiting
+	// would strand it until some later event flushed it.
+	if _, _, _, isPad := keypadKey(sym, sym.Mod&sdl3.KMOD_NUM != 0); isPad {
+		return false
+	}
+	return sym.Sym >= 32 && sym.Sym < 127
+}
+
+// optionComposes reports whether the keystroke is the kind macOS composes for:
+// Option held on a printable key, with nothing else that would claim it first.
+//
+// The conditions mirror encodeKey's own alt branch. Ctrl and Command are
+// excluded because macOS composes nothing for those, so waiting for a character
+// there would only delay the chord until the next event flushed it. Kept apart
+// from the platform test so the conditions can be read — and tested — anywhere.
+func optionComposes(sym sdl3.Keysym) bool {
+	if sym.Mod&sdl3.KMOD_ALT == 0 {
+		return false
+	}
+	if sym.Mod&(sdl3.KMOD_CTRL|sdl3.KMOD_GUI) != 0 {
+		return false
+	}
+	return sym.Sym >= 32 && sym.Sym < 127
+}
+
+// takePendingPress claims the held chord, if there is one.
+func (p *Platform) takePendingPress() *pendingKeyPress {
+	pending := p.pendingPress
+	p.pendingPress = nil
+	return pending
+}
+
+// dispatchPendingPress sends a held chord with the character it composed, records
+// the pairing, and registers the press so its release names it the same.
+//
+// composed is empty when nothing was composed — the chord is still the
+// keystroke that happened, and is dispatched exactly as it would have been.
+func (p *Platform) dispatchPendingPress(pending *pendingKeyPress, composed string) {
+	if pending == nil {
+		return
+	}
+	p.emitKeyPress(pending.surface, keyPress{
+		chord: pending.key,
+		// Nothing composed leaves the memo alone rather than recording a
+		// silence: the text may simply not have come, and the chord still types
+		// what the key itself shows.
+		produced: composed,
+		observed: composed != "",
+		scancode: pending.scancode,
+		held:     true,
+		repeat:   pending.repeat,
+		origin:   "held",
+	})
+}
+
+// flushPendingPress dispatches a held chord that no composition followed.
+//
+// Called before any other event is handled and again when the queue drains, so
+// a chord that composes nothing waits for one event at most and never for an
+// idle keyboard.
+func (p *Platform) flushPendingPress() {
+	pending := p.takePendingPress()
+	if pending == nil {
+		return
+	}
+	// A plain key that produced no text produced NOTHING, and there is nothing
+	// to report.
+	//
+	// A plain printable is only the text it makes. When the text does not come,
+	// an input method has the keystroke: macOS hands a held letter over as
+	// marked text rather than committing it, and goes on delivering repeat
+	// key-downs behind the palette. Dispatching those committed the very
+	// character the palette had opened to replace, and then went on committing
+	// one per repeat.
+	//
+	// An Option chord is not that. It is a chord that happens to compose, so it
+	// is dispatched whether or not anything came of it — M-e is the shortcut
+	// the user pressed either way.
+	if !pending.optionChord {
+		return
+	}
+	p.dispatchPendingPress(pending, "")
+}
+
 // macOSDeadKeys maps the composition a macOS dead-key Option chord opens back
 // to its M-key notation.
 //
@@ -144,4 +301,77 @@ var macOSDeadKeys = map[string]string{
 func decodeMacOSDeadKey(composition string) (string, bool) {
 	key, ok := macOSDeadKeys[composition]
 	return key, ok
+}
+
+// deadKeyChords is macOSDeadKeys read the other way: the chords that arm an
+// accent rather than typing one, by name.
+//
+// Built from the same table so the two cannot disagree about which five keys
+// these are.
+var deadKeyChords = func() map[string]bool {
+	chords := make(map[string]bool, len(macOSDeadKeys))
+	for _, chord := range macOSDeadKeys {
+		chords[chord] = true
+	}
+	return chords
+}()
+
+// isDeadKeyChord reports whether a chord is one of the five that arm an accent.
+//
+// Known from the chord alone, at the moment it is pressed, which is the point.
+// Waiting to learn it from what the keystroke produced means never learning it
+// at all when the keystroke produces nothing — and macOS often delivers neither
+// text nor a composition for these, keeping the armed accent to itself. The
+// chord then went out unrecorded, a consumer fell through to a table of what
+// such a chord types, and the accent was inserted.
+//
+// That failure was invisible after the first success: once anything recorded
+// the chord, every later press of it behaved, so the bug showed only as the
+// first few presses of each dead key misbehaving and then stopping.
+func isDeadKeyChord(chord string) bool { return deadKeyChords[chord] }
+
+// macOptionChordFor names the M- chord a macOS Option keystroke makes, from the
+// key and the modifier held.
+//
+// It exists because translateKey does not always get the chance. macOS can
+// report Option as a level-3 shift, and can report the key itself as the
+// character it composed — either of which makes translateKey yield the key-down
+// entirely and leave the chord to be recovered later from the text. That works
+// for a chord that produces text. A dead key produces none, so there is nothing
+// to recover it from, and the only moment it can be known is the press.
+//
+// Deliberately not a substitute for translateKey: it answers one narrow
+// question — which M- chord is this — for the one caller that has to ask before
+// anything has been produced.
+func macOptionChordFor(sym sdl3.Keysym) (string, bool) {
+	if runtime.GOOS != "darwin" {
+		return "", false
+	}
+	if sym.Mod&(sdl3.KMOD_ALT|sdl3.KMOD_MODE) == 0 {
+		return "", false
+	}
+	if sym.Mod&(sdl3.KMOD_CTRL|sdl3.KMOD_GUI) != 0 {
+		return "", false
+	}
+	if sym.Sym < 32 || sym.Sym >= 127 {
+		return "", false
+	}
+	return "M-" + string(rune(sym.Sym)), true
+}
+
+// isArmedAccent reports whether text an Option chord produced is one of the
+// accents a dead key ARMS rather than types.
+//
+// Which event carries it is not something to depend on. The comment above says
+// macOS reports these as an in-flight composition, and that is what the
+// composition path was built for — but the same accent also arrives as ordinary
+// committed text, and then it was recorded as what the chord typed. Anything
+// falling through to what M-i types then inserted the accent, and the next
+// keystroke composed the accented character behind it: "ˆû".
+//
+// So the accent is what identifies the case, not the event it came on. A dead
+// key types nothing whichever way its accent is delivered.
+func isArmedAccent(text string) bool {
+	_, ok := macOSDeadKeys[text]
+	return ok
 }

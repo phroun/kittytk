@@ -980,6 +980,36 @@ func (d *Desktop) Backend() core.RenderBackend {
 	return d.backend
 }
 
+// KeyChordText returns the text this host has watched its own keyboard produce
+// for a chord ("M-a" -> "å"), and whether it has seen any.
+//
+// The observation belongs to whichever half of the host can see both the key
+// and the text it produced — the graphical platform. A trinket reaches it
+// through here rather than through the platform directly, since the platform is
+// a build-tagged package it must not import. Nothing is observed on a host that
+// cannot see the pairing, and an application then falls back to whatever table
+// it carries. See core.KeyChordTextSource.
+func (d *Desktop) KeyChordText(chord string) (string, bool) {
+	d.mu.RLock()
+	p := d.platform
+	d.mu.RUnlock()
+	if src, ok := p.(core.KeyChordTextSource); ok {
+		return src.KeyChordText(chord)
+	}
+	return "", false
+}
+
+// AllKeyChordText returns every text-for-chord this host has observed.
+func (d *Desktop) AllKeyChordText() map[string]string {
+	d.mu.RLock()
+	p := d.platform
+	d.mu.RUnlock()
+	if src, ok := p.(core.KeyChordTextSource); ok {
+		return src.AllKeyChordText()
+	}
+	return nil
+}
+
 // WindowManager returns the window manager.
 func (d *Desktop) WindowManager() *window.WindowManager {
 	d.mu.RLock()
@@ -3730,7 +3760,32 @@ func (h *desktopSurfaceHandler) Frame(painter *core.Painter) {
 	// owner here and applies the caret request itself — the same job SurfaceHost
 	// does in native one-window-per-surface mode. Without this a focused
 	// terminal would ask for the platform caret and nothing would place it.
-	platform.ApplyTextCaret(s, painter.TextCaretRequest())
+	platform.ApplyTextCaret(s, platform.TextInputFrame{
+		Caret:    painter.TextCaretRequest(),
+		Sink:     h.FocusedTextSink(),
+		Complete: painter.Complete(),
+	})
+}
+
+// FocusedTextSink implements platform.TextSinkReporter: whether the trinket
+// holding focus in the desktop's ACTIVE window types.
+//
+// The platform asks this on the compositing path, where it finishes the frame
+// itself and cannot see into the window tree; Frame above asks it for the same
+// reason one layer down. See platform.TextInputFrame.
+func (h *desktopSurfaceHandler) FocusedTextSink() core.TextSinkState {
+	d := h.d
+	d.mu.RLock()
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if wm == nil {
+		return core.TextSinkUnknown
+	}
+	aw := wm.ActiveWindow()
+	if aw == nil {
+		return core.TextSinkUnknown
+	}
+	return core.FocusedTextSink(aw.FocusManager())
 }
 
 // FrameBase implements platform.BaseLayerPainter: it paints ONLY the
@@ -3840,6 +3895,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		return true
 
 	case core.KeyPressEvent:
+		core.KeyTracef("2 desktop  press   key=%q mods=%v text=%q", e.Key, e.Modifiers, e.Text)
 		// Pass-next-key mode is handled above, before event filters.
 		// Check global shortcuts first
 		if d.handleShortcut(e) {
@@ -3890,10 +3946,34 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 
 	case core.KeyReleaseEvent:
 		// When every modifier has gone up, lock in an in-progress window-cycle
-		// run's MRU order (the Alt-Tab "commit on release"). Only the graphical
-		// backend delivers releases; the WM ignores this on the TUI.
+		// run's MRU order (the Alt-Tab "commit on release"). The graphical
+		// backend has always delivered releases; the TUI one does too once the
+		// outer terminal has been asked for event reporting.
 		if e.Modifiers == 0 && wm != nil {
 			wm.NotifyModifiersReleased()
+		}
+
+		// Then route it onward, which nothing did: this case notified the
+		// window manager and returned false, so a release never reached a
+		// window, a focus scope or a trinket. Every level below had a
+		// HandleKeyPress and no HandleKeyRelease, so there was no path for one
+		// to travel even if this had tried.
+		//
+		// A hosted child that wants releases — a browser, which cannot know a
+		// held key was let go without them — was the thing this cost. It is
+		// routed like a paste rather than like a key press: straight to
+		// whatever holds focus, with no shortcuts, no menu bar and no
+		// window-cycle keys, because all of those are decided on the press and
+		// running them again on the way up would fire each of them twice.
+		if core.KeyTracing() {
+			core.KeyTracef("2 desktop  release key=%q mods=%v fm=%v wm=%v",
+				e.Key, e.Modifiers, fm != nil, wm != nil)
+		}
+		if fm != nil && fm.HandleKeyRelease(e) {
+			return true
+		}
+		if wm != nil {
+			return wm.HandleKeyRelease(e)
 		}
 		return false
 

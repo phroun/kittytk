@@ -52,6 +52,26 @@ type PurfecTerm struct {
 	// Track which mouse button is currently held for drag events
 	heldButton core.MouseButton
 
+	// keyPressedToChild names the keys whose PRESS this child was actually
+	// handed, so a release can be matched to one.
+	//
+	// A press only reaches here if nothing above claimed it first — a menu
+	// accelerator, a window shortcut, the window-cycle keys — and this trinket
+	// then claims some of them itself, for scrollback. A release is routed
+	// like a paste instead: straight to whatever holds focus, past all of
+	// that, because those gestures are decided on the press and running them
+	// again on the way up would fire each of them twice.
+	//
+	// Both halves of that are right and together they are wrong, because the
+	// child ends up told a key it never saw pressed has been let go. That is
+	// the same fault as a press with no release, seen from the other side, and
+	// it is just as unreadable to a guest tracking held keys.
+	//
+	// Keyed by the name the press arrived under, which is the name its release
+	// carries back: direct-key-handler names a release for its press. The
+	// matching release consumes the entry, and losing focus clears the rest.
+	keyPressedToChild map[string]bool
+
 	// Debug callback for cell inspection
 	onCellClicked func(info CellDebugInfo)
 
@@ -331,6 +351,15 @@ func (t *PurfecTerm) focused() bool { return t.HasFocus() || t.embeddedFocus.Loa
 // claims the platform caret. Distinct from focused(), which governs input and
 // the emulator's own focus reporting — a mirror must not disturb either.
 func (t *PurfecTerm) paintFocused() bool { return t.focused() && !t.mirrorPaint.Load() }
+
+// AcceptsTextInput implements core.TextSink: a terminal types, and so does
+// whatever is running in it — an editor hosted here is reached through this
+// trinket and has no separate say.
+//
+// Unconditional. A terminal with no child is still where keystrokes would go;
+// there is no read-only terminal, and an application that stops reading is not
+// something this side can see.
+func (t *PurfecTerm) AcceptsTextInput() bool { return true }
 
 // PaintMirror paints this terminal at the painter's position exactly as Paint
 // does, but as a read-only MIRROR: rendered unfocused (hollow cursor, no blink)
@@ -932,9 +961,89 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	// encodes them apart — CR for the home row, SS3 M for the keypad — so the
 	// rename now does active harm: it would hand the home-row key the keypad's
 	// sequence, which is the confusion it was written to avoid, inverted.
-	t.terminal.HandleKeyString(event.Key)
+	//
+	// A HELD key says so on the way out. The event names the key and marks it a
+	// repeat separately; the emulator's encoder reads the marker off the name,
+	// the way direct-key-handler writes it, so it goes back on here — the same
+	// trade the release makes just below. A guest that negotiated nothing has
+	// the marker taken off again one layer down and receives the press a legacy
+	// terminal would have sent, so nothing regresses for a program that cannot
+	// read it.
+	key := event.Key
+	if event.Repeat {
+		key += ":Repeat"
+	}
+	if core.KeyTracing() {
+		core.KeyTracef("3 trinket  press   key=%q flags=%d focused=%v",
+			key, t.guestKeyboardFlags(), t.terminal.IsFocused())
+	}
+	t.terminal.HandleKeyString(key)
+	// Written down so the release can be matched to it — see
+	// keyPressedToChild. Under the BARE name: the release names the key, not
+	// how long it was held.
+	if t.keyPressedToChild == nil {
+		t.keyPressedToChild = make(map[string]bool)
+	}
+	t.keyPressedToChild[event.Key] = true
 	t.Update()
 	return true
+}
+
+// HandleKeyRelease forwards a key coming back up to the child.
+//
+// Without this the release stopped here. TrinketBase.HandleKeyRelease returns
+// false, and nothing overrode it, so a guest that had negotiated the "kitty"
+// keyboard protocol's event reporting — as a browser must, to know a held key
+// was let go — received presses only. The SDL backend has been dispatching
+// these events all along; they arrived one call short of the child.
+//
+// The event carries the bare key name, so the ":Release" marker is put back
+// here: that is the form direct-key-handler produces and the form purfecterm's
+// encoder reads. The emulator drops it again unless the child asked for event
+// reporting, so a child that wants nothing still sees nothing.
+//
+// Scrollback keys are deliberately not consulted. That gesture is decided on
+// the press, and running it again on the way up would scroll twice — but a
+// scrollback key IS one the child was never handed, and its release is dropped
+// below for that reason rather than re-read here.
+//
+// The release goes only for a key whose press this child received (see
+// keyPressedToChild). Shift+PageUp scrolls and never reaches the guest; a menu
+// accelerator is taken before this trinket sees it at all. Sending their
+// releases anyway would tell the guest to let go of keys it was never holding.
+func (t *PurfecTerm) HandleKeyRelease(event core.KeyReleaseEvent) bool {
+	if t.terminal == nil {
+		return false
+	}
+	if !t.keyPressedToChild[event.Key] {
+		return false
+	}
+	delete(t.keyPressedToChild, event.Key)
+	// Same as the press: HandleKeyString drops input the emulator believes
+	// unfocused, and this event only reaches a FOCUSED trinket, so say so
+	// rather than let the release depend on a press having set it first.
+	t.terminal.SetFocused(true)
+	if core.KeyTracing() {
+		core.KeyTracef("3 trinket  release key=%q flags=%d focused=%v",
+			event.Key, t.guestKeyboardFlags(), t.terminal.IsFocused())
+	}
+	t.terminal.HandleKeyString(event.Key + ":Release")
+	return true
+}
+
+// guestKeyboardFlags reports the "kitty" keyboard enhancements the child has
+// negotiated, for the trace. Zero means it asked for nothing, in which case no
+// release can be sent to it however far the event travelled — that is the
+// protocol's rule, not a fault in this chain.
+func (t *PurfecTerm) guestKeyboardFlags() int {
+	if t.terminal == nil {
+		return -1
+	}
+	buf := t.terminal.Buffer()
+	if buf == nil {
+		return -1
+	}
+	return buf.KeyboardFlags()
 }
 
 // handleScrollbackKey runs the scrollback navigation locally (it scrolls the
@@ -1069,6 +1178,11 @@ func (t *PurfecTerm) HandleFocusOut() {
 	if t.terminal != nil {
 		t.terminal.SetFocused(false)
 	}
+	// A key held while focus moves away comes up somewhere else, so its
+	// release will never arrive here to consume what the press wrote down.
+	// Forgetting the lot is what keeps that from answering, much later, for a
+	// release belonging to a different press of the same key.
+	t.keyPressedToChild = nil
 	t.Update()
 }
 

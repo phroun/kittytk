@@ -80,22 +80,27 @@ func TestOuterPixelMouseCoordinateConversion(t *testing.T) {
 		t.Helper()
 		b.handleKey(pos)
 		b.handleKey(action)
-		select {
-		case ev := <-b.eventQueue:
-			mp, ok := ev.(core.MousePressEvent)
-			if !ok {
-				t.Fatalf("%s: dispatched as %T, want MousePressEvent", action, ev)
+		// The position report ahead of the press is the pointer arriving
+		// there, and dispatches as a move; the press is the event behind it.
+		var ev core.Event
+		for drained := false; !drained; {
+			select {
+			case e := <-b.eventQueue:
+				ev = e
+			default:
+				drained = true
 			}
-			return mp
-		default:
-			t.Fatalf("%s: no event dispatched", action)
-			return core.MousePressEvent{}
 		}
+		mp, ok := ev.(core.MousePressEvent)
+		if !ok {
+			t.Fatalf("%s: dispatched as %T, want MousePressEvent", action, ev)
+		}
+		return mp
 	}
 
 	// Cell mode: metrics 8x16, no pixel state. Mouse@3,2 → cell (2,1) left edge.
 	cell := &TUIBackend{metrics: core.DefaultCellMetrics(), eventQueue: make(chan core.Event, 8)}
-	if ev := press(cell, "Mouse@3,2", "MouseLeftPress"); ev.X != 16 || ev.Y != 16 {
+	if ev := press(cell, "Mouse@3,2", "MouseLeft"); ev.X != 16 || ev.Y != 16 {
 		t.Fatalf("cell mode: X,Y = %d,%d, want 16,16", ev.X, ev.Y)
 	}
 
@@ -110,14 +115,14 @@ func TestOuterPixelMouseCoordinateConversion(t *testing.T) {
 		outerCellW: 10,
 		outerCellH: 20,
 	}
-	if ev := press(px, "Mouse@26,51", "MouseLeftPress"); ev.X != 20 || ev.Y != 40 {
+	if ev := press(px, "Mouse@26,51", "MouseLeft"); ev.X != 20 || ev.Y != 40 {
 		t.Fatalf("pixel mode: X,Y = %d,%d, want 20,40", ev.X, ev.Y)
 	}
 
 	// A drag carries its position embedded in the action key; it must take the
 	// same pixel conversion. Mouse@ ... then a drag to px (5,5): cell 0, frac 5
 	// → X 5*8/10=4, Y 5*16/20=4.
-	px.handleKey("MouseLeftDrag@6,6")
+	px.handleKey("MouseDragLeft@6,6")
 	select {
 	case ev := <-px.eventQueue:
 		mv, ok := ev.(core.MouseMoveEvent)

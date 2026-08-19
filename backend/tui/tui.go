@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/phroun/direct-key-handler/keyboard"
@@ -107,13 +108,12 @@ type TUIBackend struct {
 	motionWanted bool
 	motionOn     bool
 
-	// What kitty currently has on screen. kittyBaseIDs is one id per block,
-	// the full picture; kittyPatchIDs are the deltas layered over them since
-	// the last full send. kittyNextID only ever counts up, so a new placement
-	// can never collide with one being deleted in the same frame.
-	// kittyPatchArea is the pixel area patched since the last full send, which
-	// is what decides when patching has stopped being cheaper than starting
-	// over.
+	// What the "kitty" graphics protocol currently has on screen. kittyBaseIDs is
+	// one id per block, the full picture; kittyPatchIDs are the deltas layered
+	// over them since the last full send. kittyNextID only ever counts up, so a
+	// new placement can never collide with one being deleted in the same frame.
+	// kittyPatchArea is the pixel area patched since the last full send, which is
+	// what decides when patching has stopped being cheaper than starting over.
 	kittyBaseIDs   []uint32
 	kittyPatchIDs  []uint32
 	kittyPatchArea int
@@ -183,7 +183,9 @@ type TUIBackend struct {
 	// flushImagesLocked). Compared by value, which is why a queued image must
 	// be one nobody else will overwrite.
 	shownImages []placedImage
-	hadImages   bool // last frame placed images (kitty needs them deleted)
+	// hadImages says the last frame placed images, which "kitty" graphics
+	// needs deleted before the next set.
+	hadImages bool
 
 	// Output writer
 	output io.Writer
@@ -245,8 +247,8 @@ type TUIOptions struct {
 	// AlternateScreen uses the alternate screen buffer (default: true)
 	AlternateScreen bool
 
-	// OSC52Clipboard mirrors Copy/Cut to the terminal's clipboard with the
-	// OSC 52 escape sequence (supported by iTerm2, xterm, kitty, wezterm,
+	// OSC52Clipboard mirrors Copy/Cut to the terminal's clipboard with the OSC 52
+	// escape sequence (supported by iTerm2, xterm, the kitty terminal, wezterm,
 	// tmux with set-clipboard, ...). When false the host uses its own internal
 	// clipboard only. Default: true.
 	OSC52Clipboard bool
@@ -297,6 +299,83 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 	return t
 }
 
+// enterTerminalModes turns on every outer-terminal mode this backend runs
+// under. RestoreTerminal turns them off again in the mirror order, and the two
+// are a pair: a mode enabled here that is not disabled there outlives the
+// process and lands on the user's shell.
+//
+// Split out of Init so the ORDER can be tested. Init cannot be: it opens the
+// controlling terminal and starts a keyboard reader on os.Stdin, neither of
+// which a test has.
+func (t *TUIBackend) enterTerminalModes() {
+	// Enable mouse if requested
+	if t.hasMouse {
+		t.writeTTY("\033[?1000h\033[?1002h\033[?1006h")
+	}
+
+	// Enter alternate screen
+	t.writeTTY("\033[?1049h")
+
+	// Enable the "kitty" keyboard protocol for better key detection.
+	//
+	// Flag 1 is disambiguation; flag 2 is event reporting, which is what makes
+	// the outer terminal send key RELEASE and repeat at all. Asking for 1 alone
+	// meant no release ever arrived here, so a hosted child that wanted them —
+	// a browser tracking a held key — could not be given what the terminal was
+	// never asked to send.
+	//
+	// AFTER the switch to the alternate screen, because the flag stack is
+	// per-screen and this is the screen the application runs on. Pushed before
+	// the switch it landed on the MAIN screen's stack, where nothing reads it:
+	// the outer terminal went on sending legacy keys for the whole session, so
+	// no release arrived however loudly this asked for one — and the push
+	// outlived us on the screen the shell came back to, which is how the first
+	// Ctrl+C after an exit printed "...9;5u" instead of interrupting.
+	// Disambiguate (1) + ReportEvents (2) + ReportAllKeys (8).
+	//
+	// ReportAllKeys is what makes a keypad key arrive AS a keypad key. Without
+	// it a terminal sends any key that produces text as that text and nothing
+	// else, so the pad's 7 goes down as the byte "7" — indistinguishable from
+	// the main row's, carrying no identity at all — while its repeats and its
+	// release, which have no legacy form and must go as CSI u, carry keycode
+	// 57406 and name the pad. One key, reported as two different keys, with a
+	// release for a press nobody made.
+	//
+	// Disambiguate alone does not close this: it promotes the pad keys that
+	// produce NO text, which is why P-Enter, P-Home and the pad arrows were
+	// always right and only the locked pad was wrong. There is no narrower lever.
+	// The application-keypad mode that would have been keypad-only is parsed and
+	// discarded by the kitty terminal, the protocol's own reference
+	// implementation (screen_alternate_keypad_mode, its handler for the mode,
+	// is an empty function), so this flag is the whole of the mechanism.
+	//
+	// The cost is that text stops arriving as text. Nothing here read it as
+	// text anyway — a key's name IS its character for a text key, and the
+	// KeyPressEvent's Text is derived from the name a few hundred lines below.
+	t.writeTTY("\033[>11u")
+
+	// Enable focus reporting. The outer terminal then sends CSI I and CSI O as
+	// it gains and loses focus, which is the only way this process can learn
+	// that the keyboard has gone elsewhere.
+	//
+	// It matters because of what happens to a key held across that moment: its
+	// key-up is delivered to whoever has the keyboard now and never arrives
+	// here, so without this notification the press would stand for good in
+	// anything tracking held keys. direct-key-handler releases them on the
+	// report; enabling the mode is what makes the report come.
+	t.writeTTY("\033[?1004h")
+
+	// Enable bracketed paste. Without this the outer terminal ships a paste as
+	// a raw byte flood — indistinguishable from very fast typing — which
+	// direct-key-handler then surfaces one key at a time, overrunning the event
+	// queue and dropping characters on a large paste. With it on, a paste
+	// arrives framed (\x1b[200~ … \x1b[201~) and is delivered whole via OnPaste.
+	t.writeTTY("\033[?2004h")
+
+	// Hide cursor initially
+	t.writeTTY("\033[?25l")
+}
+
 // Init initializes the terminal backend.
 func (t *TUIBackend) Init() error {
 	t.mu.Lock()
@@ -342,26 +421,7 @@ func (t *TUIBackend) Init() error {
 	// every row on the first present, exactly as it does after a resize.
 	t.needsLineClear = true
 
-	// Enable Kitty keyboard protocol for better key detection
-	t.writeTTY("\033[>1u")
-
-	// Enable mouse if requested
-	if t.hasMouse {
-		t.writeTTY("\033[?1000h\033[?1002h\033[?1006h")
-	}
-
-	// Enter alternate screen
-	t.writeTTY("\033[?1049h")
-
-	// Enable bracketed paste. Without this the outer terminal ships a paste as
-	// a raw byte flood — indistinguishable from very fast typing — which
-	// direct-key-handler then surfaces one key at a time, overrunning the event
-	// queue and dropping characters on a large paste. With it on, a paste
-	// arrives framed (\x1b[200~ … \x1b[201~) and is delivered whole via OnPaste.
-	t.writeTTY("\033[?2004h")
-
-	// Hide cursor initially
-	t.writeTTY("\033[?25l")
+	t.enterTerminalModes()
 
 	// The terminal is now ours. Join the set RestoreAll walks, so an exit path
 	// that never reaches Shutdown can still hand it back.
@@ -380,6 +440,32 @@ func (t *TUIBackend) Init() error {
 	t.keyboard.OnKey = t.handleKey
 	t.keyboard.OnPaste = func(content []byte) {
 		t.deliverPaste(string(content))
+	}
+	// The outer terminal's focus, surfaced as the toolkit's own focus event so
+	// a trinket cannot tell which backend it is running under. The graphical
+	// host has always sent these; this one had no way to know, so an
+	// application hosted in a terminal never learned the window had been left.
+	//
+	// The keys held at that moment have already been released by the handler
+	// before this runs — their key-ups go to whoever has the keyboard now and
+	// never arrive here — so anything reacting to the focus change sees a
+	// keyboard with nothing down, which is the truth.
+	t.keyboard.OnFocus = func(focused bool) {
+		select {
+		case t.eventQueue <- core.FocusEvent{Focused: focused}:
+		default:
+			// Queue full, drop event
+		}
+	}
+	// Keyboard states — the pad's lock, Caps Lock, focus — as toolkit events,
+	// so a trinket drawing an indicator repaints when one moves. The states
+	// themselves are read through Modes(); this is only the nudge.
+	t.keyboard.OnMode = func(m keyboard.Mode) {
+		select {
+		case t.eventQueue <- core.ModeEvent{Mode: core.Mode{Name: m.Name, Value: m.Value}}:
+		default:
+			// Queue full, drop event
+		}
 	}
 	if t.osc52Paste {
 		// OSC 52 clipboard responses (replies to our read query) are delivered
@@ -441,8 +527,8 @@ func (t *TUIBackend) Shutdown() {
 }
 
 // RestoreTerminal puts the terminal back the way it was found - mouse off,
-// cursor shown, alternate screen left, Kitty keyboard protocol popped, colours
-// reset - and does so at most once however many paths reach it.
+// cursor shown, alternate screen left, "kitty" keyboard protocol popped,
+// colours reset - and does so at most once however many paths reach it.
 //
 // It is separate from Shutdown, and exported, because the terminal is PROCESS
 // state, not backend state: whoever ends the process is responsible for it,
@@ -468,22 +554,24 @@ func (t *TUIBackend) RestoreTerminal() {
 		// Disable bracketed paste (harmless if the terminal never enabled it).
 		t.writeTTY("\033[?2004l")
 
-		// Leave alternate screen
-		t.writeTTY("\033[?1049l")
-
-		// Pop the Kitty keyboard protocol - AFTER leaving the alternate screen,
-		// because the flag stack is per-screen. Init pushes (\033[>1u) while
-		// still on the MAIN screen and only then switches to the alternate one,
-		// so a pop issued before switching back applies to the alternate
-		// screen's stack and leaves the main screen's push live. The shell
-		// inherits it and the first Ctrl+C prints an escape ("...9;5u")
-		// instead of interrupting.
+		// Pop the "kitty" keyboard protocol - BEFORE leaving the alternate
+		// screen, because the flag stack is per-screen and the alternate
+		// screen's is the one Init pushed onto. Popping after the switch back
+		// would pop the MAIN screen's stack, which we never pushed, and leave
+		// our own push standing on the screen we just left.
 		//
 		// Popping an empty stack is a no-op, so this stays safe on a terminal
 		// that ignored the push. The explicit reset after it covers a terminal
 		// that honours the flags but not the stack.
 		t.writeTTY("\033[<u")
 		t.writeTTY("\033[=0;1u")
+
+		// Focus reporting off. Left on, the shell that inherits this terminal
+		// is sent CSI I and CSI O on every alt-tab and types them as text.
+		t.writeTTY("\033[?1004l")
+
+		// Leave alternate screen
+		t.writeTTY("\033[?1049l")
 
 		// Reset colors
 		t.writeTTY("\033[0m")
@@ -1498,16 +1586,50 @@ func (t *TUIBackend) handleKey(key string) {
 			t.pendingMouseY = y
 			t.mu.Unlock()
 		}
-		return // Position events don't generate UI events
+		// The pointer is somewhere it was not, which is a move — the only kind
+		// there is with no button held. An action arriving right behind this
+		// one resolves against the same position, so a click reads as a move to
+		// the spot and then the press, which is what the pointer did.
+		t.handleMouseAction("MouseMove")
+		return
 	}
 
 	// Check for mouse action events — which may arrive MODIFIER-PREFIXED
-	// ("S-MouseRightPress" from a terminal that forwards shifted clicks, as
+	// ("S-MouseRight" from a terminal that forwards shifted clicks, as
 	// iTerm2 does), so the mouse-ness test looks past the prefixes.
 	if _, name := core.ParseKeyModifiers(key); strings.HasPrefix(name, "Mouse") {
 		t.handleMouseAction(key)
 		return
 	}
+
+	// A key coming back UP. The outer terminal sends these only because Init
+	// asks for event reporting (the "2" in CSI > 3 u); before that they never
+	// arrived, and this backend produced no KeyReleaseEvent at all, so a hosted
+	// child that wanted them could not be given any.
+	//
+	// The suffix comes off here so Key holds the bare name, matching what the
+	// SDL backend puts in the same field. Whoever forwards to a child puts the
+	// marker back — see the PurfecTerm trinket.
+	//
+	// A repeat is deliberately left as a press: it IS another press, every
+	// consumer already treats it as one, and the distinction only matters to a
+	// child that negotiated event reporting for itself.
+	if base, isRelease := strings.CutSuffix(key, ":Release"); isRelease {
+		mods, _ := core.ParseKeyModifiers(base)
+		if core.KeyTracing() {
+			core.KeyTracef("1 tui      release key=%q mods=%v", base, mods)
+		}
+		select {
+		case t.eventQueue <- core.KeyReleaseEvent{Key: base, Modifiers: mods}:
+		default:
+		}
+		return
+	}
+	// A REPEAT is a press, and it is also a repeat. The marker comes off the
+	// name — every consumer reads Key as a plain key, and one carrying a suffix
+	// would match nothing — but it is recorded on the event rather than thrown
+	// away, so a hosted guest that can read the distinction gets to.
+	key, repeated := strings.CutSuffix(key, ":Repeat")
 
 	// Parse modifiers while keeping the full key string
 	// Key names follow direct-key-handler convention:
@@ -1518,9 +1640,15 @@ func (t *TUIBackend) handleKey(key string) {
 	// - Shift combinations: "S-" prefix
 	mods, keyName := core.ParseKeyModifiers(key)
 
-	// Determine text content for printable characters
+	// Determine text content for printable characters.
+	//
+	// One RUNE, not one byte. Under ReportAllKeys the terminal sends no text at
+	// all and a key's name is the only place its character can come from — and
+	// a name is UTF-8, so a byte-length test silently dropped the text of every
+	// key outside ASCII the moment that flag went on.
 	var text string
-	if len(keyName) == 1 && keyName[0] >= 32 && keyName[0] < 127 {
+	if r, size := utf8.DecodeRuneInString(keyName); size == len(keyName) &&
+		r != utf8.RuneError && unicode.IsPrint(r) {
 		text = keyName
 	}
 
@@ -1528,6 +1656,10 @@ func (t *TUIBackend) handleKey(key string) {
 		Key:       key,  // Full key string including modifier prefixes
 		Modifiers: mods, // Also provide parsed modifiers for trinket convenience
 		Text:      text,
+		Repeat:    repeated,
+	}
+	if core.KeyTracing() {
+		core.KeyTracef("1 tui      press   key=%q mods=%v repeat=%v", key, mods, repeated)
 	}
 
 	select {
@@ -1557,7 +1689,7 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	}
 	t.mu.Unlock()
 
-	// Strip modifier prefixes ("S-MouseRightPress") into event modifiers.
+	// Strip modifier prefixes ("S-MouseRight") into event modifiers.
 	// Terminals VARY in whether they forward modified clicks to the app —
 	// iTerm2 sends shift+clicks through (shifted), stock Terminal strips
 	// the shift — and a modified mouse event must reach the trinkets with
@@ -1569,15 +1701,21 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	unitX := t.outerToUnitsX(x, frame)
 	unitY := t.outerToUnitsY(y, frame)
 
-	// For drag events, position is embedded: MouseLeftDrag@x,y (also raw
+	// For drag events, position is embedded: MouseDragLeft@x,y (also raw
 	// 1-based, same conversion). Everything else uses the stashed position
 	// from the Mouse@x,y key that preceded it.
+	//
+	// Which of the two sources a gesture used is the thing the trace below
+	// exists to record: the stash is shared state a press depends on and a
+	// motion never touches, so it is the one place the two can diverge.
+	src := "stash"
 	if strings.Contains(key, "@") {
 		var dragX, dragY int
 		parts := strings.SplitN(key, "@", 2)
 		if len(parts) == 2 {
 			if _, err := fmt.Sscanf(parts[1], "%d,%d", &dragX, &dragY); err == nil {
 				x, y = dragX, dragY
+				src = "embedded"
 				unitX = t.outerToUnitsX(dragX, frame)
 				unitY = t.outerToUnitsY(dragY, frame)
 			}
@@ -1585,42 +1723,39 @@ func (t *TUIBackend) handleMouseAction(key string) {
 		key = parts[0] // Strip position from key for matching
 	}
 
+	if core.MouseTracing() {
+		core.MouseTracef("outer  %-18s raw=(%d,%d) via=%-8s pixelMouse=%v outerCell=%dx%d -> units=(%v,%v)",
+			key, x, y, src, t.pixelMouse, t.outerCellW, t.outerCellH, unitX, unitY)
+	}
+
 	var event core.Event
 
 	switch key {
-	case "MouseLeftPress":
+	case "MouseLeft":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
-	case "MouseMiddlePress":
+	case "MouseMiddle":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.MiddleButton, Modifiers: mods}
-	case "MouseRightPress":
+	case "MouseRight":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
-	case "MousePress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
-	case "MouseLeftRelease":
+	case "MouseLeft:Release":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
-	case "MouseMiddleRelease":
+	case "MouseMiddle:Release":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.MiddleButton, Modifiers: mods}
-	case "MouseRightRelease":
+	case "MouseRight:Release":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
-	case "MouseRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
 	// Motion, with whichever button is held. direct-key-handler names the
-	// button in the event, and "MouseDrag" is its name for motion with NO
-	// button — the buttonless tracking a terminal sends under ?1003 — so that
-	// one carries no button rather than a default.
-	//
-	// Buttons went unset here, which made every motion look button-free to a
-	// trinket: a drag passing over a scrollbar lit its hover instead of
-	// clearing it, since the hover test is exactly "no button held".
-	case "MouseLeftDrag":
+	// button in the event; motion with NO button is the bare position report
+	// this backend turns into "MouseMove" above, so that one carries no button
+	// rather than a default.
+	case "MouseDragLeft":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.LeftButton, Modifiers: mods}
-	case "MouseMiddleDrag":
+	case "MouseDragMiddle":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.MiddleButton, Modifiers: mods}
-	case "MouseRightDrag":
+	case "MouseDragRight":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.RightButton, Modifiers: mods}
-	case "MouseDrag":
+	case "MouseMove":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Modifiers: mods}
 
 	case "MouseScrollUp":
@@ -1744,9 +1879,9 @@ func (t *TUIBackend) maybeEnablePixelMouse() {
 // Mode changes have to reach somewhere they take effect, and they have to be
 // UNDONE through the same channel. Under `app > file` the enable would
 // otherwise reach the terminal (via /dev/tty) while the disable went into the
-// file, leaving raw/alt-screen/kitty-keys state set with nothing still running
-// to clear it. Content writes keep using write() and the configured output,
-// which is what redirection is for.
+// file, leaving raw/alt-screen/"kitty"-keyboard state set with nothing still
+// running to clear it. Content writes keep using write() and the configured
+// output, which is what redirection is for.
 func (t *TUIBackend) writeTTY(s string) {
 	if t.ttyOut != nil {
 		io.WriteString(t.ttyOut, s)

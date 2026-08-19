@@ -180,6 +180,15 @@ func (t *TextInput) IsReadOnly() bool {
 	return t.readOnly
 }
 
+// AcceptsTextInput implements core.TextSink: this is the trinket that types.
+//
+// Not while it is read-only or disabled — a keystroke arriving there produces
+// no text, so an input method has nothing to compose FOR and should not be
+// left pointed at it.
+func (t *TextInput) AcceptsTextInput() bool {
+	return !t.readOnly && t.IsEnabled()
+}
+
 // SetReadOnly sets the read-only state.
 func (t *TextInput) SetReadOnly(readOnly bool) {
 	t.readOnly = readOnly
@@ -1105,9 +1114,26 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	}
 
-	// Handle printable characters
-	if event.Text != "" && utf8.RuneCountInString(event.Text) == 1 {
-		t.insert(event.Text)
+	// Handle printable characters, in the order mew's own floor uses.
+	//
+	// What the host watched this keyboard type comes first, and for every
+	// chord: it saw both halves of the keystroke and this trinket sees only the
+	// name. An observation of nothing is an answer too — a dead key arms an
+	// accent and produces no character — so a chord that was watched is settled
+	// here either way.
+	if text, observed := core.KeyChordTextFor(t, event.Key); observed {
+		if utf8.RuneCountInString(text) == 1 {
+			t.insert(text)
+		}
+		return true
+	}
+
+	// Nothing watched it. A one-character KeyName IS the character, which is
+	// the answer wherever there is no host to ask — the terminal backend, where
+	// a keystroke arrives already named and there is no second event to
+	// observe.
+	if utf8.RuneCountInString(event.Key) == 1 {
+		t.insert(event.Key)
 		return true
 	}
 

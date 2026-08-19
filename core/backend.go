@@ -598,6 +598,18 @@ type KeyPressEvent struct {
 	Key       string       // Key name from direct-key-handler
 	Modifiers KeyModifiers // Active modifiers
 	Text      string       // Printable text if any
+
+	// Repeat marks a press the keyboard generated because the key is being
+	// HELD, rather than struck again.
+	//
+	// It is a press either way, and every consumer that only wants to know a
+	// key happened can ignore this and be right. It is here for the ones that
+	// cannot: a browser in a hosted terminal reports a repeat as a keydown with
+	// its repeat flag set, and without this it has no way to tell a held key
+	// from a drummed one. Both backends produced repeats and neither said so —
+	// the TUI trimmed the protocol's marker off and SDL never read its own
+	// repeat bit — so a hosted guest was told the key was struck ten times.
+	Repeat bool
 }
 
 func (KeyPressEvent) isEvent() {}
@@ -711,6 +723,15 @@ type Painter struct {
 	transform Transform
 	clip      UnitRect
 	metrics   CellMetrics
+
+	// partial marks a frame painted for only part of the surface — the tree
+	// clipped to a damaged region rather than drawn whole. Derived painters
+	// copy it, so it reaches whoever finishes the frame.
+	//
+	// It is here for what a frame's SILENCE is worth. A complete frame that
+	// reported no insertion point has said there is none; a partial one has
+	// said nothing at all, and the difference is the whole of Complete().
+	partial bool
 
 	// Rounded clip region (screen coordinates; zero rect = none): an
 	// additional constraint beyond the rectangular clip, honored by

@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,6 +81,65 @@ type Platform struct {
 	// effect is reachable only from that dialog and R stays an ordinary key
 	// everywhere else. Nil means never (no host opted in).
 	rotationGate func() bool
+
+	// keyRepeat latches whether the KEY_DOWN just handled was SDL's auto-repeat
+	// of a held key, so the SDLTextInput that follows it can say so.
+	//
+	// A printable key produces both events: KEY_DOWN carries the repeat bit but
+	// translateKey answers "" for it (the character belongs to the SDLTextInput
+	// path), and SDLTextInput carries the character but no bit. Neither event
+	// alone can report a held comma, and SDL delivers them in that order for
+	// the same physical press, so the bit waits here for the character to
+	// arrive. Without it a hosted browser was told a held key was struck again,
+	// with its repeat flag clear every time.
+	keyRepeat bool
+
+	// padTyped latches that the KEY_DOWN just handled was a keypad key already
+	// named as a chord, so the SDLTextInput after it must be dropped.
+	//
+	// The pad's shown keys are text-producing: with NumLock on the 7 sends both
+	// a KEY_DOWN and the character "7". Every other text-producing key resolves
+	// that by having translateKey answer "" and letting SDLTextInput own it — but a
+	// pad key cannot, because the whole point is to report WHICH 7 was struck,
+	// and the character has no room to say. So the chord is emitted on KEY_DOWN
+	// and the character it would also have produced is swallowed here; otherwise
+	// one press of the pad's 7 arrives as "P-7" and then again as "7".
+	padTyped bool
+
+	// heldKeys remembers, per SCANCODE, the name reported when that key went
+	// down, so its release can be reported the same way instead of derived
+	// again from modifiers that have since moved on.
+	//
+	// Deriving again is wrong: a KEY_UP carries the modifier mask as it stands
+	// at that instant, so letting go of Control a few milliseconds before the
+	// letter — which is what fingers do — sent "^A" down and "a" up. Scancode
+	// is the identity because it is the physical key and nothing about it
+	// changes between the two events.
+	//
+	// padScancode carries the scancode of the KEY_DOWN forward to the
+	// SDLTextInput that may follow it. A printable's press is reported from
+	// there, and that event has no scancode of its own — the same gap keyRepeat
+	// and padTyped already bridge.
+	heldKeys map[uint32]string
+
+	// padLock is what this host knows about the number pad's lock, and on a
+	// system that has no lock of its own it IS the lock. See padlock.go.
+	padLock *padLock
+
+	// modes is the rest of the keyboard states this host publishes — Caps
+	// Lock, focus, and whatever a host added itself. The pad's lock is not
+	// among them: padLock owns that one, for the key-naming path as well.
+	// See modes.go.
+	modes modeState
+
+	// chordText is what this keyboard has been WATCHED typing, by the chord
+	// that typed it (see keychordtext_sdl.go), and pendingPress is the Option
+	// chord whose character has not arrived yet (see macoption_sdl.go).
+	chordTextMu  sync.Mutex
+	chordText    map[string]string
+	pendingPress *pendingKeyPress
+
+	padScancode uint32
 
 	main *nativeWin
 	wins map[uint32]*nativeWin // by SDL window ID, main included
@@ -179,6 +239,11 @@ type nativeWin struct {
 	frameCaret    core.TextCaret
 	frameCaretSet bool
 
+	// frameComplete is whether the last frame painted the whole surface, so
+	// the compositing path can tell a frame that reported no insertion point
+	// from one that merely did not paint the thing that reports it.
+	frameComplete bool
+
 	// baseCaret is the caret request from the BASE layer's own paint —
 	// desktop chrome, or a torn window's frame. The compositor seeds the
 	// frame's caret from it so chrome can hold the caret when no layer
@@ -217,6 +282,7 @@ func New(title string, widthPx, heightPx int, rendererType string) (*Platform, e
 		wins:              map[uint32]*nativeWin{},
 		cursors:           map[core.CursorShape]*sdl3.Cursor{},
 		rotationStartTime: time.Now(),
+		padLock:           newPadLock(),
 	}, nil
 }
 
@@ -884,10 +950,16 @@ func (p *Platform) paintBackend(w *nativeWin, forceFull, baseOnly bool) {
 	w.backend.BeginFrame()
 	painter := core.NewPainter(w.backend)
 	painter.ResetTextCaretRequest()
+	// What this frame does NOT say is only worth something when it painted
+	// everything. A damage-clipped frame may skip the very trinket that
+	// reports where text is being typed, and its silence must not be read as
+	// an answer. See core.Painter.Complete and platform.TextInputFrame.
+	w.frameComplete = full
 	if full {
 		frame(painter)
 	} else {
 		// Clip the whole tree to the damaged region
+		painter.MarkPartial()
 		frame(painter.WithClip(dmg))
 	}
 	w.backend.EndFrame()
@@ -930,9 +1002,25 @@ func (p *Platform) presentWindow(w *nativeWin, forceFull bool) {
 				if err == nil {
 					// The compositor gathered the frame's caret from the
 					// layers; the surface is the platform's to talk to.
+					//
+					// Applied even when no layer claimed it. "Nothing asked"
+					// is one of the answers ApplyTextCaret weighs — against
+					// whether the frame was complete, and whether anything
+					// with focus types at all — and skipping the call here
+					// would decide it silently instead.
+					caret := core.TextCaret{}
 					if w.frameCaretSet {
-						platform.ApplyTextCaret(s, w.frameCaret)
+						caret = w.frameCaret
 					}
+					sink := core.TextSinkUnknown
+					if r, ok := s.handler.(platform.TextSinkReporter); ok {
+						sink = r.FocusedTextSink()
+					}
+					platform.ApplyTextCaret(s, platform.TextInputFrame{
+						Caret:    caret,
+						Sink:     sink,
+						Complete: w.frameComplete,
+					})
 					p.scheduleAnimationFrame(s)
 					return
 				}
@@ -1273,9 +1361,23 @@ func (p *Platform) pumpEvents() bool {
 	for {
 		ev := sdl3.PollEvent()
 		if ev == nil {
+			// An Option chord still waiting for a character it turns out not
+			// to compose: the queue is empty, so nothing is coming. Dispatch
+			// it rather than hold it into an idle keyboard.
+			p.flushPendingPress()
 			return delivered
 		}
 		delivered = true
+		// Only the two text events answer a held Option chord. Anything else
+		// means no character is coming for it, and it goes first so the two
+		// keystrokes stay in the order they were made.
+		if p.pendingPress != nil {
+			switch ev.(type) {
+			case *sdl3.TextInputEvent, *sdl3.TextEditingEvent:
+			default:
+				p.flushPendingPress()
+			}
+		}
 		switch e := ev.(type) {
 		case *sdl3.QuitEvent:
 			if s := p.mainSurface(); s != nil && s.handler != nil {
@@ -1294,38 +1396,150 @@ func (p *Platform) pumpEvents() bool {
 			case sdl3.WindowFocusGained:
 				s.handler.Event(core.FocusEvent{Focused: true})
 				s.Invalidate(core.UnitRect{})
+				// Set text input up again, now that this window holds the
+				// keyboard. It was asked for once when the window was made
+				// (see nativeWin creation), and SDL has believed it ever
+				// since — which is the problem, not the reassurance: a plain
+				// StartTextInput would see that belief and return without
+				// doing anything. See sdl3.RestartTextInput.
+				//
+				// It sits here for the same reason the CapsLock read below
+				// does: focus is the moment something outside this process may
+				// have changed under us, so it is the moment to say it again
+				// rather than to wait for a key.
+				//
+				// Safe to do on every focus gain, unlike the caret edge: a
+				// window that has just taken the keyboard is not holding a
+				// composition for the restart to abandon.
+				if s.win != nil && s.win.window != nil {
+					if err := sdl3.RestartTextInput(s.win.window); err != nil && imeDebug {
+						fmt.Fprintf(os.Stderr,
+							"kittytk-ime: window %d restart on focus failed: %v\n", s.win.id, err)
+					}
+				}
+				// A latch can have moved while someone else had the keyboard,
+				// so this is the moment to look rather than to wait for a key.
+				if p.noteCapsLock(uint16(sdl3.GetModState())) {
+					p.announceMode(core.Mode{
+						Name:  core.ModeCapsLock,
+						Value: modeValue(sdl3.GetModState()&sdl3.KMOD_CAPS != 0),
+					})
+				}
+				if p.noteFocus(true) {
+					p.announceMode(core.Mode{Name: core.ModeFocus, Value: core.ModeOn})
+				}
 			case sdl3.WindowFocusLost:
+				// Anything still down is let go somewhere else now, and its
+				// KEY_UP will be delivered to whoever has the keyboard. Report
+				// the releases here or the presses stand forever — the one way
+				// dropping an unmatched release could strand a key. A browser
+				// does the same on blur.
+				p.releaseHeldKeys(s)
 				s.handler.Event(core.FocusEvent{Focused: false})
 				s.Invalidate(core.UnitRect{})
+				if p.noteFocus(false) {
+					p.announceMode(core.Mode{Name: core.ModeFocus, Value: core.ModeOff})
+				}
 			case sdl3.WindowMouseLeave:
 				// Pointer left the active boundary box: clear hover affordances.
 				s.handler.Event(core.MouseLeaveEvent{})
 				s.Invalidate(core.UnitRect{})
 			}
+		// SDLTextInput: SDL's text event, and the name to use for it everywhere
+		// in this codebase. "TextInput" alone is the trinket (objects/trinkets)
+		// — a single-line editing control — and the two have nothing to do with
+		// each other, so the bare word is always the trinket and never this.
+		//
+		// SDL splits one keypress into two independent events. KEY_DOWN carries
+		// the scancode, the keysym and the repeat bit but no character;
+		// SDLTextInput carries the composed text but no key identity and no
+		// repeat bit. The split is deliberate on SDL's part, because text is
+		// what an input method, a dead key or a compose sequence produces, and
+		// one physical press can yield no characters, one, or several.
+		//
+		// So a plain or shifted printable is deliberately NOT reported on
+		// KEY_DOWN: translateKey answers "" and the character becomes a key
+		// press here instead. Chords and named keys go the other way, since
+		// SDLTextInput carries nothing for them. Anything that needs both
+		// halves of one press has to bridge the gap by hand — see keyRepeat,
+		// which carries the repeat bit forward into this event, and padTyped,
+		// which suppresses this event for a key already reported as a chord.
 		case *sdl3.TextInputEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
 			text := e.GetText()
+			// Spend the repeat bit the KEY_DOWN before this one left behind: it
+			// belongs to this character, and to no character after it.
+			repeat := p.keyRepeat
+			p.keyRepeat = false
+			// A keypad character has already been delivered as a chord on the
+			// KEY_DOWN, prefix and all. Dropping it here is what keeps one press
+			// from arriving twice (see Platform.padTyped).
+			if p.padTyped {
+				p.padTyped = false
+				continue
+			}
 			// AltGr / ISO_Level3_Shift (the Glyph modifier) composes its
-			// character here on the TextInput path, not on KEY_DOWN. When it is
+			// character here on the SDLTextInput path, not on KEY_DOWN. When it is
 			// held, tag the produced glyph with a "G-" prefix so it reaches the
 			// keymap as a distinct, bindable chord (an unbound G-glyph then
 			// self-inserts the character — see the sequence processor). The mask
 			// is read live: the modifier is still down while its glyph composes.
 			glyph := glyphMod(sdl3.GetModState())
+
+			// The character a held press produced. The key was named from its
+			// own key-down; this is what that keystroke typed, and the two are
+			// dispatched as the single keystroke they are.
+			if pending := p.takePendingPress(); pending != nil {
+				// Unless it is an accent a dead key ARMED, which is not text
+				// the chord typed — it is waiting for the next keystroke to
+				// wear it. Recorded as typed, anything falling through to what
+				// M-i types inserted the accent and the composed character
+				// arrived behind it: "ˆû".
+				//
+				// Checked here as well as on the composition path because the
+				// accent comes by either route, and which one is not something
+				// to depend on.
+				if imeDebug {
+					fmt.Fprintf(os.Stderr,
+						"kittytk-ime: held %q met text %q (optionChord=%v armed=%v)\n",
+						pending.key, text, pending.optionChord, isArmedAccent(text))
+				}
+				if pending.optionChord && isArmedAccent(text) {
+					p.noteKeyChordTypesNothing(pending.key)
+					p.dispatchPendingPress(pending, "")
+					continue
+				}
+				p.dispatchPendingPress(pending, text)
+				continue
+			}
+
 			for _, ch := range text {
 				// On macOS, handle native Option key shortcuts by mapping them
 				// back into clear "M-key" syntax to ensure uniformity across environments.
 				if runtime.GOOS == "darwin" {
 					if decoded, ok := decodeMacOSOptionChar(ch); ok {
-						mods, name := core.ParseKeyModifiers(decoded)
-						t := ""
-						if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
-							t = name
+						if imeDebug {
+							fmt.Fprintf(os.Stderr,
+								"kittytk-ime: text %q decoded to chord %q (no press was held)\n",
+								string(ch), decoded)
 						}
-						s.handler.Event(core.KeyPressEvent{Key: decoded, Modifiers: mods, Text: t})
+						produced := string(ch)
+						if isArmedAccent(produced) {
+							// An accent this chord ARMED, not one it typed.
+							produced = ""
+						}
+						p.emitKeyPress(s, keyPress{
+							chord:    decoded,
+							produced: produced,
+							observed: true,
+							scancode: p.padScancode,
+							held:     true,
+							repeat:   repeat,
+							origin:   "decoded from text",
+						})
 						continue
 					}
 				}
@@ -1333,9 +1547,25 @@ func (p *Platform) pumpEvents() bool {
 				if glyph {
 					key = "G-" + key
 				}
-				s.handler.Event(core.KeyPressEvent{
-					Key:  key,
-					Text: string(ch),
+				// Every chord that types is recorded, not only the ones where
+				// the chord and its text look different. This event is the
+				// keyboard SAYING what it produced — the plain keys as much as
+				// the composed ones — and a table with every chord in it needs
+				// no rule about which ones belong and no pruning when one
+				// changes. See keychordtext_sdl.go.
+				// Held under the scancode of the KEY_DOWN this event followed.
+				// A printable's press is reported HERE, and this event carries
+				// no scancode, so without the latch every ordinary letter would
+				// go down unrecorded and its release would be dropped as an
+				// orphan.
+				p.emitKeyPress(s, keyPress{
+					chord:    key,
+					produced: string(ch),
+					observed: true,
+					scancode: p.padScancode,
+					held:     true,
+					repeat:   repeat,
+					origin:   "from text",
 				})
 			}
 		case *sdl3.TextEditingEvent:
@@ -1351,26 +1581,73 @@ func (p *Platform) pumpEvents() bool {
 			// ...except on macOS, where five of the Option chords are DEAD
 			// KEYS: Option+E, I, N, U and ` open a composition to accent the
 			// next character instead of producing a character of their own.
-			// Those arrive here rather than on the TextInput path, so the
+			// Those arrive here rather than on the SDLTextInput path, so the
 			// decoding that turns every other Option chord back into M-key
 			// never saw them and M-e opened an accent picker over whatever
 			// had focus. Decoded the same way, with Option still held, they
 			// are the shortcut the user pressed.
+			// A held Option chord whose key is one of the five dead ones: the
+			// composition IS what it produced, so the chord goes out with it
+			// An Option chord that opened a composition is a DEAD KEY: Option+i
+			// arms a circumflex for the next keystroke. The chord itself is
+			// still reported — it was named from its own key-down, so M-i stays
+			// bindable — but it TYPED nothing, and the composition it armed is
+			// not its output.
+			//
+			// So it goes out with no text and nothing is recorded against it. A
+			// dead key that reported the accent as its own text had that accent
+			// inserted by anything falling through to what the chord types, and
+			// then the composition produced the accented character too:
+			// Option+i, u came out "ˆû".
+			//
+			// The composition is left standing rather than cleared, which is
+			// what lets the next keystroke compose against it — the "û" in that
+			// pair, arriving as ordinary committed text.
+			if imeDebug {
+				held := "none"
+				if p.pendingPress != nil {
+					held = p.pendingPress.key
+				}
+				fmt.Fprintf(os.Stderr,
+					"kittytk-ime: composition %q while holding %s\n", e.GetText(), held)
+			}
+			if p.pendingPress != nil && p.pendingPress.optionChord {
+				// Recorded as having typed NOTHING, which is a real
+				// observation and not the absence of one. A consumer that
+				// falls back to a table of what such a chord types would
+				// otherwise answer from the table and insert the accent.
+				p.noteKeyChordTypesNothing(p.pendingPress.key)
+				p.dispatchPendingPress(p.takePendingPress(), "")
+				// Fall through: the composition is forwarded below like any
+				// other, so a trinket paints it as the in-flight preedit it is.
+			}
+			// An input method has taken this keystroke over. The press it was
+			// holding is not a keystroke any more — the composition below is —
+			// and a repeat had nothing to say in the first place.
+			p.pendingPress = nil
+
 			if runtime.GOOS == "darwin" && sdl3.GetModState()&sdl3.KMOD_ALT != 0 {
 				if key, ok := decodeMacOSDeadKey(e.GetText()); ok {
-					mods, name := core.ParseKeyModifiers(key)
-					text := ""
-					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
-						text = name
-					}
-					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
-					// Drop the composition the dead key opened, so the next
-					// character types plainly rather than wearing an accent
-					// from a keystroke that was meant as a shortcut.
-					_ = sdl3.ClearComposition(s.win.window)
-					continue
+					// The same keystroke as above, reached when its key-down
+					// was not seen — the chord is recovered from the accent it
+					// armed instead of from the key. It is reported the same
+					// way for the same reasons: no text of its own, and the
+					// composition left standing for the next keystroke to
+					// compose against.
+					// macOS delivers no key-down while it is composing, so
+					// the chord is recovered from the accent it armed.
+					p.emitKeyPress(s, keyPress{
+						chord: key,
+						// A dead key types nothing, and this is where that is
+						// known: the composition is all it ever produces.
+						observed: true,
+						// No key-down happened and no key-up will, so there is
+						// nothing for a release to match.
+						origin: "recovered from composition",
+					})
 				}
 			}
+			core.KeyTracef("1 sdl      compose text=%q", e.GetText())
 			s.handler.Event(core.TextEditingEvent{
 				Text:   e.GetText(),
 				Start:  int(e.Start),
@@ -1381,7 +1658,51 @@ func (p *Platform) pumpEvents() bool {
 			if s == nil || s.handler == nil {
 				continue
 			}
+			if e.Type == sdl3.KeyDown || e.Type == sdl3.KeyUp {
+				// Correct the lock bit before anything reads it. Every namer
+				// below picks a dual-legend cap's meaning from KMOD_NUM, and on
+				// a system with no NumLock that bit is never set however locked
+				// the pad actually is. See padlock.go.
+				p.padLock.resolve(&e.Keysym)
+
+				// The other latch, which names no key here and is read only to
+				// be published. See modes.go.
+				if p.noteCapsLock(e.Keysym.Mod) {
+					p.announceMode(core.Mode{
+						Name:  core.ModeCapsLock,
+						Value: modeValue(e.Keysym.Mod&sdl3.KMOD_CAPS != 0),
+					})
+				}
+			}
+			if e.Type == sdl3.KeyDown && eatsLockCap(e.Keysym) {
+				// The lock cap alone is not a key: it moves the lock and is
+				// eaten. Nothing is held for it, so the KeyUp below drops its
+				// release on its own — a release is only reported for a press
+				// that was.
+				if changed, on := p.padLock.toggle(); changed {
+					p.announceMode(core.Mode{Name: core.ModeNumLock, Value: modeValue(on)})
+				}
+				continue
+			}
 			if e.Type == sdl3.KeyDown {
+				// Latch the repeat bit for the SDLTextInput that may follow this
+				// key down (see Platform.keyRepeat). Done before the keys that
+				// get consumed below, so the latch always describes the last
+				// physical key down whether or not it produced a press.
+				p.keyRepeat = e.Repeat
+
+				// Same shape, opposite job: note that this key down was a pad
+				// key already reported as a chord, so the character SDL is
+				// about to send for it gets dropped rather than delivered a
+				// second time. Set on every key down, so it can never describe
+				// an earlier one.
+				_, _, padShown, isPad := keypadKey(e.Keysym, e.Keysym.Mod&sdl3.KMOD_NUM != 0)
+				p.padTyped = isPad && padShown
+
+				// And carry this key's scancode to the SDLTextInput that may
+				// follow, which has none of its own (see Platform.heldKeys).
+				p.padScancode = e.Keysym.Scancode
+
 				// Check for rotation trigger (R key) - toggles on/off.
 				// Only supported by renderers with rotation capability
 				// (WebGPU); works in plain-present AND compositor modes.
@@ -1424,21 +1745,90 @@ func (p *Platform) pumpEvents() bool {
 				if p.fontZoomKey(e.Keysym) {
 					continue // Consumed by host zoom controller, skip dispatching
 				}
+				// A dead key types nothing, and the press is the only moment
+				// that can be known: it produces no text for the answer to be
+				// recovered from later. Asked of the KEY, not of translateKey,
+				// which yields these key-downs entirely on this platform — so a
+				// record hung off its answer never ran. See macOptionChordFor.
+				if chord, ok := macOptionChordFor(e.Keysym); ok && isDeadKeyChord(chord) {
+					p.noteKeyChordTypesNothing(chord)
+				}
+				if imeDebug && translateKey(e.Keysym) == "" {
+					fmt.Fprintf(os.Stderr,
+						"kittytk-ime: key-down yielded (sym=%d mod=%#x) — no chord named here\n",
+						e.Keysym.Sym, e.Keysym.Mod)
+				}
 				if key := translateKey(e.Keysym); key != "" {
-					mods, name := core.ParseKeyModifiers(key)
-					text := ""
-					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
-						text = name
+					// A press whose text arrives in the next event is held for
+					// it, so it is dispatched WITH what it produced and the
+					// pairing is recorded from the keyboard rather than from a
+					// table — before the press goes out, so a consumer reading
+					// KeyChordText for this chord sees this keystroke's answer.
+					// See macoption_sdl.go.
+					// A dead key types nothing, and that is known from the
+					// chord itself — recorded HERE rather than waiting to learn
+					// it from what the keystroke produced, because macOS often
+					// produces nothing for these and keeps the armed accent to
+					// itself. See isDeadKeyChord.
+					//
+					// Before the press is held or not. It was inside the branch
+					// below, which is only reached when SDL follows the
+					// keystroke with text — and for these it frequently does
+					// not, so the record ran for the presses that needed it
+					// least and never for the ones that needed it at all.
+					if isDeadKeyChord(key) {
+						p.noteKeyChordTypesNothing(key)
 					}
-					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
+					if keyAwaitsText(e.Keysym) {
+						p.flushPendingPress()
+						p.pendingPress = &pendingKeyPress{
+							key:         key,
+							scancode:    e.Keysym.Scancode,
+							repeat:      e.Repeat,
+							surface:     s,
+							optionChord: macOptionMayCompose(e.Keysym),
+						}
+						continue
+					}
+					p.emitKeyPress(s, keyPress{
+						chord: key,
+						// Nothing was produced to observe: this key is not one
+						// SDL follows with text.
+						scancode: e.Keysym.Scancode,
+						held:     true,
+						repeat:   e.Repeat,
+						origin:   "key-down",
+					})
 				}
 			} else if e.Type == sdl3.KeyUp {
 				// Report release actions back to tracking vectors using the modifier
 				// states parsed immediately AFTER the key release event completes.
-				s.handler.Event(core.KeyReleaseEvent{
-					Key:       translateKey(e.Keysym),
-					Modifiers: currentKeyModifiers(),
-				})
+				mods := currentKeyModifiers()
+
+				// translateKey yields "" for a plain printable key, because on the
+				// way DOWN that key belongs to the SDLTextInput path — the character
+				// arrives as text, not as a chord. There is no SDLTextInput on the way
+				// UP, so taking that answer left every letter's release nameless:
+				// "e" pressed, "" released. bareKey names the key itself, which is
+				// what a release is about; it exists for the same reason, to give a
+				// chord a key to attach to when SDLTextInput would otherwise own it.
+				name, held := p.takeHeldKey(e.Keysym.Scancode)
+				if !held {
+					// Nothing was reported down for this key, so nothing
+					// downstream believes it is held and there is nothing to
+					// release. Dropping is safe precisely because the table
+					// holds what was EMITTED — deriving a name here instead is
+					// what produced releases that matched no press.
+					continue
+				}
+				rel := core.KeyReleaseEvent{
+					Key:       name,
+					Modifiers: mods,
+				}
+				if core.KeyTracing() {
+					core.KeyTracef("1 sdl      release key=%q mods=%v", rel.Key, rel.Modifiers)
+				}
+				s.handler.Event(rel)
 			}
 		case *sdl3.MouseButtonEvent:
 			s := p.surfaceFor(e.WindowID)
@@ -1449,6 +1839,23 @@ func (p *Platform) pumpEvents() bool {
 			x, y := p.toUnits(e.X, e.Y, e.WindowID)
 			mods := currentKeyModifiers()
 			if e.Type == sdl3.MouseDown {
+				// Whatever the input method is holding, the user has just
+				// pointed somewhere else, and it goes. macOS's press-and-hold
+				// accent palette otherwise stays open over the click and
+				// follows the caret to wherever it lands, because the caret
+				// moving only re-anchors the palette (SetTextInputArea) and
+				// never closes it.
+				//
+				// This DISCARDS rather than commits, which is the only thing
+				// SDL offers. For the accent palette that is what was wanted —
+				// you clicked away, you did not want the accent. For a
+				// half-finished CJK composition it throws away characters
+				// already typed, where a native text view would have committed
+				// them. Discarding on any click is the chosen policy, not an
+				// oversight.
+				if s.win != nil && s.win.window != nil {
+					_ = sdl3.ClearComposition(s.win.window)
+				}
 				// Enable pointer capturing so dragging actions extend beyond window borders
 				// to allow continuous, lag-free native widget tear-out gestures.
 				_ = sdl3.CaptureMouse(true)
@@ -1790,8 +2197,10 @@ var specialKeys = map[sdl3.Keycode]string{
 	// written in -- names them apart. Calling both "Enter" here made the two
 	// backends disagree about the home-row key, which the keymap then bound
 	// under only one of its two names.
+	// The keypad's Enter is no longer here: every keypad key is named by
+	// POSITION in keypadKeys below, under the "P-" prefix, because a pad key
+	// and the main-cluster key it duplicates have to be tellable apart.
 	sdl3.K_RETURN:    "Return",
-	sdl3.K_KP_ENTER:  "Enter",
 	sdl3.K_TAB:       "Tab",
 	sdl3.K_ESCAPE:    "Escape",
 	sdl3.K_BACKSPACE: "Backspace",
@@ -1822,6 +2231,171 @@ var specialKeys = map[sdl3.Keycode]string{
 	sdl3.K_F12:      "F12",
 }
 
+// holdKey remembers a name as this physical key's, for the release to reuse.
+// A press always overwrites, so it can never inherit an older chord.
+func (p *Platform) holdKey(scancode uint32, name string) {
+	if name == "" {
+		return
+	}
+	if p.heldKeys == nil {
+		p.heldKeys = make(map[uint32]string)
+	}
+	p.heldKeys[scancode] = name
+}
+
+// takeHeldKey returns the name this key went down under and forgets it,
+// reporting false when nothing was recorded — which means no press was ever
+// reported for it, so there is nothing to release.
+func (p *Platform) takeHeldKey(scancode uint32) (string, bool) {
+	name, ok := p.heldKeys[scancode]
+	if ok {
+		delete(p.heldKeys, scancode)
+	}
+	return name, ok
+}
+
+// releaseHeldKeys reports a release for every key still down and forgets them.
+//
+// Called when the keyboard goes away rather than when a key comes up: the
+// KEY_UP for a key held across a focus change is delivered to whoever has the
+// keyboard now, so waiting for it means waiting forever. The order is by name
+// so a flush is repeatable — a map has none, and two runs of the same program
+// should not release in different orders.
+func (p *Platform) releaseHeldKeys(s *sdlSurface) {
+	if len(p.heldKeys) == 0 {
+		return
+	}
+	names := make([]string, 0, len(p.heldKeys))
+	for _, name := range p.heldKeys {
+		names = append(names, name)
+	}
+	p.heldKeys = make(map[uint32]string)
+	sort.Strings(names)
+	if s == nil || s.handler == nil {
+		return
+	}
+	mods := currentKeyModifiers()
+	for _, name := range names {
+		s.handler.Event(core.KeyReleaseEvent{Key: name, Modifiers: mods})
+	}
+}
+
+// The keypad, by SCANCODE. An SDL scancode is a USB HID keyboard usage ID, so
+// these are physical positions and mean the same thing under every layout —
+// which is the whole reason the pad is read this way. Sym cannot do the job: it
+// is layout-mapped, and the two AS/400 keys share their characters with the
+// ordinary ones, so a character can never say which key was struck.
+const (
+	scanNumLock        = 83 // NumLock on a PC; the cap says "Clear" on a Mac
+	scanKPDivide       = 84
+	scanKPMultiply     = 85
+	scanKPMinus        = 86
+	scanKPPlus         = 87
+	scanKPEnter        = 88
+	scanKP1            = 89
+	scanKP2            = 90
+	scanKP3            = 91
+	scanKP4            = 92
+	scanKP5            = 93
+	scanKP6            = 94
+	scanKP7            = 95
+	scanKP8            = 96
+	scanKP9            = 97
+	scanKP0            = 98
+	scanKPPeriod       = 99
+	scanKPEquals       = 103 // an ordinary pad's equals
+	scanKPComma        = 133 // the comma above Enter: DEC LK201, AS/400, most USB pads
+	scanKPEqualsAS400  = 134 // the equals in that same column
+	scanInternational6 = 140 // a PC-98's comma, in the bottom row beside the period
+)
+
+// padKey is one keypad cap. Dual-legend caps carry two keys and NumLock decides
+// which: locked gives the digit, unlocked gives the navigation action. That is
+// the rule the caps themselves are printed with.
+//
+// shown says the base is a CHARACTER rather than a name, which decides how
+// Control is spelled against it — "P-^7", not "C-P-7" — and whether SDL will
+// also deliver the character on the SDLTextInput path, where it has to be
+// suppressed so one press does not arrive twice.
+type padKey struct {
+	locked   string
+	unlocked string
+	shown    bool // true when the LOCKED form is a character
+}
+
+var keypadKeys = map[uint32]padKey{
+	// The operators and Enter ignore the lock: one key, one meaning.
+	scanKPDivide:   {"/", "/", true},
+	scanKPMultiply: {"*", "*", true},
+	scanKPMinus:    {"-", "-", true},
+	scanKPPlus:     {"+", "+", true},
+	scanKPEnter:    {"Enter", "Enter", false},
+
+	// The dual-legend caps.
+	scanKP0: {"0", "Insert", true},
+	scanKP1: {"1", "End", true},
+	scanKP2: {"2", "Down", true},
+	scanKP3: {"3", "PageDown", true},
+	scanKP4: {"4", "Left", true},
+	scanKP5: {"5", "Begin", true},
+	scanKP6: {"6", "Right", true},
+	scanKP7: {"7", "Home", true},
+	scanKP8: {"8", "Up", true},
+	scanKP9: {"9", "PageUp", true},
+	// The pad's own erase. It is a PAD ACTION, not forward delete: the cap says
+	// DEL and it sits on the pad, so it is named for where it is rather than
+	// for what a text editor would do with it.
+	scanKPPeriod: {".", "Delete", true},
+
+	scanKPEquals: {"=", "=", true},
+}
+
+// keypadKeys entries whose prefix is the ARCHAIC lowercase one. A pad character
+// that exists twice cannot have both keys spelled the same way, so the second
+// splits by case, exactly as Mega and Micro do.
+//
+// This is the channel that can finally tell them apart. A terminal cannot: the
+// "kitty" protocol reports one KP_SEPARATOR resolved from an xkb keysym, so
+// every pad comma in existence arrives collapsed onto a single code. Reading
+// HID usage IDs, the two are simply different numbers.
+var archaicPadKeys = map[uint32]padKey{
+	// The comma above Enter, which a DEC LK201 wears and an AS/400 column keeps
+	// beside its own equals — the pair at adjacent usages, 133 and 134.
+	scanKPComma:       {",", ",", true},
+	scanKPEqualsAS400: {"=", "=", true},
+}
+
+// keypadKey names the pad cap a keysym struck, reporting false for anything not
+// on the pad. numLock picks between a dual-legend cap's two keys.
+//
+// The prefix comes back separate from the base because Control has to be
+// written BETWEEN them — "P-^7" — so a caller that joined them first would only
+// have to take them apart again.
+func keypadKey(sym sdl3.Keysym, numLock bool) (prefix, base string, shown, ok bool) {
+	prefix = "P-"
+	k, found := keypadKeys[sym.Scancode]
+	if !found {
+		// A PC-98's comma is the plain "P-," — it is the bottom-row key beside
+		// the period, not the archaic one — and HID reaches it as
+		// International6 rather than as any keypad usage.
+		if sym.Scancode == scanInternational6 {
+			k, found = padKey{",", ",", true}, true
+		}
+	}
+	if !found {
+		if k, found = archaicPadKeys[sym.Scancode]; !found {
+			return "", "", false, false
+		}
+		prefix = "p-"
+	}
+	if numLock {
+		return prefix, k.locked, k.shown, true
+	}
+	// An unlocked dual-legend cap is a NAME, whatever the locked form was. The
+	// keys that ignore the lock keep whichever kind they already were.
+	return prefix, k.unlocked, k.shown && k.locked == k.unlocked, true
+}
+
 // glyphMod reports whether a modifier mask has AltGr / ISO_Level3_Shift active
 // — the "Glyph" level shift that reaches a key's third glyph plane (€, @, ä…).
 // It surfaces two ways: as KMOD_MODE on X11/Wayland layouts that carry AltGr,
@@ -1840,24 +2414,30 @@ func glyphMod(mod uint16) bool {
 }
 
 // translateKey produces the D3 key string for a KEYDOWN, or "" when
-// the TextInput path owns it (plain printable characters).
+// the SDLTextInput path owns it (plain printable characters).
 //
 // Hyper has no native SDL modifier, so mew synthesizes it from a doubled
 // side modifier: holding BOTH the left and right Ctrl (or both Alt) keys
 // promotes the chord to Hyper. The doubled modifier is consumed by the
 // promotion; any single-side modifier still held keeps its normal role, so
 //
-//	LCtrl+RCtrl+X        -> H-X       (both Ctrl -> Hyper)
-//	LAlt+RAlt+X          -> H-X       (both Alt  -> Hyper)
+//	LCtrl+RCtrl+X        -> H-X       (both Ctrl  -> Hyper)
+//	LAlt+RAlt+X          -> H-X       (both Alt   -> Hyper)
+//	LGui+RGui+X          -> H-x       (both Super -> Hyper)
 //	LAlt+RAlt+Ctrl+X     -> H-^X      (Hyper + a single Ctrl)
-//	LCtrl+RCtrl+Alt+X    -> H-M-x     (Hyper + a single Alt)
+//	LCtrl+RCtrl+Alt+X    -> M-H-x     (Hyper + a single Alt)
+//	LCtrl+RCtrl+Gui+X    -> s-H-x     (Hyper + a single Super)
 //
-// AltGr reports as a single (right) Alt, so it never trips the both-Alt
-// promotion. Shift is deliberately left out — it is a text-producing
-// modifier, so a doubled Shift would hijack ordinary capital letters.
+// All three double because all three are commonly present twice, one on
+// each side of the space bar, which is what makes holding both a gesture
+// rather than an accident. AltGr reports as a single (right) Alt, so it
+// never trips the both-Alt promotion. Shift is deliberately left out — it
+// is a text-producing modifier, so a doubled Shift would hijack the
+// capital letters most people type with both hands. Micro is left out
+// because a keyboard that has it at all rarely has two.
 func translateKey(sym sdl3.Keysym) string {
 	// AltGr / ISO_Level3_Shift (the Glyph modifier) is a text-producing level
-	// shift: the composed character arrives via TextInput, where it is tagged
+	// shift: the composed character arrives via SDLTextInput, where it is tagged
 	// "G-" (see the TextInputEvent handler / glyphMod). Yield the KEY_DOWN so we
 	// do not also fire a competing chord — notably on Windows, where AltGr
 	// surfaces as LCtrl+RAlt and would otherwise read as "M-^<letter>".
@@ -1867,7 +2447,8 @@ func translateKey(sym sdl3.Keysym) string {
 
 	bothCtrl := sym.Mod&sdl3.KMOD_LCTRL != 0 && sym.Mod&sdl3.KMOD_RCTRL != 0
 	bothAlt := sym.Mod&sdl3.KMOD_LALT != 0 && sym.Mod&sdl3.KMOD_RALT != 0
-	hyper := bothCtrl || bothAlt
+	bothGui := sym.Mod&sdl3.KMOD_LGUI != 0 && sym.Mod&sdl3.KMOD_RGUI != 0
+	hyper := bothCtrl || bothAlt || bothGui
 
 	ctrl := sym.Mod&sdl3.KMOD_CTRL != 0
 	alt := sym.Mod&sdl3.KMOD_ALT != 0
@@ -1883,64 +2464,116 @@ func translateKey(sym sdl3.Keysym) string {
 		if bothAlt {
 			alt = false
 		}
-	}
-
-	base := encodeKey(sym, ctrl, alt, shift, gui)
-
-	if !hyper {
-		return base
-	}
-
-	if base == "" {
-		// The residual modifiers alone would defer to TextInput (a plain
-		// or shifted printable). Hyper is a real chord, so synthesize the
-		// bare key token here instead of dropping the keystroke.
-		if base = bareKey(sym, shift); base == "" {
-			return ""
+		if bothGui {
+			gui = false
 		}
 	}
-	return "H-" + base
+
+	// Hyper goes IN, not on. It used to be prepended to the finished string,
+	// which put it ahead of every modifier that outranks it: LCtrl+RCtrl+Mega+X
+	// came out "H-M-x" where the canonical order is "M-H-x", and the terminal
+	// host — which has the same promotion now — spells it the second way.
+	return encodeKey(sym, ctrl, alt, shift, gui, hyper)
 }
 
 // bareKey returns the unmodified key token for a keysym: a special-key name,
 // or the printable character (upper-cased when Shift is held, so the caseful
-// hyphenated-modifier convention — H-a unshifted, H-A shifted — holds). It is
-// used only to give a Hyper chord a key to attach to when the residual
-// modifiers would otherwise have deferred the keystroke to TextInput.
+// hyphenated-modifier convention — H-a unshifted, H-A shifted — holds).
+//
+// The bare name, with no modifier prefix on it at all. Tests use it to state
+// what a key is called on its own, which is what a press and its release have
+// to agree on.
 func bareKey(sym sdl3.Keysym, shift bool) string {
+	if sym.Scancode == scanNumLock {
+		return "Clear"
+	}
+	// The pad before specialKeys, for the reason encodeKey does the same: a Sym
+	// lookup would name an unlocked pad cap as the main cluster's key. This is
+	// also the path a RELEASE takes, so without it a pad key would come up
+	// under a different name than it went down.
+	if pad, base, _, ok := keypadKey(sym, sym.Mod&sdl3.KMOD_NUM != 0); ok {
+		return pad + base
+	}
 	if name, ok := specialKeys[sym.Sym]; ok {
 		return name
 	}
 	if sym.Sym >= 32 && sym.Sym < 127 {
-		ch := rune(sym.Sym)
-		if shift && ch >= 'a' && ch <= 'z' {
-			return string(ch - 'a' + 'A')
-		}
-		return string(ch)
+		return layerAdjustedKeyName(rune(sym.Sym), shift)
 	}
 	return ""
 }
 
+// layerAdjustedKeyName names a printable key with its held layer applied: Shift
+// spent on the letter's case rather than stated as a prefix, which is how this
+// vocabulary spells every key that is SHOWN rather than named.
+//
+// Shift is the only layer it applies today, and the name says where it grows.
+//
+// One function, called by the press and by the bare name, so the two cannot
+// drift into naming the same key differently.
+func layerAdjustedKeyName(ch rune, shift bool) string {
+	if shift && ch >= 'a' && ch <= 'z' {
+		return string(ch - 'a' + 'A')
+	}
+	return string(ch)
+}
+
+// shiftedShownKey asks the layout what a physical key shows with Shift held,
+// returning 0 when it shows no character. A variable so a test can answer for
+// itself: the real one calls into SDL, which a test has not initialised.
+var shiftedShownKey = func(scancode uint32) rune {
+	return sdl3.ShiftedKey(scancode, sdl3.KMOD_SHIFT)
+}
+
 // encodeKey maps a keysym plus its effective modifier set to a D3 key string,
-// or "" when the TextInput path owns it (plain printable characters). The
+// or "" when the SDLTextInput path owns it (plain printable characters). The
 // modifier booleans are passed in rather than read from sym.Mod so translateKey
 // can strip the modifiers it has already spent on a Hyper promotion.
-func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
+//
+// Hyper is one of them, and comes in rather than being glued on afterwards: it
+// outranks nothing and is outranked by M- and S-, so a caller prepending it to
+// a finished string puts it in front of modifiers that belong first. Every
+// prefix below is spelled by keyMods.prefix (see modifiers.go), which is the
+// only thing in this package that writes one.
+func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
+	// The lock cap, which reaches here only WITH a modifier — alone it never gets
+	// this far (see padlock.go). Named before the pad, and unprefixed: it is a
+	// lock, filed with CapsLock and ScrollLock, and the "kitty" protocol puts it
+	// at 57360 with them rather than in its 57399+ keypad block. Saying "P-Clear"
+	// here while the terminal host said "Clear" is exactly the split a keymap,
+	// being one file for both, cannot afford.
+	if sym.Scancode == scanNumLock {
+		return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + "Clear"
+	}
+	// The keypad first, and by scancode, so no later branch can claim a pad key
+	// under the main cluster's name. specialKeys is keyed by Sym, and an
+	// unlocked pad cap can arrive with the navigation Sym — which would have
+	// answered "Home" for the pad's Home, exactly the collision the prefix
+	// exists to prevent.
+	if pad, base, shown, ok := keypadKey(sym, sym.Mod&sdl3.KMOD_NUM != 0); ok {
+		// A NAMED pad key takes "C-": a name has no character for the caret to
+		// sit against, so "C-P-Home" rather than "P-^Home". A SHOWN one spends
+		// Control on the caret below, and clears it here to say so.
+		prefix := keyMods{
+			ctrl:  ctrl && !shown,
+			mega:  alt,
+			shift: shift,
+			super: gui,
+			hyper: hyper,
+		}.prefix()
+		if ctrl && shown {
+			// A SHOWN pad key takes the caret, written against the character:
+			// "P-^7". The pad prefix sits outside it, where the canonical order
+			// puts it — C- G- M- m- S- s- H- P- p- ^Key — and Shift stays a
+			// prefix rather than being absorbed, because a pad character has no
+			// shifted form to absorb it into.
+			return prefix + pad + "^" + base
+		}
+		return prefix + pad + base
+	}
+
 	if name, ok := specialKeys[sym.Sym]; ok {
-		prefix := ""
-		if alt {
-			prefix += "M-"
-		}
-		if ctrl {
-			prefix += "C-"
-		}
-		if shift {
-			prefix += "S-"
-		}
-		if gui {
-			prefix += "s-"
-		}
-		return prefix + name
+		return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + name
 	}
 
 	// Letters and printable symbols.
@@ -1977,10 +2610,9 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 				name = "^@"
 			}
 			if name != "" {
-				if alt {
-					return "M-" + name
-				}
-				return name
+				// Shift is already spent choosing the name (^^ and ^_ are the
+				// shifted forms), and Control is spent on the caret in it.
+				return keyMods{mega: alt, super: gui, hyper: hyper}.prefix() + name
 			}
 		}
 
@@ -1993,52 +2625,64 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 			// is written. Shift has to be stated because "^A" already spent the
 			// letter's case on Control.
 			//
-			// Only a graphical host or a terminal speaking the kitty protocol
+			// Only a graphical host or a terminal speaking the "kitty" protocol
 			// can report this chord at all — a legacy terminal sends Ctrl+A's
 			// ASCII control code for both, with no room for a Shift bit.
-			prefix := ""
-			if alt {
-				prefix += "M-"
-			}
-			if shift {
-				prefix += "S-"
-			}
-			return prefix + "^" + string(ch-'a'+'A')
+			return keyMods{mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() +
+				"^" + string(ch-'a'+'A')
 		case ctrl:
-			// Not caret-natural, so Control keeps its letter form — and sorts
-			// first in canonical order, ahead of Meta.
-			prefix := "C-"
-			if alt {
-				prefix += "M-"
-			}
+			// Control on a SHOWN key takes the caret, against the character the
+			// key shows: Ctrl+5 is "^5" and Ctrl+Shift+5 is "^%". Shift is
+			// absorbed into that character rather than stated as a prefix,
+			// which is how this vocabulary spells every key that is shown
+			// rather than named — a named key takes prefixes instead ("C-Down",
+			// "S-Tab"), and that is the branch above.
+			//
+			// This said "C-" + the unshifted character, so Ctrl+Shift+5 came
+			// out "C-S-5": a spelling nothing else in the system produces or
+			// reads, invented here.
+			//
+			// The shown character comes from the LAYOUT, not from a table. Sym
+			// is unshifted, and a map turning '5' into '%' is a US keyboard
+			// written down — right there and wrong everywhere else.
+			shown := ch
 			if shift {
-				prefix += "S-"
+				if r := shiftedShownKey(sym.Scancode); r >= 32 && r < 127 {
+					shown = r
+				}
 			}
-			return prefix + string(ch)
+			// Shift is absorbed into the shown character above, so it is not
+			// spelled again here.
+			return keyMods{mega: alt, super: gui, hyper: hyper}.prefix() + "^" + string(shown)
 		case alt:
-			// On macOS a bare Option+printable composes a character that
-			// SDL also delivers via TextInput, where we decode it back to
-			// M-key (see the TextInputEvent handler). Defer to that path so
-			// the shortcut fires exactly once; elsewhere Alt is a plain Meta
-			// modifier and TextInput carries nothing, so emit M-key here.
-			if runtime.GOOS == "darwin" {
-				return ""
-			}
-			return "M-" + string(ch)
+			// The chord is named HERE, from the physical key and the modifier
+			// that is held — on every platform, macOS included.
+			//
+			// macOS also composes a character for it, which arrives a moment
+			// later on SDLTextInput. That character used to be what named the
+			// chord, by looking it up in a table of what a US keyboard
+			// composes; the key and its modifier are better evidence and are
+			// already in hand. The composition is not thrown away: the event
+			// loop holds this chord until it arrives, dispatches the two
+			// together, and remembers the pairing (see macoption_sdl.go).
+			return keyMods{mega: true, super: gui, hyper: hyper}.prefix() + string(ch)
 		case gui:
-			// Command-modified printables never arrive via TextInput;
+			// Command-modified printables never arrive via SDLTextInput;
 			// "s-" is the toolkit's Meta/Cmd prefix.
-			prefix := ""
-			if ctrl {
-				prefix += "C-"
-			}
-			if shift {
-				prefix += "S-"
-			}
-			return prefix + "s-" + string(ch)
+			return keyMods{ctrl: ctrl, shift: shift, super: true, hyper: hyper}.prefix() + string(ch)
 		default:
-			// Plain (possibly shifted) printable: TextInput delivers it.
-			return ""
+			// Plain (possibly shifted) printable, named here like every other
+			// key — from the key.
+			//
+			// Identity is not text: the press already knows which key it is,
+			// and every other branch here names it from the key. Taking the
+			// name from the character instead would make an ordinary letter
+			// nameless until a text event followed it.
+			//
+			// Hyper can be the only modifier left when this is reached, since
+			// translateKey spends the doubled pair that formed it, so the
+			// prefix goes on here where the canonical order puts it.
+			return keyMods{hyper: hyper}.prefix() + layerAdjustedKeyName(ch, shift)
 		}
 	}
 	return ""
@@ -2248,6 +2892,13 @@ type sdlSurface struct {
 	caretVisible bool
 	caretX       core.Unit
 	caretY       core.Unit
+
+	// textInputOn is whether text input is on for this window, and
+	// textInputKnown whether that has ever been said. Unset is not "off": a
+	// window starts with text input claimed at creation, and the first answer
+	// from a focused trinket is what settles it. See SetTextInputEnabled.
+	textInputOn    bool
+	textInputKnown bool
 }
 
 func (s *sdlSurface) Size() core.UnitSize {
@@ -2331,6 +2982,21 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 	s.caretVisible, s.caretX, s.caretY = visible, x, y
 
 	if !visible {
+		// The insertion point is gone — focus left everything that types, or a
+		// whole frame painted and none of it reported one. Whatever the input
+		// method is still holding goes with it.
+		//
+		// Forgetting the position is not enough on its own: it says where, and
+		// an accent palette or candidate list already open just moves to
+		// wherever the OS puts an unanchored one and stays there. This is the
+		// same abandonment a click performs, for the same reason — the text it
+		// was composing for is no longer being composed.
+		//
+		// Reached only on the transition, since the guard above returns early
+		// while nothing has changed.
+		if err := sdl3.ClearComposition(s.win.window); err != nil && imeDebug {
+			fmt.Fprintf(os.Stderr, "kittytk-ime: abandon failed: %v\n", err)
+		}
 		if err := sdl3.ClearTextInputArea(s.win.window); err != nil && imeDebug {
 			fmt.Fprintf(os.Stderr, "kittytk-ime: clear failed: %v\n", err)
 		}
@@ -2356,6 +3022,45 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 		fmt.Fprintf(os.Stderr,
 			"kittytk-ime: window %d area unit=(%v,%v) px=(%d,%d %dx%d) active=%v err=%v\n",
 			s.win.id, x, y, x0, y0, wPx, hPx, sdl3.TextInputActive(s.win.window), err)
+	}
+}
+
+// SetTextInputEnabled implements platform.TextInputEnabler: turn text input on
+// or off for this window, following the focused trinket.
+//
+// On is a RESTART, not a start. SDL_StartTextInput returns early when its
+// per-window flag is already set, and that flag was set once when the window
+// was made — before the window was the one with the keyboard, so the platform
+// attached nothing while SDL recorded that it had. Going off and back on makes
+// the second call a real one. See sdl3.RestartTextInput.
+//
+// Off is what keeps an input method from opening over a trinket that does not
+// type. Key events are untouched by it: a press is named from the key, so every
+// keystroke still arrives under its own name with text input off.
+//
+// Acted on only when the answer changes — this is called from a finished frame,
+// which is often.
+func (s *sdlSurface) SetTextInputEnabled(on bool) {
+	if s.closed || s.win == nil || s.win.window == nil {
+		return
+	}
+	if s.textInputKnown && s.textInputOn == on {
+		return
+	}
+	s.textInputKnown, s.textInputOn = true, on
+
+	var err error
+	if on {
+		err = sdl3.RestartTextInput(s.win.window)
+	} else {
+		// Whatever it is holding goes with it — the same abandonment a click
+		// performs, and for the same reason.
+		_ = sdl3.ClearComposition(s.win.window)
+		err = sdl3.StopTextInput(s.win.window)
+	}
+	if imeDebug {
+		fmt.Fprintf(os.Stderr, "kittytk-ime: window %d text input on=%v err=%v\n",
+			s.win.id, on, err)
 	}
 }
 

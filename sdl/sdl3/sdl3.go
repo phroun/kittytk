@@ -394,6 +394,27 @@ type Keycode = csdl.Keycode
 type Keysym struct {
 	Sym Keycode
 	Mod uint16
+
+	// Scancode is the PHYSICAL key, before any layout is applied. Sym is
+	// already layout-mapped but unshifted, so it cannot answer "what does this
+	// key produce with Shift held" — only the scancode plus a modifier state
+	// can, and only the layout knows. See ShiftedKey.
+	Scancode uint32
+}
+
+// ShiftedKey asks the CURRENT KEYBOARD LAYOUT what a physical key produces
+// under a modifier state, and returns 0 when it produces no character.
+//
+// This is the only honest source for it. A table mapping '5' to '%' is a US
+// keyboard written down: correct there and wrong everywhere else, and this
+// toolkit already declines to guess elsewhere (AltGr composition and macOS
+// dead keys are both taken from the system rather than reconstructed).
+func ShiftedKey(scancode uint32, mod uint16) rune {
+	k := csdl.Scancode(scancode).KeyFrom(csdl.Keymod(mod), false)
+	if k == 0 || k >= 0x110000 {
+		return 0
+	}
+	return rune(k)
 }
 
 const (
@@ -410,6 +431,18 @@ const (
 	KMOD_RGUI   = uint16(csdl.KMOD_RGUI)
 	KMOD_GUI    = uint16(csdl.KMOD_GUI)
 	KMOD_MODE   = uint16(csdl.KMOD_MODE) // AltGr / ISO_Level3_Shift (the Glyph modifier)
+	// KMOD_NUM is the NumLock LATCH, not a held modifier. It decides which of
+	// two keys each dual-legend keypad cap is: locked gives the digit, unlocked
+	// gives the navigation action. Nothing else can answer that question —
+	// scancode names the position and Sym is layout-mapped, so the lock state
+	// has to come from here.
+	KMOD_NUM = uint16(csdl.KMOD_NUM)
+	// KMOD_CAPS is the other latch, and it is here to be EXCLUDED. Nothing
+	// names a key from it; it is exposed so the rule that a latch is not a held
+	// modifier can be stated against the real bit rather than a literal. SDL
+	// carries a third (KMOD_SCROLL) and KanaLock and HangulLock are behind
+	// that, which is why the rule lists what a held modifier IS.
+	KMOD_CAPS = uint16(csdl.KMOD_CAPS)
 )
 
 func GetModState() uint16 { return uint16(csdl.GetModState()) }
@@ -462,7 +495,34 @@ func StartTextInput(w *Window) error { return w.w.StartTextInput() }
 // TextInputActive reports whether text events are enabled for a window.
 // Exists so a test can prove every window got StartTextInput, rather
 // than the absence showing up as "typing does nothing" in one window.
+//
+// It reports SDL's own flag, which is not the same question as whether the
+// OS is listening — see RestartTextInput.
 func TextInputActive(w *Window) bool { return w.w.TextInputActive() }
+
+// StopTextInput disables text events for a window. Exposed for
+// RestartTextInput, which is the only caller that wants it.
+func StopTextInput(w *Window) error { return w.w.StopTextInput() }
+
+// RestartTextInput turns text input off and straight back on.
+//
+// The off is the point. SDL_StartTextInput does nothing when a window's text
+// input is already active — it checks its own flag and returns — so once that
+// flag is set, every later call is a no-op no matter what has happened
+// underneath. On macOS the platform side of "start" is what attaches the
+// input-method responder to the focused window's view, and if that ran at a
+// moment the window was not yet the one with the keyboard, it did nothing
+// while SDL latched the flag on anyway. From then on the window has text
+// input by SDL's reckoning and no input method by the OS's: keys arrive,
+// typing works, and only the input method's own surfaces are missing.
+//
+// Going off and on again clears the flag so the second call is a real one.
+func RestartTextInput(w *Window) error {
+	if err := StopTextInput(w); err != nil {
+		return err
+	}
+	return StartTextInput(w)
+}
 
 // SetTextInputArea tells the OS where the caret is, in WINDOW pixels, so
 // an input method can put its candidate window under the text being
@@ -538,6 +598,12 @@ type KeyboardEvent struct {
 	Type     uint32
 	WindowID uint32
 	Keysym   Keysym
+
+	// Repeat marks a KEY_DOWN the keyboard generated because the key is being
+	// HELD. SDL reports it and this adapter used to drop it, which left the
+	// platform layer unable to tell a held key from a drummed one and every
+	// consumer above it the same.
+	Repeat bool
 }
 
 type TextInputEvent struct {
@@ -640,7 +706,8 @@ func translate(ev *csdl.Event) Event {
 		return &KeyboardEvent{
 			Type:     typ,
 			WindowID: uint32(k.WindowID),
-			Keysym:   Keysym{Sym: k.Key, Mod: uint16(k.Mod)},
+			Keysym:   Keysym{Sym: k.Key, Mod: uint16(k.Mod), Scancode: uint32(k.Scancode)},
+			Repeat:   k.Repeat,
 		}
 
 	case csdl.EVENT_TEXT_INPUT:
