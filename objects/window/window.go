@@ -3515,6 +3515,35 @@ func (w *Window) HandleTextEditing(event core.TextEditingEvent) bool {
 	return fm.HandleTextEditing(event)
 }
 
+// HandleTextCommit forwards a finished composition straight to the focused
+// trinket, skipping the window's own key policy for the same reason
+// HandleTextEditing does: a commit is not a keystroke, so the menu bar and the
+// shortcut resolver have nothing to say about it.
+func (w *Window) HandleTextCommit(event core.TextCommitEvent) bool {
+	w.mu.RLock()
+	fm := w.focusManager
+	w.mu.RUnlock()
+
+	if fm == nil {
+		return false
+	}
+	return fm.HandleTextCommit(event)
+}
+
+// HandleTextErase forwards an input method's erase straight to the focused
+// trinket, skipping the window's own key policy for the same reason
+// HandleTextCommit does: it is not a keystroke.
+func (w *Window) HandleTextErase(event core.TextEraseEvent) bool {
+	w.mu.RLock()
+	fm := w.focusManager
+	w.mu.RUnlock()
+
+	if fm == nil {
+		return false
+	}
+	return fm.HandleTextErase(event)
+}
+
 // HandlePaste forwards pasted text straight to the focused trinket, skipping
 // the window's own key policy for the same reason HandleTextEditing does:
 // none of the menu bar, shortcut resolver, or title-bar focus has anything to

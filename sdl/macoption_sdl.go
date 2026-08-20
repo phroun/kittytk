@@ -5,6 +5,7 @@ package sdl
 import (
 	"runtime"
 
+	"github.com/phroun/kittytk/core"
 	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
 )
 
@@ -270,10 +271,268 @@ func (p *Platform) flushPendingPress() {
 	// is dispatched whether or not anything came of it — M-e is the shortcut
 	// the user pressed either way.
 	if !pending.optionChord {
-		return
+		// And this is where the takeover OPENS the composition, over the
+		// character the key had already committed and showing that character.
+		//
+		// It matters most on the route where SDL reports no composition at
+		// all: picking from the palette by number arrives as a synthesized
+		// Backspace and the replacement, with nothing marked in between. The
+		// sink would have no standing composition to replace, and the commit
+		// would append. Announced here, both routes are the same thing.
+		if p.ime.armFor(pending) && pending.surface != nil && pending.surface.handler != nil {
+			pending.surface.handler.Event(core.TextEditingEvent{
+				Text:   pending.key,
+				Start:  -1,
+				Length: -1,
+				Covers: p.ime.covers,
+			})
+		}
+		// Swallowed only if this press is the PALETTE'S OWN — a repeat of the
+		// key being held down behind it. That is the case the swallowing was
+		// for: those repeats each committed a copy of the very character the
+		// palette had opened to replace.
+		//
+		// A FRESH press is somebody typing. Reaching for "." or "/" with a
+		// palette up dismisses it and types the character, and swallowing that
+		// press ate the keystroke outright — it produced no text because the
+		// palette had the keyboard for a moment, not because it produced
+		// nothing.
+		if pending.repeat {
+			return
+		}
 	}
 	p.dispatchPendingPress(pending, "")
 }
+
+// imeState tracks what an input method is doing to text that has already been
+// committed.
+//
+// It exists for macOS's press-and-hold accent palette, which is not a
+// composition at all in the ordinary sense: the held letter is COMMITTED the
+// moment the key goes down, and choosing an accent then has to remove a
+// character that is already in the document. A native client is told which one
+// through NSTextInputClient's replacementRange. SDL's composition event has no
+// field for it, so we are told nothing, and the count has to be inferred.
+//
+// The inference rests on an observation this platform already makes: a held
+// plain printable whose text never arrives has been TAKEN OVER by an input
+// method (see flushPendingPress). What the palette has opened over is the
+// character that key committed before the hold began, which is exactly one rune
+// — only plain printables are held for text.
+//
+// So the takeover OPENS A COMPOSITION covering that character, and everything
+// after it is ordinary composition handling. The sink hides the letter and
+// paints the composition in its place, which is what the palette shows on
+// screen; whichever way the choice is confirmed — a synthesized Backspace and
+// the replacement for a number, marked text and the replacement for the arrows
+// — the commit replaces what the composition covered. Neither the extent nor
+// the confirmation route has to be described to the sink twice.
+type imeState struct {
+	// covers is how many committed runes the standing composition was opened
+	// over, and armed says whether an input method has taken a key over at all.
+	// They are separate because zero is a real answer: an ordinary composition
+	// is opened over nothing.
+	armed  bool
+	covers int
+
+	// composing is whether a composition is in flight, from the first non-empty
+	// update to the empty one that ends it. It is what keeps a key-down from
+	// disarming: while the input method has the keyboard, the keystrokes
+	// driving its palette are not the user typing.
+	composing bool
+
+	// shown is what the composition is displaying, kept because the palette's
+	// selector passes through the sink as ordinary typed text and ends the
+	// composition there — so it has to be put back once the selector is erased.
+	shown string
+
+	// typed is how many runes the palette has put in the document on its own
+	// behalf since it opened — its selector, which it erases again.
+	//
+	// Counted only to tell the palette's one selector apart from somebody
+	// typing on: it is NOT part of what the commit replaces, because the
+	// palette's own erase takes it back out (see TextEraseEvent).
+	typed int
+}
+
+// armFor records a takeover if this is the press that constitutes one, and
+// says whether it did — which is also the caller's cue to open a composition
+// over the character that press's key had committed.
+//
+// A REPEAT is what identifies it. The palette opens on the hold, so the presses
+// it swallows are the repeats behind it — the first press of that key committed
+// its character and was dispatched normally, and that character is the one the
+// palette will replace.
+//
+// The repeat test is what keeps a dead key's completion out. Option+i arms a
+// circumflex and the "u" that completes it is a FRESH press whose composition
+// arrives the same way; arming for that would delete the character before it.
+// True only on the transition, so the repeats that keep arriving behind an
+// open palette do not re-announce a composition that is already standing.
+func (m *imeState) armFor(pending *pendingKeyPress) bool {
+	if pending == nil || pending.optionChord || !pending.repeat || m.armed {
+		return false
+	}
+	// One rune: only plain printables are held for text, so the character the
+	// first press committed is exactly one.
+	m.armed, m.covers, m.shown = true, 1, pending.key
+	core.KeyTracef("1 sdl      ime     OPEN over %q covers=1", pending.key)
+	return true
+}
+
+// disarm forgets a takeover WITHOUT deleting anything, which is what a
+// cancelled palette needs: the letter the key committed is what the user typed
+// and it stays. Called wherever the input method loses the keystroke — a real
+// key, a click, focus leaving, text input being switched off.
+func (m *imeState) disarm() {
+	m.armed = false
+	m.covers = 0
+	m.typed = 0
+	m.shown = ""
+}
+
+// noteTyped records a rune this platform put in the document on the palette's
+// behalf, and reports whether the palette is still plausibly open.
+//
+// The palette takes exactly ONE selector. A first typed keystroke while it is
+// open is that selector — macOS types it, backspaces it, and sends the accent —
+// so it does not end the composition. A SECOND is somebody typing on, which no
+// palette does, and ends it.
+//
+// Without the first exemption, picking by number cancelled the takeover before
+// its own accent arrived and the accent appended: "oœ". Without the second, a
+// palette dismissed by typing rather than confirmed never ended at all, and the
+// letter under it stayed painted as provisional text.
+func (m *imeState) noteTyped() bool {
+	if !m.armed {
+		return false
+	}
+	m.typed++
+	return m.typed == 1
+}
+
+// takeBackTyped reports whether the palette has a rune of its OWN in the
+// document to take back, and spends it if so.
+//
+// It is what tells the palette's two erases apart. Picking by NUMBER types a
+// selector digit and backspaces that; picking with the MOUSE types nothing and
+// backspaces the base letter instead — the very character the composition
+// already stands over, which the sink is hiding and the commit is about to
+// replace. Forwarding that one as an erase deleted a rune the commit then
+// replaced as well, one character too many: "Hi" held on the "i" and clicked
+// came out "ï".
+//
+// Zero is also the answer while an ordinary composition is up, where Backspace
+// is the input method's own key for shortening what it holds. Nothing of the
+// document is being taken back there either.
+func (m *imeState) takeBackTyped() bool {
+	if m.typed <= 0 {
+		return false
+	}
+	m.typed--
+	return true
+}
+
+// spend ends the takeover on a commit, so a second commit does not open over a
+// second character.
+//
+// The composition goes with it. A commit IS the composition finishing, and an
+// input method that delivers one without the empty update that usually follows
+// would otherwise leave this standing true for good — and a key that types
+// nothing is swallowed while it stands (see emitKeyPress), so Return would stop
+// working for the rest of the session. Another update sets it again.
+func (m *imeState) spend() {
+	m.composing = false
+	m.disarm()
+}
+
+// imeBackspace reports the palette's own erase as what it MEANS, rather than as
+// the key it arrived on.
+//
+// Picking from the press-and-hold palette by number types the selector digit
+// into the document and takes it back out this way, because macOS expects the
+// base letter to be marked text it will replace itself. Nobody pressed
+// Backspace, so dispatching it as a keystroke would run whatever the user has
+// bound to that key — which need not be an erase at all — and the sink is the
+// only thing that knows what erasing means where it is: a character out of a
+// document, or the child's own erase byte down a terminal session.
+//
+// The takeover STANDS. The letter the palette opened over is still there and
+// still what the accent will replace; only the palette's own selector is being
+// taken back. And nothing is held for this press, so its release drops on its
+// own.
+func (p *Platform) imeBackspace(s *sdlSurface) {
+	if !p.ime.takeBackTyped() {
+		// Nothing of the palette's OWN is in the document, so this erase is
+		// aimed at the character it opened over — which the sink is already
+		// hiding behind the composition, and which the commit replaces. There
+		// is nothing here to take back: doing it anyway deleted the rune before
+		// the region as well, and "Hi" held on the "i" came out "ï".
+		core.KeyTracef("1 sdl      ime     erase swallowed (nothing of its own typed)")
+		return
+	}
+	core.KeyTracef("1 sdl      ime     erase 1 (the palette's own)")
+	if s == nil || s.handler == nil {
+		return
+	}
+	s.handler.Event(core.TextEraseEvent{Count: 1})
+
+	// And the composition goes back up. The selector reached the sink as
+	// ordinary typed text, which ENDS a composition there — that is what
+	// committed characters do — so by now the sink has forgotten what the
+	// palette is standing over. Restored once the selector is gone and the
+	// caret is back where the composition belongs, so the accent still has a
+	// region to replace.
+	if p.ime.armed {
+		s.handler.Event(core.TextEditingEvent{
+			Text:   p.ime.shown,
+			Start:  -1,
+			Length: -1,
+			Covers: p.ime.covers,
+		})
+	}
+}
+
+// cancelComposition ends a takeover AND tells the sink, which is what makes
+// cancelling whole.
+//
+// Disarming alone is not enough once the takeover opens a composition: the sink
+// is hiding a committed character behind it, and a composition nobody ends
+// leaves that character hidden for good. Nothing is deleted — the letter comes
+// back exactly as it was typed, which is what dismissing a palette means.
+//
+// Sending an empty composition rather than relying on SDL to send one, because
+// on the route where the palette is driven by number SDL never reported a
+// composition in the first place: ours was the only one, and only we can end
+// it.
+func (p *Platform) cancelComposition(s *sdlSurface) {
+	if !p.ime.armed {
+		// Nothing of ours is standing. A composition SDL owns is left alone —
+		// a dead key deliberately leaves one open for the next keystroke to
+		// compose against.
+		p.ime.disarm()
+		return
+	}
+	core.KeyTracef("1 sdl      ime     CANCEL (covers=%d composing=%v)",
+		p.ime.covers, p.ime.composing)
+	// composing goes with it. It is set from the updates SDL sends, and a
+	// palette dismissed by a keystroke rather than confirmed produces no
+	// ending update at all — so left alone it stands true for good, and the
+	// cancel that should have run on the next key never would.
+	p.ime.composing = false
+	p.ime.disarm()
+	if s != nil && s.handler != nil {
+		s.handler.Event(core.TextEditingEvent{Start: -1, Length: -1})
+	}
+}
+
+// holdsKeyboard reports whether an input method currently has the keystrokes.
+//
+// It answers both of the questions this state exists for, because they are the
+// same question. A key arriving now is the palette's rather than the
+// document's, and text arriving now is a COMMIT rather than ordinary typing —
+// a character chosen from a palette or a candidate list, with no key behind it.
+func (m *imeState) holdsKeyboard() bool { return m.armed || m.composing }
 
 // macOSDeadKeys maps the composition a macOS dead-key Option chord opens back
 // to its M-key notation.

@@ -139,6 +139,10 @@ type Platform struct {
 	chordText    map[string]string
 	pendingPress *pendingKeyPress
 
+	// ime is what an input method is doing to keystrokes already committed —
+	// macOS's press-and-hold accent palette, chiefly. See macoption_sdl.go.
+	ime imeState
+
 	padScancode uint32
 
 	main *nativeWin
@@ -1435,6 +1439,11 @@ func (p *Platform) pumpEvents() bool {
 				// dropping an unmatched release could strand a key. A browser
 				// does the same on blur.
 				p.releaseHeldKeys(s)
+				// An input method holding this keyboard is not holding it any
+				// more. Nothing was deleted, so the letter a palette had opened
+				// over simply comes back.
+				p.ime.composing = false
+				p.cancelComposition(s)
 				s.handler.Event(core.FocusEvent{Focused: false})
 				s.Invalidate(core.UnitRect{})
 				if p.noteFocus(false) {
@@ -1516,6 +1525,28 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 
+			// Text arriving while an input method holds the keyboard is a
+			// COMMIT: the final form of a composition, chosen from a palette or
+			// a candidate list. There is no key behind it — the digit, arrow or
+			// Return that chose it was the input method's — so it is not
+			// reported as a chord and nothing about it goes in the memo.
+			//
+			// Reached only with no press held. A dead key's completion has one:
+			// Option+i then u composes "û" while this same flag stands, and
+			// that IS the u keystroke's own text, dispatched above.
+			core.KeyTracef("1 sdl      text    %q (armed=%v composing=%v covers=%d)",
+				text, p.ime.armed, p.ime.composing, p.ime.covers)
+			if p.ime.holdsKeyboard() {
+				core.KeyTracef("1 sdl      commit  text=%q covers=%d", text, p.ime.covers)
+				p.ime.spend()
+				if s.handler.Event(core.TextCommitEvent{Text: text}) {
+					continue
+				}
+				// Nobody took it, so it goes on as ordinary typed text below —
+				// what every sink saw before this event existed, minus the
+				// replacement, which only a commit can express.
+			}
+
 			for _, ch := range text {
 				// On macOS, handle native Option key shortcuts by mapping them
 				// back into clear "M-key" syntax to ensure uniformity across environments.
@@ -1578,6 +1609,12 @@ func (p *Platform) pumpEvents() bool {
 			if s == nil || s.handler == nil {
 				continue
 			}
+			// Whether an input method currently has the keyboard, which decides
+			// both whether a Backspace is the palette's and whether text is a
+			// commit. An empty update ends the composition; the takeover it may
+			// have been carrying is left alone, because the commit that spends
+			// it can arrive either side of this event.
+			p.ime.composing = e.GetText() != ""
 			// ...except on macOS, where five of the Option chords are DEAD
 			// KEYS: Option+E, I, N, U and ` open a composition to accent the
 			// next character instead of producing a character of their own.
@@ -1624,6 +1661,14 @@ func (p *Platform) pumpEvents() bool {
 			// An input method has taken this keystroke over. The press it was
 			// holding is not a keystroke any more — the composition below is —
 			// and a repeat had nothing to say in the first place.
+			//
+			// Armed here as well as in flushPendingPress because they are two
+			// routes to the same takeover: a composition arriving is a text
+			// event, so it keeps the held press from ever reaching the flush.
+			// This is the route the accent palette takes when it is driven with
+			// the arrow keys rather than by number. The composition below
+			// carries the extent either way.
+			p.ime.armFor(p.pendingPress)
 			p.pendingPress = nil
 
 			if runtime.GOOS == "darwin" && sdl3.GetModState()&sdl3.KMOD_ALT != 0 {
@@ -1647,11 +1692,17 @@ func (p *Platform) pumpEvents() bool {
 					})
 				}
 			}
-			core.KeyTracef("1 sdl      compose text=%q", e.GetText())
+			// Stamped with what the takeover opened over, which SDL knows
+			// nothing about: the input method took a letter that was already
+			// committed, and the sink has to hide it while showing the
+			// alternatives rather than painting them after it.
+			p.ime.shown = e.GetText()
+			core.KeyTracef("1 sdl      compose text=%q covers=%d", e.GetText(), p.ime.covers)
 			s.handler.Event(core.TextEditingEvent{
 				Text:   e.GetText(),
 				Start:  int(e.Start),
 				Length: int(e.Length),
+				Covers: p.ime.covers,
 			})
 		case *sdl3.KeyboardEvent:
 			s := p.surfaceFor(e.WindowID)
@@ -1673,6 +1724,11 @@ func (p *Platform) pumpEvents() bool {
 						Value: modeValue(e.Keysym.Mod&sdl3.KMOD_CAPS != 0),
 					})
 				}
+			}
+			if e.Type == sdl3.KeyDown && e.Keysym.Sym == sdl3.K_BACKSPACE &&
+				p.ime.holdsKeyboard() {
+				p.imeBackspace(s)
+				continue
 			}
 			if e.Type == sdl3.KeyDown && eatsLockCap(e.Keysym) {
 				// The lock cap alone is not a key: it moves the lock and is
@@ -1856,6 +1912,11 @@ func (p *Platform) pumpEvents() bool {
 				if s.win != nil && s.win.window != nil {
 					_ = sdl3.ClearComposition(s.win.window)
 				}
+				// And the takeover with it: the click cancelled the palette, so
+				// the letter it had opened over comes back, exactly as it was
+				// typed. That is what cancelling means.
+				p.ime.composing = false
+				p.cancelComposition(s)
 				// Enable pointer capturing so dragging actions extend beyond window borders
 				// to allow continuous, lag-free native widget tear-out gestures.
 				_ = sdl3.CaptureMouse(true)
@@ -3056,6 +3117,10 @@ func (s *sdlSurface) SetTextInputEnabled(on bool) {
 		// Whatever it is holding goes with it — the same abandonment a click
 		// performs, and for the same reason.
 		_ = sdl3.ClearComposition(s.win.window)
+		if s.platform != nil {
+			s.platform.ime.composing = false
+			s.platform.cancelComposition(s)
+		}
 		err = sdl3.StopTextInput(s.win.window)
 	}
 	if imeDebug {
