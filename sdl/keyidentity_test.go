@@ -100,26 +100,39 @@ func TestWhichPressesWaitForText(t *testing.T) {
 	}
 }
 
-// A plain key that produced no text produced nothing.
+// A plain key REPEATING with no text produced nothing.
 //
 // macOS hands a held letter over as marked text rather than committing it, and
 // goes on delivering repeat key-downs behind its accent palette. Naming presses
 // from the key made those real keystrokes, so the drain committed the very
 // character the palette had opened to replace — and then one more per repeat.
-func TestAPlainKeyWithNoTextIsSilence(t *testing.T) {
-	for _, repeat := range []bool{false, true} {
+//
+// A FRESH press is not that, and used to be swallowed by the same rule: with a
+// palette up, reaching for "." or "/" dismisses it and types the character, and
+// that keystroke was eaten outright. It produced no text because the palette
+// held the keyboard for a moment, not because it produced nothing. So the
+// silence belongs to the repeats alone.
+func TestOnlyARepeatWithNoTextIsSilence(t *testing.T) {
+	for _, c := range []struct {
+		repeat bool
+		want   int
+	}{
+		{true, 0},  // the palette's own key, held down behind it
+		{false, 1}, // somebody typing
+	} {
 		h := &optionEventLog{}
 		s := &sdlSurface{handler: h}
 		p := &Platform{}
-		p.pendingPress = &pendingKeyPress{key: "e", scancode: 8, repeat: repeat, surface: s}
+		p.pendingPress = &pendingKeyPress{key: "e", scancode: 8, repeat: c.repeat, surface: s}
 
 		p.flushPendingPress()
 
-		if n := len(h.keys()); n != 0 {
-			t.Errorf("repeat=%v: dispatched %d keys with no text: %v", repeat, n, h.events)
+		if n := len(h.keys()); n != c.want {
+			t.Errorf("repeat=%v: dispatched %d keys, want %d: %v",
+				c.repeat, n, c.want, h.events)
 		}
 		if p.pendingPress != nil {
-			t.Errorf("repeat=%v: the press is still held after being flushed", repeat)
+			t.Errorf("repeat=%v: the press is still held after being flushed", c.repeat)
 		}
 	}
 }
@@ -346,5 +359,74 @@ func TestReportingOneKeystroke(t *testing.T) {
 	p, _ = press(keyPress{chord: "M-i", observed: true, scancode: 4})
 	if _, ok := p.takeHeldKey(4); ok {
 		t.Error("a keystroke with no key-down behind it was registered for a release")
+	}
+}
+
+// A key that TYPES NOTHING, arriving while a composition is in flight, belongs
+// to the input method rather than to the document.
+//
+// macOS goes on delivering key-downs from behind its Japanese candidate window
+// even though it is consuming them itself. Return confirms the candidate — and
+// also reached the document, so the caret walked a line down the screen for
+// every word confirmed, while the composition stayed exactly where it belonged.
+//
+// The line is text, not the key's name: a "." typed to dismiss a palette, the
+// digit that picks from one, the space that confirms, and the "u" completing a
+// dead key's Option+i all produce a character, and all still go through.
+func TestAKeyThatTypesNothingIsTheInputMethodsWhileComposing(t *testing.T) {
+	for _, c := range []struct {
+		what      string
+		chord     string
+		produced  string
+		composing bool
+		want      int
+	}{
+		{"Return confirming a candidate", "Return", "", true, 0},
+		{"an arrow walking the candidate list", "down", "", true, 0},
+		{"Return with nothing composing", "Return", "", false, 1},
+		{"a character typed to dismiss a composition", ".", "", true, 1},
+		{"a dead key's completion", "u", "û", true, 1},
+	} {
+		h := &optionEventLog{}
+		s := &sdlSurface{handler: h}
+		p := &Platform{}
+		p.ime.composing = c.composing
+
+		p.emitKeyPress(s, keyPress{chord: c.chord, produced: c.produced, scancode: 8})
+
+		if n := len(h.keys()); n != c.want {
+			t.Errorf("%s: dispatched %d keys, want %d: %v", c.what, n, c.want, h.events)
+		}
+	}
+}
+
+// And a swallowed press registers no hold, so its release is dropped as the
+// orphan it is rather than reported as half a keystroke.
+func TestASwallowedPressLeavesNothingHeld(t *testing.T) {
+	h := &optionEventLog{}
+	s := &sdlSurface{handler: h}
+	p := &Platform{}
+	p.ime.composing = true
+
+	p.emitKeyPress(s, keyPress{chord: "Return", scancode: 8, held: true})
+
+	if _, held := p.takeHeldKey(8); held {
+		t.Error("a key the input method took was recorded as held")
+	}
+}
+
+// A commit ends the composition, so the swallow above cannot outlive it.
+//
+// An input method that delivers its finished text without the empty update
+// that usually follows would otherwise leave a composition standing forever —
+// and Return would stop working for the rest of the session.
+func TestACommitEndsTheComposition(t *testing.T) {
+	p := &Platform{}
+	p.ime.composing = true
+
+	p.ime.spend()
+
+	if p.ime.holdsKeyboard() {
+		t.Error("a composition is still standing after its text was committed")
 	}
 }

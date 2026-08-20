@@ -3930,6 +3930,30 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		}
 		return false
 
+	case core.TextCommitEvent:
+		// A finished composition goes where the in-flight one went, and is
+		// routed the same way for the same reasons. False here is meaningful:
+		// it means no sink took the commit, and the platform delivers the text
+		// the ordinary way instead.
+		if fm != nil && fm.HandleTextCommit(e) {
+			return true
+		}
+		if wm != nil {
+			return wm.HandleTextCommit(e)
+		}
+		return false
+
+	case core.TextEraseEvent:
+		// An input method's erase goes where its composition went, and is
+		// routed the same way for the same reasons.
+		if fm != nil && fm.HandleTextErase(e) {
+			return true
+		}
+		if wm != nil {
+			return wm.HandleTextErase(e)
+		}
+		return false
+
 	case core.PasteEvent:
 		// Pasted text goes to whatever is focused and nowhere else — like a
 		// composition, not a key: no shortcuts, no menu bar, no window-cycle
