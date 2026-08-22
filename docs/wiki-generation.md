@@ -81,6 +81,7 @@ never commits and never pushes.
 | `-wiki PATH` | The wiki checkout. Required. |
 | `-check` | Report stale pages and exit non-zero. Writes nothing. |
 | `-list` | Coverage both ways: types with no page, pages with no blocks. |
+| `-examples` | Execute the wiki's wire examples. Writes nothing. |
 | `-endpoint ADDR` | Describe a **running** display service instead of this binary's own registry. |
 
 `-endpoint` documents whichever build is actually serving, which is what you
@@ -151,3 +152,36 @@ go run ./cmd/kittytk-wikidoc -wiki ../kittytk.wiki -check
 
 `-list` answers the other question — what is not documented at all. A type
 with no page is the gap worth closing next.
+
+## Checking the examples
+
+`-examples` runs every wire script in the wiki against the registry:
+
+```sh
+go run ./cmd/kittytk-wikidoc -wiki ../kittytk.wiki -examples
+```
+
+**Parsing an example proves nothing.** The protocol accepts any
+syntactically valid property name and rejects only one the registry has
+never heard of, so an invented property parses cleanly and fails when it
+runs. A wrong child under a parent behaves the same way. Examples have to
+be *executed*, and this is the difference between a page that looks right
+and one that is.
+
+Each page gets a session of its own, in page order, so an example that
+continues the one above it — `set tv.b children={…}` after the build that
+made `tv` — runs against what that build produced.
+
+Blocks that are not wire scripts are left alone: client code, shell
+commands, a fragment with an `…` in it, and an example shown beside the
+result it produces. A wire script that genuinely cannot run as written —
+one quoting an object ID an application would have read out of a reply —
+is exempted where it sits:
+
+```markdown
+<!-- ktkdoc:noexec -->
+```
+
+on the line before the fence. The marker renders as nothing, applies to
+that one block, and keeps the exemption visible to whoever edits the page
+next. Use it sparingly: every block it covers is a block nothing checks.

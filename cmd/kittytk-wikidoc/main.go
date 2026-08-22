@@ -30,6 +30,7 @@
 //	kittytk-wikidoc -wiki ../kittytk.wiki            # rewrite in place
 //	kittytk-wikidoc -wiki ../kittytk.wiki -check     # fail if stale
 //	kittytk-wikidoc -wiki ../kittytk.wiki -list      # coverage both ways
+//	kittytk-wikidoc -wiki ../kittytk.wiki -examples  # run the examples
 //
 // It edits files and never commits: the wiki is a separate repository,
 // and a human reading the diff before it lands is the point.
@@ -58,6 +59,7 @@ func main() {
 	endpoint := flag.String("endpoint", "", "describe a running display service instead of this binary's registry")
 	check := flag.Bool("check", false, "report staleness and exit non-zero; write nothing")
 	list := flag.Bool("list", false, "report coverage: types with no page, pages with no markers")
+	examples := flag.Bool("examples", false, "execute the wiki's wire examples; exit non-zero on a failure. Writes nothing")
 	flag.Parse()
 
 	if *wiki == "" {
@@ -83,6 +85,17 @@ func main() {
 	if *list {
 		if err := report(vocab, pages); err != nil {
 			fatal(err)
+		}
+		return
+	}
+
+	if *examples {
+		failed, err := runExamples(pages)
+		if err != nil {
+			fatal(err)
+		}
+		if failed > 0 {
+			os.Exit(1)
 		}
 		return
 	}
