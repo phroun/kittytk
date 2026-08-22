@@ -17,6 +17,10 @@ func init() {
 			// wiring below).
 			"action": actionProp("action").Tip("Optional command dispatched on click."),
 		},
+		map[string]protocol.EventDesc{
+			"click": protocol.NewEventDesc("The button was activated, by pointer or by keyboard.").
+				Field("trinket", "uint", "The button's object ID."),
+		},
 		nil, // buttons take no children
 		func(ctx *protocol.BindContext, w core.Trinket) {
 			b := w.(*Button)
