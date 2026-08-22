@@ -41,11 +41,35 @@ Two things worth knowing:
   — the same ones you push the code with. If you use SSH for the code, use
   `git@github.com:phroun/kittytk.wiki.git`.
 
+## Where to keep the clone
+
+Anywhere — the tool takes a path, so this is only your convenience. Two
+arrangements are common:
+
+```sh
+git clone https://github.com/phroun/kittytk.wiki.git   # beside the code
+git clone https://github.com/phroun/kittytk.wiki.git wiki   # inside it
+```
+
+A clone inside the checkout needs ignoring. Prefer `.git/info/exclude` over
+`.gitignore` — where you keep it is your layout, not the project's:
+
+```sh
+echo "/wiki/" >> .git/info/exclude
+```
+
+It is safe there. `git clean -xdf` skips an untracked directory that is
+itself a repository, so the sync procedure in
+[fork-sync-policy.md](fork-sync-policy.md) will not touch it; only
+`git clean -xdff`, forcing twice, removes it, and that would take unpushed
+wiki commits with it. The Go tool never looks inside either, since the
+directory holds no `.go` files. The sync procedure's recursive diff excludes
+`wiki` for the same reason this section exists.
+
 ## Running it
 
 ```sh
-# from the kittytk checkout, with the wiki cloned beside it
-go run ./cmd/kittytk-wikidoc -wiki ../kittytk.wiki
+go run ./cmd/kittytk-wikidoc -wiki ../kittytk.wiki   # or -wiki ./wiki
 ```
 
 It rewrites the generated spans, prints which pages changed, and stops.
