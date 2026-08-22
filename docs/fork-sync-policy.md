@@ -35,9 +35,14 @@ diverges in exactly these ways. A sync must respect all of them.
 
 ### Files that ARE yours — keep them on your side, never send them
 
-- `objects/trinkets/editor_mew.go`
-- `objects/trinkets/editor_mew_editactions_test.go`
+- `objects/trinkets/editor_mew*.go` — the editor and every test of it
 - `objects/trinkets/editor_protocol_mew.go`
+
+The glob is the guard, so **give every mew-owned file a name that matches
+it**. A mew test named for something else slips through: `capture_relay_test.go`
+tested `captureRelay` in `editor_mew.go`, matched nothing here, and sat in the
+upstream repo referring to a symbol that does not exist there until it was
+noticed and renamed.
 
 These carry `//go:build mew` and import `github.com/phroun/mew`. Upstream ships
 the complementary `//go:build !mew` placeholders (`editor.go`,
@@ -107,8 +112,7 @@ git -C "$MINE" clean -xdn          # DRY RUN: show build junk. Then -xdf to remo
 
 diff -ruN \
   --exclude='.git' \
-  --exclude='editor_mew.go' \
-  --exclude='editor_mew_editactions_test.go' \
+  --exclude='editor_mew*.go' \
   --exclude='editor_protocol_mew.go' \
   --exclude='garland' \
   --exclude='patches' \
