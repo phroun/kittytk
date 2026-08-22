@@ -40,8 +40,13 @@ func init() {
 			})
 		},
 		Props: map[string]protocol.Property{
-			"selected":       intProp("selected", (*ListView).SetCurrentIndex).Tip("Selected row index (-1 = none).").Def("-1"),
-			"alternate_rows": boolProp("alternate_rows", (*ListView).SetAlternateRowColors).Tip("Shade alternate rows.").Def("false"),
+			"selected": intProp("selected", (*ListView).SetCurrentIndex).Tip("Selected row index (-1 = none).").Def("-1"),
+			// alternate_rows and ledger are the SAME switch: both set
+			// alternateRowColors, and the paint path has one branch, which
+			// bands with the scheme's ledger colors. The older name is kept
+			// so existing scripts keep working; treeview only ever had
+			// `ledger`, which is the name to prefer.
+			"alternate_rows": boolProp("alternate_rows", (*ListView).SetAlternateRowColors).Tip("Ledger-band non-selected rows. Same switch as ledger; prefer ledger.").Def("false"),
 			"ledger":         boolProp("ledger", (*ListView).SetLedger).Tip("Alternate non-selected rows in the ledger colors.").Def("false"),
 		},
 		Append: func(parent, child any) error {
