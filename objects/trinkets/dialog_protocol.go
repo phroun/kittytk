@@ -75,7 +75,9 @@ func init() {
 			}
 			m.SetIcon(icon)
 			return nil
-		})).OneOf("none", "information", "warning", "error", "question").Tip("Icon shown beside the message"),
+			// NewMessageBox leaves the icon zero, which is IconNone, so
+			// "none" is the actual default and not just a legal value.
+		})).OneOf("none", "information", "warning", "error", "question").Def("none").Tip("Icon shown beside the message"),
 	}
 	for name, flag := range buttonFlags {
 		name, flag := name, flag
