@@ -114,6 +114,7 @@ diff -ruN \
   --exclude='editor_mew*.go' \
   --exclude='editor_protocol_mew.go' \
   --exclude='patches' \
+  --exclude='wiki' \
   --exclude='__pycache__' \
   --exclude='*.pyc' \
   --exclude='kittytk-sdl' \
@@ -122,12 +123,24 @@ diff -ruN \
   "$UP" "$MINE" > sync.diff
 ```
 
+`wiki` is excluded because the wiki is a repository of its own
+(`kittytk.wiki.git`) that people reasonably clone into a `wiki/` directory
+beside the code and ignore locally — see
+[wiki-generation.md](wiki-generation.md). It is not part of either tree, and
+a recursive diff has no way to know that: present on one side only, it reads
+as a page-by-page addition or deletion.
+
+Note also that `git clean -xdf` leaves such a clone alone — git skips an
+untracked directory that is itself a repository, and says nothing about it
+even in the dry run. Only `git clean -xdff`, forcing twice, removes it, and
+that would take any unpushed wiki commits with it.
+
 Then, **before you send it**, self-audit — these are the checks I have to run
 on the receiving end, so run them yourself:
 
 ```sh
-# 1. Nothing under patches/ (boundary leak):
-grep -E '^\+\+\+ .*/patches/' sync.diff && echo "LEAK — fix excludes"
+# 1. Nothing under patches/ or wiki/ (boundary leak):
+grep -E '^\+\+\+ .*/(patches|wiki)/' sync.diff && echo "LEAK — fix excludes"
 
 # 2. No mew anywhere:
 grep -i 'phroun/mew' sync.diff && echo "mew LEAK — strip go.mod/go.sum edits"

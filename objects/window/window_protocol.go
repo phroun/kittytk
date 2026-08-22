@@ -158,6 +158,10 @@ func init() {
 	}
 
 	protocol.RegisterType("window", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"window_closed": protocol.NewEventDesc("The window finished closing. It carries no trinket field because the window IS the subject.").
+				Field("window", "uint", "The closed window's object ID."),
+		},
 		New: func() any { return NewWindow("") },
 		ID: func(t any) uint64 {
 			return uint64(t.(*Window).ObjectID())

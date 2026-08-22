@@ -15,6 +15,14 @@ import (
 //	} selected=0
 func init() {
 	protocol.RegisterType("listview", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"change": protocol.NewEventDesc("The selection moved.").
+				Field("trinket", "uint", "The list's object ID.").
+				Field("selected", "int", "Index of the newly selected row, or -1 for none."),
+			"activate": protocol.NewEventDesc("A row was activated — double-clicked, or Enter on the selection.").
+				Field("trinket", "uint", "The list's object ID.").
+				Field("selected", "int", "Index of the activated row."),
+		},
 		New: func() any { return NewListView() },
 		ID: func(t any) uint64 {
 			return uint64(t.(*ListView).ObjectID())

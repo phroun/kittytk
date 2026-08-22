@@ -94,6 +94,11 @@ func init() {
 	}
 
 	protocol.RegisterType("messagebox", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"finish": protocol.NewEventDesc("The message box was dismissed.").
+				Field("trinket", "uint", "The message box's object ID.").
+				Field("result", "word", "Which answer closed it."),
+		},
 		New: func() any { return NewMessageBox("", "", 0) },
 		ID: func(t any) uint64 {
 			return uint64(t.(*MessageBox).ObjectID())

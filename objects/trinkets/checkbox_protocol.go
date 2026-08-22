@@ -45,6 +45,11 @@ func init() {
 			"wrap":     boolProp("wrap", (*Checkbox).SetWordWrap).Tip("Word-wrap the label.").Def("false"),
 			"action":   actionProp("action").Tip("Optional command dispatched on toggle."),
 		},
+		map[string]protocol.EventDesc{
+			"toggle": protocol.NewEventDesc("The checked state changed.").
+				Field("trinket", "uint", "The checkbox's object ID.").
+				Field("checked", "flag", "The new state: set, unset, or indeterminate on a tristate box."),
+		},
 		nil,
 		func(ctx *protocol.BindContext, w core.Trinket) {
 			c := w.(*Checkbox)
