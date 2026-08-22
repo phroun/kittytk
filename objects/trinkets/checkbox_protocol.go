@@ -46,6 +46,8 @@ func init() {
 			"action":   actionProp("action").Tip("Optional command dispatched on toggle."),
 		},
 		map[string]protocol.EventDesc{
+			"command": protocol.NewEventDesc("The command named by action= was activated. Raised only when action= is set, and before the toggle event, so a client may act on either. Carries the command rather than the trinket, because a command is what an application binds to and the same one may be reachable from several places.").
+				Field("action", "word", "The command ID from action=."),
 			"toggle": protocol.NewEventDesc("The checked state changed.").
 				Field("trinket", "uint", "The checkbox's object ID.").
 				Field("checked", "flag", "The new state: set, unset, or indeterminate on a tristate box."),
