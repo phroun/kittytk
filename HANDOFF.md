@@ -55,6 +55,11 @@ go test -tags sdl ./objects/...
 
 Visual work is proven with PNG captures from the SDL backend when relevant.
 
+New test files follow [TEST-NAMING.md](TEST-NAMING.md) — `0_<source>_test.go`
+for the tests of one source file, `00_<description>_test.go` for one that
+spans several. Read it before adding a test file rather than pattern-matching
+off a neighbour.
+
 ## Git conventions used this whole project
 
 - Branch: work on the designated `claude/...` branch; push with

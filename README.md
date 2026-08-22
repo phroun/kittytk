@@ -51,3 +51,16 @@ github.com/phroun/kittytk
 The stylized wordmark is `KittyTK`; the code identifier — module path,
 package imports, binary, and the `KITTYTK_DISPLAY` environment variable — is
 lowercase `kittytk`.
+
+## Tests
+
+```
+go build ./... && go build -tags sdl ./...
+go test ./... && go test -tags sdl ./objects/...
+```
+
+Test files are named for the source file they test — `0_keymap_test.go`
+tests `keymap.go`, `00_` marks one that spans several files. **Read
+[TEST-NAMING.md](TEST-NAMING.md) before adding a test file**; it is short,
+and it covers a trap that removes tests from the build without failing
+anything.
