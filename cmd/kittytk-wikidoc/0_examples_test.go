@@ -71,6 +71,42 @@ func TestNoexecInsideAFenceIsNotADirective(t *testing.T) {
 	}
 }
 
+// The noexec marker is a standalone directive, not a span. Read as a
+// span it has no closing marker, and the whole page then fails with
+// "never closed" -- which is a confusing way to say "that is not a
+// span", and it stops every other page from being written too.
+func TestNoexecIsNotAGeneratedSpan(t *testing.T) {
+	lines := strings.Split(
+		noexecMarker+"\n"+
+			"```\nset x enum=738\n```\n"+
+			"<!-- ktkdoc:props widget -->\n<!-- /ktkdoc -->\n", "\n")
+
+	blocks, err := scan("P.md", lines)
+	if err != nil {
+		t.Fatalf("noexec read as a span: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1 (the props span alone)", len(blocks))
+	}
+	if blocks[0].kind != "props" {
+		t.Errorf("kind = %q, want props", blocks[0].kind)
+	}
+}
+
+// A standalone directive inside a span does not end it or count as a
+// nested block.
+func TestNoexecInsideASpanIsNotNesting(t *testing.T) {
+	lines := strings.Split(
+		"<!-- ktkdoc:props widget -->\n"+noexecMarker+"\n<!-- /ktkdoc -->\n", "\n")
+	blocks, err := scan("P.md", lines)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1", len(blocks))
+	}
+}
+
 // Only wire scripts are executed. Client code, shell, elided
 // fragments and result-annotated pairs are not wire scripts, and
 // running them would report failures that are not failures.

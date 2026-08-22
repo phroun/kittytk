@@ -151,6 +151,14 @@ func isClose(line string) bool {
 	return strings.TrimSpace(line) == closeMarker
 }
 
+// Not every ktkdoc marker opens a span. A standalone directive stands
+// on its own line and has no closing marker, so the scanner has to know
+// them by name -- read as a span, one reports itself as never closed,
+// which is a confusing way to say "that is not a span".
+var standalone = map[string]bool{
+	"noexec": true, // examples.go: exempt the next fenced block
+}
+
 // block is one marked span in one page.
 type block struct {
 	kind    string // props, events, common, types
@@ -174,9 +182,12 @@ func scan(path string, lines []string) ([]block, error) {
 			}
 			continue
 		}
+		if standalone[m[1]] {
+			continue
+		}
 		b := block{kind: m[1], arg: m[2], open: i, close: -1, openRaw: lines[i]}
 		for j := i + 1; j < len(lines); j++ {
-			if openRe.MatchString(lines[j]) {
+			if sub := openRe.FindStringSubmatch(lines[j]); sub != nil && !standalone[sub[1]] {
 				return nil, fmt.Errorf("%s:%d: block opened inside the one at line %d", path, j+1, i+1)
 			}
 			if isClose(lines[j]) {
