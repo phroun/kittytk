@@ -28,8 +28,8 @@ github.com/phroun/direct-key-handler v0.3.38 h1:IsxJQUbHjF2mv7QjpSzTVMvR+HXme57N
 github.com/phroun/direct-key-handler v0.3.38/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
 github.com/phroun/key-sequence-processor v0.1.11 h1:M1vI3FlxcF9sxfeitRlJSFyLzYcvqU0R8mqu7KaDzYk=
 github.com/phroun/key-sequence-processor v0.1.11/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
-github.com/phroun/khatool v0.1.2-0.20260916075045-149034ad25c7 h1:R1q4BjAkG7IlN0gfFdcZcJkCb0mweCi370qfh8yv5dw=
-github.com/phroun/khatool v0.1.2-0.20260916075045-149034ad25c7/go.mod h1:odkX/gW9WkGgGhT/G+gBrZ4FkBK3WElHBxbEhdsnKds=
+github.com/phroun/khatool v0.1.2 h1:yM9V6H6PJVMwU3dzDK0yYinQ3fVRM+vhMxp0DFB0GZA=
+github.com/phroun/khatool v0.1.2/go.mod h1:odkX/gW9WkGgGhT/G+gBrZ4FkBK3WElHBxbEhdsnKds=
 github.com/phroun/pawscript v0.2.17-alpha h1:QF7viEKfLl6V61Y/ZNkPrWByqEKqoYSt8RZGCx13JxI=
 github.com/phroun/pawscript v0.2.17-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
 github.com/phroun/purfecterm v0.2.55 h1:0BiXrjD/WJUEGepdOD+RTKt1O3gmYXolevYPlHj4z7g=
