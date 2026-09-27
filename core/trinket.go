@@ -213,8 +213,8 @@ type FocusableTrinket interface {
 	NextFocusTrinket() Trinket
 	SetNextFocusTrinket(w Trinket)
 
-	// PrevFocusTrinket returns the previous trinket in the focus chain.
-	PrevFocusTrinket() Trinket
+	// PriorFocusTrinket returns the prior trinket in the focus chain.
+	PriorFocusTrinket() Trinket
 	SetPrevFocusTrinket(w Trinket)
 }
 
@@ -257,6 +257,23 @@ type PopupRequest struct {
 	Anchor UnitRect
 	// Paint function to render the popup
 	Paint func(p *Painter)
+	// Fade is how solid this popup is drawn over time, for one that comes
+	// and goes rather than appearing outright. Nil is solid.
+	//
+	// The compositor asks it what it comes to at the instant of each frame
+	// and keeps drawing frames until it is done, so a fade runs at the
+	// surface's own rate rather than at any timer's.
+	Fade *Fade
+	// Inert marks a popup that is drawn and nothing else: the pointer
+	// passes through it to whatever it is lying over, so a press inside
+	// its bounds reaches the thing underneath instead of being swallowed
+	// by an overlay that has nothing to do with the click. A tooltip is
+	// the case for it -- it sits ON the text it stands for, and the
+	// reader clicking that text means the text.
+	//
+	// An inert popup is still cleared by a press like any other: the
+	// pointer has stopped resting, so what it was resting on is answered.
+	Inert bool
 	// HandleMousePress function to handle clicks (returns true if handled)
 	HandleMousePress func(event MousePressEvent) bool
 	// HandleMouseMove function to handle mouse movement (returns true if handled)
@@ -366,6 +383,11 @@ type TrinketBase struct {
 	sizePolicy SizePolicyPair
 	margins    UnitMargins
 
+	elide            ElideMode
+	tooltip          string // what this trinket was told to say when asked
+	cutText          string // the whole of what it last had to cut short
+	tooltipShown     string // what it is currently offering, if anything
+	tooltipSide      TooltipSide
 	layoutStretch    int
 	layoutStretchSet bool
 	layoutAlign      Alignment
@@ -1340,6 +1362,10 @@ func (w *TrinketBase) HandleMouseRelease(event MouseReleaseEvent) bool {
 
 // HandleMouseMove handles mouse movement (override in subclasses).
 func (w *TrinketBase) HandleMouseMove(event MouseMoveEvent) bool {
+	// The default answer to a pointer passing over is to offer what this
+	// trinket could not show. It is not "handled": a move is news, not a
+	// request, and everything else that wants to hear it still does.
+	w.TrackTooltipHover(UnitPoint{X: event.X, Y: event.Y})
 	return false
 }
 

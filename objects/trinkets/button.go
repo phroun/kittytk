@@ -15,8 +15,10 @@ type Button struct {
 	core.TrinketKeys
 	core.AccessibleTrinket
 
-	text         string
-	icon         *style.Icon
+	text string
+	// icon is the NAME of a registered icon (style.RegisterIcon), not a
+	// picture. A name nothing has registered draws nothing.
+	icon         string
 	iconSize     style.IconSize
 	checkable    bool
 	checked      bool
@@ -61,13 +63,11 @@ func NewButton(text string) *Button {
 	return b
 }
 
-// NewIconButton creates a button with an icon.
-func NewIconButton(icon *style.Icon) *Button {
+// NewIconButton creates a button showing the icon registered under a name.
+func NewIconButton(icon string) *Button {
 	b := NewButton("")
 	b.icon = icon
-	if icon != nil {
-		b.SetAccessibleName(icon.ID)
-	}
+	b.SetAccessibleName(icon)
 	return b
 }
 
@@ -81,23 +81,26 @@ func (b *Button) SetText(text string) {
 	b.text = text
 	b.SetAccessibleName(text)
 	b.Update()
+	b.InvalidateLayout()
 }
 
-// Icon returns the button icon.
-func (b *Button) Icon() *style.Icon {
+// Icon returns the name of the button's icon.
+func (b *Button) Icon() string {
 	return b.icon
 }
 
-// SetIcon sets the button icon.
-func (b *Button) SetIcon(icon *style.Icon) {
+// SetIcon names the button's icon.
+func (b *Button) SetIcon(icon string) {
 	b.icon = icon
 	b.Update()
+	b.InvalidateLayout()
 }
 
 // SetIconSize sets the icon size.
 func (b *Button) SetIconSize(size style.IconSize) {
 	b.iconSize = size
 	b.Update()
+	b.InvalidateLayout()
 }
 
 // IsCheckable returns whether the button is checkable.
@@ -279,7 +282,7 @@ func (b *Button) SizeHint() core.UnitSize {
 
 	// Add icon width if present (icons use fixed width)
 	iconWidth := core.Unit(0)
-	if b.icon != nil {
+	if b.icon != "" {
 		if b.iconSize == style.IconSmall {
 			iconWidth = metrics.TextWidth(3)
 		} else {
@@ -395,17 +398,16 @@ func (b *Button) Paint(p *core.Painter) {
 
 	// Icon handling
 	iconWidth := core.Unit(0)
-	if b.icon != nil {
-		var textIcon style.TextIcon
-		if b.iconSize == style.IconSmall && b.icon.HasText(style.IconSmall) {
-			textIcon = b.icon.TextSmall
-		} else if b.icon.HasText(style.IconLarge) {
-			textIcon = b.icon.TextLarge
-		}
-		if textIcon.Width > 0 {
-			iconWidth = metrics.TextWidth(textIcon.Width + 1)
-		}
+	if textIcon, ok := style.IconText(b.icon, b.iconSize); ok && textIcon.Width > 0 {
+		iconWidth = metrics.TextWidth(textIcon.Width + 1)
 	}
+
+	// The face is as wide as what it holds -- unless the layout gave the button
+	// less than it asked for, and then the caption is cut and the face is what
+	// there is. A button drawn at its natural width in a narrower slot runs its
+	// last letters through whatever stands beside it.
+	shown, _ := b.ElideText(b.text, bounds.Width-bracketWidth-iconWidth)
+	textWidth = b.MeasureText(b.CellRun(shown))
 
 	// Total button width (content only, no shadow)
 	buttonWidth := bracketWidth + textWidth + iconWidth
@@ -471,14 +473,8 @@ func (b *Button) Paint(p *core.Painter) {
 	}
 
 	// Draw icon if present
-	if b.icon != nil && iconWidth > 0 {
-		var textIcon style.TextIcon
-		if b.iconSize == style.IconSmall && b.icon.HasText(style.IconSmall) {
-			textIcon = b.icon.TextSmall
-		} else if b.icon.HasText(style.IconLarge) {
-			textIcon = b.icon.TextLarge
-		}
-
+	if iconWidth > 0 {
+		textIcon, _ := style.IconText(b.icon, b.iconSize)
 		if textIcon.Width > 0 {
 			x := xOffset + metrics.UnitsPerCellWidth // After left bracket (1 cell)
 			y := yOffset
@@ -496,9 +492,9 @@ func (b *Button) Paint(p *core.Painter) {
 	p.DrawCell(xOffset, yOffset, leftBracket, s)
 
 	// Draw text using font
-	if b.text != "" {
+	if shown != "" {
 		textX := xOffset + metrics.UnitsPerCellWidth + iconWidth // After left bracket (1 cell)
-		p.DrawText(textX, yOffset, b.CellRun(b.text), s, font)
+		p.DrawText(textX, yOffset, b.CellRun(shown), s, font)
 	}
 
 	// Draw right bracket/space (decorative - use DrawCell, not DrawText)
@@ -639,6 +635,9 @@ func (b *Button) HandleMousePress(event core.MousePressEvent) bool {
 // highlight when the button is idle, and the pressed-and-over state during
 // a press.
 func (b *Button) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	b.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	// Hover and drag use the same hit box as the click path (full bounds on
 	// cell surfaces; full bounds minus the dead bottom half-row on graphical
 	// surfaces), so all three stop at the same edge.

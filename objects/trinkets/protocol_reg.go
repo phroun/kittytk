@@ -107,7 +107,7 @@ func trinketID(w core.Trinket) uint64 {
 // connection (called once at construction); events describes what that
 // wiring emits, and is passed beside it so the pair is changed together.
 func regTrinket(name string, construct func() core.Trinket, props map[string]protocol.Property, events map[string]protocol.EventDesc, appendFn func(parent, child core.Trinket) error, bind func(ctx *protocol.BindContext, w core.Trinket)) {
-	spec := &protocol.TypeSpec{
+	descriptor := &protocol.TypeSpec{
 		New:    func() any { return construct() },
 		Props:  props,
 		Events: events,
@@ -131,11 +131,11 @@ func regTrinket(name string, construct func() core.Trinket, props map[string]pro
 	// registered one of its own -- a type whose children are a particular
 	// kind names them, and says so in its own words.
 	if appendFn != nil {
-		if _, own := spec.Props["children"]; !own {
-			if spec.Props == nil {
-				spec.Props = map[string]protocol.Property{}
+		if _, own := descriptor.Props["children"]; !own {
+			if descriptor.Props == nil {
+				descriptor.Props = map[string]protocol.Property{}
 			}
-			spec.Props["children"] = protocol.NewCollection(func(p, c any) error {
+			descriptor.Props["children"] = protocol.NewCollection(func(p, c any) error {
 				pw, ok1 := p.(core.Trinket)
 				cw, ok2 := c.(core.Trinket)
 				if !ok1 || !ok2 {
@@ -146,13 +146,13 @@ func regTrinket(name string, construct func() core.Trinket, props map[string]pro
 		}
 	}
 	if bind != nil {
-		spec.Bind = func(ctx *protocol.BindContext, t any) {
+		descriptor.Bind = func(ctx *protocol.BindContext, t any) {
 			if w, ok := t.(core.Trinket); ok {
 				bind(ctx, w)
 			}
 		}
 	}
-	protocol.RegisterType(name, spec)
+	protocol.RegisterType(name, descriptor)
 }
 
 func init() {
@@ -255,6 +255,37 @@ func init() {
 		return fmt.Errorf("direction: not supported by this type")
 	})).OneOf("inherit", "ltr", "rtl").Def("inherit").
 		Tip("Side text begins on and a row runs from, here and below; inherit takes it from the container."))
+
+	// elide takes a word for WHERE the cut goes, and the flag form for whether
+	// there is one at all: !elide leaves the text whole and lets the surface
+	// clip it. Text that fits is never cut either way, so this is only ever
+	// about a trinket given less room than it asked for.
+	protocol.RegisterCommonProperty("elide", protocol.NewProperty("enum", wprop("elide", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+		mode := core.ElideEnd
+		switch {
+		case f == protocol.FlagFalse:
+			mode = core.ElideOff
+		case f == protocol.FlagTrue || v == nil:
+			mode = core.ElideEnd
+		default:
+			word, err := protocol.AsWord("elide", v, f)
+			if err != nil {
+				return err
+			}
+			m, ok := core.ParseElideMode(word)
+			if !ok {
+				return fmt.Errorf("elide: %q is not end, middle, start or off", word)
+			}
+			mode = m
+		}
+		h, ok := w.(interface{ SetElideMode(core.ElideMode) })
+		if !ok {
+			return fmt.Errorf("elide: not supported by this type")
+		}
+		h.SetElideMode(mode)
+		return nil
+	})).OneOf("end", "middle", "start", "off").Def("end").
+		Tip("Where text too long for its room is cut: end (default), middle, start, or off to leave it whole."))
 
 	// Colors (vocabulary decision 2026-07-05): named colors as bare
 	// words, RGB as quoted "#rrggbb". fg/bg build on the trinket's

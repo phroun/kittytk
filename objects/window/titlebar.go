@@ -204,7 +204,7 @@ func titleFaces(font *core.Font, scale float64) (text, mono *core.Font) {
 // the slot. Both halves of that matter and each was gotten wrong once:
 // per-glyph centering by proportional widths let narrow ink sit
 // differently against its brackets than wide ink (one run advances each
-// character exactly from the edge the previous one ended on), and the
+// character exactly from the edge the prior one ended on), and the
 // proportional TITLE face lost the retro monospace the controls have at
 // 1.0, where DrawCell renders the cell font and its pitch IS the cell.
 func paintThreeCellButton(p *core.Painter, tm TitleBarMetrics, x core.Unit, icon rune, st style.CellStyle) {
@@ -279,18 +279,24 @@ func PaintTearHandleSlot(p *core.Painter, tm TitleBarMetrics, x core.Unit, glyph
 // "..." butts against the right limit — the right side keeps no mirrored
 // reserve. A span of zero or less clips the title entirely. (This is the
 // former Window.paintTitleText, verbatim at scale 1.0.)
-func PaintTitleBarText(p *core.Painter, tm TitleBarMetrics, title string, ts style.CellStyle, leftUsed, rightLimit, barWidth core.Unit) {
+//
+// It reports whether the title was CUT to fit -- which is what says a reader
+// cannot see the whole name and would want it offered -- and WHERE it drew
+// the title, in the painter's own coordinates, so a note about the name can
+// stand on the name rather than at the end of the bar.
+func PaintTitleBarText(p *core.Painter, tm TitleBarMetrics, title string, ts style.CellStyle, leftUsed, rightLimit, barWidth core.Unit) (bool, core.UnitRect) {
 	leftEdge := leftUsed + tm.CellW
 	avail := rightLimit - leftEdge
 	if avail <= 0 || title == "" {
-		return
+		return avail <= 0 && title != "", core.UnitRect{}
 	}
 	display := title
 	titleW := tm.TitleWidth(display)
-	if titleW > avail {
+	cut := titleW > avail
+	if cut {
 		display = ellipsizeToWidth(title, avail, tm.Font, tm.base)
 		if display == "" {
-			return
+			return true, core.UnitRect{}
 		}
 	}
 	// Cut to fit first, prepared for the cell target after, and measured as
@@ -305,6 +311,7 @@ func PaintTitleBarText(p *core.Painter, tm TitleBarMetrics, title string, ts sty
 		x = rightLimit - titleW
 	}
 	p.DrawText(x, tm.YOff, display, ts, tm.Font)
+	return cut, core.UnitRect{X: x, Width: titleW, Height: tm.RowH}
 }
 
 // PaintFocusedTitleDecoration draws the keyboard-focused title as

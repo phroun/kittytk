@@ -407,7 +407,43 @@ func init() {
 // properties plus the multi-column surface.
 func treeViewProps() map[string]protocol.Property {
 	return map[string]protocol.Property{
-		"selected":     intProp("selected", (*TreeView).SetCurrentIndex).Tip("Selected visible-row index.").Def("-1"),
+		// Where the rows come from, when they are not written down here.
+		//
+		// The same one word the list says, and it means the same thing: a
+		// `source:` name somebody registered, or a `bundle:` key -- the bare
+		// form being a bundle too. A source that is a hierarchy brings its own
+		// depth, kind and child counts with it, and a flat one reads as a tree
+		// of one generation, so the language does not need to say which.
+		"source": protocol.NewProperty("string", wprop("source",
+			func(ctx *protocol.BindContext, t *TreeView, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("source", v, f)
+				if err != nil {
+					return err
+				}
+				// Through the CONNECTION, because a store is per connection and
+				// the bundle two applications each call objectLibrary is two
+				// different bundles.
+				src, err := LookupSourceOn(ctx, s)
+				if err != nil {
+					// A name nothing serves is a refusal this tree says out loud, the
+					// same as a list does: the complaint goes up to whoever is
+					// assembling the bundle, and the reader is looking HERE.
+					t.took(Trouble{Reason: err.Error(), At: -1})
+					return err
+				}
+				t.SetSource(src)
+				return nil
+			})).Tip("Where the rows come from: source:<name>, or a bundle key."),
+
+		// Which of a record's fields the key column reads, for a tree over a
+		// declared source. A column names its field by its `id`; the key column
+		// has no id, so it says it here -- the same one word a list says.
+		"display": stringProp("display", (*TreeView).SetKeyField).
+			Tip("Field the key (tree) column reads, for a declared source."),
+
+		"selected": intProp("selected", (*TreeView).SetCurrentIndex).Tip("Selected visible-row index.").Def("-1"),
+		"trouble": boolProp("trouble", (*TreeView).SetShowsTrouble).
+			Tip("Draw a refusal as a line of its own, under the header and above the rows.").Def("true"),
 		"indent_width": intProp("indent_width", (*TreeView).SetIndentWidth).Tip("Indent width per tree level."),
 
 		"caption":    stringProp("caption", (*TreeView).SetKeyCaption).Tip("Header caption over the key (tree) column."),
@@ -436,13 +472,17 @@ func treeViewProps() map[string]protocol.Property {
 			t.SetFixedColumns(t.fixedBegin, n)
 		}).Tip("Visible columns pinned outside horizontal scrolling, counted from where the run ends.").Def("0"),
 		"sorted": boolProp("sorted", func(t *TreeView, b bool) {
-			t.SetSorted(b, t.sortedBy, t.sortDescending)
+			t.setSortEnabled(b)
 		}).Tip("Show the sort indicator.").Def("false"),
 		"sortedby": intProp("sortedby", func(t *TreeView, n int) {
-			t.SetSorted(t.sorted, n, t.sortDescending)
+			first := t.primarySort()
+			first.By = n
+			t.setPrimarySort(first)
 		}).Tip("Sort column: -1 = the key column, else a column index.").Def("-1"),
 		"descending": boolProp("descending", func(t *TreeView, b bool) {
-			t.SetSorted(t.sorted, t.sortedBy, b)
+			first := t.primarySort()
+			first.Descending = b
+			t.setPrimarySort(first)
 		}).Tip("Sort direction indicator points down.").Def("false"),
 
 		"columns": protocol.NewCollection(func(parent, child any) error {

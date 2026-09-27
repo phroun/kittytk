@@ -37,6 +37,18 @@ const (
 	ButtonDiscard
 	ButtonApply
 	ButtonHelp
+
+	// ButtonPopOut is an offer rather than an answer: do the thing another way.
+	// The desktop's exit uses it to give the applications inside it windows of
+	// their own instead of closing them, and names it per case ("Pop It Out",
+	// "Pop Them Out") with SetButtonText.
+	//
+	// **Display-only, by decision, and deliberately not on the wire**: it is
+	// absent from dialog_protocol.go's button flags and result words, and that is
+	// not an oversight to fix by adding it. An application wanting an offer of its
+	// own builds a window and puts the offer in it, which is the same work either
+	// way and does not spend a word of the shared vocabulary on one host's menu.
+	ButtonPopOut
 )
 
 // DialogResult represents the result of a dialog.
@@ -55,6 +67,7 @@ const (
 	ResultDiscard
 	ResultApply
 	ResultHelp
+	ResultPopOut
 )
 
 // MessageBoxIcon represents message box icons.
@@ -79,6 +92,40 @@ type MessageBox struct {
 
 	// Callbacks
 	onFinished func(result DialogResult)
+
+	// waiters are callers waiting on the one answer this dialog will get, for a
+	// question more than one of them asked: two close attempts on the same window
+	// are one question to the person, and both are told what they said. Answered
+	// exactly once, whichever of them is still listening.
+	waiters  []func(bool)
+	answered bool
+}
+
+// alsoTell adds a caller to those told what the person answers.
+func (m *MessageBox) alsoTell(fn func(bool)) {
+	if fn == nil {
+		return
+	}
+	if m.answered {
+		// Already settled: tell this one what was decided rather than leaving it
+		// waiting on an answer that has been and gone.
+		fn(m.result == ResultYes)
+		return
+	}
+	m.waiters = append(m.waiters, fn)
+}
+
+// tellThem delivers the answer to everyone waiting on it, once.
+func (m *MessageBox) tellThem(yes bool) {
+	if m.answered {
+		return
+	}
+	m.answered = true
+	waiting := m.waiters
+	m.waiters = nil
+	for _, fn := range waiting {
+		fn(yes)
+	}
 }
 
 // messageBoxContent is the content trinket for a MessageBox.
@@ -87,6 +134,7 @@ type messageBoxContent struct {
 	icon           MessageBoxIcon
 	text           string
 	buttonTrinkets []*Button
+	buttonResults  []DialogResult
 	onDone         func(result DialogResult)
 }
 
@@ -154,7 +202,18 @@ func NewMessageBox(title, text string, buttons DialogButton) *MessageBox {
 }
 
 // createButtons creates the dialog buttons for the content.
+//
+// **It builds the whole row, so it starts from nothing.** The buttons ARE the
+// row -- Children, hit testing, layout and paint all read `buttonTrinkets` and
+// nothing else -- so a call that added to them left the previous row on the
+// screen underneath the new one. Over the wire the buttons arrive one flag at a
+// time (`yes no` is two properties, not one), so `yes` built a Yes and `no`
+// rebuilt Yes and No on top of it: a dialog with two Yes buttons, the first of
+// them a ghost of the set before.
 func (c *messageBoxContent) createButtons(buttons DialogButton) {
+	c.buttonTrinkets = nil
+	c.buttonResults = nil
+
 	buttonDefs := []struct {
 		flag   DialogButton
 		text   string
@@ -171,6 +230,7 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 		{ButtonDiscard, "Discard", ResultDiscard},
 		{ButtonApply, "Apply", ResultApply},
 		{ButtonHelp, "Help", ResultHelp},
+		{ButtonPopOut, "Pop Out", ResultPopOut},
 	}
 
 	for _, def := range buttonDefs {
@@ -184,6 +244,22 @@ func (c *messageBoxContent) createButtons(buttons DialogButton) {
 				}
 			})
 			c.buttonTrinkets = append(c.buttonTrinkets, btn)
+			c.buttonResults = append(c.buttonResults, def.result)
+		}
+	}
+}
+
+// SetButtonText renames one of the dialog's buttons, named by what it answers.
+//
+// The standard wording carries most dialogs, and a few are worth saying in their own
+// terms: "Pop It Out" reads as an offer about one application where "Pop Out" reads as
+// a setting. Call it before the dialog is shown -- it changes the button's width, and
+// ResizeToFitContent is what takes account of that.
+func (m *MessageBox) SetButtonText(answers DialogResult, text string) {
+	for i, r := range m.content.buttonResults {
+		if r == answers {
+			m.content.buttonTrinkets[i].SetText(text)
+			return
 		}
 	}
 }

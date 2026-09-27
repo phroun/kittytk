@@ -58,9 +58,9 @@ func (a *app) wireMainWindow() {
 	})
 	ui.Checkbox("dfont").OnToggle(func(s protocol.FlagState) {
 		if s == protocol.FlagTrue {
-			_, _ = a.conn.Exec("desktopfont tuesday")
+			_ = a.conn.Host().Set("desktopfont=tuesday")
 		} else {
-			_, _ = a.conn.Exec("desktopfont default")
+			_ = a.conn.Host().Set("desktopfont=default")
 		}
 	})
 	ui.Checkbox("grid").OnToggle(func(s protocol.FlagState) {
@@ -331,23 +331,44 @@ func (a *app) wireDenomination(win client.Handle) {
 	ui.Button("dnn").OnClick(preset(8, 32))
 }
 
-// wireMenus registers the primary application's command handlers. The
-// desktop-reaching actions (edit ops, theme, tiling, announcements) go
-// out as display app-verbs; the rest are handled here in the client.
+// wireMenus registers the primary application's command handlers. The theme
+// and the desktop font are properties of the display; the other
+// desktop-reaching actions (edit ops, tiling, announcements) go out as display
+// app-verbs; the rest are handled here in the client.
 func (a *app) wireMenus() {
 	c := a.conn
 
 	// Demo menu.
 	c.OnCommand("demo.file.new", func() { a.openTerminalWindow() })
 	c.OnCommand("demo.file.bounded", func() { a.openBoundedWindow() })
+	a.wireSulking(c)
 
 	// Edit menu: Cut/Copy/Paste/Select All are supplied by the host's
 	// system Edit menu and act on the focused trinket directly; the client
 	// only contributes the custom Raw Key Input item.
-	c.OnCommand("demo.edit.rawkey", func() { _, _ = c.Exec("rawkey") })
+	c.OnCommand("demo.edit.rawkey", func() { _ = c.Host().Do("rawkey") })
 
-	// View menu.
-	c.OnCommand("demo.view.theme", func() { _, _ = c.Exec("theme") })
+	// View menu. The display's theme is a property with two values, so the item
+	// has to know which way it is set before it can turn it over: it asks, ticks
+	// itself from the answer, and keeps count from there.
+	dark := true
+	_ = c.Host().AskFor(client.AskDark, func(ans *protocol.Answer) {
+		dark = ans.Flag("dark") == protocol.FlagTrue
+		tick := "checked"
+		if !dark {
+			tick = "!checked"
+		}
+		_ = a.ui.Object("mdark").Set(tick)
+	})
+
+	c.OnCommand("demo.view.theme", func() {
+		dark = !dark
+		prop := "dark"
+		if !dark {
+			prop = "!dark"
+		}
+		_ = c.Host().Set(prop)
+	})
 	c.OnCommand("demo.view.announce", func() { _, _ = c.Exec("announce_visual") })
 	c.OnCommand("demo.view.speak", func() { _, _ = c.Exec("announce_speak") })
 
@@ -370,6 +391,10 @@ func (a *app) wireMenus() {
 	c.OnCommand("demo.nested.pick", func() { a.setStatus("Nested: ordinary item") })
 	c.OnCommand("demo.nested.deep", func() { a.setStatus("Nested: fired from level 4") })
 
+	// The Lists tab's Make trouble button: a bundle that loads and has something
+	// said about it. See trouble.go.
+	a.wireTrouble(c)
+
 	// Help menu.
 	c.OnCommand("demo.help.about", func() { a.showAbout() })
 }
@@ -385,10 +410,10 @@ func (a *app) wireMDI() {
 
 	c.OnCommand("demo.mdi.spawn", func() { a.spawnMDIChild() })
 	c.OnCommand("demo.mdi.spawnbounded", func() { a.spawnBoundedMDIChild() })
-	c.OnCommand("demo.mdi.tile", func() { _ = mdi.Set("tile") })
-	c.OnCommand("demo.mdi.cascade", func() { _ = mdi.Set("cascade") })
-	c.OnCommand("demo.mdi.next", func() { _ = mdi.Set("next") })
-	c.OnCommand("demo.mdi.prior", func() { _ = mdi.Set("prior") })
+	c.OnCommand("demo.mdi.tile", func() { _ = mdi.Do("tile") })
+	c.OnCommand("demo.mdi.cascade", func() { _ = mdi.Do("cascade") })
+	c.OnCommand("demo.mdi.next", func() { _ = mdi.Do("next") })
+	c.OnCommand("demo.mdi.prior", func() { _ = mdi.Do("prior") })
 
 	entries := make(map[uint64]client.Handle) // window id -> dock entry
 	dropEntry := func(winID uint64) {
@@ -414,7 +439,7 @@ func (a *app) wireMDI() {
 		entry.On("click", func(*protocol.Event) {
 			// D20: our own set never echoes a restore event, so the
 			// initiator drops its own dock entry.
-			if mdi.Set(fmt.Sprintf("restore=%d", winID)) == nil {
+			if mdi.Do(fmt.Sprintf("restore window=%d", winID)) == nil {
 				dropEntry(winID)
 			}
 		})
@@ -443,17 +468,28 @@ func (a *app) wireMDI() {
 
 // spawnMDIChild appends one document window into the MDI pane and wires
 // its New/Close buttons through click events (no per-child command IDs).
+//
+// Its [x] is answerable: the document says whether it may close, and says it after
+// asking the person -- with what is typed into it deciding how the question reads.
+// See confirmClose in closing.go. The Close button inside it is `remove`, which the
+// pane does without asking, the same way `destroy` never asks: the order came from
+// the application, and handing it back as a question would want an answer inside
+// the batch that gave the order.
 func (a *app) spawnMDIChild() {
 	a.mdiCount++
-	ui, err := a.conn.Build(mdiChildScript(a.mdiCount))
+	n := a.mdiCount
+	ui, err := a.conn.Build(mdiChildScript(n))
 	if err != nil {
 		return
 	}
 	winID := ui.ID("wwin")
 	ui.Button("wnew").OnClick(func() { a.spawnMDIChild() })
 	ui.Button("wclose").OnClick(func() {
-		_ = a.ui.Object("mdi").Set(fmt.Sprintf("remove=%d", winID))
+		_ = a.ui.Object("mdi").Do(fmt.Sprintf("remove window=%d", winID))
 	})
+	text := ui.TextInput("wtext")
+	a.confirmClose(ui.Window("wwin"), fmt.Sprintf("Document %d", n),
+		func() bool { return strings.TrimSpace(text.Text()) != "" })
 }
 
 // spawnBoundedMDIChild spawns a child that says how far it grows, so the
@@ -461,14 +497,18 @@ func (a *app) spawnMDIChild() {
 // pane with the shaded room around it.
 func (a *app) spawnBoundedMDIChild() {
 	a.mdiCount++
-	ui, err := a.conn.Build(mdiBoundedChildScript(a.mdiCount))
+	n := a.mdiCount
+	ui, err := a.conn.Build(mdiBoundedChildScript(n))
 	if err != nil {
 		return
 	}
 	winID := ui.ID("bwwin")
 	ui.Button("bwclose").OnClick(func() {
-		_ = a.ui.Object("mdi").Set(fmt.Sprintf("remove=%d", winID))
+		_ = a.ui.Object("mdi").Do(fmt.Sprintf("remove window=%d", winID))
 	})
+	// It holds nothing to lose, so its question is only whether you meant it.
+	a.confirmClose(ui.Window("bwwin"), fmt.Sprintf("Bounded %d", n),
+		func() bool { return false })
 }
 
 // openBoundedWindow builds a desktop window that says how far it grows: the
@@ -482,6 +522,7 @@ func (a *app) openBoundedWindow() {
 	}
 	win := ui.Window("bwin")
 	ui.Button("bwcloser").OnClick(func() { _ = win.Close() })
+	a.watchWindow(win.ID(), "the bounded window")
 }
 
 // openProtocolWindow builds the companion window whose content is all
@@ -491,6 +532,7 @@ func (a *app) openProtocolWindow() {
 	if err != nil {
 		return
 	}
+	a.watchWindow(ui.ID("pw"), "the protocol window")
 	status := ui.Label("pstatus")
 	ui.Checkbox("pcb").OnToggle(func(s protocol.FlagState) {
 		state := "off"
@@ -527,6 +569,7 @@ func (a *app) openTerminalWindow() {
 	}
 	win := ui.Window("dwin")
 	ui.Button("dcloser").OnClick(func() { _ = win.Close() })
+	a.watchWindow(win.ID(), "the demo window")
 	a.wireTerminal(ui.Object("dterm"))
 }
 
@@ -568,7 +611,7 @@ func (a *app) wireSecondary(n int) {
 	c.OnCommand("demo.app.close", func() { _ = ui.Window("w").Close() })
 	// Cut/Copy/Paste/Select All come from the host's system Edit menu; the
 	// client only wires the custom Raw Key Input item.
-	c.OnCommand("demo.app.rawkey", func() { _, _ = c.Exec("rawkey") })
+	c.OnCommand("demo.app.rawkey", func() { _ = c.Host().Do("rawkey") })
 	c.OnCommand("demo.app.info", func() {
 		_, _ = c.Exec(fmt.Sprintf(
 			`dlg=new messagebox icon=information ok title="About App %d" text="This is Secondary Application #%d\n\nIt has its own menus and status bar."`,

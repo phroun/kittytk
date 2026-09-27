@@ -57,6 +57,7 @@ func (c *Checkbox) SetText(text string) {
 	c.text = text
 	c.SetAccessibleName(text)
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // IsChecked returns whether the checkbox is checked.
@@ -147,6 +148,7 @@ func (c *Checkbox) WordWrap() bool {
 func (c *Checkbox) SetWordWrap(wrap bool) {
 	c.wordWrap = wrap
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.
@@ -244,7 +246,9 @@ func (c *Checkbox) Paint(p *core.Painter) {
 	x := metrics.UnitsPerCellWidth * 4 // After indicator + space (4 cells)
 
 	if !c.wordWrap {
-		run := c.CellRun(c.text)
+		// The label has the room left over from the indicator and its space.
+		shown, _ := c.ElideText(c.text, box-x)
+		run := c.CellRun(shown)
 		p.DrawText(core.LeadingX(c, box, x, c.MeasureText(run)), 0, run, labelStyle, font)
 		return
 	}

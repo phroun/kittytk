@@ -19,6 +19,13 @@ type Scheme struct {
 	FocusedDockItem   *CellStyle
 	HoveredDockItem   *CellStyle // nil = HoverBG + HoverFG
 
+	// Tooltip is the classic tooltip's own face, and TooltipBorder the rule
+	// around it. A tooltip is not part of what it stands over: it reads as a
+	// note laid on top of the screen, so it carries its own colors rather than
+	// the window's.
+	Tooltip       *CellStyle
+	TooltipBorder *CellStyle
+
 	// =========================================================================
 	// Window Frame Related Colors
 	// =========================================================================
@@ -233,6 +240,15 @@ type Scheme struct {
 	// List Related Colors (TreeView, ListView)
 	// =========================================================================
 
+	// ErrorMessage is what a trinket says a REFUSAL in: something it asked for was
+	// turned down, and this is the line it says so on.
+	//
+	// **Its own colour and not a borrowed one**, because a refusal is the one thing a
+	// trinket draws that is not about the data: every other style here says what a row
+	// IS, and this says that a row is missing and why. Bright white on red by default,
+	// which is what the terminal has always meant by it.
+	ErrorMessage *CellStyle // nil = bright white on red
+
 	ListBG            *CellStyle // nil = TrinketContentBG
 	ListFG            *CellStyle // nil = TrinketContentFG
 	FocusedListBG     *CellStyle // nil = ListBG
@@ -361,6 +377,9 @@ func DefaultScheme() *Scheme {
 		DockItem:          ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
 		FocusedDockItem:   ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightCyan)),
 		HoveredDockItem:   nil, // HoverBG + HoverFG
+		Tooltip:           ptr(DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorBlack).WithAttrs(StyleBold)),
+		ErrorMessage:      ptr(DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorRed)),
+		TooltipBorder:     ptr(DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack)),
 
 		// Window Frame Related Colors
 		ActiveWindowBorder:   ptr(DefaultStyle().WithFg(ColorBrightCyan).WithBg(ColorBlue)),
@@ -594,8 +613,23 @@ func orBG(styles ...*CellStyle) Color {
 func (s *Scheme) GetDesktopFill() CellStyle       { return or(s.DesktopFill) }
 func (s *Scheme) GetStatusBar() CellStyle         { return or(s.StatusBar) }
 func (s *Scheme) GetStatusBarShortcut() CellStyle { return or(s.StatusBarShortcut) }
-func (s *Scheme) GetDock() CellStyle              { return or(s.Dock) }
-func (s *Scheme) GetDockItem() CellStyle          { return or(s.DockItem) }
+
+// GetTooltip and GetTooltipBorder are the classic tooltip's face and its rule.
+func (s *Scheme) GetTooltip() CellStyle {
+	if s.Tooltip != nil {
+		return *s.Tooltip
+	}
+	return DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorBlack).WithAttrs(StyleBold)
+}
+
+func (s *Scheme) GetTooltipBorder() CellStyle {
+	if s.TooltipBorder != nil {
+		return *s.TooltipBorder
+	}
+	return DefaultStyle().WithFg(ColorBrightBlack).WithBg(ColorBlack)
+}
+func (s *Scheme) GetDock() CellStyle     { return or(s.Dock) }
+func (s *Scheme) GetDockItem() CellStyle { return or(s.DockItem) }
 
 func (s *Scheme) GetFocusedDockItem() CellStyle { return or(s.FocusedDockItem) }
 
@@ -1310,6 +1344,30 @@ func (s *Scheme) GetFocusedTab() CellStyle {
 		return *s.FocusedTab
 	}
 	return DefaultStyle().WithFg(s.GetFocusFG()).WithBg(s.GetFocusBG())
+}
+
+// --- The refusal line ---
+
+func (s *Scheme) GetErrorMessageFG() Color {
+	if s.ErrorMessage != nil {
+		return s.ErrorMessage.Fg
+	}
+	return ColorBrightWhite
+}
+
+func (s *Scheme) GetErrorMessageBG() Color {
+	if s.ErrorMessage != nil {
+		return s.ErrorMessage.Bg
+	}
+	return ColorRed
+}
+
+// GetErrorMessage is the whole style of a refusal line, which is what a painter wants.
+func (s *Scheme) GetErrorMessage() CellStyle {
+	if s.ErrorMessage != nil {
+		return *s.ErrorMessage
+	}
+	return DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorRed)
 }
 
 // --- List Colors ---

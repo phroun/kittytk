@@ -185,6 +185,12 @@ type PopupOverlay struct {
 	Anchor core.UnitRect
 	// Paint function to render the popup
 	Paint func(p *core.Painter)
+	// Inert marks a paint-only popup the pointer passes through (see
+	// core.PopupRequest).
+	Inert bool
+	// Fade is how solid this overlay is drawn over time (see
+	// core.PopupRequest). Nil is solid.
+	Fade *core.Fade
 	// HandleMousePress function to handle clicks (returns true if handled)
 	HandleMousePress func(event core.MousePressEvent) bool
 	// HandleMouseMove function to handle mouse movement (returns true if handled)
@@ -1304,12 +1310,12 @@ func (m *WindowManager) DeactivateActiveWindow() {
 // This is used when the menu bar is dismissed via Escape.
 func (m *WindowManager) RestorePreviousActiveWindow() {
 	m.mu.Lock()
-	prev := m.previousActiveWindow
+	previous := m.previousActiveWindow
 	m.previousActiveWindow = nil
 	m.mu.Unlock()
 
-	if prev != nil {
-		m.ActivateWindow(prev)
+	if previous != nil {
+		m.ActivateWindow(previous)
 	}
 }
 
@@ -1960,6 +1966,8 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 		Bounds:             request.Bounds,
 		Anchor:             request.Anchor,
 		Paint:              request.Paint,
+		Inert:              request.Inert,
+		Fade:               request.Fade,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
 		HandleMouseRelease: request.HandleMouseRelease,
@@ -2347,9 +2355,14 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 	popups := m.popups
 	m.mu.RUnlock()
 
-	// Check popups first (highest z-order)
+	// Check popups first (highest z-order). An inert one is not there as
+	// far as the pointer is concerned: the press goes on to whatever it
+	// was lying over, and the clear below takes it off the screen.
 	for i := len(popups) - 1; i >= 0; i-- {
 		popup := popups[i]
+		if popup.Inert {
+			continue
+		}
 		if popup.Bounds.Contains(core.UnitPoint{X: event.X, Y: event.Y}) {
 			if popup.HandleMousePress != nil {
 				return popup.HandleMousePress(event)

@@ -249,14 +249,25 @@ func TestDemoBuildsOverService(t *testing.T) {
 	}
 
 	// Every desktop-action app verb must be accepted by the display.
-	for _, verb := range []string{
-		"status text=\"hi there\"", "cut", "copy", "paste", "selectall",
-		"tile", "cascade", "theme", "desktopfont tuesday",
-		"desktopfont default", "announce_visual", "announce_speak",
-		"rawkey",
-	} {
+	for _, verb := range []string{"announce_visual", "announce_speak"} {
 		if _, err := conn.Exec(verb); err != nil {
 			t.Errorf("app verb %q: %v", verb, err)
+		}
+	}
+	// And everything the display does.
+	for _, action := range []string{
+		"cut", "copy", "paste", "selectall", "tile", "cascade", "rawkey",
+	} {
+		if err := conn.Host().Do(action); err != nil {
+			t.Errorf("do host %s: %v", action, err)
+		}
+	}
+	// And every property of the display itself.
+	for _, prop := range []string{
+		`status="hi there"`, "dark", "!dark", "desktopfont=tuesday", "desktopfont=default",
+	} {
+		if err := conn.Host().Set(prop); err != nil {
+			t.Errorf("set host %s: %v", prop, err)
 		}
 	}
 }
