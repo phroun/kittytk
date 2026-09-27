@@ -80,6 +80,7 @@ func (s *LineSeparator) Title() string {
 func (s *LineSeparator) SetTitle(title string) {
 	s.title = title
 	s.Update()
+	s.InvalidateLayout()
 }
 
 // Orientation returns the separator orientation.
@@ -92,6 +93,7 @@ func (s *LineSeparator) SetOrientation(o core.Orientation) {
 	s.orientation = o
 	s.applyOrientationPolicy()
 	s.Update()
+	s.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.
@@ -168,9 +170,11 @@ func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.Un
 	font := captionFont75(base)
 	// Width comes back screen-space (see ScreenWidthToLocal). The line the
 	// caption occupies is three quarters of a cell down, already local.
-	w := p.ScreenWidthToLocal(font.MeasureText(s.title))
+	measure := func(text string) core.Unit { return p.ScreenWidthToLocal(font.MeasureText(text)) }
 	h := core.LineUnits(font, base, s.EffectiveCellMetrics())
 	pad := p.ScreenWidthToLocal(6)
+	title, _ := s.ElideTextWith(s.title, bounds.Width-pad*2, measure)
+	w := measure(title)
 	boxW := w + pad*2
 	if boxW > bounds.Width {
 		boxW = bounds.Width
@@ -179,7 +183,7 @@ func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.Un
 	// The line in two segments: the mid-section belongs to the title.
 	p.FillRect(core.UnitRect{X: 0, Y: midY, Width: boxX, Height: hairH}, ' ', line)
 	p.FillRect(core.UnitRect{X: boxX + boxW, Y: midY, Width: bounds.Width - boxX - boxW, Height: hairH}, ' ', line)
-	p.DrawText(boxX+pad, midY+hairH/2-h/2, s.CellRun(s.title), titleStyle, font)
+	p.DrawText(boxX+pad, midY+hairH/2-h/2, s.CellRun(title), titleStyle, font)
 }
 
 // paintVerticalGraphical draws the vertical rule: a hairline spanning

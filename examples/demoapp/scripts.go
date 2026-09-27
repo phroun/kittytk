@@ -185,6 +185,9 @@ li=new tab caption="Lists" children={
 			new treeview min_width=160 min_height=160 items={` + indent(treeItemsScript, "\t\t\t\t") + `}
 		}
 	}
+	new label caption="A list whose source REFUSES -- three rows arrive and the rest is turned down:"
+	lirefused=new listview source="source:` + refusedSourceName + `" display="name" min_width=160 min_height=80
+	litrouble=new button caption="Make trouble" action=demo.trouble fill=none
 	}
 }
 
@@ -809,12 +812,17 @@ pgrtl=w.t.pg.pgv.pgrtl
 pgc=w.t.pg.pgv.pgc
 lirtl=w.t.li.liv.lirtl
 lilv=w.t.li.liv.lisp.lilp.lilv
+lirefused=w.t.li.liv.lirefused
+litrouble=w.t.li.liv.litrouble
 `)
 
 	// The menu bar and status bar are adopted as this application's
 	// chrome by the display when the build's targets are taken.
 	b.WriteString(mainMenuScript())
 	b.WriteString(mainStatusScript)
+	// The theme item's tick has to be put right from what the display answers,
+	// so the client needs to be able to address it.
+	b.WriteString("\nmdark=mb.vm.vdark\n")
 	return b.String()
 }
 
@@ -828,17 +836,18 @@ mb=new menubar children={
 	new menu caption="&Demo" wellknown="app" children={
 		new menuitem caption="&New" shortcut="^N" action=demo.file.new
 		new menuitem caption="New &Bounded Window" action=demo.file.bounded
+		new menuitem caption="New &Sulking Window" action=demo.file.sulking
 		new menuitem caption="&Open..." shortcut="^O"
 		new menuitem caption="&Save" shortcut="^S"
 	}
 	new menu caption="&Edit" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" shortcut="^\\" action=demo.edit.rawkey
 	}
-	new menu caption="&View" wellknown="view" children={
+	vm=new menu caption="&View" wellknown="view" children={
 		new menuitem caption="&Toolbar" checkable checked
 		new menuitem caption="&Status Bar" checkable checked
 		new menuitem separator
-		new menuitem caption="&Light/Dark Theme" shortcut="^T" action=demo.view.theme
+		vdark=new menuitem caption="&Light/Dark Theme" shortcut="^T" checkable action=demo.view.theme
 		new menuitem separator
 		new menuitem caption="Show A&nnouncements in Status Bar" checkable action=demo.view.announce
 		new menuitem caption="Speak Announcements" checkable action=demo.view.speak
@@ -1054,13 +1063,18 @@ sb=new statusbar children={new section children={new span text="Secondary Applic
 
 // mdiChildScript spawns one document window inside the MDI pane, wired
 // through click events (no per-child command IDs to collide).
+//
+// Its text field is surfaced as `wtext` because the close question asked about
+// this window depends on it: whether there is anything in the document is
+// something only the application knows, which is the whole reason the display
+// asks rather than deciding. See confirmClose in closing.go.
 func mdiChildScript(n int) string {
 	offset := (n - 1) % 5
 	return fmt.Sprintf(`
 set mdi children={d%d=new window title="Document %d" x=%d y=%d width=240 height=128 children={
 	p=new panel layout=vbox spacing=8 children={
-		new label caption="Document #%d"
-		new textinput min_width=160 placeholder="Enter document content..."
+		new label caption="Document #%d ([x] asks)"
+		ti=new textinput min_width=160 placeholder="Enter document content..."
 		bp=new panel layout=hbox spacing=8 children={
 			nb=new button caption="New"
 			cl=new button caption="Close"
@@ -1070,7 +1084,8 @@ set mdi children={d%d=new window title="Document %d" x=%d y=%d width=240 height=
 wwin=mdi.d%d
 wnew=mdi.d%d.p.bp.nb
 wclose=mdi.d%d.p.bp.cl
-`, n, n, (offset*2+1)*8, (offset+1)*16, n, n, n, n)
+wtext=mdi.d%d.p.ti
+`, n, n, (offset*2+1)*8, (offset+1)*16, n, n, n, n, n)
 }
 
 // mdiBoundedChildScript spawns a document window that says how far it grows,

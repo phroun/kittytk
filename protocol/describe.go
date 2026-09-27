@@ -89,6 +89,47 @@ func (p Property) OneOf(words ...string) Property {
 // As overrides the value kind (for raw appliers built without a helper).
 func (p Property) As(kind string) Property { p.Desc.Kind = kind; return p }
 
+// CallDesc is the queryable descriptor for one question an object answers or
+// one action it performs: what it means and what arguments it takes.
+//
+// Both are declared beside the properties and events for the same reason they
+// are: one registration is the source of both behavior and introspection, so a
+// client can find out what it may ask and what it may do rather than reading
+// the host's code.
+type CallDesc struct {
+	// Doc says what the question or the action means.
+	Doc string
+	// Args are the named arguments it takes, in the order worth reading.
+	Args []EventFieldDesc
+}
+
+// AskDesc is a question an object answers; DoDesc is an action it performs.
+// They are the same shape -- a name and arguments -- because they are the same
+// statement with a different verb in front of it.
+//
+// What comes back needs no describing. An `ask` is answered by `answer` and a
+// `do` is answered by nothing, and both are the language's, not the question's:
+// see wire/answer.go on the three pairs.
+type (
+	AskDesc = CallDesc
+	DoDesc  = CallDesc
+)
+
+// NewAskDesc builds an AskDesc from its description; add arguments with Arg.
+func NewAskDesc(doc string) AskDesc { return CallDesc{Doc: doc} }
+
+// NewDoDesc builds a DoDesc the same way.
+func NewDoDesc(doc string) DoDesc { return CallDesc{Doc: doc} }
+
+// Arg appends one named argument to the descriptor and returns it for chaining.
+// The append copies, for the reason EventDesc.Field does.
+func (a CallDesc) Arg(name, kind, doc string) CallDesc {
+	args := make([]EventFieldDesc, len(a.Args), len(a.Args)+1)
+	copy(args, a.Args)
+	a.Args = append(args, EventFieldDesc{Name: name, Kind: kind, Doc: doc})
+	return a
+}
+
 // EventDesc is the queryable descriptor for one wire event: when it
 // fires, and what it carries.
 //
@@ -155,6 +196,24 @@ func sortedEventInfos(events map[string]EventDesc) []EventInfo {
 	return out
 }
 
+// sortedCallInfos renders a type's questions or actions in name order.
+func sortedCallInfos(asks map[string]CallDesc) []AskInfo {
+	if len(asks) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(asks))
+	for n := range asks {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]AskInfo, 0, len(names))
+	for _, n := range names {
+		d := asks[n]
+		out = append(out, AskInfo{Name: n, Doc: d.Doc, Args: d.Args})
+	}
+	return out
+}
+
 // DescribeVocabulary returns the registered wire vocabulary: common
 // properties plus every type, each with its type-specific properties and
 // the events it emits. Types, properties and events are sorted for
@@ -171,12 +230,15 @@ func DescribeVocabulary() *Vocabulary {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		spec := regTypes[n]
+		descriptor := regTypes[n]
 		v.Types = append(v.Types, TypeInfo{
 			Name:    n,
-			Virtual: spec.Virtual,
-			Props:   sortedPropInfos(spec.Props),
-			Events:  sortedEventInfos(spec.Events),
+			Virtual: descriptor.Virtual,
+			Hosted:  descriptor.Hosted,
+			Asks:    sortedCallInfos(descriptor.Asks),
+			Does:    sortedCallInfos(descriptor.Does),
+			Props:   sortedPropInfos(descriptor.Props),
+			Events:  sortedEventInfos(descriptor.Events),
 		})
 	}
 	return v
@@ -187,8 +249,12 @@ func DescribeVocabulary() *Vocabulary {
 // can parse it line by line:
 //
 //	propcommon name="enabled" kind=flag default="true" doc="..."
-//	proptype name="button" virtual=false
+//	proptype name="button" !virtual !hosted
 //	prop of="button" name="caption" kind=string default="" doc="..." enum="" members=""
+//	ask of="store" name="inventory" doc="..."
+//	askarg of="blob" ask="bytes" name="offset" kind="int" doc="..."
+//	do of="blob" name="append" doc="..."
+//	doarg of="blob" do="append" name="bytes" kind="blob" doc="..."
 //	event of="button" name="click" doc="..."
 //	eventfield of="button" event="click" name="trinket" kind="uint" doc="..."
 //
@@ -197,6 +263,39 @@ func DescribeVocabulary() *Vocabulary {
 // nesting to carry that relationship. enum= and members= are
 // comma-separated lists: enum= holds the allowed words of an enum, and
 // members= the types a collection accepts (empty means any trinket).
+// writeCallStmts renders a type's questions or actions: one `ask`/`do` line each
+// and an `askarg`/`doarg` line per named argument. One routine for both, because
+// they are the same declaration under a different verb -- the verb is the only
+// difference there is.
+func writeCallStmts(sb *strings.Builder, verb, typeName string, calls []AskInfo) {
+	for _, c := range calls {
+		sb.WriteString(verb)
+		sb.WriteString(" of=")
+		sb.WriteString(Quote(typeName))
+		sb.WriteString(" name=")
+		sb.WriteString(Quote(c.Name))
+		sb.WriteString(" doc=")
+		sb.WriteString(Quote(c.Doc))
+		sb.WriteByte('\n')
+		for _, f := range c.Args {
+			sb.WriteString(verb)
+			sb.WriteString("arg of=")
+			sb.WriteString(Quote(typeName))
+			sb.WriteByte(' ')
+			sb.WriteString(verb)
+			sb.WriteByte('=')
+			sb.WriteString(Quote(c.Name))
+			sb.WriteString(" name=")
+			sb.WriteString(Quote(f.Name))
+			sb.WriteString(" kind=")
+			sb.WriteString(Quote(f.Kind))
+			sb.WriteString(" doc=")
+			sb.WriteString(Quote(f.Doc))
+			sb.WriteByte('\n')
+		}
+	}
+}
+
 func EncodeVocabulary(v *Vocabulary) string {
 	var sb strings.Builder
 	for _, p := range v.Common {
@@ -210,10 +309,17 @@ func EncodeVocabulary(v *Vocabulary) string {
 		} else {
 			sb.WriteString(" !virtual")
 		}
+		if t.Hosted {
+			sb.WriteString(" hosted")
+		} else {
+			sb.WriteString(" !hosted")
+		}
 		sb.WriteByte('\n')
 		for _, p := range t.Props {
 			writePropStmt(&sb, "prop", t.Name, p)
 		}
+		writeCallStmts(&sb, "ask", t.Name, t.Asks)
+		writeCallStmts(&sb, "do", t.Name, t.Does)
 		for _, e := range t.Events {
 			sb.WriteString("event of=")
 			sb.WriteString(Quote(t.Name))

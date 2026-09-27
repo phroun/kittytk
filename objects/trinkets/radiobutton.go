@@ -53,6 +53,7 @@ func (r *RadioButton) SetText(text string) {
 	r.text = text
 	r.SetAccessibleName(text)
 	r.Update()
+	r.InvalidateLayout()
 }
 
 // IsChecked returns whether the radio button is checked.
@@ -99,6 +100,7 @@ func (r *RadioButton) WordWrap() bool {
 func (r *RadioButton) SetWordWrap(wrap bool) {
 	r.wordWrap = wrap
 	r.Update()
+	r.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.
@@ -192,7 +194,9 @@ func (r *RadioButton) Paint(p *core.Painter) {
 	x := metrics.UnitsPerCellWidth * 4 // After indicator + space (4 cells)
 
 	if !r.wordWrap {
-		run := r.CellRun(r.text)
+		// The label has the room left over from the indicator and its space.
+		shown, _ := r.ElideText(r.text, box-x)
+		run := r.CellRun(shown)
 		p.DrawText(core.LeadingX(r, box, x, r.MeasureText(run)), 0, run, labelStyle, font)
 		return
 	}
@@ -232,7 +236,7 @@ func (r *RadioButton) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		if r.group != nil {
-			r.group.SelectPrevious()
+			r.group.SelectPrior()
 			return true
 		}
 	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
@@ -423,8 +427,8 @@ func (g *RadioGroup) SelectNext() {
 	}
 }
 
-// SelectPrevious selects the previous button in the group.
-func (g *RadioGroup) SelectPrevious() {
+// SelectPrior selects the prior button in the group.
+func (g *RadioGroup) SelectPrior() {
 	g.mu.RLock()
 	buttons := g.buttons
 	selected := g.selected
@@ -442,12 +446,12 @@ func (g *RadioGroup) SelectPrevious() {
 		}
 	}
 
-	// Find previous enabled button
+	// Find prior enabled button
 	for i := 1; i <= len(buttons); i++ {
-		prevIdx := (currentIdx - i + len(buttons)) % len(buttons)
-		if buttons[prevIdx].IsEnabled() {
-			buttons[prevIdx].SetFocus()
-			g.selectButton(buttons[prevIdx])
+		priorIdx := (currentIdx - i + len(buttons)) % len(buttons)
+		if buttons[priorIdx].IsEnabled() {
+			buttons[priorIdx].SetFocus()
+			g.selectButton(buttons[priorIdx])
 			return
 		}
 	}

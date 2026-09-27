@@ -96,6 +96,10 @@ func (c *ComboBox) SetEmbedHost(host core.Trinket, origin func() core.UnitPoint)
 	c.embedOrigin = origin
 }
 
+// EmbedHost is the trinket standing in for a parent this box does not have,
+// which is who draws it and therefore who a repaint has to reach.
+func (c *ComboBox) EmbedHost() core.Trinket { return c.embedHost }
+
 // markPopupGrab records where a press on the BOX landed, in the screen space
 // the drop-down's own handlers work in. Without a controller to map through
 // there is no drop-down either, and the box's own space is the best answer.
@@ -356,6 +360,7 @@ func (c *ComboBox) AddItem(text string) {
 		c.SetCurrentIndex(0)
 	}
 	c.Update()
+	c.InvalidateLayout() // the widest item is what the box asks to be
 }
 
 // AddItems adds multiple items to the combo box.
@@ -381,6 +386,7 @@ func (c *ComboBox) InsertItem(index int, text string) {
 		c.currentIndex++
 	}
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // RemoveItem removes an item at the given index.
@@ -401,6 +407,7 @@ func (c *ComboBox) RemoveItem(index int) {
 		c.currentIndex--
 	}
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // Clear removes all items.
@@ -409,6 +416,7 @@ func (c *ComboBox) Clear() {
 	c.currentIndex = -1
 	c.editText = ""
 	c.Update()
+	c.InvalidateLayout()
 }
 
 // Count returns the number of items.
@@ -879,7 +887,8 @@ func (c *ComboBox) Paint(p *core.Painter) {
 
 	// Draw text
 	// Cut to fit first, prepared for the cell target after.
-	shown := c.CellRun(c.displayText(text, textAreaWidth))
+	cut, _ := c.ElideText(text, textAreaWidth)
+	shown := c.CellRun(cut)
 	p.DrawText(core.LeadingX(c.ancestor(), bounds.Width, 0, c.MeasureText(shown)), 0, shown, s, font)
 
 	// Draw dropdown arrow at the trailing edge
@@ -965,7 +974,10 @@ func (c *ComboBox) paintPopup(p *core.Painter) {
 			Width:  bounds.Width,
 			Height: metrics.UnitsPerCellHeight,
 		})
-		run := c.CellRun(item)
+		// The row is indented a column on the leading side; the same column is
+		// left on the other, so a cut item does not run into the frame.
+		cut, _ := c.ElideText(item, bounds.Width-metrics.UnitsPerCellWidth*2)
+		run := c.CellRun(cut)
 		rowPainter.DrawText(core.LeadingX(c.ancestor(), bounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(run)),
 			itemY, run, s, font)
 	}
@@ -1083,7 +1095,8 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 			Width:  popupBounds.Width,
 			Height: metrics.UnitsPerCellHeight,
 		})
-		run := c.CellRun(item)
+		cut, _ := c.ElideText(item, popupBounds.Width-metrics.UnitsPerCellWidth*2)
+		run := c.CellRun(cut)
 		rowPainter.DrawText(core.LeadingX(c.ancestor(), popupBounds.Width, metrics.UnitsPerCellWidth, c.MeasureText(run)),
 			itemY, run, s, font)
 	}
@@ -1964,6 +1977,9 @@ func (c *ComboBox) HandleMousePress(event core.MousePressEvent) bool {
 
 // HandleMouseMove handles mouse movement while button may be held.
 func (c *ComboBox) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	c.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	if !c.mouseDown || !c.isOpen {
 		return false
 	}

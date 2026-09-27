@@ -10,12 +10,41 @@ import (
 // an ObjectID, see ObjectID) and accepts property sets like any window or
 // trinket. The app is never constructed over the wire - the connection
 // already has one - so there is no `new application`; instead the host
-// registers the existing instance into the session (Session.Register) and
-// hands the client its ID in the handshake. The client can then address it:
+// registers the existing instance into the session under the name `app`
+// (Session.RegisterAs) and hands the client its ID in the handshake as well.
+// The client can then address it either way:
 //
-//	set <appID> multiwindow contextonly name="Tools"
+//	set app multiwindow contextonly name="Tools"
 //
 // These three methods make *Application satisfy protocol.Object.
+//
+// The type is registered as well, so the vocabulary answers for the app object
+// the way it answers for a button: it is addressable, it takes properties, and
+// it is not something the wire builds.
+
+func init() {
+	set := func(name string) protocol.PropertyApplier {
+		return func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
+			return target.(*Application).Set(name, v, f)
+		}
+	}
+	protocol.RegisterType("application", &protocol.TypeSpec{
+		// The connection arrives with its Application and the host registers
+		// it; `new application` is refused. Registering says what the object
+		// a client ALREADY HOLDS accepts and raises -- it does not offer a
+		// way to make another.
+		Hosted: true,
+		ID:     func(target any) uint64 { return target.(*Application).ID() },
+		Props: map[string]protocol.Property{
+			"name": protocol.NewProperty("string", set("name")).
+				Tip("What the app is called. A remote app may only keep the name it was approved under.").Def(""),
+			"multiwindow": protocol.NewProperty("flag", set("multiwindow")).
+				Tip("The app may open more than one top-level window.").Def("false"),
+			"contextonly": protocol.NewProperty("flag", set("contextonly")).
+				Tip("The app contributes context menus and no windows of its own.").Def("false"),
+		},
+	})
+}
 
 // SetWireNameChangeAllowed marks whether this connection is trusted to change
 // the app's name over the protocol independently of the name it was approved

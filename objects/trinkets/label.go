@@ -46,6 +46,7 @@ func (l *Label) SetText(text string) {
 	l.text = text
 	l.SetAccessibleName(text)
 	l.Update()
+	l.InvalidateLayout()
 }
 
 // Alignment returns the text alignment.
@@ -81,6 +82,7 @@ func (l *Label) WordWrap() bool {
 func (l *Label) SetWordWrap(wrap bool) {
 	l.wordWrap = wrap
 	l.Update()
+	l.InvalidateLayout()
 }
 
 // SizeHint returns the preferred size.
@@ -193,10 +195,14 @@ func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellSt
 		if i >= maxLines {
 			break
 		}
+		// What fits, said so: a line drawn past the label's own edge runs
+		// under whatever stands beside it and reads as though the text ended
+		// where the room did.
+		shown, _ := l.ElideText(line, bounds.Width)
 
 		p.DrawTextAligned(
 			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight},
-			l.CellRun(line),
+			l.CellRun(shown),
 			l.textSide(),
 			core.AlignTop,
 			s,

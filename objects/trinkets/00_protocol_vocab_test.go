@@ -290,7 +290,7 @@ wdoc=mdi.d1
 
 	// Minimize by id-directed action; the pane reports it with title.
 	*events = nil
-	min, _ := protocol.Parse(fmt.Sprintf("set mdi minimize=%d", docID))
+	min, _ := protocol.Parse(fmt.Sprintf("do mdi minimize window=%d", docID))
 	if _, err := session.Execute(min, f); err != nil {
 		t.Fatalf("minimize: %v", err)
 	}
@@ -347,8 +347,8 @@ wentry=dock.e1`, docID))
 		t.Errorf("dock entries after destroy = %d", dock.EntryCount())
 	}
 
-	// Flag actions parse and run (tile with one window: no crash).
-	tile, _ := protocol.Parse(`set mdi tile`)
+	// Actions parse and run (tile with one window: no crash).
+	tile, _ := protocol.Parse(`do mdi tile`)
 	if _, err := session.Execute(tile, f); err != nil {
 		t.Fatalf("tile: %v", err)
 	}
@@ -548,5 +548,39 @@ new label caption="tinted" fg=bright_yellow bg="#334455"
 	}
 	if s.Bg != style.RGB(0x33, 0x44, 0x55) {
 		t.Errorf("bg = %v, want RGB 334455", s.Bg)
+	}
+}
+
+// A list told what to read in the wire language reads it, and the two field
+// names come through the same statement.
+func TestListViewReadsANamedSource(t *testing.T) {
+	RegisterSource("test.wire", namedRows(7))
+	defer UnregisterSource("test.wire")
+
+	f, _ := buildWithEvents(t, nil, `
+lv=new listview source="source:test.wire" display="subject" value="id"
+`)
+	lv := f.targets[0].(*ListView)
+	if lv.Count() != 7 {
+		t.Fatalf("it counts %d rows, want 7", lv.Count())
+	}
+	if got := lv.Item(4); got == nil || got.Text != "message 4" {
+		t.Errorf("row 4 shows %v, want the subject", got)
+	}
+	if v := lv.ValueAt(4); v == nil || !v.IsInt || v.Int != 1004 {
+		t.Errorf("row 4 means %v, want 1004", v)
+	}
+}
+
+// A name nothing stands for is refused by the statement rather than leaving a
+// list quietly empty.
+func TestListViewRefusesANameNothingStandsFor(t *testing.T) {
+	script, err := protocol.Parse(`lv=new listview source="source:not.registered"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	f := &captureFactory{inner: protocol.NewRegistryFactory(&protocol.BindContext{})}
+	if _, err := protocol.NewSession().Execute(script, f); err == nil {
+		t.Fatal("the statement was taken, and nothing stands for that name")
 	}
 }

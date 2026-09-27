@@ -16,6 +16,16 @@ import (
 //	    new item caption="Roots"
 //	}
 //
+// Or the rows are NAMED, and the tree reads somebody else's, which is the same
+// one word a list says:
+//
+//	new treeview source="source:hosts.tree" showheader
+//	new treeview source="bundle:objectLibrary@2.1.0"
+//
+// A named source that is a hierarchy carries its own depth, kind and child
+// counts, so the nesting is the SOURCE's rather than the statement's; a flat one
+// reads as a tree of one generation.
+//
 // Items are first-class wire objects: each carries an ObjectID, and
 // correlation keys name them (`fruit=new item …` → `tree.fruit`, then
 // `set tree.fruit caption="…"`, `destroy tree.fruit`). Selection
@@ -44,8 +54,15 @@ func init() {
 			"edit": protocol.NewEventDesc("An in-place cell edit was committed.").
 				Field("trinket", "uint", "The tree's object ID.").
 				Field("item", "uint", "The edited item.").
+				Field("key", "string", "The edited RECORD's identity, for a declared source; empty for a tree's own items.").
 				Field("column", "int", "Index of the edited column.").
 				Field("value", "string", "The committed cell text."),
+			"trouble": protocol.NewEventDesc("Something this tree asked for was refused — a source it named, or a scope of it. The tree goes on showing what it has.").
+				Field("trinket", "uint", "The tree's object ID.").
+				Field("text", "string", "Why, in the words of whoever refused it.").
+				Field("at", "int", "The row it was asking about, or -1 where it was asking about none.").
+				Field(protocol.DecisionField, "uint", "The decision to answer about THIS refusal: `do <id> deny` and the tree draws no line, because you have shown the reader yourself; `do <id> allow` and it draws its own. Answer promptly — the line waits, and appears anyway shortly if nothing comes. `trouble=false` is the same thing said once about every refusal.").
+				Field(protocol.DecisionWithinField, "uint", "How many milliseconds the tree will wait for the answer before drawing its own line. Short: this is a line on a screen, not a question for a person."),
 		},
 		New: func() any { return NewTreeView() },
 		ID: func(t any) uint64 {
@@ -63,6 +80,24 @@ func init() {
 					WithUint("item", uint64(item.ID)).
 					WithInt("selected", tv.CurrentIndex()))
 			}
+			// A refusal reaches the application the way everything else about this
+			// object does, and it carries a DECISION: `trouble=` is a standing
+			// preference about every refusal, and this is about THIS one. See the
+			// listview's, which is the same wiring.
+			tv.announceTrouble(func(t Trouble) bool {
+				d := ctx.Deciding(
+					protocol.NewEvent("trouble").
+						WithUint("trinket", id).
+						WithString("text", t.Reason).
+						WithInt("at", t.At),
+					troubleDecision,
+					func(v protocol.Verdict) {
+						if tv.decidedTrouble(t, v.Said && !v.Allowed) {
+							tv.Update()
+						}
+					})
+				return d != nil
+			})
 			tv.SetOnCurrentChanged(func(item *TreeItem) { emit("change", item) })
 			tv.SetOnItemActivated(func(item *TreeItem) { emit("activate", item) })
 			tv.SetOnItemExpanded(func(item *TreeItem) {
@@ -104,12 +139,28 @@ func init() {
 						break
 					}
 				}
+				// **The record's identity, not only the item's.** An item ID is
+				// minted here, by the view, for a row it drew -- it means nothing
+				// to the application that served the record, which knows its own
+				// records by key. Without this an application subscribing to edits
+				// could see that something was edited and not which thing, so the
+				// subscription was decorative.
+				//
+				// Empty for a tree reading its own items: there is no record
+				// underneath and the item ID is the whole of what identifies a row.
 				ctx.EmitEvent(protocol.NewEvent("edit").
 					WithUint("trinket", id).
 					WithUint("item", uint64(item.ID)).
+					WithString("key", item.Key()).
 					WithInt("column", colIdx).
 					WithString("value", value))
 			})
+		},
+		Asks: map[string]protocol.AskDesc{
+			AskAmendments: protocol.NewAskDesc(
+				"What this tree holds against its source: the edits a reader made, " +
+					"so they can be written somewhere that lasts. One answer each, " +
+					"and a completion carrying how many."),
 		},
 		Props: treeViewProps(),
 		Destroy: func(t any) error {

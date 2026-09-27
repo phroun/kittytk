@@ -1,6 +1,7 @@
 package trinkets
 
 import (
+	"github.com/phroun/serval"
 	"strings"
 
 	"github.com/phroun/kittytk/core"
@@ -17,7 +18,7 @@ import (
 //	Enter   commit the row and dismiss
 //	Escape  cancel the current cell (original value stays) and dismiss
 //	Tab     commit the cell, edit the next editable column (wraps)
-//	S-Tab   commit the cell, edit the previous editable column
+//	S-Tab   commit the cell, edit the prior editable column
 //	Up/Down commit the cell, move to that row, keep editing the SAME
 //	        column there (even on a combo cell, where arrows would
 //	        normally change the value - row navigation wins while the
@@ -66,9 +67,18 @@ func (t *TreeView) SetEditable(on bool) {
 	t.Update()
 }
 
+// IsKeyColumn reports whether a column handed to an observer is the KEY (tree)
+// column -- the one whose cell is the item's own caption.
+//
+// The key column is a sentinel that lives nowhere in the column list, so it
+// cannot be found by searching Columns() and is not nil either. This is how
+// anything outside the package tells a caption edit from a cell edit.
+func (t *TreeView) IsKeyColumn(col *TreeColumn) bool { return col == treeKeyColumn }
+
 // SetOnCellEdited installs the observer for committed cell edits (only
-// fired when the value actually changed). column is treeKeyColumn's
-// sentinel identity for key edits; wire consumers see index -1.
+// fired when the value actually changed). column is the key column's sentinel
+// identity for key edits, which IsKeyColumn recognises; wire consumers see
+// index -1.
 func (t *TreeView) SetOnCellEdited(fn func(item *TreeItem, column *TreeColumn, value string)) {
 	t.onCellEdited = fn
 }
@@ -96,6 +106,12 @@ func (t *TreeView) colEditable(col *TreeColumn) bool {
 	return col != nil && col.Editable && !col.Hidden
 }
 
+// cellEditable reports whether this cell may be opened for editing: the
+// column has to allow it, and the row has to be one that is written in.
+func (t *TreeView) cellEditable(item *TreeItem, col *TreeColumn) bool {
+	return item != nil && !item.ReadOnly && t.colEditable(col)
+}
+
 // cellValue reads the raw stored value for a column (the key column
 // stores the item's caption).
 func (t *TreeView) cellValue(item *TreeItem, col *TreeColumn) string {
@@ -116,12 +132,16 @@ func (t *TreeView) setCellValue(item *TreeItem, col *TreeColumn, v string) {
 
 // treeCellTextInset is how far into a tree-hosting cell the caption text
 // begins, measured along the run: the indent, the expander cell, and the icon
-// (when the item has one) - mirroring paintTreeCell exactly. Where that lands
-// in the span is treeRunX's answer.
+// (when the item names one) - mirroring paintTreeCell exactly. Where that
+// lands in the span is treeRunX's answer.
+//
+// The NAME reserves the cell, not the picture: a row whose icon has not been
+// registered yet keeps its caption where it will be once it has, rather than
+// shifting the moment somebody dresses the application.
 func (t *TreeView) treeCellTextInset(item *TreeItem) core.Unit {
 	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	inset := core.Unit(item.Level()*t.indentWidth+1+treeLeftPadCells) * cw
-	if item.Icon != nil && len(item.Icon.Cells) > 0 {
+	if item.Icon != "" {
 		inset += cw * 2
 	}
 	return inset
@@ -176,7 +196,7 @@ func (t *TreeView) enterTargetColumn() *TreeColumn {
 	return col
 }
 
-// moveEnterTargetColumn walks the Enter target to the previous or next
+// moveEnterTargetColumn walks the Enter target to the prior or next
 // editable column WITHOUT editing anything and without touching the tree's
 // structure, which is what a keymap wanting a "left that never collapses"
 // binds. It stops at the ends rather than wrapping, so holding the key cannot
@@ -207,7 +227,7 @@ func (t *TreeView) moveEnterTargetColumn(delta int) bool {
 // editable one. Returns false when there is nothing to edit.
 func (t *TreeView) startRowEdit() bool {
 	item := t.CurrentItem()
-	if item == nil || !t.multiColumn() || t.rowEditing {
+	if item == nil || !t.multiColumn() || t.rowEditing || item.ReadOnly {
 		return false
 	}
 	col := t.enterTargetColumn()
@@ -439,17 +459,114 @@ func (t *TreeView) commitCellEdit() {
 		return
 	}
 	t.setCellValue(t.editItem, t.editCol, v)
+	t.amendCell(t.editItem, t.editCol, v)
 	if t.onCellEdited != nil {
 		t.onCellEdited(t.editItem, t.editCol, v)
 	}
 	// Under an active visual sort the new value can move rows; the
 	// trinket re-sorts itself and the selection tracks the item.
-	if t.sorted {
+	//
+	// **Not for a DECLARED source.** There the sort is the source's, so saying it
+	// again rebuilds every live sequence -- which for a tree means walking it, which
+	// means a query per level. A hundred thousand rows would be re-read on every
+	// committed cell, and the row the reader is typing in would leap away to wherever
+	// its new value sorted. The amendment has already put the value where the next
+	// read will find it; where that read lands it is the reader's to ask for.
+	if t.sorted && t.source == nil {
 		t.resortKeepingSelection()
 	}
 	// An explicit edit is a user action ON this row: keep it in view
 	// unconditionally, even if the new value just sorted it far away.
 	t.ensureVisible(t.currentIndex)
+}
+
+// WriteCell writes a value into one cell the way a committed edit does: onto the
+// item, held against the source where there is one to hold it, and reported.
+//
+// **The same path and not a shortcut beside it.** An application setting a cell has
+// exactly the reasons a reader does for wanting it to stick, and a second way in
+// would be a second place for the amendment to be forgotten. `columnID` empty is the
+// key column, which has no id of its own.
+//
+// False for a column this tree has not got, and for a value that is already there --
+// nothing is amended and nothing is reported for a write that changes nothing, the
+// same as a committed edit whose value did not move.
+func (t *TreeView) WriteCell(item *TreeItem, columnID, value string) bool {
+	if item == nil {
+		return false
+	}
+	col := treeKeyColumn
+	if columnID != "" {
+		col = nil
+		for _, c := range t.columns {
+			if c.ID == columnID {
+				col = c
+				break
+			}
+		}
+		if col == nil {
+			return false
+		}
+	}
+	if t.cellValue(item, col) == value {
+		return false
+	}
+	t.setCellValue(item, col, value)
+	t.amendCell(item, col, value)
+	if t.onCellEdited != nil {
+		t.onCellEdited(item, col, value)
+	}
+	t.Update()
+	return true
+}
+
+// amendCell holds an edit to a DECLARED source's row against that source, so that
+// the value survives the next read.
+//
+// Without it an edit lasts until the next rebuild and no longer. The item a reader
+// typed into is a PROJECTION of a record -- `learnRow` makes it and writes the
+// record's members onto it -- so the next read overwrites what was typed with what
+// the source still says. The value was never anywhere but on screen.
+//
+// **It is an alteration and not a replacement**, because that is what a cell edit
+// is: one member changed, and nothing said about the others. A replacement is the
+// record entire, which would mean holding every member of every row on the chance
+// that one might be edited. An alteration also cannot move the record -- the child
+// placed it and this touches what it holds afterwards -- which is why the row does
+// not leap away while the reader is still in it.
+//
+// **The member amended is the one that was SHOWN**, because that is what was edited.
+// A column that separates what it sorts by from what it draws -- a size in bytes
+// under a "1.2 MB" caption -- has its drawn member altered and its sorting member
+// left alone, which is the caller's to reconcile: nothing here can turn "1.2 MB"
+// back into a number.
+//
+// Nothing happens for a tree reading its own items: the item IS the record there,
+// and `setCellValue` has already written it. Nothing happens either for a declared
+// source with no amendment layer to reach -- the edit shows and does not stick, and
+// `onCellEdited` is where a programmer finds out and decides what to do about it.
+func (t *TreeView) amendCell(item *TreeItem, col *TreeColumn, v string) {
+	if t.source == nil || item == nil || item.rowKey == nil {
+		return
+	}
+	over := t.amendable()
+	if over == nil {
+		return
+	}
+	field := t.cellOf(item.rowKind, colOrKey(col)).showField()
+	if field == "" {
+		return
+	}
+	over.Alter(item.rowKey, serval.Record{serval.Named(field, v)})
+}
+
+// colOrKey turns an edit-ring column into the one cellOf takes: nil for the key
+// column, which the ring names with a sentinel and the mapping names with nothing.
+func colOrKey(col *TreeColumn) *TreeColumn {
+	if col == treeKeyColumn {
+		return nil
+	}
+	return col
 }
 
 // endRowEdit dismisses the editor. commit=false is Escape: nothing is
@@ -470,7 +587,7 @@ func (t *TreeView) endRowEdit(commit bool) {
 }
 
 // stepEditColumn commits the current cell and moves the editor to the
-// next (+1) or previous (-1) editable column, wrapping around. The
+// next (+1) or prior (-1) editable column, wrapping around. The
 // editor trinket is remounted, so text and enum columns mix freely.
 func (t *TreeView) stepEditColumn(delta int) {
 	cols := t.editableColumns()
@@ -494,10 +611,12 @@ func (t *TreeView) stepEditColumn(delta int) {
 func (t *TreeView) stepEditRow(delta int) {
 	col := t.editCol
 	t.endRowEdit(true)
-	if ni := t.CurrentIndex() + delta; ni >= 0 && ni < len(t.flatList) {
+	if ni := t.CurrentIndex() + delta; ni >= 0 && ni < t.rowCount() {
 		t.SetCurrentIndex(ni)
 	}
-	if it := t.CurrentItem(); it != nil && col != nil {
+	// A row that is not written in ends the walk rather than opening an
+	// editor over it: the selection lands there, and stops.
+	if it := t.CurrentItem(); it != nil && col != nil && t.cellEditable(it, col) {
 		t.beginCellEdit(it, col)
 	}
 }
@@ -625,12 +744,9 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 	if !t.rowEditing || t.editCol == nil || t.editItem == nil {
 		return core.UnitRect{}, false
 	}
-	idx := -1
-	for i, it := range t.flatList {
-		if it == t.editItem {
-			idx = i
-			break
-		}
+	idx, ok := t.positionOf(t.editItem)
+	if !ok {
+		idx = -1
 	}
 	row := idx - t.scrollOffset
 	if idx < 0 || row < 0 || row >= t.visibleCount() {
@@ -638,7 +754,6 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 	}
 	metrics := t.EffectiveCellMetrics()
 	lay := t.columnLayout()
-	host := t.treeHostColumn()
 	for _, sp := range lay.spans {
 		if !spanMatchesCol(sp, t.editCol) {
 			continue
@@ -647,12 +762,12 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 		if !ok {
 			return core.UnitRect{}, false
 		}
-		y := lay.headerH + core.Unit(row)*metrics.UnitsPerCellHeight
+		y := lay.rowsY + core.Unit(row)*metrics.UnitsPerCellHeight
 		r := core.UnitRect{X: clip.X, Y: y, Width: clip.Width, Height: metrics.UnitsPerCellHeight}
 		// A tree-hosting cell's editor starts where the caption TEXT
 		// starts - past the indent, expander, and icon - so it lines
 		// up with the value it replaces.
-		if sp.col == nil || (host != nil && sp.col == host) {
+		if t.hostsTree(sp.col) {
 			inset := t.treeCellTextInset(t.editItem)
 			w := sp.w - inset
 			if w <= 0 {
@@ -839,16 +954,15 @@ func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
 	if !t.multiColumn() || t.rowEditing {
 		return
 	}
-	headerH := t.headerHeight()
-	if event.Y < headerH {
+	under := t.rowUnder(event.Y)
+	if under < 0 {
 		return
 	}
-	metrics := t.EffectiveCellMetrics()
-	row := t.scrollOffset + int((event.Y-headerH)/metrics.UnitsPerCellHeight)
-	if row != t.currentIndex || row < 0 || row >= len(t.flatList) {
+	row := t.scrollOffset + under
+	if row != t.currentIndex || row < 0 || row >= t.rowCount() {
 		return
 	}
-	item := t.flatList[row]
+	item := t.rowAt(row)
 	col := t.editableColumnAt(event.X, item)
 	if col == nil {
 		return
@@ -878,7 +992,7 @@ func (t *TreeView) armClickEdit(event core.MouseReleaseEvent) {
 	if dx > slopX || dy > slopY {
 		return // a drag, not a click
 	}
-	if t.rowEditing || t.CurrentItem() != item || !t.colEditable(col) {
+	if t.rowEditing || t.CurrentItem() != item || !t.cellEditable(item, col) {
 		return
 	}
 	t.beginCellEdit(item, col)

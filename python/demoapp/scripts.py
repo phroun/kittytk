@@ -332,7 +332,7 @@ mtab=new tab caption="MDI Demo" children={
                         new button caption="Tile" action=demo.mdi.tile
                         new button caption="Cascade" action=demo.mdi.cascade
                         new button caption="Next" action=demo.mdi.next
-                        new button caption="Prev" action=demo.mdi.prev
+                        new button caption="Prior" action=demo.mdi.prior
                     }
                     mdistatus=new label caption="Active: none"
                     new spacer
@@ -395,7 +395,7 @@ mb=new menubar children={
         new menuitem caption="&Toolbar" checkable checked
         new menuitem caption="&Status Bar" checkable checked
         new menuitem separator
-        new menuitem caption="&Light/Dark Theme" shortcut="^T" action=demo.view.theme
+        new menuitem caption="&Light/Dark Theme" shortcut="^T" checkable checked action=demo.view.theme
         new menuitem separator
         new menuitem caption="Show A&nnouncements in Status Bar" checkable action=demo.view.announce
         new menuitem caption="Speak Announcements" checkable action=demo.view.speak

@@ -27,7 +27,10 @@ type TreeColumn struct {
 	Caption string
 
 	// Width is the current width in UNITS, as every other measurement in
-	// this toolkit is; Min/MaxWidth bound drag-resizing. MaxWidth -1 does
+	// this toolkit is; Min/MaxWidth bound it, whether it is being dragged
+	// or stretched over the room at the end of the run. A column held at
+	// its maximum cuts its cells short rather than growing, and each cut
+	// cell offers the whole of what it holds on hover. MaxWidth -1 does
 	// not bound; a maximum below the minimum loses to it, a minimum being
 	// the stronger statement.
 	//
@@ -284,11 +287,89 @@ func (t *TreeView) SetOnSortRequested(fn func(sorted bool, sortedBy int, descend
 	t.onSortRequested = fn
 }
 
+// SortLevel is one level of a visual sort: which column it reads, and
+// which way that column runs. By is -1 for the key (tree) column, else a
+// declared data-column index.
+//
+// A sort is an ordered run of these. The first level decides; rows it
+// finds equal are settled by the second, and so on. Rows equal on every
+// level keep the order the app gave them, the sort being stable -- so
+// "by size, then by name" is two levels, and the answer does not depend
+// on what the rows happened to be sorted by before.
+type SortLevel struct {
+	By         int
+	Descending bool
+}
+
 // Sorted returns the view's sort state: whether visual sorting is
-// active, which column it is on (-1 = the key column, else a declared
-// data-column index), and the direction.
+// active, which column its FIRST level is on (-1 = the key column, else
+// a declared data-column index), and that level's direction. A sort of
+// more than one level is read with SortLevels.
 func (t *TreeView) Sorted() (sorted bool, sortedBy int, descending bool) {
-	return t.sorted, t.sortedBy, t.sortDescending
+	first := t.primarySort()
+	return t.sorted, first.By, first.Descending
+}
+
+// SortLevels returns the ordered run of levels the sort walks. The
+// result is a copy: changing it changes nothing until it is handed to
+// SetSortLevels.
+func (t *TreeView) SortLevels() []SortLevel {
+	return append([]SortLevel{}, t.sortLevels...)
+}
+
+// SetSortLevels replaces the run of sort levels, the first being the one
+// the header indicator sits on. Handing it nothing turns sorting off.
+func (t *TreeView) SetSortLevels(levels ...SortLevel) {
+	t.sortLevels = append([]SortLevel{}, levels...)
+	t.sorted = len(t.sortLevels) > 0
+	t.resortKeepingSelection()
+}
+
+// AddSortLevel adds a level beneath the ones already there -- "and then
+// by this one". A column already in the run keeps its place and takes
+// the new direction, because one column cannot be two levels of one
+// sort.
+func (t *TreeView) AddSortLevel(by int, descending bool) {
+	for i, lv := range t.sortLevels {
+		if lv.By == by {
+			t.sortLevels[i].Descending = descending
+			t.sorted = true
+			t.resortKeepingSelection()
+			return
+		}
+	}
+	t.sortLevels = append(t.sortLevels, SortLevel{By: by, Descending: descending})
+	t.sorted = true
+	t.resortKeepingSelection()
+}
+
+// primarySort is the first level of the sort -- the one the indicator
+// sits on and the one the header cycle turns. A view with no levels
+// reads as the key column ascending, which is where a first activation
+// starts from.
+func (t *TreeView) primarySort() SortLevel {
+	if len(t.sortLevels) == 0 {
+		return SortLevel{}
+	}
+	return t.sortLevels[0]
+}
+
+// setPrimarySort replaces the first level, leaving any levels beneath it
+// where they are.
+func (t *TreeView) setPrimarySort(lv SortLevel) {
+	if len(t.sortLevels) == 0 {
+		t.sortLevels = []SortLevel{lv}
+	} else {
+		t.sortLevels[0] = lv
+	}
+	t.resortKeepingSelection()
+}
+
+// setSortEnabled turns the sort on or off without disturbing the levels
+// it runs, so a view can be handed its levels and then told to use them.
+func (t *TreeView) setSortEnabled(on bool) {
+	t.sorted = on
+	t.resortKeepingSelection()
 }
 
 // SetSorted sets the sort state. Sorting is VISUAL, built into the
@@ -298,8 +379,10 @@ func (t *TreeView) Sorted() (sorted bool, sortedBy int, descending bool) {
 // work off that list. Selection tracks the ITEM across the reorder,
 // and events keep reporting item identity - the app can stay entirely
 // unaware sorting is happening.
+// A sort set this way has one level; SetSortLevels sets more.
 func (t *TreeView) SetSorted(sorted bool, sortedBy int, descending bool) {
-	t.sorted, t.sortedBy, t.sortDescending = sorted, sortedBy, descending
+	t.sorted = sorted
+	t.sortLevels = []SortLevel{{By: sortedBy, Descending: descending}}
 	t.resortKeepingSelection()
 }
 
@@ -310,11 +393,15 @@ func (t *TreeView) SetSorted(sorted bool, sortedBy int, descending bool) {
 // row; if the user had scrolled it out of view themselves, the
 // viewport stays where they put it.
 func (t *TreeView) resortKeepingSelection() {
+	// A declared tree sorts its own levels, so the order is TOLD rather than
+	// applied here -- this is the one funnel every sort and column change goes
+	// through, so it is the one place that has to say it.
+	t.tellOrder()
 	cur := t.CurrentItem()
 	wasVisible := cur != nil &&
 		t.currentIndex >= t.scrollOffset &&
 		t.currentIndex < t.scrollOffset+t.visibleCount()
-	t.rebuildFlatList()
+	t.moved()
 	if cur != nil {
 		t.restoreSelectionByItem(cur)
 		if wasVisible {
@@ -324,14 +411,14 @@ func (t *TreeView) resortKeepingSelection() {
 	t.Update()
 }
 
-// sortTarget resolves which column the sort actually runs on and how:
+// sortTarget resolves which column a level actually runs on and how:
 // the chosen column's SortProxy redirects to the column holding the
 // real sort values (the indicator stays on the chosen column), and the
 // target's Numeric flag selects float comparison. idx -1 = key column.
-func (t *TreeView) sortTarget() (idx int, numeric bool) {
+func (t *TreeView) sortTarget(by int) (idx int, numeric bool) {
 	idx = -1
-	if t.sortedBy >= 0 && t.sortedBy < len(t.columns) {
-		idx = t.sortedBy
+	if by >= 0 && by < len(t.columns) {
+		idx = by
 		if p := t.columns[idx].SortProxy; p >= 0 && p < len(t.columns) && p != idx {
 			idx = p
 		}
@@ -351,37 +438,53 @@ func (t *TreeView) sortKeyFor(it *TreeItem, idx int) string {
 
 // visualSiblings returns one sibling run in VISUAL order: the logical
 // slice untouched when unsorted; a sorted copy otherwise (stable, so
-// equal keys keep the app's order; descending reverses). Text columns
-// compare case-insensitively; numeric targets compare the cached
-// numeric equivalents. Children sort within their parent - the
-// hierarchy is never flattened away, exactly like Finder's list view.
+// rows equal on every level keep the app's order). Children sort within
+// their parent - the hierarchy is never flattened away, exactly like
+// Finder's list view.
 func (t *TreeView) visualSiblings(items []*TreeItem) []*TreeItem {
-	if !t.sorted || len(items) < 2 {
+	// **A DECLARED source's children are already in visual order**, serval having
+	// produced the run this slice was rebuilt from. Sorting them again here would
+	// be a second, different comparison over the same rows -- this one folds with
+	// strings.ToLower where serval applies the level's collation -- and the two
+	// disagreeing puts the elbow of a tree line on the wrong row.
+	if t.source != nil {
+		return items
+	}
+	if !t.sorted || len(items) < 2 || len(t.sortLevels) == 0 {
 		return items
 	}
 	out := make([]*TreeItem, len(items))
 	copy(out, items)
-	idx, numeric := t.sortTarget()
-	if numeric {
-		id := t.columns[idx].ID
-		sort.SliceStable(out, func(i, j int) bool {
-			a, b := out[i].NumericValue(id), out[j].NumericValue(id)
-			if t.sortDescending {
-				return b < a
-			}
-			return a < b
-		})
-		return out
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		a := strings.ToLower(t.sortKeyFor(out[i], idx))
-		b := strings.ToLower(t.sortKeyFor(out[j], idx))
-		if t.sortDescending {
-			return b < a
-		}
-		return a < b
-	})
+	sort.SliceStable(out, func(i, j int) bool { return t.sortLess(out[i], out[j]) })
 	return out
+}
+
+// sortLess walks the levels in order and answers on the first that
+// separates the two rows, so each level settles only what the ones
+// above it left equal. Text columns compare case-insensitively; numeric
+// targets compare the cached numeric equivalents.
+func (t *TreeView) sortLess(a, b *TreeItem) bool {
+	for _, level := range t.sortLevels {
+		idx, numeric := t.sortTarget(level.By)
+		var less, more bool
+		if numeric {
+			id := t.columns[idx].ID
+			x, y := a.NumericValue(id), b.NumericValue(id)
+			less, more = x < y, y < x
+		} else {
+			x := strings.ToLower(t.sortKeyFor(a, idx))
+			y := strings.ToLower(t.sortKeyFor(b, idx))
+			less, more = x < y, y < x
+		}
+		if !less && !more {
+			continue // equal here: the next level decides
+		}
+		if level.Descending {
+			return more
+		}
+		return less
+	}
+	return false
 }
 
 // columnIndex returns c's declared index (-1 for nil = the key column).
@@ -419,7 +522,7 @@ func (t *TreeView) treeHostColumn() *TreeColumn {
 // sortIndicatorFor reports whether the indicator sits on this span's
 // column (nil col = the key column).
 func (t *TreeView) sortIndicatorFor(col *TreeColumn) bool {
-	return t.sorted && t.sortedBy == t.columnIndex(col)
+	return t.sorted && t.primarySort().By == t.columnIndex(col)
 }
 
 // headerSortClick handles activating a column header (mouse click or
@@ -432,9 +535,10 @@ func (t *TreeView) headerSortClick(col *TreeColumn) {
 		return
 	}
 	by := t.columnIndex(col)
+	first := t.primarySort()
 	sorted, descending := true, false
-	if t.sorted && t.sortedBy == by {
-		if !t.sortDescending {
+	if t.sorted && first.By == by {
+		if !first.Descending {
 			descending = true // second activation: reverse
 		} else {
 			sorted = false // third: back to unsorted
@@ -507,7 +611,7 @@ func (t *TreeView) headerStopLabel(idx int) string {
 	}
 	state := "not sorted"
 	if t.sortIndicatorFor(col) {
-		if t.sortDescending {
+		if t.primarySort().Descending {
 			state = "sorted descending"
 		} else {
 			state = "sorted ascending"
@@ -524,9 +628,9 @@ func (t *TreeView) headerStopLabel(idx int) string {
 //	bar:    Enter/Space drill in - Tab -> content - S-Tab releases
 //	        backward - Down -> content - Escape -> content
 //	items:  Tab/Right next stop (past the chooser -> content) -
-//	        S-Tab previous (before the first -> WRAP to the last
+//	        S-Tab prior (before the first -> WRAP to the last
 //	        stop, so the machine keeps the focus and a Tab from
-//	        there exits down into the rows) - Left previous (before
+//	        there exits down into the rows) - Left prior (before
 //	        the first -> bar) - Enter/Space activates (sort cycle,
 //	        or opens the chooser) - Escape -> bar
 func (t *TreeView) handleHeaderFocusKey(cmd string) bool {
@@ -652,8 +756,16 @@ func (t *TreeView) treeLinePrefix(item *TreeItem) []rune {
 	}
 	// chain[k] is the ancestor-or-self at level k+1: its connector
 	// state fills chunk k (columns [k*indentWidth, (k+1)*indentWidth)).
+	//
+	// **A chunk the view has no ancestor for stays blank**, and that is not a
+	// failure. A connector says something about rows OTHER than this one -- whether
+	// an ancestor has more siblings below -- so a view holding a window cannot draw
+	// one for an ancestor above the window without fetching back what it windowed
+	// away to answer a question about a line. The indent is still exactly right,
+	// the depth being the source's own word, and the lines fill in as the rows
+	// above arrive.
 	chain := make([]*TreeItem, level)
-	for n, k := item, level-1; k >= 0; n, k = n.Parent, k-1 {
+	for n, k := item, level-1; k >= 0 && n != nil; n, k = n.Parent, k-1 {
 		chain[k] = n
 	}
 	// The elbow opens towards the caption, which is the way the tree reads.
@@ -662,6 +774,9 @@ func (t *TreeView) treeLinePrefix(item *TreeItem) []rune {
 		tee, elbow = '┤', '┘'
 	}
 	for k, n := range chain {
+		if n == nil {
+			continue
+		}
 		at := k * t.indentWidth
 		if k == level-1 {
 			if t.hasNextVisualSibling(n) {
@@ -733,7 +848,10 @@ func (t *TreeView) drawTreeLineCell(p *core.Painter, x, y core.Unit, r rune, s s
 // the VISUAL (sorted) order - the state that picks ├ vs └ and runs the
 // │ continuation through deeper rows.
 func (t *TreeView) hasNextVisualSibling(item *TreeItem) bool {
-	siblings := t.rootItems
+	// RootItems and not the field: a DECLARED source's top level is not the
+	// caller's own list, which is empty there -- reading the field found no
+	// siblings at all and drew every top row as the last of its run.
+	siblings := t.RootItems()
 	if item.Parent != nil {
 		siblings = item.Parent.Children
 	}
@@ -764,6 +882,9 @@ func (t *TreeView) SetFitWidth(on bool) {
 	t.Update()
 }
 
+// FitWidth reports which of the two modes the columns are in.
+func (t *TreeView) FitWidth() bool { return t.fitWidth }
+
 // SetFixedColumns pins visible columns outside the horizontal scrolling
 // region: the first `begin` of the run and the last `end` of it.
 //
@@ -779,6 +900,10 @@ func (t *TreeView) SetFixedColumns(begin, end int) {
 	t.fixedBegin, t.fixedEnd = begin, end
 	t.Update()
 }
+
+// FixedColumns reports how many visible columns are pinned at each end of the
+// run.
+func (t *TreeView) FixedColumns() (begin, end int) { return t.fixedBegin, t.fixedEnd }
 
 // SetKeyWidth sets the tree column's width in units for scroll mode (fit mode
 // sizes it to the leftover space automatically).
@@ -896,8 +1021,13 @@ type colSpan struct {
 
 // treeColLayout is the computed column geometry for one pass.
 type treeColLayout struct {
-	spans      []colSpan
-	headerH    core.Unit
+	spans   []colSpan
+	headerH core.Unit
+	// rowsY is where the ROWS begin, which is under the header and under the
+	// refusal line where one is drawn (see trouble.go). It is headerH wherever
+	// nothing was refused, so everything about the rows reads from rowsY and the
+	// header band alone reads from headerH.
+	rowsY      core.Unit
 	blankW     core.Unit // blank past the last span along the run (natural)
 	contentX   core.Unit // where the content band starts (the lane took the other side)
 	dividerW   core.Unit // what a divider occupies: a column in the TUI, nothing on pixels
@@ -945,7 +1075,7 @@ func (t *TreeView) columnLayout() treeColLayout {
 	cw := metrics.UnitsPerCellWidth
 	q := t.colQuantum()
 	bounds := t.Bounds()
-	lay := treeColLayout{headerH: t.headerHeight()}
+	lay := treeColLayout{headerH: t.headerHeight(), rowsY: t.rowsTop()}
 	lay.contentW = bounds.Width - cw // scrollbar lane
 	if lay.contentW < cw {
 		lay.contentW = cw
@@ -1109,14 +1239,23 @@ func (t *TreeView) columnLayout() treeColLayout {
 	// The last span before the right flank (the very last span when
 	// nothing is pinned right) stretches over any trailing blank width
 	// - nothing sits between it and the region's edge, so its content
-	// must not ellipsize while free space goes unused. The blank's
-	// NATURAL size is recorded first: the fit-mode drag pool feeds on
-	// it (widths[] stay natural throughout).
+	// must not ellipsize while free space goes unused. A column with a
+	// MaxWidth stops there instead and leaves the rest blank: a stated
+	// maximum is a statement about the column, not only about how far it
+	// may be dragged, and stretching past it would be the one place the
+	// tree ignored it. The blank's NATURAL size is recorded first: the
+	// fit-mode drag pool feeds on it (widths[] stay natural throughout).
 	if idx := n - 1 - fr; idx >= 0 {
 		last := &lay.spans[idx]
 		if end := last.x + last.w; end < lay.scrollR {
 			lay.blankW = lay.scrollR - end
-			last.w = lay.scrollR - last.x
+			grown := lay.scrollR - last.x
+			if last.col != nil {
+				if m := last.col.maxWidth(); m >= 0 && grown > m {
+					grown = snapColWidth(m, q)
+				}
+			}
+			last.w = grown
 		}
 	}
 
@@ -1177,7 +1316,16 @@ func (t *TreeView) neededWidth(col *TreeColumn) core.Unit {
 		maxW += t.arrowRoom("▲")
 	}
 	host := t.treeHostColumn() == col // carries expander + indent
-	for _, it := range t.flatList {
+	// **The rows the view HOLDS, which is what there is to measure.** A blank row
+	// has no text in it, so it can widen no column, and a view that measured the
+	// whole sequence would have to read the whole sequence to do it -- which is the
+	// one thing a window exists not to do. A column therefore fits what the reader
+	// has seen, and grows as further rows arrive.
+	for _, at := range t.held() {
+		it := t.rowAt(at)
+		if it == nil {
+			continue
+		}
 		w := font.MeasureTextIn(col.displayValue(it.Value(col.ID)), metrics)
 		if host {
 			w += core.Unit(it.Level()*t.indentWidth+1+treeLeftPadCells) * cw
@@ -1280,6 +1428,13 @@ func (l *treeColLayout) divVisible(sp colSpan) bool {
 // paintMulti renders the multi-column presentation: header, per-column
 // rows, dividers, chooser button, scrollbar.
 func (t *TreeView) paintMulti(p *core.Painter) {
+	// Asked once, and before anything is MEASURED: rowCount makes sure the window is
+	// there, and the answer can change what there is to measure -- a refusal takes a
+	// row out of the rows' own area, and the layout below measures that area. Asking
+	// per row would run the spine's scan down the whole viewport for an answer that
+	// cannot change while this paint is being drawn.
+	drawn := t.rowCount()
+
 	bounds := t.Bounds()
 	scheme := t.GetScheme()
 	focused := t.HasFocus()
@@ -1336,7 +1491,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			capSide := t.colSide(sp.col, core.AlignLayoutNatural)
 			if t.sortIndicatorFor(sp.col) {
 				arrow := "▲"
-				if t.sortDescending {
+				if t.primarySort().Descending {
 					arrow = "▼"
 				}
 				t.drawAligned(cp, arrow, sp, 0, headerStyle, font, t.colSide(sp.col, core.AlignLayoutOpposite))
@@ -1365,6 +1520,18 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 		// inside the content area the right-edge fade covers.
 	}
 
+	// A refusal, drawn between the header and the rows and taking its row out of
+	// what the rows have. See trouble.go.
+	if h := lay.rowsY - lay.headerH; h > 0 {
+		paintTrouble(p, &t.TrinketBase, scheme,
+			troubleRow(core.UnitRect{
+				Y:      lay.headerH,
+				Width:  bounds.Width,
+				Height: bounds.Height - lay.headerH,
+			}, h),
+			t.trouble.Reason)
+	}
+
 	// Rows. Row styles are collected for the horizontal-scroll edge
 	// fades, which must match each band's own background (header,
 	// selected row, plain rows). enterCol is the cell Enter would edit
@@ -1379,8 +1546,8 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	// the footer scrollbar instead of leaving that space blank (the bar
 	// overlays it). It never joins visibleCount, so the scrolling math
 	// does not treat the clipped row as visible.
-	if p.Graphical() && t.scrollOffset+visibleCount < len(t.flatList) &&
-		lay.headerH+core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {
+	if p.Graphical() && t.scrollOffset+visibleCount < t.rowCount() &&
+		lay.rowsY+core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {
 		rows++
 	}
 	// Per-row fade colors for the horizontal-scroll edge fades: usually
@@ -1392,11 +1559,11 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	rowBands := make([]style.Color, 0, rows) // full-row band bg (vertical fades)
 	for i := 0; i < rows; i++ {
 		itemIndex := t.scrollOffset + i
-		if itemIndex >= len(t.flatList) {
+		if itemIndex >= drawn {
 			break
 		}
-		item := t.flatList[itemIndex]
-		itemY := lay.headerH + core.Unit(i)*metrics.UnitsPerCellHeight
+		item := t.drawRow(itemIndex)
+		itemY := lay.rowsY + core.Unit(i)*metrics.UnitsPerCellHeight
 
 		// While the internal focus sits in the header (bar or drilled
 		// items), the column chooser menu is popped down, or the cell
@@ -1473,7 +1640,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				spanMatchesCol(sp, enterCol) {
 				cellStyle = scheme.GetFocusedListItem()
 				segX, segW := sp.x, sp.w
-				if sp.col == nil || (host != nil && sp.col == host) {
+				if t.hostsTree(sp.col) {
 					segX, segW = t.treeCellEditZone(sp, item)
 				}
 				if segX < clip.X {
@@ -1616,7 +1783,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	if t.footerHeight() > 0 {
 		t.paintHScrollbar(p, lay)
 	}
-	if len(t.flatList) > visibleCount {
+	if t.rowCount() > visibleCount {
 		t.paintScrollbar(p, visibleCount)
 	}
 }
@@ -1665,8 +1832,10 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 	y := core.Unit(0)
 	if lay.headerH > 0 {
 		bands = append(bands, band{0, lay.headerH, headerStyle.Bg, headerStyle.Bg})
-		y = lay.headerH
 	}
+	// The rows' bands begin where the rows do: a refusal line is not scrolled
+	// sideways and has no edge to fade.
+	y = lay.rowsY
 	for i := range fadeL {
 		bands = append(bands, band{y, y + metrics.UnitsPerCellHeight, fadeL[i], fadeR[i]})
 		y += metrics.UnitsPerCellHeight
@@ -1706,7 +1875,7 @@ func (t *TreeView) paintVScrollFades(p *core.Painter, lay treeColLayout, rowBand
 		return
 	}
 	visibleCount := t.visibleCount()
-	maxScroll := len(t.flatList) - visibleCount
+	maxScroll := t.rowCount() - visibleCount
 	showTop := t.scrollOffset > 0
 	showBottom := maxScroll > 0 && t.scrollOffset < maxScroll
 	if !showTop && !showBottom {
@@ -1714,7 +1883,7 @@ func (t *TreeView) paintVScrollFades(p *core.Painter, lay treeColLayout, rowBand
 	}
 	bounds := t.Bounds()
 	metrics := t.EffectiveCellMetrics()
-	top := lay.headerH
+	top := lay.rowsY
 	// The bottom fade anchors at the TRUE bottom and runs through the
 	// partial peek strip in one continuous gradient (a fade stopping
 	// at the footer would let the peek row snap back to full
@@ -1770,6 +1939,48 @@ func (t *TreeView) treeRunX(sp colSpan, at, w core.Unit) core.Unit {
 	return sp.x + core.LeadingX(t, sp.w, at, w)
 }
 
+// cellTextRoom is how much of a span is left for a cell's text once whatever
+// stands in front of it is out of the way: the indent, expander and icon in
+// the key column, half a pitch of padding in a data column.
+//
+// The painter asks this and so does the tooltip, because they must not answer
+// it differently. A cell one of them thinks fits and the other cuts draws an
+// ellipsis and then offers nothing to expand -- which is exactly what a word
+// cut to "co…" did.
+func (t *TreeView) cellTextRoom(sp colSpan, item *TreeItem) core.Unit {
+	room := sp.w - t.cellTextInset(sp, item)
+	if room < 0 {
+		return 0
+	}
+	return room
+}
+
+// hostsTree reports whether a column carries the tree apparatus: the key column
+// always, and the first visible data column where the key column is hidden.
+//
+// **It is one predicate because five places ask it**, and they must not answer
+// differently. The painter draws the value past the apparatus, the tooltip offers
+// a cut word from where it begins, the editor opens over it and the mouse resolves
+// a click against it -- and the one that spelled the question out for itself and
+// forgot the hidden-key half drew every hosting value on top of its own twisty.
+func (t *TreeView) hostsTree(col *TreeColumn) bool {
+	if col == nil {
+		return true
+	}
+	host := t.treeHostColumn()
+	return host != nil && col == host
+}
+
+// cellTextInset is how far into a span a cell's text begins. A nil item is a
+// HEADING rather than a row: a caption stands behind no indent, expander or
+// icon, so it is padded like any data cell whichever column it heads.
+func (t *TreeView) cellTextInset(sp colSpan, item *TreeItem) core.Unit {
+	if item != nil && t.hostsTree(sp.col) {
+		return t.treeCellTextInset(item)
+	}
+	return t.EffectiveCellMetrics().UnitsPerCellWidth / 2
+}
+
 // treeExpanderRect is the cell the expander glyph stands in: past the pad and
 // the item's indent. The painter draws it there and the mouse looks for it
 // there, so both ask here.
@@ -1805,15 +2016,15 @@ func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, it
 	}
 	// Past the apparatus: the icon's cell, then everything left of the span
 	// for the caption.
-	at := t.treeCellTextInset(item)
-	if item.Icon != nil && len(item.Icon.Cells) > 0 {
-		cell := item.Icon.Cells[0]
+	at := t.cellTextInset(sp, item)
+	// The NAME reserves the cell and the picture fills it, so a row named an
+	// icon nothing has registered yet keeps its caption where it will be once
+	// something has. See treeCellTextInset, which measures the same way.
+	if icon, ok := style.IconText(item.Icon, style.IconSmall); ok && len(icon.Cells) > 0 {
+		cell := icon.Cells[0]
 		p.DrawCell(t.treeRunX(sp, at-2*cw, cw), itemY, cell.Char, cell.Style)
 	}
-	avail := sp.w - at
-	if avail < 0 {
-		avail = 0
-	}
+	avail := t.cellTextRoom(sp, item)
 	text = ellipsizeText(font, t.EffectiveCellMetrics(), text, avail)
 	text = t.CellRun(text)
 	p.DrawText(t.treeRunX(sp, at, t.MeasureText(text)), itemY, text, textStyle, font)
@@ -1868,10 +2079,7 @@ func ellipsizeText(font *core.Font, m core.CellMetrics, text string, avail core.
 func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.Unit, s style.CellStyle, font *core.Font, side core.HSide) {
 	metrics := t.EffectiveCellMetrics()
 	pad := metrics.UnitsPerCellWidth / 2
-	avail := sp.w - pad
-	if avail < 0 {
-		avail = 0
-	}
+	avail := t.cellTextRoom(sp, nil)
 	text = ellipsizeText(font, metrics, text, avail)
 	text = core.CellRun(text, t.colDirection(sp.col))
 	tw := t.MeasureText(text)
@@ -2838,8 +3046,8 @@ func (t *TreeView) sortCommandColumn() (*TreeColumn, bool) {
 			return nil, false
 		}
 	}
-	if t.sorted && t.sortedBy >= 0 && t.sortedBy < len(t.columns) {
-		col := t.columns[t.sortedBy]
+	if t.sorted && t.primarySort().By >= 0 && t.primarySort().By < len(t.columns) {
+		col := t.columns[t.primarySort().By]
 		if col.Sortable {
 			return col, true
 		}
@@ -2885,7 +3093,7 @@ func (t *TreeView) ToggleSortAscending() bool {
 	if !ok {
 		return false
 	}
-	if t.sorted && t.sortedBy == t.columnIndex(col) && !t.sortDescending {
+	if t.sorted && t.primarySort().By == t.columnIndex(col) && !t.primarySort().Descending {
 		return t.applySort(col, false, false)
 	}
 	return t.applySort(col, true, false)
@@ -2896,7 +3104,7 @@ func (t *TreeView) ToggleSortDescending() bool {
 	if !ok {
 		return false
 	}
-	if t.sorted && t.sortedBy == t.columnIndex(col) && t.sortDescending {
+	if t.sorted && t.primarySort().By == t.columnIndex(col) && t.primarySort().Descending {
 		return t.applySort(col, false, false)
 	}
 	return t.applySort(col, true, true)
@@ -2909,11 +3117,11 @@ func (t *TreeView) SortModeNext() bool {
 	if !ok {
 		return false
 	}
-	on := t.sorted && t.sortedBy == t.columnIndex(col)
+	on := t.sorted && t.primarySort().By == t.columnIndex(col)
 	switch {
 	case !on:
 		return t.applySort(col, true, false)
-	case !t.sortDescending:
+	case !t.primarySort().Descending:
 		return t.applySort(col, true, true)
 	default:
 		return t.applySort(col, false, false)
@@ -2925,11 +3133,11 @@ func (t *TreeView) SortModePrior() bool {
 	if !ok {
 		return false
 	}
-	on := t.sorted && t.sortedBy == t.columnIndex(col)
+	on := t.sorted && t.primarySort().By == t.columnIndex(col)
 	switch {
 	case !on:
 		return t.applySort(col, true, true)
-	case t.sortDescending:
+	case t.primarySort().Descending:
 		return t.applySort(col, true, false)
 	default:
 		return t.applySort(col, false, false)
@@ -2994,4 +3202,111 @@ func (t *TreeView) colAlign(col *TreeColumn) core.HAlign {
 // header caption and the sort indicator.
 func (t *TreeView) colSide(col *TreeColumn, a core.HAlign) core.HSide {
 	return core.ResolveHAlign(a, core.DirInherit, t.colDirection(col))
+}
+
+// headingAt answers for a column heading the pointer is over, when the column
+// is too narrow to have drawn the whole of it. A narrow column is exactly the
+// one whose heading is worth asking about: it is the only thing saying what
+// the cells under it are.
+func (t *TreeView) headingAt(local core.UnitPoint, headerH core.Unit) (string, core.UnitRect, bool) {
+	lay := t.columnLayout()
+	for _, sp := range lay.spans {
+		clip, ok := lay.spanClip(sp, headerH)
+		if !ok || local.X < clip.X || local.X >= clip.X+clip.Width {
+			continue
+		}
+		text := t.keyCaption
+		if sp.col != nil {
+			text = sp.col.Caption
+		}
+		// The same room the painter measured against (see cellTextRoom).
+		avail := t.cellTextRoom(sp, nil)
+		if text == "" || avail <= 0 || t.MeasureText(t.CellRun(text)) <= avail {
+			return "", core.UnitRect{}, false
+		}
+		return text, clip, true
+	}
+	return "", core.UnitRect{}, false
+}
+
+// TooltipAt answers for the CELL under the pointer rather than for the tree as
+// a whole. A tree is made of parts, and the part being read is the one whose
+// text was cut to fit the column it sits in.
+func (t *TreeView) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
+	if s := t.Tooltip(); s != "" {
+		b := t.Bounds()
+		return s, core.UnitRect{Width: b.Width, Height: b.Height}, true
+	}
+	metrics := t.EffectiveCellMetrics()
+	rowH := metrics.UnitsPerCellHeight
+	headerH := t.headerHeight()
+	if rowH <= 0 {
+		return "", core.UnitRect{}, false
+	}
+	if local.Y < headerH {
+		return t.headingAt(local, headerH)
+	}
+	visible := t.rowUnder(local.Y)
+	at := t.scrollOffset + visible
+	if visible < 0 || at < 0 || at >= t.rowCount() {
+		return "", core.UnitRect{}, false
+	}
+	item := t.rowAt(at)
+	if item == nil {
+		return "", core.UnitRect{}, false // a blank has nothing to say about itself
+	}
+
+	lay := t.columnLayout()
+	for _, sp := range lay.spans {
+		clip, ok := lay.spanClip(sp, rowH)
+		if !ok || local.X < clip.X || local.X >= clip.X+clip.Width {
+			continue
+		}
+		// **The cell being EDITED says nothing.** A note over the open editor
+		// competes with the editor's own selection -- the pointer is in there
+		// dragging through the text, and a panel arriving under it is in the way of
+		// the very thing the hand is doing. Nothing else about the tree changes: a
+		// note over any other cell is as useful while an editor is up as it was
+		// before, which is why this is the edited CELL and not the whole trinket.
+		//
+		// Asked with the same predicate the editor places itself by, because the two
+		// must not disagree about which cell is which -- the key column being the nil
+		// span on one side and a sentinel on the other is exactly where they would.
+		//
+		// `rowEditing` is an EQUIVALENT mutant today and is kept: `endRowEdit` nils
+		// the item and the column, and no row is nil, so the identity check already
+		// fails on its own with nothing open. It is here because it is the state's own
+		// name -- "while an editor is up" is the condition, and leaning on two other
+		// fields being nilled to express it would be leaning on housekeeping.
+		if t.rowEditing && item == t.editItem && spanMatchesCol(sp, t.editCol) {
+			return "", core.UnitRect{}, false
+		}
+		text := item.Text
+		if sp.col != nil {
+			text = item.Value(sp.col.ID)
+		}
+		// The same room the painter measured against, so a cell it cut is a
+		// cell this offers.
+		avail := t.cellTextRoom(sp, item)
+		if text == "" || avail <= 0 || t.MeasureText(t.CellRun(text)) <= avail {
+			return "", core.UnitRect{}, false
+		}
+		// The note stands where the TEXT does, not where the span does: in
+		// the key column the caption begins past the indent, the expander
+		// and the icon, and a note at the span's edge would sit out to the
+		// left of the word it is expanding.
+		inset := t.cellTextInset(sp, item)
+		x := t.treeRunX(sp, inset, sp.w-inset)
+		width := clip.X + clip.Width - x
+		if x < clip.X {
+			x, width = clip.X, clip.Width
+		}
+		return text, core.UnitRect{
+			X:      x,
+			Y:      t.rowsTop() + core.Unit(visible)*rowH,
+			Width:  width,
+			Height: rowH,
+		}, true
+	}
+	return "", core.UnitRect{}, false
 }

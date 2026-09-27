@@ -29,6 +29,21 @@ type BindContext struct {
 	// EmitEvent, which is nil-safe.
 	Emit func(*Event)
 
+	// Answer delivers one piece of an answer to a question. Nil when the
+	// connection takes none. Objects call EmitAnswer, which is nil-safe.
+	Answer func(*Answer)
+
+	// The three things a DECISION needs of the connection it is on, and the
+	// only things: somewhere to be addressed from while it is open, a way to
+	// stop being addressable once it is decided, and the thread the connection
+	// does its own work on, so a verdict a deadline decided arrives where one an
+	// application decided would have. Adopt nil means this connection holds no
+	// decisions at all, and Deciding says so rather than opening one nothing can
+	// reach. See decisions.go.
+	Adopt func(Object)
+	Drop  func(uint64)
+	Post  func(func())
+
 	mu       sync.Mutex
 	actions  map[uint64]string
 	subs     map[uint64]map[string]bool     // trinketID -> event types ("" = all; ID 0 = all trinkets)
@@ -36,6 +51,12 @@ type BindContext struct {
 	suppress int
 	stash    map[string]any
 	refs     map[uint64]any // virtual wire objects by ID, for pointer properties
+
+	// decisions are the questions this connection is holding open, by the id
+	// the event carrying each one went out with, and gone says the application
+	// has left, so nothing is asked of it again.
+	decisions map[uint64]*Decision
+	gone      bool
 }
 
 // RegisterRef records a virtual wire object under its wire ID so
@@ -94,6 +115,26 @@ func (c *BindContext) EmitEvent(ev *Event) {
 		return
 	}
 	c.Emit(ev)
+}
+
+// EmitAnswer sends one piece of an answer, and passes NEITHER of the two gates an
+// event passes.
+//
+// **That is the whole reason the verb exists.** An answer is solicited and belongs
+// to one question, so:
+//
+//   - Nothing has to have subscribed to receive it. Asking IS the subscription. An
+//     answer carried as an event could not push an inventory at all, because the run
+//     ends in an event type the client had no reason to have subscribed to.
+//   - It does not wait for the suppression to lift. That is there to stop a property
+//     a client set echoing back at it, and an answer to a question is not an echo --
+//     which askObject already relies on, running outside the suppression for exactly
+//     this reason.
+func (c *BindContext) EmitAnswer(a *Answer) {
+	if c == nil || c.Answer == nil || a == nil {
+		return
+	}
+	c.Answer(a)
 }
 
 // subscribedLocked checks the subscription table. Caller holds c.mu.
@@ -273,6 +314,20 @@ type TypeSpec struct {
 	// wiring, same as their property registration. Optional.
 	Bind func(ctx *BindContext, target any)
 
+	// Asks describes the questions this type answers, keyed by question
+	// name, so the vocabulary says what a client may ask it. The answering
+	// is the target's own Ask method; this is the describing, and a question
+	// no type declares is refused rather than quietly doing nothing.
+	Asks map[string]AskDesc
+
+	// Does describes the actions this type performs, keyed by action name,
+	// the way Asks describes its questions. An action is a thing done rather
+	// than a value held: `do <mdi> tile` arranges windows, and there is no
+	// "is it tiled" to ask for or to set. The doing is the target's own Do
+	// method; this is the describing, and an action no type declares is
+	// refused rather than quietly doing nothing.
+	Does map[string]DoDesc
+
 	// Events describes what Bind emits, keyed by event name, so the wire
 	// vocabulary answers for events the way it answers for properties.
 	// Optional; empty for a type that emits none.
@@ -294,6 +349,17 @@ type TypeSpec struct {
 	// Virtual marks pseudo-object types (e.g. combobox items): they
 	// skip common properties and trinket identity.
 	Virtual bool
+
+	// Hosted marks a type the wire cannot construct: the connection
+	// arrives with the instance and the host registers it (Session.Register),
+	// handing the client its ID. `new <name>` is refused.
+	//
+	// A hosted type declares no New, because there is nothing for the wire
+	// to build. It registers so the vocabulary can answer for the object a
+	// client already holds -- what it accepts, and what events reach the
+	// client through it, which is what a subscription on its ID is checked
+	// against.
+	Hosted bool
 }
 
 var (
@@ -303,19 +369,27 @@ var (
 )
 
 // RegisterType registers a builtin type. Builtin names begin lowercase
-// (D18). Panics on programmer error (duplicate, bad spec) - callers
+// (D18). Panics on programmer error (duplicate, bad descriptor) - callers
 // are init functions.
-func RegisterType(name string, spec *TypeSpec) {
+func RegisterType(name string, descriptor *TypeSpec) {
 	if !isLowerInitial(name) {
 		panic(fmt.Sprintf("protocol: builtin type %q must begin lowercase (D18)", name))
 	}
-	if spec == nil || spec.New == nil {
-		panic(fmt.Sprintf("protocol: type %q: spec.New is required", name))
+	if descriptor == nil {
+		panic(fmt.Sprintf("protocol: type %q: a descriptor is required", name))
 	}
-	if !spec.Virtual && spec.ID == nil {
-		panic(fmt.Sprintf("protocol: type %q: spec.ID is required for non-virtual types", name))
+	// A hosted type is never built here, so it declares no constructor; every
+	// other type must, or `new` would have nothing to hand back.
+	if descriptor.New == nil && !descriptor.Hosted {
+		panic(fmt.Sprintf("protocol: type %q: descriptor.New is required", name))
 	}
-	for prop, p := range spec.Props {
+	if descriptor.New != nil && descriptor.Hosted {
+		panic(fmt.Sprintf("protocol: type %q: a hosted type is not constructed over the wire, so descriptor.New is never called", name))
+	}
+	if !descriptor.Virtual && descriptor.ID == nil {
+		panic(fmt.Sprintf("protocol: type %q: descriptor.ID is required for non-virtual types", name))
+	}
+	for prop, p := range descriptor.Props {
 		if err := checkPropertyShape(p); err != nil {
 			panic(fmt.Sprintf("protocol: type %q: property %q: %v", name, prop, err))
 		}
@@ -325,7 +399,7 @@ func RegisterType(name string, spec *TypeSpec) {
 	if _, dup := regTypes[name]; dup {
 		panic(fmt.Sprintf("protocol: type %q registered twice", name))
 	}
-	regTypes[name] = spec
+	regTypes[name] = descriptor
 }
 
 // RegisterCommonProperty registers a property available on every
@@ -379,16 +453,124 @@ const UniversalEvent = "command"
 func EventNames(typeName string) []string {
 	regMu.RLock()
 	defer regMu.RUnlock()
-	spec, ok := regTypes[typeName]
+	descriptor, ok := regTypes[typeName]
 	if !ok {
 		return nil
 	}
-	names := make([]string, 0, len(spec.Events))
-	for n := range spec.Events {
+	names := make([]string, 0, len(descriptor.Events))
+	for n := range descriptor.Events {
 		names = append(names, n)
 	}
 	sort.Strings(names)
 	return names
+}
+
+// callsOf is the table a verb consults: the questions for ask, the actions for
+// do. Both are declared on the TypeSpec and both are checked the same way.
+func callsOf(descriptor *TypeSpec, verb string) map[string]CallDesc {
+	if verb == "do" {
+		return descriptor.Does
+	}
+	return descriptor.Asks
+}
+
+// AskNames returns the sorted questions a type answers.
+func AskNames(typeName string) []string { return callNames(typeName, "ask") }
+
+// DoNames returns the sorted actions a type performs.
+func DoNames(typeName string) []string { return callNames(typeName, "do") }
+
+func callNames(typeName, verb string) []string {
+	regMu.RLock()
+	descriptor := regTypes[typeName]
+	regMu.RUnlock()
+	if descriptor == nil {
+		return nil
+	}
+	calls := callsOf(descriptor, verb)
+	names := make([]string, 0, len(calls))
+	for n := range calls {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TypeAnswers reports whether a registered type declares a question.
+func TypeAnswers(typeName, question string) bool {
+	return typeDeclares(typeName, "ask", question)
+}
+
+// TypeDoes reports whether a registered type declares an action.
+func TypeDoes(typeName, action string) bool {
+	return typeDeclares(typeName, "do", action)
+}
+
+func typeDeclares(typeName, verb, name string) bool {
+	regMu.RLock()
+	descriptor := regTypes[typeName]
+	regMu.RUnlock()
+	if descriptor == nil {
+		return false
+	}
+	_, declared := callsOf(descriptor, verb)[name]
+	return declared
+}
+
+// AnyTypeAnswers reports whether ANY registered type declares a question. It is
+// the question to ask about an object the HOST registered, which has no type to
+// check against.
+func AnyTypeAnswers(question string) bool { return anyTypeDeclares("ask", question) }
+
+// AnyTypeDoes is the same for an action.
+func AnyTypeDoes(action string) bool { return anyTypeDeclares("do", action) }
+
+func anyTypeDeclares(verb, name string) bool {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	for _, descriptor := range regTypes {
+		if _, declared := callsOf(descriptor, verb)[name]; declared {
+			return true
+		}
+	}
+	return false
+}
+
+// checkAskName rejects a question the target cannot answer, and checkDoName an
+// action it cannot perform, for the same reason a misspelled event name is
+// rejected: accepted and then silently doing nothing is the worst answer
+// available.
+func checkAskName(typeName, question string) error {
+	return checkCallName("ask", typeName, question)
+}
+
+func checkDoName(typeName, action string) error {
+	return checkCallName("do", typeName, action)
+}
+
+// callWords are the words a refusal is written in, so an action reads as an
+// action and a question as a question.
+var callWords = map[string][3]string{
+	"ask": {"answers", "answers no question called", "answers no questions at all, so it cannot answer"},
+	"do":  {"does", "does nothing called", "does nothing at all, so it cannot do"},
+}
+
+func checkCallName(verb, typeName, name string) error {
+	w := callWords[verb]
+	if typeName == "" {
+		if anyTypeDeclares(verb, name) {
+			return nil
+		}
+		return fmt.Errorf("%s: nothing %s %q", verb, w[0], name)
+	}
+	if typeDeclares(typeName, verb, name) {
+		return nil
+	}
+	if names := callNames(typeName, verb); len(names) > 0 {
+		return fmt.Errorf("%s: %s %s %q; it %s %s",
+			verb, typeName, w[1], name, w[0], strings.Join(names, ", "))
+	}
+	return fmt.Errorf("%s: %s %s %q", verb, typeName, w[2], name)
 }
 
 // TypeEmits reports whether a registered type declares an event. An
@@ -399,11 +581,11 @@ func TypeEmits(typeName, event string) bool {
 	}
 	regMu.RLock()
 	defer regMu.RUnlock()
-	spec, ok := regTypes[typeName]
+	descriptor, ok := regTypes[typeName]
 	if !ok {
 		return false
 	}
-	_, declared := spec.Events[event]
+	_, declared := descriptor.Events[event]
 	return declared
 }
 
@@ -417,8 +599,8 @@ func AnyTypeEmits(event string) bool {
 	}
 	regMu.RLock()
 	defer regMu.RUnlock()
-	for _, spec := range regTypes {
-		if _, declared := spec.Events[event]; declared {
+	for _, descriptor := range regTypes {
+		if _, declared := descriptor.Events[event]; declared {
 			return true
 		}
 	}
@@ -472,13 +654,19 @@ func NewRegistryFactory(ctx *BindContext) *RegistryFactory {
 // New implements Factory.
 func (f *RegistryFactory) New(typeName string) (Object, error) {
 	regMu.RLock()
-	spec := regTypes[typeName]
+	descriptor := regTypes[typeName]
 	regMu.RUnlock()
-	if spec == nil {
+	if descriptor == nil {
 		return nil, fmt.Errorf("unknown trinket type %q", typeName)
 	}
-	o := &registryObject{ctx: f.ctx, spec: spec, typeName: typeName, target: spec.New()}
-	if spec.Virtual {
+	// A hosted type's instance belongs to the connection, which already has
+	// one. Building a second would hand the client an object attached to
+	// nothing -- and asking a nil target for its identity is a crash.
+	if descriptor.Hosted {
+		return nil, fmt.Errorf("%s is not created over the wire: the host registers one and hands over its ID", typeName)
+	}
+	o := &registryObject{ctx: f.ctx, descriptor: descriptor, typeName: typeName, target: descriptor.New()}
+	if descriptor.Virtual {
 		o.virtualID = virtualIDSource()
 		// Virtual targets that want to know their identity (e.g. tree
 		// items, whose IDs outlive construction) receive it here.
@@ -489,18 +677,18 @@ func (f *RegistryFactory) New(typeName string) (Object, error) {
 		// properties (a column's enum= naming a collection).
 		f.ctx.RegisterRef(o.virtualID, o.target)
 	}
-	if spec.Bind != nil {
-		spec.Bind(f.ctx, o.target)
+	if descriptor.Bind != nil {
+		descriptor.Bind(f.ctx, o.target)
 	}
 	return o, nil
 }
 
 type registryObject struct {
-	ctx       *BindContext
-	spec      *TypeSpec
-	typeName  string
-	target    any
-	virtualID uint64
+	ctx        *BindContext
+	descriptor *TypeSpec
+	typeName   string
+	target     any
+	virtualID  uint64
 }
 
 // Target exposes the constructed object (the trinket) so the embedding
@@ -552,13 +740,36 @@ func (o *registryObject) Append(slot string, child Object) error {
 	return p.Accept(o.target, c.target)
 }
 
+// Ask puts a question to the target, backing the ask verb for anything the wire
+// built. The target answers; this only carries the question to it.
+func (o *registryObject) Ask(question string, args []*Arg, out *Answers) error {
+	a, ok := o.target.(interface {
+		Ask(string, []*Arg, *Answers) error
+	})
+	if !ok {
+		return fmt.Errorf("ask: a %s answers no questions", o.typeName)
+	}
+	return a.Ask(question, args, out)
+}
+
+// Do forwards an action to the target, if it performs any.
+func (o *registryObject) Do(action string, args []*Arg) error {
+	d, ok := o.target.(interface {
+		Do(string, []*Arg) error
+	})
+	if !ok {
+		return fmt.Errorf("do: a %s does nothing", o.typeName)
+	}
+	return d.Do(action, args)
+}
+
 // property resolves a name against this type's own table and, for a
 // non-virtual type, the common properties behind it.
 func (o *registryObject) property(name string) (Property, bool) {
-	if p, ok := o.spec.Props[name]; ok {
+	if p, ok := o.descriptor.Props[name]; ok {
 		return p, true
 	}
-	if o.spec.Virtual {
+	if o.descriptor.Virtual {
 		return Property{}, false
 	}
 	regMu.RLock()
@@ -569,18 +780,18 @@ func (o *registryObject) property(name string) (Property, bool) {
 
 // ID implements Object.
 func (o *registryObject) ID() uint64 {
-	if o.spec.Virtual || o.spec.ID == nil {
+	if o.descriptor.Virtual || o.descriptor.ID == nil {
 		return o.virtualID
 	}
-	return o.spec.ID(o.target)
+	return o.descriptor.ID(o.target)
 }
 
 // Destroy implements the session's optional destroyer interface.
 func (o *registryObject) Destroy() error {
-	if o.spec.Destroy == nil {
+	if o.descriptor.Destroy == nil {
 		return fmt.Errorf("this type does not support destroy")
 	}
-	return o.spec.Destroy(o.target)
+	return o.descriptor.Destroy(o.target)
 }
 
 // EventControl is implemented by RegistryFactory so the session's
@@ -593,6 +804,10 @@ func (f *RegistryFactory) Unsubscribe(trinketID uint64, eventType string) {
 	f.ctx.Unsubscribe(trinketID, eventType)
 }
 func (f *RegistryFactory) Suppressed(fn func()) { f.ctx.Suppressed(fn) }
+
+// Answers implements AnswerControl: a question's answers go out on this
+// connection, correlated to the key its ask carried.
+func (f *RegistryFactory) Answers(key string) *Answers { return f.ctx.Answers(key) }
 
 // --- D17 typed-conversion helpers for property appliers ---
 
@@ -617,7 +832,7 @@ func AsInt(name string, v *Value, flag FlagState) (int, error) {
 	if flag != FlagNone || v == nil || v.Kind != NumberValue || !v.IsInt {
 		return 0, fmt.Errorf("%s: expected an integer", name)
 	}
-	return int(v.Number), nil
+	return int(v.Int), nil
 }
 
 // AsFloat requires a numeric (int or float).

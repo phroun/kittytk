@@ -62,8 +62,10 @@ type TabTrinket struct {
 
 // Tab represents a single tab in a TabTrinket.
 type Tab struct {
-	Text     string
-	Icon     *style.TextIcon
+	Text string
+	// Icon is the NAME of a registered icon (style.RegisterIcon), not a
+	// picture. A name nothing has registered draws nothing.
+	Icon     string
 	Content  core.Trinket
 	Enabled  bool
 	Closable bool // Per-tab closable setting
@@ -496,7 +498,7 @@ func (t *TabTrinket) TabText(index int) string {
 }
 
 // SetTabIcon sets the icon of a tab.
-func (t *TabTrinket) SetTabIcon(index int, icon *style.TextIcon) {
+func (t *TabTrinket) SetTabIcon(index int, icon string) {
 	if index < 0 || index >= len(t.tabs) {
 		return
 	}
@@ -3356,7 +3358,7 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 		switch cmd {
 		case core.CmdTrinketItemLeft:
 			if !isVertical {
-				t.prevTabAndEnsureVisible()
+				t.priorTabAndEnsureVisible()
 				return true
 			}
 		case core.CmdTrinketItemRight:
@@ -3366,7 +3368,7 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 			}
 		case core.CmdTrinketItemUp:
 			if isVertical {
-				t.prevTabAndEnsureVisible()
+				t.priorTabAndEnsureVisible()
 				return true
 			}
 		case core.CmdTrinketItemDown:
@@ -3375,7 +3377,7 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 				return true
 			}
 		case core.CmdTrinketItemPrior:
-			t.prevTabAndEnsureVisible()
+			t.priorTabAndEnsureVisible()
 			return true
 		case core.CmdTrinketItemNext:
 			t.nextTabAndEnsureVisible()
@@ -3403,7 +3405,7 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdWindowMDIPrior:
-		t.prevTab()
+		t.priorTab()
 		return true
 	}
 
@@ -3424,7 +3426,7 @@ func (t *TabTrinket) nextTab() {
 	}
 }
 
-func (t *TabTrinket) prevTab() {
+func (t *TabTrinket) priorTab() {
 	if len(t.tabs) == 0 {
 		return
 	}
@@ -3459,8 +3461,8 @@ func (t *TabTrinket) nextTabAndEnsureVisible() {
 	}
 }
 
-// prevTabAndEnsureVisible moves to previous tab and ensures it's fully visible.
-func (t *TabTrinket) prevTabAndEnsureVisible() {
+// priorTabAndEnsureVisible moves to prior tab and ensures it's fully visible.
+func (t *TabTrinket) priorTabAndEnsureVisible() {
 	if len(t.tabs) == 0 {
 		return
 	}
@@ -3625,6 +3627,63 @@ func (t *TabTrinket) stripPartAt(x core.Unit) (stripSpan, bool) {
 		}
 	}
 	return stripSpan{}, false
+}
+
+// TooltipAt answers for the tab under the pointer.
+//
+// A strip too narrow for its tabs cuts the run short, and the tab it stops on
+// is drawn as much of as there was room for -- so the one thing a reader
+// cannot do is read its name. That is what is offered, and only for such a
+// tab: a tab standing whole says its own name already.
+func (t *TabTrinket) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
+	if tip := t.Tooltip(); tip != "" {
+		text, at, _ := t.TrinketBase.TooltipAt(local)
+		return text, at, tip != ""
+	}
+	strip := t.stripHoverBounds()
+	if !strip.Contains(local) {
+		return "", core.UnitRect{}, false
+	}
+	// The strip recorded itself in RUN coordinates, so a point is turned
+	// back into them the way a press is: the unit the pointer is on, not the
+	// boundary in front of it.
+	x := local.X - strip.X
+	if core.ChromeMirrored(t) {
+		x = strip.Width - x - 1
+	}
+	sp, ok := t.stripPartAt(x)
+	if !ok || sp.owner < 0 || sp.owner >= len(t.tabs) || !sp.clipped {
+		return "", core.UnitRect{}, false
+	}
+	// The note stands on the TAB, not on the strip: the strip runs the width
+	// of the trinket, and a note anchored to it would appear at the far end
+	// from the tab it names.
+	return t.tabs[sp.owner].Text, t.stripSpanBounds(sp, strip), true
+}
+
+// stripSpanBounds is one part of the strip in this trinket's own local units:
+// the run coordinates it was recorded in, turned back the way a mirrored run
+// reflects them.
+func (t *TabTrinket) stripSpanBounds(sp stripSpan, strip core.UnitRect) core.UnitRect {
+	x := sp.x
+	if core.ChromeMirrored(t) {
+		x = strip.Width - sp.x - sp.w
+	}
+	return core.UnitRect{X: strip.X + x, Y: strip.Y, Width: sp.w, Height: strip.Height}
+}
+
+// stripHoverBounds is the band the tabs occupy, in this trinket's own local
+// units. Only the horizontal edges cut a run short, so only they answer.
+func (t *TabTrinket) stripHoverBounds() core.UnitRect {
+	b := t.Bounds()
+	h := t.tabBarHeight()
+	switch t.tabEdge() {
+	case TabEdgeBottom:
+		return core.UnitRect{Y: b.Height - h, Width: b.Width, Height: h}
+	case TabEdgeTop:
+		return core.UnitRect{Width: b.Width, Height: h}
+	}
+	return core.UnitRect{}
 }
 
 func (t *TabTrinket) handleTabBarPress(x core.Unit) {
@@ -3886,6 +3945,9 @@ func (t *TabTrinket) overVertScrollbarThumb(x, y core.Unit) bool {
 
 // HandleMouseMove handles mouse movement.
 func (t *TabTrinket) HandleMouseMove(event core.MouseMoveEvent) bool {
+	// A trinket that answers moves itself still owes the offer of what it
+	// could not show; the base makes it for everything that does not.
+	t.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
 	// Track scrollbar-thumb hover. Hover is a no-button affordance: while a
 	// button is held (a drag begun elsewhere passing over) don't light the
 	// thumb - unless this tab strip owns the scrollbar drag.

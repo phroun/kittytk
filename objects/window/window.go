@@ -81,8 +81,18 @@ type Window struct {
 
 	// Window properties
 	title string
-	flags WindowFlags
-	state WindowState
+	// titleCut records that the last paint had to cut the title short, and
+	// titleBandH how tall the bar it was drawn in is: what the bar can show
+	// depends on the buttons beside the name and the room the frame leaves,
+	// so the paint is what knows.
+	titleCut   bool
+	titleBandH core.Unit
+	// titleTextAt is where the name was drawn, in the window's own units. A
+	// title bar centres its name, so a note anchored to the whole band would
+	// stand at the far left of the window rather than on the name.
+	titleTextAt core.UnitRect
+	flags       WindowFlags
+	state       WindowState
 
 	// windowType classifies the window's role (main, normal, mdichild,
 	// dialog, modal, toolpalette). owner is the resolved non-overlay window a
@@ -143,6 +153,10 @@ type Window struct {
 	minHeight core.Unit
 	maxWidth  core.Unit
 	maxHeight core.Unit
+
+	// deciding says an answer about whether this window may close is still
+	// coming, which is the one thing onClose's bool cannot say. See SetDeciding.
+	deciding bool
 
 	// Callbacks
 	onClose       func() bool // Return false to prevent close
@@ -231,6 +245,7 @@ type Window struct {
 	onBoundsRequest       func(core.UnitRect) bool // Takes title-focus keyboard geometry whole (torn-off hosts)
 	onCloseComplete       func()                   // Called when window is closed, to remove from manager
 	onClosedObservers     []func()                 // Additional close observers (survive onCloseComplete reassignment)
+	closed                bool                     // Terminal: this window has been through its close. See attemptClose.
 	getConstrainingBounds func() core.UnitRect     // Returns the client area for movement constraints
 	getDisplayBounds      func() core.UnitRect     // Returns where the container DRAWS this window (the corral)
 	popupController       core.PopupController     // Popup controller for ComboBox etc.
@@ -1036,11 +1051,37 @@ func (w *Window) Close() bool {
 // reports the innermost window that declined.
 func (w *Window) attemptClose() (bool, *Window) {
 	w.mu.RLock()
+	already := w.closed
 	handler := w.onClose
 	closeComplete := w.onCloseComplete
 	observers := append([]func(){}, w.onClosedObservers...)
 	title := w.title
 	w.mu.RUnlock()
+
+	// **A window that has closed is closed**, and saying so is the answer to what
+	// the caller is actually asking: is this window out of the way? It is -- it
+	// went earlier.
+	//
+	// Nothing prevents a second close. A sweep takes a snapshot and then closes
+	// each window in turn, and closing a parent takes its children with it -- so it
+	// reaches a child it has already closed, still in the list. An application
+	// tidying up after a window the person closed does the same thing with
+	// `destroy`.
+	//
+	// And this ran the whole path again, handler included, which for a window
+	// whose application is consulted about closing meant a fresh `window_closing`
+	// with a fresh deadline -- about a window that is gone. It came back false, the
+	// sweep read that as a refusal, and a quit parked itself waiting for an answer
+	// about something nobody could see. An application that says nothing would have
+	// had a person asked whether to force closed a window that was not there.
+	//
+	// Being visible is not the test: Hide is somewhere to come back from, and this
+	// is the other thing. It is terminal -- a closed window has been dropped by its
+	// manager and by the application that owned it, and there is nothing left for
+	// showing it again to mean.
+	if already {
+		return true, nil
+	}
 
 	if handler != nil && !handler() {
 		return false, w
@@ -1068,6 +1109,13 @@ func (w *Window) attemptClose() (bool, *Window) {
 		parent.removeChildWindow(w)
 	}
 
+	// **Closed before anything is told**, so that a close reaching back in here --
+	// an observer, or a manager's removal, closing this window again -- finds it
+	// done rather than starting over.
+	w.mu.Lock()
+	w.closed = true
+	w.mu.Unlock()
+
 	w.Hide()
 
 	// Notify manager to remove this window
@@ -1089,6 +1137,98 @@ func (w *Window) attemptClose() (bool, *Window) {
 // so the dependency stays one-way.
 type windowSurfacer interface {
 	SurfaceWindow(win *Window)
+}
+
+// closeCoordinator is the desktop again, and for the same reason as the surfacer:
+// what it does about a close is desktop-wide, and a window cannot do it.
+//
+// It is asked when an application that wanted a say in this window closing has not
+// answered, and told when a close that was being decided has resolved. See
+// Desktop.AskForceClose and Desktop.CloseDecided.
+type closeCoordinator interface {
+	AskForceClose(win *Window, then func(force bool))
+	CloseDecided(win *Window, closed bool)
+}
+
+// findCloseCoordinator walks up for the desktop.
+//
+// A window on the desktop has the desktop as its direct parent -- AddWindow sets it,
+// so capability lookups reach it -- and a window torn onto its own surface keeps that
+// parent, because leaving the manager does not change whose desktop it is on. So this
+// usually finds it at the first step; it walks because nothing guarantees that, and a
+// window nested under something else still has to be able to ask.
+func (w *Window) findCloseCoordinator() closeCoordinator {
+	var current any = w.Parent()
+	for current != nil {
+		if c, ok := current.(closeCoordinator); ok {
+			return c
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return nil
+		}
+		current = t.Parent()
+	}
+	return nil
+}
+
+// AskForceClose puts that question to whatever can ask a person, and answers false
+// where nothing can -- a window with no desktop under it has nobody to ask, and
+// leaving it open is the half of the answer that loses no work.
+//
+// Exported because the close handler that needs it is installed from outside this
+// package, by the wire binding in window_protocol.go.
+func (w *Window) AskForceClose(then func(force bool)) {
+	if then == nil {
+		return
+	}
+	w.traceCoordinator()
+	if c := w.findCloseCoordinator(); c != nil {
+		c.AskForceClose(w, then)
+		return
+	}
+	then(false)
+}
+
+// SetDeciding records whether somebody is being asked whether this window may
+// close, and Deciding reads it back.
+//
+// **It is the third answer Close has no room for.** Close reports a bool: closed, or
+// not closed. Once an application can be consulted, "not closed" covers two quite
+// different things -- a refusal, which is final, and an answer still coming, which is
+// not. A sweep over several windows has to tell them apart: a refusal abandons a
+// quit, and a pending answer means try the quit again when it lands.
+//
+// Set by whoever asks -- the wire binding in window_protocol.go -- because it is the
+// only thing that knows a question is outstanding.
+func (w *Window) SetDeciding(deciding bool) {
+	w.mu.Lock()
+	w.deciding = deciding
+	w.mu.Unlock()
+}
+
+// Deciding reports whether an answer about closing this window is still coming.
+func (w *Window) Deciding() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.deciding
+}
+
+// CloseSettled says a close that was being decided has finished being decided, and
+// whether the window actually went.
+//
+// A sweep that stopped at this window did not treat it as a refusal; it is waiting
+// for exactly this. **And it needs to know which way**: a window that closed means
+// carry on to the next one, and a window that did not means the sweep is over. Told
+// the outcome rather than just the fact, or a refused close would send the sweep back
+// round to put the same question to an application that has already answered it.
+//
+// Called after the window has done whatever the answer said, so a sweep that resumes
+// sees the result rather than the question.
+func (w *Window) CloseSettled(closed bool) {
+	if c := w.findCloseCoordinator(); c != nil {
+		c.CloseDecided(w, closed)
+	}
 }
 
 // surfaceBlockingChain brings the window that refused back into view, together
@@ -1519,6 +1659,15 @@ func (w *Window) requestTear() {
 	if handler != nil {
 		handler()
 	}
+}
+
+// IsClosed reports whether this window has been through its close. Terminal, and not
+// the inverse of IsVisible: a hidden window is somewhere to come back to, and this is
+// the other thing.
+func (w *Window) IsClosed() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.closed
 }
 
 // SetOnCloseComplete sets the callback for when the window is fully closed.
@@ -1958,6 +2107,12 @@ func (w *Window) ChildAt(pos core.UnitPoint) core.Trinket {
 }
 
 // Layout implements core.Container.
+// IsLayoutRoot marks a window as where a child's change stops climbing: a
+// window is the size the manager or the user gave it, not the size of what it
+// holds, so a caption growing inside one rearranges the window and nothing
+// beyond it.
+func (w *Window) IsLayoutRoot() bool { return true }
+
 func (w *Window) Layout() {
 	w.layoutContent()
 
@@ -2675,7 +2830,8 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		if titleFocus == TitleFocusBlur {
 			rightLimit = bounds.Width - buttonWidth
 		}
-		PaintTitleBarText(p, tm, title, titleStyle, controlX, rightLimit, bounds.Width)
+		cut, at := PaintTitleBarText(p, tm, title, titleStyle, controlX, rightLimit, bounds.Width)
+		w.noteTitleCut(cut, at, tm)
 	}
 
 	// Draw blur button on far right when blur item is focused
@@ -2956,7 +3112,12 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			if titleFocus == TitleFocusBlur {
 				rightLimit = innerW - tm.CellW - buttonWidth
 			}
-			PaintTitleBarText(tp, tm, title, titleDisplayStyle, controlX, rightLimit, innerW)
+			cut, at := PaintTitleBarText(tp, tm, title, titleDisplayStyle, controlX, rightLimit, innerW)
+			// tp is the frame's inner painter; the note is placed in the
+			// window's own coordinates, so the border comes back on.
+			at.X += bx
+			at.Y += by
+			w.noteTitleCut(cut, at, tm)
 		}
 
 		// Draw blur button on far right when blur item is focused
@@ -3327,16 +3488,16 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent, cmd string) bool {
 		return true
 
 	case core.CmdFocusPrior:
-		// Move to previous title element, or loop to content's last trinket
-		prev := w.prevTitleFocus(titleFocus)
-		if prev == titleFocus {
+		// Move to prior title element, or loop to content's last trinket
+		prior := w.priorTitleFocus(titleFocus)
+		if prior == titleFocus {
 			// At first title element, loop to content's last trinket
 			w.SetTitleFocus(TitleFocusNone)
 			if fm := w.FocusManager(); fm != nil {
 				fm.FocusLast()
 			}
 		} else {
-			w.SetTitleFocus(prev)
+			w.SetTitleFocus(prior)
 		}
 		return true
 
@@ -3757,8 +3918,8 @@ func (w *Window) nextTitleFocus(current TitleFocus) TitleFocus {
 	return TitleFocusNone
 }
 
-// prevTitleFocus returns the previous title bar element before the given one.
-func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
+// priorTitleFocus returns the prior title bar element before the given one.
+func (w *Window) priorTitleFocus(current TitleFocus) TitleFocus {
 	w.mu.RLock()
 	flags := w.flags
 	w.mu.RUnlock()
@@ -4012,8 +4173,8 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 					break // Not at first trinket
 				}
 			}
-			// Not at first trinket, move to previous
-			return fm.FocusPrevious()
+			// Not at first trinket, move to prior
+			return fm.FocusPrior()
 		}
 
 		// Regular Tab - check if at last trinket
@@ -4167,6 +4328,10 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 	event.X, event.Y = w.frameLocalOrOut(event.X, event.Y)
 
+	// A window answers moves itself, so it makes for its own title bar the
+	// offer the base makes for everything that does not.
+	w.TrackTooltipHover(core.UnitPoint{X: event.X, Y: event.Y})
+
 	w.mu.RLock()
 	content := w.content
 	pressedButton := w.pressedButton
@@ -4243,11 +4408,11 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// an out-of-bounds move so its hover doesn't stick - chromeMouseTarget
 	// only forwards while the pointer is actually over the chrome.
 	w.mu.Lock()
-	prevChrome := w.lastChromeHover
+	previousChrome := w.lastChromeHover
 	w.lastChromeHover = chromeTarget
 	w.mu.Unlock()
-	if prevChrome != nil && prevChrome != chromeTarget {
-		if h, ok := prevChrome.(interface {
+	if previousChrome != nil && previousChrome != chromeTarget {
+		if h, ok := previousChrome.(interface {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {
 			h.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
@@ -4624,4 +4789,35 @@ func (w *Window) KeyContext() *core.KeyContext {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.keyContext
+}
+
+// noteTitleCut records that the title bar had to cut the window's name short,
+// which is what makes the bar worth asking about: the name is the one thing a
+// title bar is for, and a cut one is the thing a reader cannot make out.
+func (w *Window) noteTitleCut(cut bool, at core.UnitRect, tm TitleBarMetrics) {
+	w.mu.Lock()
+	w.titleCut = cut
+	w.titleBandH = tm.RowH
+	w.titleTextAt = at
+	w.mu.Unlock()
+}
+
+// TooltipAt implements core.TooltipSource: the window answers for its own
+// title bar, and only when the name there was cut short. Everything below the
+// bar is content, and the trinkets in it answer for themselves.
+func (w *Window) TooltipAt(local core.UnitPoint) (string, core.UnitRect, bool) {
+	w.mu.RLock()
+	cut, bandH, title, at := w.titleCut, w.titleBandH, w.title, w.titleTextAt
+	w.mu.RUnlock()
+	if !cut || title == "" || bandH <= 0 {
+		return "", core.UnitRect{}, false
+	}
+	band := core.UnitRect{Width: w.Bounds().Width, Height: bandH}
+	if !band.Contains(local) {
+		return "", core.UnitRect{}, false
+	}
+	if at.Width <= 0 {
+		at = band
+	}
+	return title, at, true
 }

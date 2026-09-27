@@ -9,9 +9,10 @@ import (
 
 // visualCaptions returns the flattened row captions in display order.
 func visualCaptions(tv *TreeView) []string {
-	out := make([]string, len(tv.flatList))
-	for i, it := range tv.flatList {
-		out[i] = it.Text
+	n := tv.rowCount()
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = tv.drawRow(i).Text
 	}
 	return out
 }
@@ -23,13 +24,13 @@ func newSortableTree() *TreeView {
 	size.Sortable = true
 	tv.AddColumn(size)
 
-	for _, spec := range []struct{ name, size string }{
+	for _, descriptor := range []struct{ name, size string }{
 		{"banana", "20"},
 		{"Apple", "30"},
 		{"cherry", "10"},
 	} {
-		it := NewTreeItem(spec.name)
-		it.SetValue("size", spec.size)
+		it := NewTreeItem(descriptor.name)
+		it.SetValue("size", descriptor.size)
 		tv.AddRootItem(it)
 	}
 	// A folder with children: children must sort within it, staying

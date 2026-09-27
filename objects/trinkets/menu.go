@@ -85,11 +85,13 @@ type MenuItem struct {
 	// column shows the bound shortcut, a space, then this text, so a command
 	// reachable either way advertises both. See MenuItem.ShortcutDisplay.
 	ShortcutText string
-	Icon         *style.TextIcon
-	Enabled      bool
-	Checkable    bool
-	Checked      bool
-	Separator    bool // If true, this is a separator line
+	// Icon is the NAME of a registered icon (style.RegisterIcon), not a
+	// picture. A name nothing has registered draws nothing.
+	Icon      string
+	Enabled   bool
+	Checkable bool
+	Checked   bool
+	Separator bool // If true, this is a separator line
 	// InPlace: activating this item performs its action but KEEPS the
 	// menu open, re-rendering the updated content in place (checkable
 	// toggles that users flip several times in a row - column choosers,
@@ -236,7 +238,7 @@ func (m *MenuItem) SetShortcut(shortcut core.Shortcut) *MenuItem {
 }
 
 // SetIcon sets the icon.
-func (m *MenuItem) SetIcon(icon *style.TextIcon) *MenuItem {
+func (m *MenuItem) SetIcon(icon string) *MenuItem {
 	m.Icon = icon
 	return m
 }
@@ -993,8 +995,8 @@ func (m *Menu) findNextEnabled(from int) int {
 	return -1
 }
 
-// findPrevEnabled finds the previous enabled item.
-func (m *Menu) findPrevEnabled(from int) int {
+// findPriorEnabled finds the prior enabled item.
+func (m *Menu) findPriorEnabled(from int) int {
 	n := len(m.items)
 	if n == 0 {
 		return -1
@@ -1666,8 +1668,8 @@ func (m *Menu) Paint(p *core.Painter) {
 			if item.Checked {
 				mm.DrawGlyph(p, x, itemY, '✓', tickStyle)
 			}
-		} else if item.Icon != nil {
-			m.paintGutterIcon(p, mm, itemY, item.Icon, tickStyle)
+		} else if icon, ok := style.IconText(item.Icon, style.IconSmall); ok {
+			m.paintGutterIcon(p, mm, itemY, &icon, tickStyle)
 		}
 		x += mm.CellW * 2 // Move past checkmark + 1 gutter space
 
@@ -1756,7 +1758,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	switch m.KeyCommand(event.Key) {
 	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
-		m.currentIndex = m.findPrevEnabled(m.currentIndex)
+		m.currentIndex = m.findPriorEnabled(m.currentIndex)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
 		m.announceCurrentItem()
@@ -1815,7 +1817,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketEnd:
-		m.currentIndex = m.findPrevEnabled(0)
+		m.currentIndex = m.findPriorEnabled(0)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
 		m.Update()
